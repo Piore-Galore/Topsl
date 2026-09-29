@@ -96,11 +96,11 @@ The compile workflow uses read-only repository permissions, pinned actions, boun
 
 [Release Topsl](https://github.com/Piore-Galore/Topsl/actions/workflows/release.yml) runs when a `v<version>` tag matching `package.json` is pushed. It builds and tests all four platforms, uploads each package and SHA-256 checksum directly to a draft GitHub Release, and publishes an unsigned personal-pilot prerelease only after every platform passes and the uploaded checksums are verified. Release jobs have repository-content write permission through the temporary `GITHUB_TOKEN`. They use the same public standard runners and pinned actions, without Actions artifact storage or dependency caches. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 
-To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the initial pilot:
+To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the repaired pilot:
 
 ```sh
-git tag -a v0.1.0 -m "Topsl v0.1.0 personal pilot"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Topsl v0.1.1 personal pilot"
+git push origin v0.1.1
 ```
 
 Failed builds leave the release in draft. Rerun failed jobs on the same tag to resume; each platform replaces only its own draft assets. Published releases are never overwritten by this workflow. Use a new version and tag for subsequent releases; do not move an existing release tag. Downloads appear on the [releases page](https://github.com/Piore-Galore/Topsl/releases).

@@ -59,7 +59,7 @@ else {
         result = {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "topsl-project-context", version: "0.1.0" },
+          serverInfo: { name: "topsl-project-context", version: "0.1.1" },
         };
       else if (request.method === "tools/list")
         result = {

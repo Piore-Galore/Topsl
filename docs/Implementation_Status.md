@@ -1,7 +1,7 @@
 # Personal pilot implementation and acceptance
 
-**Implementation:** Topsl 0.1.0, following the v2.1 design.  
-**Recorded:** 29 September 2026.  
+**Implementation:** Topsl 0.1.1, following the v2.1 design.  
+**Recorded:** 30 September 2026.  
 **Scope:** Working local application and the first usable foundations. The design's later phases are not declared complete by a compiled package.
 
 ## Implemented paths

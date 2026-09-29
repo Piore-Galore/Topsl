@@ -50,7 +50,7 @@ export async function officialFetch(
     const response = await fetch(target, {
       ...options,
       redirect: "manual",
-      headers: { "User-Agent": "Topsl/0.1.0", ...options.headers },
+      headers: { "User-Agent": "Topsl/0.1.1", ...options.headers },
       signal: options.signal ?? AbortSignal.timeout(20000),
     });
     if (response.status >= 300 && response.status < 400) {
