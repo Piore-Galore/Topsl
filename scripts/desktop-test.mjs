@@ -9,20 +9,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-// Keep failures visible in public check annotations even when log downloads
-// require an authenticated GitHub session. This harness uses synthetic profiles.
-process.on("uncaughtExceptionMonitor", (error) => {
-  if (process.env.GITHUB_ACTIONS === "true") {
-    const detail = String(error.stack ?? error)
-      .replaceAll("%", "%25")
-      .replaceAll("\r", "%0D")
-      .replaceAll("\n", "%0A");
-    console.error(
-      `::error file=scripts/desktop-test.mjs,title=Desktop acceptance smoke::${detail}`,
-    );
-  }
-});
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-desktop-"));
+const desktopEnvironment = { ...process.env, TOPSL_TEST_PROFILE: profile };
+delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
 const project = path.join(profile, "fixture-project");
 await mkdir(project);
 const canonicalProject = await realpath(project);
@@ -64,11 +53,7 @@ const app = await electron.launch({
     ...(process.platform === "linux" && process.env.CI ? ["--no-sandbox"] : []),
     ".",
   ],
-  env: {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: "",
-    TOPSL_TEST_PROFILE: profile,
-  },
+  env: desktopEnvironment,
   timeout: 90000,
 });
 const errors = [];
@@ -205,11 +190,7 @@ const reopened = await electron.launch({
     ...(process.platform === "linux" && process.env.CI ? ["--no-sandbox"] : []),
     ".",
   ],
-  env: {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: "",
-    TOPSL_TEST_PROFILE: profile,
-  },
+  env: desktopEnvironment,
   timeout: 90000,
 });
 try {

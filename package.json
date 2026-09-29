@@ -16,7 +16,7 @@
     "dev": "npm run start",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
-    "test:desktop": "node scripts/desktop-test.mjs",
+    "test:desktop": "node scripts/desktop-test-runner.mjs",
     "rebuild": "electron-builder install-app-deps",
     "package": "npm run build && electron-builder --publish never",
     "check": "npm run typecheck && npm test && npm run build",
