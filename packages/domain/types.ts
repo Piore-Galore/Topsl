@@ -65,6 +65,8 @@ export interface LifecyclePlan {
   executorIdentity: string | null;
   release: Release | null;
   nativeUrl: string | null;
+  nativeApplicationPath: string | null;
+  installedVersion: string | null;
   effects: string[];
   digest: string;
   createdAt: string;
@@ -82,6 +84,7 @@ export interface LifecycleJob {
     | "awaiting-native"
     | "reconciling"
     | "completed"
+    | "unchanged"
     | "failed"
     | "cancelled"
     | "uncertain";

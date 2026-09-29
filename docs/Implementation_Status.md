@@ -40,6 +40,8 @@ Unverified store/package deployments, custom locations, Windows Store discovery,
 
 Read-only release resolution uses the OpenAI GitHub release API for independent Codex CLI downloads and Homebrew's cask metadata for eligible official artifacts/checksums. Homebrew metadata is identified as the checksum source; it is not represented as vendor signing evidence. Native OS/installer publisher verification remains required before execution. Unknown or externally controlled native auto-update settings are displayed as unknown and are never changed.
 
+A vendor-managed desktop's eligible update is determined by its own channel, not the public installer feed. Its update action opens the existing application. Reconciliation requires a changed version before reporting an update; a closed native flow with an identical installation is recorded as unchanged and requires a fresh review to try again. Unknown or active process state keeps the operation unresolved.
+
 ## Recorded engineering evidence
 
 - Strict TypeScript compilation and the deterministic test suite are run before delivery. Test cases cover approval/IPC boundaries, encrypted database/WAL, project scoping, imports/deletion, configuration conflicts, publisher/architecture validation, lifecycle faults, real PTY loading, and synthetic Codex streaming/approvals/usage.

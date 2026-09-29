@@ -55,6 +55,7 @@ export class Lifecycle {
       if (
         ![
           "completed",
+          "unchanged",
           "failed",
           "cancelled",
           "uncertain",
@@ -80,7 +81,9 @@ export class Lifecycle {
     Object.assign(job, values, { updatedAt: now() });
     this.store.transaction(() => {
       this.store.save("job", job);
-      if (["completed", "failed", "cancelled"].includes(job.state)) {
+      if (
+        ["completed", "unchanged", "failed", "cancelled"].includes(job.state)
+      ) {
         const plan = this.store.get<LifecyclePlan>("plan", job.planId);
         if (
           plan &&
@@ -228,6 +231,7 @@ export class Lifecycle {
       appId,
       installationId,
       expectedRevision: installation?.revisionId ?? null,
+      installedVersion: installation?.version ?? null,
       action,
       route,
       managementUnitId: installation?.managementUnitId ?? `new:${appId}`,
@@ -250,6 +254,10 @@ export class Lifecycle {
         route === "native"
           ? catalog.find((a) => a.id === appId)!.website
           : null,
+      nativeApplicationPath:
+        route === "native" && action === "update" && appId.endsWith("desktop")
+          ? installation!.path
+          : null,
       effects: [
         release
           ? `Target ${release.version}; ${release.source}.`
@@ -263,7 +271,9 @@ export class Lifecycle {
             ? "Run this one package update. Homebrew may request native elevation and install required dependencies. Automatic metadata refresh is disabled."
             : action === "install" && release && appId.endsWith("desktop")
               ? "Download and checksum-verify the official archive, then open it in the native installer. Complete placement, publisher verification, and any elevation there, then reconcile."
-              : "Open the official installation flow. Complete installation and elevation in the native UI, then reconcile.",
+              : action === "update" && appId.endsWith("desktop")
+                ? "Open the installed application's own update controls. Its existing owner determines the eligible version and channel; complete the native flow, then reconcile."
+                : "Open the official installation flow. Complete installation and elevation in the native UI, then reconcile.",
         action === "download"
           ? "Cancelled or interrupted downloads restart from byte zero."
           : "Wait for affected sessions to close. Existing processes are never force-closed. Restart the native application to use the new version.",
@@ -302,7 +312,9 @@ export class Lifecycle {
           (j) =>
             this.store.get<LifecyclePlan>("plan", j.planId)
               ?.managementUnitId === plan.managementUnitId &&
-            !["completed", "failed", "cancelled"].includes(j.state),
+            !["completed", "unchanged", "failed", "cancelled"].includes(
+              j.state,
+            ),
         )
     )
       throw new Error(
@@ -435,7 +447,7 @@ export class Lifecycle {
         );
         await this.reconcile(job.id, true);
       } else {
-        let target = plan.nativeUrl!;
+        let target = plan.nativeApplicationPath ?? plan.nativeUrl!;
         if (
           plan.action === "install" &&
           plan.release &&
@@ -569,7 +581,8 @@ export class Lifecycle {
       throw new Error(
         "The operation is still executing. Wait for its recorded outcome before reconciliation.",
       );
-    if (["completed", "cancelled", "failed"].includes(job.state)) return job;
+    if (["completed", "unchanged", "cancelled", "failed"].includes(job.state))
+      return job;
     const installations = await this.deps.discover();
     const installation =
       installations.find((i) => i.id === plan.installationId) ??
@@ -582,8 +595,35 @@ export class Lifecycle {
           (!plan.release || i.version === plan.release.version),
       );
     if (
+      plan.route === "native" &&
+      plan.action === "update" &&
+      !plan.release &&
+      ["awaiting-native", "uncertain"].includes(job.state) &&
+      installation?.revisionId === plan.expectedRevision &&
+      installation?.version === plan.installedVersion &&
+      !this.deps.active(plan.managementUnitId)
+    ) {
+      const related = installations.filter(
+        (i) => i.managementUnitId === plan.managementUnitId,
+      );
+      const processes = await (this.deps.processes ?? affectedProcesses)(
+        related.map((i) => i.realPath),
+      );
+      if (processes?.length === 0) {
+        this.change(job, {
+          state: "unchanged",
+          actualVersion: installation?.version ?? null,
+          detail:
+            "The native flow is closed and the installation is unchanged. No update is claimed. Any new attempt requires a fresh review.",
+        });
+        return job;
+      }
+    }
+    if (
       installation?.version &&
-      (!plan.release || installation.version === plan.release.version)
+      (!plan.release || installation.version === plan.release.version) &&
+      (plan.action !== "update" ||
+        installation.version !== plan.installedVersion)
     ) {
       this.change(job, {
         state: "completed",

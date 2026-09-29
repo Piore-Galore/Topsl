@@ -236,7 +236,7 @@ export class Service {
         return this.lifecycle.reconcile(command.id);
       case "lifecycle-retry-preview": {
         const job = this.require<LifecycleJob>("job", command.id);
-        if (!["failed", "cancelled"].includes(job.state))
+        if (!["failed", "cancelled", "unchanged"].includes(job.state))
           throw new Error("Reconcile the existing operation before retrying.");
         const plan = this.require<LifecyclePlan>("plan", job.planId);
         return this.lifecycle.preview(

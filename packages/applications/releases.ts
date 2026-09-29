@@ -112,6 +112,9 @@ export async function resolveRelease(
   platform = process.platform as string,
   arch = process.arch as string,
 ): Promise<Release | null> {
+  // A vendor-managed desktop's private/managed channel is not the public download feed.
+  if (installation?.owner === "vendor" && appId.endsWith("desktop"))
+    return null;
   if (
     installation &&
     ["desktop", "npm", "system", "unknown"].includes(installation.owner)

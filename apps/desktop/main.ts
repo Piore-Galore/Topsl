@@ -135,7 +135,13 @@ async function unlock(passphrase?: string): Promise<AppState> {
               .catch((e) => publish({ type: "error", data: safeError(e) }));
           else if (
             typeof target === "string" &&
-            isWithin(path.join(app.getPath("userData"), "downloads"), target)
+            (isWithin(
+              path.join(app.getPath("userData"), "downloads"),
+              target,
+            ) ||
+              state.installations.some(
+                (i) => i.appId.endsWith("desktop") && i.path === target,
+              ))
           )
             void shell.openPath(target).then((error) => {
               if (error) publish({ type: "error", data: error });
@@ -277,7 +283,7 @@ async function dispatch(command: Command): Promise<any> {
       plan.command
         ? `Command: ${plan.command.executable} ${plan.command.args.join(" ")}`
         : "",
-      plan.release?.url ?? plan.nativeUrl ?? "",
+      plan.release?.url ?? plan.nativeApplicationPath ?? plan.nativeUrl ?? "",
       plan.release?.sha256 ? `SHA-256: ${plan.release.sha256}` : "",
       `Review expires: ${plan.expiresAt}`,
     ]

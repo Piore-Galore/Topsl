@@ -56,6 +56,7 @@ async function outcome(
   id: string,
   states = [
     "completed",
+    "unchanged",
     "failed",
     "cancelled",
     "uncertain",
@@ -70,6 +71,65 @@ async function outcome(
   return f.store.get<LifecycleJob>("job", id)!;
 }
 describe("application lifecycle", () => {
+  test("native desktop updates open the existing application and cannot claim an unchanged version was updated", async () => {
+    const f = await setup({ release: async () => null });
+    const i = {
+      ...f.installation,
+      appId: "openai.desktop" as const,
+      owner: "vendor" as const,
+      channel: "native",
+    };
+    f.setInstallations([i]);
+    const p = await f.lifecycle.preview(i.appId, i.id, "update");
+    expect(p.nativeApplicationPath).toBe(i.path);
+    expect(p.release).toBeNull();
+    const j = await f.lifecycle.approve(p.id, p.digest);
+    await outcome(f, j.id);
+    expect(f.deps.nativeOpen).toHaveBeenCalledWith(i.path);
+    f.deps.processes = vi.fn(async () => [42]);
+    expect((await f.lifecycle.reconcile(j.id)).state).toBe("uncertain");
+    f.setInstallations([
+      { ...i, version: "2.0.0", revisionId: "new-revision" },
+    ]);
+    expect((await f.lifecycle.reconcile(j.id)).actualVersion).toBe("2.0.0");
+  });
+  test("a closed native flow can confirm unchanged without claiming an update or retaining its lock", async () => {
+    const f = await setup({ release: async () => null });
+    const p = await f.lifecycle.preview(
+      f.installation.appId,
+      f.installation.id,
+      "update",
+    );
+    const j = await f.lifecycle.approve(p.id, p.digest);
+    await outcome(f, j.id);
+    expect((await f.lifecycle.reconcile(j.id)).state).toBe("unchanged");
+    expect(
+      f.store.get("installation-lock", p.managementUnitId),
+    ).toBeUndefined();
+    await expect(f.lifecycle.approve(p.id, p.digest)).rejects.toThrow(
+      "already been used",
+    );
+    const fresh = await f.lifecycle.preview(
+      f.installation.appId,
+      f.installation.id,
+      "update",
+    );
+    await outcome(f, (await f.lifecycle.approve(fresh.id, fresh.digest)).id);
+    expect(f.deps.nativeOpen).toHaveBeenCalledTimes(2);
+  });
+  test("unknown native running state cannot confirm an unchanged flow is closed", async () => {
+    const f = await setup({ release: async () => null });
+    const p = await f.lifecycle.preview(
+      f.installation.appId,
+      f.installation.id,
+      "update",
+    );
+    const j = await f.lifecycle.approve(p.id, p.digest);
+    await outcome(f, j.id);
+    f.deps.processes = vi.fn(async () => null);
+    expect((await f.lifecycle.reconcile(j.id)).state).toBe("uncertain");
+    expect(f.store.get("installation-lock", p.managementUnitId)).toBeDefined();
+  });
   test("background checks never download or execute and obey the due time", async () => {
     const f = await setup();
     await f.lifecycle.check(f.installation.id);

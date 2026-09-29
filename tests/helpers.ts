@@ -47,6 +47,8 @@ export function plan(overrides: Partial<LifecyclePlan> = {}): LifecyclePlan {
     executorIdentity: null,
     release: null,
     nativeUrl: null,
+    nativeApplicationPath: null,
+    installedVersion: null,
     effects: ["Save only"],
     digest: "",
     createdAt: now(),

@@ -734,7 +734,9 @@ function App() {
                             Cancel
                           </button>
                         )}
-                        {["failed", "cancelled"].includes(j.state) && (
+                        {["failed", "cancelled", "unchanged"].includes(
+                          j.state,
+                        ) && (
                           <button
                             onClick={async () => {
                               const value = await act({

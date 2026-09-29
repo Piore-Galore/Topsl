@@ -14,6 +14,7 @@ import {
   assertArtifactPublisher,
   assertDownloadUrl,
   brewVariant,
+  resolveRelease,
 } from "../packages/applications/releases";
 import { plan } from "./helpers";
 afterEach(() => vi.unstubAllEnvs());
@@ -55,6 +56,15 @@ describe("approval and scheduling invariants", () => {
   );
 });
 describe("command and network boundary", () => {
+  test("a vendor desktop's update eligibility is not inferred from a public installer feed", async () => {
+    expect(
+      await resolveRelease("openai.desktop", {
+        owner: "vendor",
+        appId: "openai.desktop",
+        channel: "native",
+      } as any),
+    ).toBeNull();
+  });
   test.each(["exec", "approve", "shell", "install-anything"])(
     "rejects untyped command %s",
     (type) =>
