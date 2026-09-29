@@ -230,30 +230,46 @@ describe("native process adapter", () => {
     ).rejects.toThrow("trust");
   });
   test("native PTY loads and carries actual process output", async () => {
-    const output = await new Promise<string>((resolve, reject) => {
-      const term = spawnPty(
-        process.execPath,
-        ["-e", 'process.stdout.write("TOPSL_PTY_OK")'],
-        {
-          cwd: process.cwd(),
-          env: { ...nativeEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
-          cols: 80,
-          rows: 24,
-        },
-      );
-      let data = "";
-      const timer = setTimeout(() => {
-        term.kill();
-        reject(new Error("PTY did not exit"));
-      }, 10000);
-      term.onData((chunk) => {
-        data += chunk;
-      });
-      term.onExit(() => {
-        clearTimeout(timer);
-        resolve(data);
-      });
-    });
-    expect(output).toContain("TOPSL_PTY_OK");
+    const result = await new Promise<{ output: string; exitCode: number }>(
+      (resolve, reject) => {
+        // Electron is a GUI-subsystem executable on Windows. Exercise ConPTY with
+        // a console-subsystem child, as real native CLI installations use.
+        const windows = process.platform === "win32";
+        const term = spawnPty(
+          windows
+            ? path.join(
+                process.env.SystemRoot ??
+                  process.env.SYSTEMROOT ??
+                  "C:\\Windows",
+                "System32",
+                "cmd.exe",
+              )
+            : process.execPath,
+          windows
+            ? ["/d", "/s", "/c", "echo TOPSL_PTY_OK"]
+            : ["-e", 'process.stdout.write("TOPSL_PTY_OK")'],
+          {
+            cwd: process.cwd(),
+            env: { ...nativeEnvironment(), ELECTRON_RUN_AS_NODE: "1" },
+            cols: 80,
+            rows: 24,
+          },
+        );
+        let data = "";
+        const timer = setTimeout(() => {
+          term.kill();
+          reject(new Error("PTY did not exit"));
+        }, 10000);
+        term.onData((chunk) => {
+          data += chunk;
+        });
+        term.onExit(({ exitCode }) => {
+          clearTimeout(timer);
+          resolve({ output: data, exitCode });
+        });
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("TOPSL_PTY_OK");
   });
 });
