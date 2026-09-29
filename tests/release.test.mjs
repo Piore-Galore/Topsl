@@ -20,6 +20,12 @@ const version = "0.1.0";
 const sha = "a".repeat(40);
 const tag = `v${version}`;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const expectedPackages = [
+  `Topsl-${version}-mac-arm64.zip`,
+  `Topsl-${version}-mac-x64.zip`,
+  `Topsl-${version}-win-x64.exe`,
+  `Topsl-${version}-linux-x86_64.AppImage`,
+];
 
 function fixture(t) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "topsl-release-test-"));
@@ -76,7 +82,7 @@ function fixture(t) {
     };
   }
   function completeAssets() {
-    for (const name of packageNames(version)) {
+    for (const name of expectedPackages) {
       const content = Buffer.from(`fixture package ${name}`);
       addAsset(name, content);
       addAsset(`${name}.sha256`, `${hash(content)}  ${name}\n`);
@@ -259,6 +265,24 @@ test("upload verifies GitHub's digests against the actual package and checksum b
   );
   f.state.corruptUpload = true;
   await assert.rejects(f.invoke("upload"), /Uploaded bytes/);
+});
+
+test("the Linux x64 runner uploads electron-builder's x86_64 AppImage", async (t) => {
+  const f = fixture(t);
+  f.draft();
+  f.env.RELEASE_OS = "linux";
+  f.env.RELEASE_ARCH = "x64";
+  const name = `Topsl-${version}-linux-x86_64.AppImage`;
+  writeFileSync(path.join(f.cwd, "release", name), "Linux package bytes");
+  await f.invoke("upload", { host: "linux-x64" });
+  assert.deepEqual(
+    f.state.release.assets.map((asset) => asset.name),
+    [name, `${name}.sha256`],
+  );
+  assert.equal(
+    f.state.bytes.get(`${name}.sha256`).toString(),
+    `${hash("Linux package bytes")}  ${name}\n`,
+  );
 });
 
 test("publication requires packages and checksum files for all four platforms", async (t) => {

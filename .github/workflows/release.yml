@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: "24"
       - name: Test release safeguards
-        run: npm run test:release
+        run: node --test tests/release.test.mjs
       - name: Verify tag and prepare draft prerelease
         env:
           GH_TOKEN: ${{ github.token }}

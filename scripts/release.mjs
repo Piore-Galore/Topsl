@@ -49,10 +49,14 @@ export function releaseContext(version, env) {
     throw new Error("Invalid release repository.");
   return { tag, version, sha: env.GITHUB_SHA, repo: env.GITHUB_REPOSITORY };
 }
+function packageName(version, target) {
+  // electron-builder expands the AppImage architecture macro to x86_64.
+  // The build runner and Node still identify the same architecture as x64.
+  const artifactTarget = target === "linux-x64" ? "linux-x86_64" : target;
+  return `Topsl-${version}-${artifactTarget}.${targets[target]}`;
+}
 export function packageNames(version) {
-  return Object.entries(targets).map(
-    ([target, ext]) => `Topsl-${version}-${target}.${ext}`,
-  );
+  return Object.keys(targets).map((target) => packageName(version, target));
 }
 export function requireDraft(release, context) {
   if (
@@ -181,7 +185,7 @@ export async function runRelease(
       const target = `${env.RELEASE_OS}-${env.RELEASE_ARCH}`;
       if (!targets[target] || target !== host)
         throw new Error("The package target does not match its build runner.");
-      const name = `Topsl-${version}-${target}.${targets[target]}`;
+      const name = packageName(version, target);
       const file = path.join(cwd, "release", name);
       const info = await stat(file);
       if (!info.isFile() || info.size <= 0 || info.size >= 2 * 1024 ** 3)
