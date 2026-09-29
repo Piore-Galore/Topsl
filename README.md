@@ -88,11 +88,22 @@ TOPSL_NATIVE_PROJECT_BINARY=/absolute/path/to/codex npm test -- tests/codex-proj
 
 The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without distribution signing/notarization. Native runtime compatibility and production eligibility are separate from compilation.
 
-## GitHub builds
+## GitHub builds and releases
 
 [Compile Topsl](https://github.com/Piore-Galore/Topsl/actions/workflows/build.yml) checks and packages macOS Apple silicon, macOS Intel, Windows x64, and Linux x64 on standard GitHub-hosted runners. It runs only while the repository is public. Standard public runners are free; larger runners are not. [GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 
-The workflow uses read-only repository permissions, pinned actions, bounded job timeouts, and no artifact/cache uploads. Package names, sizes, and checksums appear in the run summary. Packages are compiled on each runner but are not retained after it finishes; persistent downloads/releases can be configured separately against an explicit storage allowance. This avoids introducing artifact-storage charges. [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+The compile workflow uses read-only repository permissions, pinned actions, bounded job timeouts, and no artifact/cache uploads. Package names, sizes, and checksums appear in the run summary. Its packages are not retained after the runner finishes. [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+
+[Release Topsl](https://github.com/Piore-Galore/Topsl/actions/workflows/release.yml) runs when a `v<version>` tag matching `package.json` is pushed. It builds and tests all four platforms, uploads each package and SHA-256 checksum directly to a draft GitHub Release, and publishes an unsigned personal-pilot prerelease only after every platform passes and the uploaded checksums are verified. Release jobs have repository-content write permission through the temporary `GITHUB_TOKEN`. They use the same public standard runners and pinned actions, without Actions artifact storage or dependency caches. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+
+To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the initial pilot:
+
+```sh
+git tag -a v0.1.0 -m "Topsl v0.1.0 personal pilot"
+git push origin v0.1.0
+```
+
+Failed builds leave the release in draft. Rerun failed jobs on the same tag to resume; each platform replaces only its own draft assets. Published releases are never overwritten by this workflow. Use a new version and tag for subsequent releases; do not move an existing release tag. Downloads appear on the [releases page](https://github.com/Piore-Galore/Topsl/releases).
 
 ## Repository layout
 
