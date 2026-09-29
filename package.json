@@ -1,0 +1,83 @@
+{
+  "name": "topsl",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local coding workbench and application control center",
+  "author": "Piore-Galore",
+  "license": "UNLICENSED",
+  "main": "dist/main.cjs",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run start",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "test:desktop": "node scripts/desktop-test.mjs",
+    "rebuild": "electron-builder install-app-deps",
+    "package": "npm run build && electron-builder --publish never",
+    "check": "npm run typecheck && npm test && npm run build",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
+    "node-pty": "1.1.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "smol-toml": "1.9.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.6.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "prettier": "3.9.9",
+    "typescript": "7.0.2",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  },
+  "build": {
+    "appId": "com.piore.topsl",
+    "productName": "Topsl",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "**/node-pty/**",
+      "dist/cli.cjs"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "zip"
+      ],
+      "identity": null
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "artifactName": "Topsl-${version}-${os}-${arch}.${ext}"
+  }
+}
