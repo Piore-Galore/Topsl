@@ -27,6 +27,18 @@ History and its search index are encrypted with SQLCipher. The database key uses
 
 The subscription-only pilot blocks known API billing environment overrides. Structured Codex turns require native ChatGPT authentication. Claude's native terminal owns its login, model choice, billing mode, and permissions; inspect these in the native UI before submitting work. Multiple isolated provider profiles, optional API accounts, and remote hosts remain separate roadmap items.
 
+## Shared local projects
+
+Open **Projects → Enable project discovery** to bring native project folders into one catalog. Topsl refreshes the approved sources on startup and every minute while open; **Refresh projects** checks immediately and **Pause discovery** stops observation. Manually added folders are available in the same catalog immediately.
+
+- Codex desktop saved roots and local-project metadata, Codex CLI configured project paths, and Claude's shared project metadata are read from the selected local provider homes. The native dialog shows the exact source files. Only folder names, paths, source identities, and observation status are retained; native trust is not imported.
+- Canonical paths merge references to the same folder, including symlink aliases. Every root of a native multi-folder project appears as a separate folder, with its native project reference retained. Separate folders and worktrees keep separate Topsl identities and histories.
+- Trust a discovered folder before running a session. Missing or retargeted folders are shown explicitly; **Relink folder** keeps the existing Topsl project identity and history. Removing a folder from a native list never deletes Topsl history or files.
+- **Codex native projects → Enable Codex sync** connects a trusted Codex runtime to its local profile. Trusted Topsl folders are registered through the experimental native project API; native names and order flow back into Topsl's catalog and sidebar. Expand the registered projects to rename or reorder native groups. Multi-folder groups retain all roots. **Sync now** refreshes immediately; **Pause Codex sync** stops this connection independently of metadata discovery.
+- **Open folder** launches either CLI in the exact shared directory. On macOS, Codex desktop receives the folder through the existing selected application. Claude Desktop receives a `claude://code/new?folder=…` link and asks for native folder-access confirmation. macOS targets the selected Claude application; other platforms use the system's registered Claude handler. Other Codex desktop platforms retain the native folder-picker handoff.
+
+Codex reports **Registry synced** only after native readback. Its desktop can keep a separate sidebar cache, so this does not certify immediate visible sidebar refresh, pins, sections, or chat mirroring. Claude's native sidebar creation/order API is not verified; its integration supplies folder discovery and native folder links. Native formats can change: unsupported or unreadable sources retain their last observation and display an error. Topsl does not edit raw provider registries, copy files between machines, synchronize cloud projects, or import conversations through folder discovery. The [project synchronization notes](docs/Project_Synchronization.md) describe the supported sources and boundaries.
+
 ## Applications
 
 The catalog starts with Codex CLI, the desktop application providing Codex (ChatGPT, with legacy Codex discovery), Claude Code CLI, and Claude Desktop. Application lifecycle code is independent of the conversation adapters.
@@ -66,6 +78,12 @@ For an explicitly selected trusted Codex binary, a separate read-only protocol p
 
 ```sh
 node scripts/probe-codex.mjs /absolute/path/to/codex
+```
+
+To verify the selected runtime's experimental project API, run the optional native acceptance test. It creates, renames, reorders, and removes only temporary fixture projects in an empty native home, with zero model turns:
+
+```bash
+TOPSL_NATIVE_PROJECT_BINARY=/absolute/path/to/codex npm test -- tests/codex-projects-native.test.ts
 ```
 
 The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without distribution signing/notarization. Native runtime compatibility and production eligibility are separate from compilation.
