@@ -16,10 +16,11 @@
     "dev": "npm run start",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
+    "test:release": "node --test tests/release.test.mjs",
     "test:desktop": "node scripts/desktop-test-runner.mjs",
     "rebuild": "electron-builder install-app-deps",
     "package": "npm run build && electron-builder --publish never",
-    "check": "npm run typecheck && npm test && npm run build",
+    "check": "npm run typecheck && npm test && npm run test:release && npm run build",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {

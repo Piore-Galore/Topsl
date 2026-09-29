@@ -1,0 +1,119 @@
+name: Release Topsl
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: topsl-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
+jobs:
+  prepare:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Test release safeguards
+        run: npm run test:release
+      - name: Verify tag and prepare draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs prepare
+
+  desktop:
+    needs: prepare
+    name: ${{ matrix.name }}
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple silicon
+            runner: macos-15
+            os: mac
+            arch: arm64
+            target: --mac --arm64
+          - name: macOS Intel
+            runner: macos-15-intel
+            os: mac
+            arch: x64
+            target: --mac --x64
+          - name: Windows x64
+            runner: windows-2025
+            os: win
+            arch: x64
+            target: --win --x64
+          - name: Linux x64
+            runner: ubuntu-24.04
+            os: linux
+            arch: x64
+            target: --linux --x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      RELEASE_OS: ${{ matrix.os }}
+      RELEASE_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Linux desktop libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 xvfb
+      - name: Install locked dependencies and compile native modules
+        run: npm ci
+      - name: Typecheck, integration tests, and application build
+        run: npm run check
+      - name: Desktop acceptance smoke
+        if: runner.os != 'Linux'
+        run: npm run test:desktop
+      - name: Linux desktop acceptance smoke
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:desktop
+      - name: Compile installable application
+        run: npm run package -- ${{ matrix.target }}
+      - name: Upload verified package and checksum to draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs upload
+
+  publish:
+    needs: [prepare, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Verify all four packages and publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs publish
+
+# Release assets go directly to a draft release. No Actions artifacts, dependency
+# caches, paid runners, signing subscriptions, or personal access tokens are used.
