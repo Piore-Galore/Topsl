@@ -1,5 +1,6 @@
 import {
   app,
+  clipboard,
   BrowserWindow,
   dialog,
   ipcMain,
@@ -19,9 +20,11 @@ import type {
   Approval,
   ConfigurationPlan,
   LifecyclePlan,
+  ProjectOpenResult,
 } from "../../packages/domain/types";
+import { isClaudeFolderUrl } from "../../packages/workspace/project-opening";
 import { safeError } from "../../packages/domain/invariants";
-import { isWithin } from "../../packages/platform/system";
+import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 
 let isolatedTest = false;
@@ -57,6 +60,18 @@ let state: AppState = {
   checks: [],
   jobs: [],
   projects: [],
+  projectSync: { enabled: false, refreshing: false, sources: [] },
+  codexProjectSync: {
+    enabled: false,
+    refreshing: false,
+    installationId: null,
+    home: "",
+    status: "disabled",
+    detail: "Unlock to synchronize projects.",
+    lastSuccessAt: null,
+    projects: [],
+    orderRevision: "",
+  },
   conversations: [],
   messages: [],
   runs: [],
@@ -219,17 +234,56 @@ async function dispatch(command: Command): Promise<any> {
       state.lockReason ?? state.serviceError ?? "The vault is locked.",
     );
   const trusted: TrustedInput = {};
-  if (command.type === "project-add") {
+  if (command.type === "project-add" || command.type === "project-relink") {
     const chosen = await dialog.showOpenDialog(window!, {
-      title: "Select a trusted project",
+      title:
+        command.type === "project-relink"
+          ? "Select this project's new folder"
+          : "Select a trusted project",
       properties: ["openDirectory"],
     });
     if (chosen.canceled) return null;
     trusted.selectedPath = chosen.filePaths[0];
     trusted.approved = await confirm(
-      "Trust this project?",
-      `${trusted.selectedPath}\n\nNative instructions, hooks, plugins, and MCP servers in this project may execute when you start its runtime.`,
+      command.type === "project-relink"
+        ? "Relink and trust this project?"
+        : "Trust this project?",
+      `${trusted.selectedPath}\n\nNative instructions, hooks, plugins, and MCP servers in this project may execute when you start its runtime.${command.type === "project-relink" ? " Existing Topsl history will remain attached to this project; existing native entries are retained." : ""}${state.codexProjectSync.enabled ? " Codex synchronization will share this trusted folder with the native project registry." : ""}`,
       "Trust project",
+    );
+    if (!trusted.approved) return null;
+  }
+  if (command.type === "project-sync-enable" && command.enabled) {
+    trusted.approved = await confirm(
+      "Discover project folders across your applications?",
+      `Topsl will read folder names and paths from these native metadata files on startup and every minute:\n\n${state.projectSync.sources.map((source) => source.path).join("\n")}\n\nDiscovered folders appear in the shared Projects catalog. Trust each folder before running it. Discovery reads metadata only; Codex synchronization has separate controls. You can pause discovery in Projects.`,
+      "Enable discovery",
+    );
+    if (!trusted.approved) return null;
+  }
+  if (command.type === "project-trust") {
+    const project = state.projects.find((project) => project.id === command.id);
+    if (!project) throw new Error("Refresh the project list first.");
+    trusted.selectedPath = project.path;
+    trusted.approved = await confirm(
+      "Trust this discovered project?",
+      `${project.name}\n${project.path}\n\nNative instructions, hooks, plugins, and MCP servers may execute when you start a native session in this folder.`,
+      "Trust project",
+    );
+    if (!trusted.approved) return null;
+  }
+  if (command.type === "codex-project-sync-enable") {
+    const installation = state.installations.find(
+      (i) =>
+        i.id === command.installationId &&
+        i.appId === "openai.codex-cli" &&
+        i.trusted,
+    );
+    if (!installation) throw new Error("Choose a trusted Codex runtime first.");
+    trusted.approved = await confirm(
+      "Synchronize the Codex project registry?",
+      `Runtime: ${installation.realPath}\nProfile: ${state.codexProjectSync.home}\n\nTopsl will read native project names, folders, and order and add trusted Topsl folders that are not already registered. It will refresh every minute while open. Renaming or reordering a native project here will update Codex. Removed native entries stay removed; files and history are retained.\n\nThis uses an experimental local API and starts no model turn. The visible desktop sidebar may keep a separate cache. You can pause in Projects.`,
+      "Enable synchronization",
     );
     if (!trusted.approved) return null;
   }
@@ -385,6 +439,61 @@ async function dispatch(command: Command): Promise<any> {
     if (!trusted.approved) return null;
   }
   const result = await request({ kind: "command", command, trusted });
+  if (command.type === "project-copy-path" && result?.copyProjectPath) {
+    clipboard.writeText(result.copyProjectPath);
+    return;
+  }
+  if (command.type === "project-open") {
+    const opened = result as ProjectOpenResult;
+    if (opened.applicationPath) {
+      if (
+        !state.installations.some(
+          (i) =>
+            i.id === command.installationId &&
+            i.realPath === opened.applicationPath,
+        )
+      )
+        throw new Error(
+          "The selected application changed. Rediscover it first.",
+        );
+      if (opened.route === "claude-folder-link") {
+        const installation = state.installations.find(
+          (i) => i.id === command.installationId,
+        );
+        const project = state.projects.find((p) => p.id === command.projectId);
+        if (
+          installation?.appId !== "anthropic.claude-desktop" ||
+          project?.realPath !== opened.projectPath ||
+          !opened.nativeUrl ||
+          !isClaudeFolderUrl(opened.nativeUrl, opened.projectPath)
+        )
+          throw new Error(
+            "Invalid native folder link. Refresh projects first.",
+          );
+        if (process.platform === "darwin")
+          await runFile("/usr/bin/open", [
+            "-a",
+            opened.applicationPath,
+            opened.nativeUrl,
+          ]);
+        else await shell.openExternal(opened.nativeUrl);
+      } else if (
+        opened.route === "folder-open" &&
+        process.platform === "darwin"
+      ) {
+        // Target an existing installation directly; never invoke a CLI that may install an absent app.
+        await runFile("/usr/bin/open", [
+          "-a",
+          opened.applicationPath,
+          opened.projectPath,
+        ]);
+      } else {
+        const error = await shell.openPath(opened.applicationPath);
+        if (error) throw new Error(error);
+      }
+    }
+    return opened;
+  }
   if (result?.openUrl) {
     if (!officialLink(result.openUrl))
       throw new Error("Unrecognized external destination.");

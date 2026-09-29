@@ -1,5 +1,5 @@
 import path from "node:path";
-import { realpath, stat, writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { Store } from "../../packages/persistence/store";
 import type {
   AppId,
@@ -12,6 +12,7 @@ import type {
   LifecycleJob,
   LifecyclePlan,
   Project,
+  ProjectOpenResult,
   ServiceEvent,
 } from "../../packages/domain/types";
 import type { Command } from "../../packages/domain/commands";
@@ -30,6 +31,16 @@ import {
   previewHandoff,
 } from "../../packages/workspace/history";
 import { ContextServer } from "../../packages/workspace/context";
+import {
+  ProjectSync,
+  projectSourcePaths,
+  requireProjectFolder,
+} from "../../packages/workspace/projects";
+import { desktopProjectRoute } from "../../packages/workspace/project-opening";
+import {
+  CodexProjectSync,
+  orderLocalProjects,
+} from "../../packages/workspace/codex-projects";
 
 export interface TrustedInput {
   selectedPath?: string;
@@ -43,6 +54,8 @@ export class Service {
   readonly runtime: RuntimeManager;
   readonly configuration: Configuration;
   readonly context: ContextServer;
+  readonly projects: ProjectSync;
+  readonly codexProjects: CodexProjectSync;
   private timer?: ReturnType<typeof setInterval>;
   private notificationTimer?: ReturnType<typeof setTimeout>;
   private discovery?: Promise<Installation[]>;
@@ -60,6 +73,21 @@ export class Service {
       this.runtime.hasActive(),
     );
     this.context = new ContextServer(this.store, directory);
+    const projectPaths = isolatedTest
+      ? projectSourcePaths(path.join(directory, "native-home"), {})
+      : projectSourcePaths();
+    this.projects = new ProjectSync(
+      this.store,
+      () => this.changed(),
+      projectPaths,
+    );
+    this.codexProjects = new CodexProjectSync(
+      this.store,
+      this.projects,
+      directory,
+      projectPaths.codexHome,
+      () => this.changed(),
+    );
     this.lifecycle = new Lifecycle(this.store, directory, {
       installations: () => this.store.list("installation"),
       discover: () => this.discover(),
@@ -72,19 +100,24 @@ export class Service {
   async start(): Promise<void> {
     await this.configuration.reconcile();
     await this.context.start();
-    if (!this.isolatedTest) {
-      await this.discover();
-      void this.lifecycle.scheduledChecks();
-      this.timer = setInterval(() => {
+    await this.refreshProjects();
+    this.timer = setInterval(() => {
+      void this.refreshProjects().catch(() => {});
+      if (!this.isolatedTest) {
         void this.lifecycle.tick().catch(() => {});
         void this.lifecycle.scheduledChecks().catch(() => {});
         if (Date.now() - this.lastDiscoveryAt >= 5 * 60_000)
           void this.discover().catch(() => {});
-      }, 60_000);
+      }
+    }, 60_000);
+    if (!this.isolatedTest) {
+      await this.discover();
+      void this.lifecycle.scheduledChecks();
     }
     this.changed();
   }
   state(): AppState {
+    const codexProjectSync = this.codexProjects.state();
     return {
       locked: false,
       lockReason: null,
@@ -97,7 +130,12 @@ export class Service {
       installations: this.store.list("installation"),
       checks: this.store.list("check"),
       jobs: this.store.list("job"),
-      projects: this.store.list("project"),
+      projects: orderLocalProjects(
+        this.store.list<Project>("project"),
+        codexProjectSync.projects,
+      ),
+      projectSync: this.projects.state(),
+      codexProjectSync,
       conversations: this.store.list("conversation"),
       messages: this.store.list("message"),
       runs: this.store.list("run"),
@@ -123,10 +161,12 @@ export class Service {
     return this.require("installation", id);
   }
   private async project(id: string): Promise<Project> {
-    const project = this.require<Project>("project", id);
-    if (!project.trusted || (await realpath(project.path)) !== project.realPath)
-      throw new Error("The project path changed. Select and approve it again.");
-    return project;
+    return requireProjectFolder(this.require<Project>("project", id));
+  }
+  private async refreshProjects(): Promise<void> {
+    await this.projects.refresh();
+    // A failed native API probe is visible in Projects and must not block vault startup.
+    await this.codexProjects.refresh().catch(() => {});
   }
   async discover(): Promise<Installation[]> {
     if (this.discovery) return this.discovery;
@@ -269,24 +309,116 @@ export class Service {
           throw new Error(
             "Project trust requires a native folder selection and confirmation.",
           );
-        const canonical = await realpath(trusted.selectedPath);
-        if (!(await stat(canonical)).isDirectory())
-          throw new Error("Select a project directory.");
-        const previous = this.store
-          .list<Project>("project")
-          .find((p) => p.realPath === canonical);
-        if (previous) return previous;
-        const project = {
-          id: uid(),
-          name: path.basename(canonical),
-          path: trusted.selectedPath,
-          realPath: canonical,
-          trusted: true,
-          createdAt: now(),
-        };
-        this.store.save("project", project);
-        this.changed();
+        const project = await this.projects.add(trusted.selectedPath);
+        await this.codexProjects.refresh().catch(() => {});
         return project;
+      }
+      case "project-sync-enable":
+        if (command.enabled && !trusted.approved)
+          throw new Error(
+            "Native folder discovery requires a native user confirmation.",
+          );
+        await this.projects.enable(command.enabled);
+        return this.projects.state();
+      case "project-sync-refresh":
+        if (!this.projects.enabled())
+          throw new Error("Enable project discovery first.");
+        await this.projects.refresh();
+        return this.projects.state();
+      case "codex-project-sync-enable":
+        if (!trusted.approved)
+          throw new Error(
+            "Native project synchronization requires confirmation of the runtime and profile.",
+          );
+        await this.codexProjects.enable(command.installationId);
+        return this.codexProjects.state();
+      case "codex-project-sync-pause":
+        this.codexProjects.pause();
+        return this.codexProjects.state();
+      case "codex-project-sync-refresh":
+        if (!this.codexProjects.state().enabled)
+          throw new Error("Enable Codex project synchronization first.");
+        await this.codexProjects.refresh();
+        return this.codexProjects.state();
+      case "codex-project-rename":
+        await this.codexProjects.rename(
+          command.id,
+          command.expectedRevision,
+          command.name,
+        );
+        return this.codexProjects.state();
+      case "codex-project-move":
+        await this.codexProjects.move(
+          command.id,
+          command.beforeProjectId,
+          command.expectedOrderRevision,
+        );
+        return this.codexProjects.state();
+      case "project-trust":
+        if (!trusted.approved || !trusted.selectedPath)
+          throw new Error("Project trust requires a native user confirmation.");
+        {
+          const project = await this.projects.trust(
+            command.id,
+            trusted.selectedPath,
+          );
+          await this.codexProjects.refresh().catch(() => {});
+          return project;
+        }
+      case "project-relink":
+        if (!trusted.approved || !trusted.selectedPath)
+          throw new Error(
+            "Relinking requires native folder selection and confirmation.",
+          );
+        if (
+          this.runtime.isProjectBusy(command.id) ||
+          this.store
+            .list<any>("run")
+            .some(
+              (run) =>
+                run.projectId === command.id && run.status === "uncertain",
+            )
+        )
+          throw new Error(
+            "Close or reconcile this project's native sessions before relinking it.",
+          );
+        {
+          const project = await this.projects.relink(
+            command.id,
+            trusted.selectedPath,
+          );
+          await this.codexProjects.refresh().catch(() => {});
+          return project;
+        }
+      case "project-copy-path":
+        return {
+          copyProjectPath: this.require<Project>("project", command.id).path,
+        };
+      case "project-open": {
+        const project = await this.project(command.projectId);
+        const installation = this.installation(command.installationId);
+        if (installation.appId.endsWith("cli")) {
+          const terminalId = await this.runtime.terminal(installation, project);
+          return {
+            terminalId,
+            projectPath: project.realPath,
+            route: "terminal",
+            detail: "The native terminal uses this shared project folder.",
+          } satisfies ProjectOpenResult;
+        }
+        if (
+          this.runtime.isProjectBusy(project.id) ||
+          this.store
+            .list<any>("run")
+            .some(
+              (run) =>
+                run.projectId === project.id && run.status === "uncertain",
+            )
+        )
+          throw new Error(
+            "Close or reconcile this project's native sessions before opening another application.",
+          );
+        return desktopProjectRoute(installation, project);
       }
       case "conversation-add": {
         await this.project(command.projectId);
@@ -502,6 +634,8 @@ export class Service {
     if (this.timer) clearInterval(this.timer);
     if (this.notificationTimer) clearTimeout(this.notificationTimer);
     this.context.close();
+    this.projects.close();
+    this.codexProjects.close();
     this.runtime.close();
     this.store.close();
   }

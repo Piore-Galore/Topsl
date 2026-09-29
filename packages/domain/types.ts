@@ -103,6 +103,58 @@ export interface Project {
   realPath: string;
   trusted: boolean;
   createdAt: string;
+  availability?: "available" | "missing" | "changed";
+  sources?: ProjectSourceReference[];
+  nameSource?: { sourceId: string; nativeProjectId: string | null };
+}
+export interface ProjectSourceReference {
+  sourceId: string;
+  path: string;
+  name: string | null;
+  nativeProjectId: string | null;
+  observedAt: string;
+}
+export interface ProjectSource {
+  id: string;
+  name: string;
+  appIds: AppId[];
+  path: string;
+  status: "disabled" | "ready" | "missing" | "error";
+  checkedAt: string | null;
+  lastSuccessAt: string | null;
+  folders: number;
+  detail: string;
+}
+export interface ProjectSyncState {
+  enabled: boolean;
+  refreshing: boolean;
+  sources: ProjectSource[];
+}
+export interface NativeProject {
+  id: string;
+  name: string;
+  roots: string[];
+  position: number;
+  revision: string;
+}
+export interface CodexProjectSyncState {
+  enabled: boolean;
+  refreshing: boolean;
+  installationId: string | null;
+  home: string;
+  status: "disabled" | "ready" | "error";
+  detail: string;
+  lastSuccessAt: string | null;
+  projects: NativeProject[];
+  orderRevision: string;
+}
+export interface ProjectOpenResult {
+  terminalId?: string;
+  projectPath: string;
+  applicationPath?: string;
+  nativeUrl?: string;
+  route: "terminal" | "folder-open" | "native-selection" | "claude-folder-link";
+  detail: string;
 }
 export interface Conversation {
   id: string;
@@ -205,6 +257,8 @@ export interface AppState {
   checks: UpdateCheck[];
   jobs: LifecycleJob[];
   projects: Project[];
+  projectSync: ProjectSyncState;
+  codexProjectSync: CodexProjectSyncState;
   conversations: Conversation[];
   messages: Message[];
   runs: Run[];

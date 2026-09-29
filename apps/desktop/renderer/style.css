@@ -1066,3 +1066,86 @@ dialog::backdrop {
     transition: none !important;
   }
 }
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.project-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 20px;
+  min-width: 0;
+}
+.project-card h2 {
+  overflow-wrap: anywhere;
+}
+.project-card .section-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.project-open {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0 12px;
+}
+.project-open label {
+  flex: 1;
+  min-width: 0;
+}
+.project-open select {
+  width: 100%;
+}
+.project-sources {
+  margin-top: 22px;
+}
+.native-project-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.native-project-row > div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+.native-project-row input {
+  min-width: 100px;
+  width: min(100%, 260px);
+}
+.native-project-row details {
+  margin-top: 6px;
+}
+.project-sources summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding-bottom: 12px;
+}
+.project-sources summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.project-source {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+  font-size: 12px;
+}
+.project-source .path {
+  margin: 9px 0;
+}
+.project-source p {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+@media (max-width: 1100px) {
+  .project-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -32,6 +32,39 @@ export const commandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("show-download"), id }),
   z.object({ type: z.literal("project-add") }),
+  z.object({ type: z.literal("project-sync-enable"), enabled: z.boolean() }),
+  z.object({ type: z.literal("project-sync-refresh") }),
+  z.object({
+    type: z.literal("codex-project-sync-enable"),
+    installationId: id,
+  }),
+  z.object({ type: z.literal("codex-project-sync-pause") }),
+  z.object({ type: z.literal("codex-project-sync-refresh") }),
+  z.object({
+    type: z.literal("codex-project-rename"),
+    id,
+    expectedRevision: id,
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .regex(/^[^\x00-\x1f\x7f]+$/),
+  }),
+  z.object({
+    type: z.literal("codex-project-move"),
+    id,
+    beforeProjectId: id.nullable(),
+    expectedOrderRevision: id,
+  }),
+  z.object({ type: z.literal("project-trust"), id }),
+  z.object({ type: z.literal("project-relink"), id }),
+  z.object({
+    type: z.literal("project-open"),
+    projectId: id,
+    installationId: id,
+  }),
+  z.object({ type: z.literal("project-copy-path"), id }),
   z.object({
     type: z.literal("conversation-add"),
     projectId: id,

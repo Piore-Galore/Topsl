@@ -14,8 +14,9 @@ import type {
 import type { Command } from "../../../packages/domain/commands";
 import "@xterm/xterm/css/xterm.css";
 import "./style.css";
+import { Projects } from "./projects";
 
-type Page = "workspace" | "applications" | "history" | "settings";
+type Page = "workspace" | "projects" | "applications" | "history" | "settings";
 function Modal({
   title,
   children,
@@ -339,23 +340,31 @@ function App() {
           </span>
         </div>
         <nav aria-label="Main navigation">
-          {(["workspace", "applications", "history", "settings"] as Page[]).map(
-            (p, index) => (
-              <button
-                key={p}
-                aria-label={p[0].toUpperCase() + p.slice(1)}
-                className={page === p ? "nav selected" : "nav"}
-                aria-current={page === p ? "page" : undefined}
-                onClick={() => setPage(p)}
-              >
-                <span className="nav-icon">{["⌘", "⊞", "◷", "⚙"][index]}</span>
-                <span>{p[0].toUpperCase() + p.slice(1)}</span>
-                {p === "applications" && updateCount > 0 && (
-                  <b className="count">{updateCount}</b>
-                )}
-              </button>
-            ),
-          )}
+          {(
+            [
+              "workspace",
+              "projects",
+              "applications",
+              "history",
+              "settings",
+            ] as Page[]
+          ).map((p, index) => (
+            <button
+              key={p}
+              aria-label={p[0].toUpperCase() + p.slice(1)}
+              className={page === p ? "nav selected" : "nav"}
+              aria-current={page === p ? "page" : undefined}
+              onClick={() => setPage(p)}
+            >
+              <span className="nav-icon">
+                {["⌘", "⌁", "⊞", "◷", "⚙"][index]}
+              </span>
+              <span>{p[0].toUpperCase() + p.slice(1)}</span>
+              {p === "applications" && updateCount > 0 && (
+                <b className="count">{updateCount}</b>
+              )}
+            </button>
+          ))}
         </nav>
         <div className="sidebar-projects">
           <div className="eyebrow">
@@ -379,7 +388,7 @@ function App() {
                 setPage("workspace");
               }}
             >
-              <span>⌁</span>
+              <span>{p.trusted ? "⌁" : "○"}</span>
               {p.name}
             </button>
           ))}
@@ -772,6 +781,27 @@ function App() {
               </section>
             </>
           )}
+          {page === "projects" && (
+            <Projects
+              state={state}
+              busy={busy}
+              act={act}
+              addProject={addProject}
+              selectProject={(id) => {
+                setProjectId(id);
+                setConversationId("");
+                setAttachedSnapshot(null);
+                setPage("workspace");
+              }}
+              openTerminal={(id, terminal) => {
+                setProjectId(id);
+                setConversationId("");
+                setAttachedSnapshot(null);
+                setTerminalId(terminal);
+                setPage("workspace");
+              }}
+            />
+          )}
           {page === "workspace" && (
             <>
               <div className="page-heading">
@@ -790,6 +820,22 @@ function App() {
                 >
                   + Add project
                 </button>
+              </div>
+              <div className="actions wrap">
+                <button onClick={() => setPage("projects")}>
+                  Manage shared projects
+                </button>
+                {project &&
+                  (!project.trusted ||
+                    (project.availability &&
+                      project.availability !== "available")) && (
+                    <span className="tiny">
+                      {project.availability === "missing" ||
+                      project.availability === "changed"
+                        ? "Relink this folder in Projects before starting a session."
+                        : "Trust this discovered folder in Projects before starting a session."}
+                    </span>
+                  )}
               </div>
               {!project ? (
                 <div className="onboarding">
@@ -1571,7 +1617,13 @@ function App() {
         <Modal title="Command palette" close={() => setPalette(false)}>
           <div className="palette">
             {(
-              ["workspace", "applications", "history", "settings"] as Page[]
+              [
+                "workspace",
+                "projects",
+                "applications",
+                "history",
+                "settings",
+              ] as Page[]
             ).map((p) => (
               <button
                 key={p}
