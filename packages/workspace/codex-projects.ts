@@ -8,6 +8,7 @@ import type {
 } from "../domain/types";
 import { hash, now, uid } from "../domain/invariants";
 import { Store } from "../persistence/store";
+import { SyncRepository } from "../sync/reconciler";
 import { identity, nativeEnvironment } from "../platform/system";
 import { RpcPeer } from "../runtime/rpc";
 import {
@@ -132,6 +133,10 @@ export class CodexProjectSync {
   }
   private observationId(pref: Preference): string {
     return hash(pref.realHome);
+  }
+  boundProfileId(): string | null {
+    const preference = this.preference();
+    return preference?.enabled ? preference.realHome : null;
   }
   state(): CodexProjectSyncState {
     const pref = this.preference();
@@ -382,8 +387,24 @@ export class CodexProjectSync {
     generation: number,
     native: NativeProject[],
   ): Promise<void> {
-    await this.catalog.observeNative(native, () => this.current(generation));
+    await this.catalog.observeNative(
+      native,
+      () => this.current(generation),
+      pref.realHome,
+    );
     this.check(generation);
+    new SyncRepository(this.store).projectNativeCatalog({
+      provider: "codex",
+      profileId: pref.realHome,
+      groups: native,
+      evidence: {
+        level: "provider-readback",
+        source: "codex-project-api",
+        observedAt: now(),
+        detail:
+          "Supported native registry list readback; visible sidebar state is separate.",
+      },
+    });
     this.store.put("codex-project-observation", {
       id: this.observationId(pref),
       status: "ready",
@@ -450,6 +471,29 @@ export class CodexProjectSync {
             "codex-project-observation",
             this.observationId(pref),
           );
+          const sync = new SyncRepository(this.store);
+          for (const link of this.store.iterate<
+            import("../domain/sync").NativeProjectLink
+          >("native-project-link"))
+            if (link.provider === "codex" && link.profileId === pref.realHome)
+              sync.observe({
+                projectId: link.projectId,
+                dimension: "native-presentation",
+                targetId: `codex:${pref.realHome}:registry:${link.nativeGroupId}`,
+                state: "error",
+                evidence: {
+                  level: "none",
+                  source: "codex-project-api",
+                  observedAt: now(),
+                  detail:
+                    "Native registry refresh failed; prior successful observations are retained.",
+                },
+                expectedRevision: link.sourceRevision,
+                observedRevision: null,
+                detail:
+                  "Native registry readback failed. Refresh the connection before deciding that membership or names are current.",
+                suggestedAction: "Refresh the native project connection.",
+              });
           this.store.put("codex-project-observation", {
             id: this.observationId(pref),
             status: "error",
@@ -478,7 +522,11 @@ export class CodexProjectSync {
     if (this.inFlight) return this.inFlight;
     return this.run(async (peer, pref, generation) => {
       const native = await this.list(peer, generation);
-      await this.catalog.observeNative(native, () => this.current(generation));
+      await this.catalog.observeNative(
+        native,
+        () => this.current(generation),
+        pref.realHome,
+      );
       this.check(generation);
       const createdIds = await this.share(peer, pref, generation, native);
       const verified = await this.list(peer, generation);

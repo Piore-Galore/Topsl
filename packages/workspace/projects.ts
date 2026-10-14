@@ -11,6 +11,8 @@ import type {
 } from "../domain/types";
 import { hash, now, uid } from "../domain/invariants";
 import { Store } from "../persistence/store";
+import { SyncRepository } from "../sync/reconciler";
+import type { NativeProjectLink } from "../domain/sync";
 
 export interface ProjectSourcePaths {
   codexHome: string;
@@ -318,7 +320,11 @@ export class ProjectSync {
     this.changed();
     return updated;
   }
-  async relink(id: string, folder: string): Promise<Project> {
+  async relink(
+    id: string,
+    folder: string,
+    applyWorkspaceMapping?: (project: Project) => void,
+  ): Promise<Project> {
     const project = this.store.get<Project>("project", id);
     if (!project) throw new Error("The project no longer exists.");
     const canonical = validPath(folder) ? await resolveFolder(folder) : null;
@@ -347,13 +353,17 @@ export class ProjectSync {
       sources: [],
       nameSource: undefined,
     };
-    this.store.save("project", updated, "project.relinked");
+    this.store.transaction(() => {
+      applyWorkspaceMapping?.(updated);
+      this.store.save("project", updated, "project.relinked");
+    });
     this.changed();
     return updated;
   }
   async observeNative(
     native: NativeProject[],
     current: () => boolean,
+    profileId?: string,
   ): Promise<void> {
     const entries: Array<{
       project: NativeProject;
@@ -406,7 +416,61 @@ export class ProjectSync {
           byCanonical.set(pathKey(project.realPath), project);
         }
         if (!named.has(project.id)) {
-          project.name = nativeProject.name;
+          const sync = new SyncRepository(this.store);
+          const link =
+            profileId &&
+            sync
+              .links(project.id)
+              .find(
+                (link: NativeProjectLink) =>
+                  link.provider === "codex" &&
+                  link.profileId === profileId &&
+                  link.nativeGroupId === nativeProject.id,
+              );
+          const field =
+            link &&
+            sync
+              .fields(project.id)
+              .find(
+                (field) => field.targetId === link.id && field.field === "name",
+              );
+          if (!field) {
+            // Preserve existing naming policy until the user explicitly selects coordinated ownership.
+            project.name = nativeProject.name;
+          } else {
+            const observation = sync.reconcileField({
+              projectId: project.id,
+              targetId: field.targetId,
+              field: "name",
+              local: project.name,
+              remote: nativeProject.name,
+              expectedRevision: field.revision,
+              evidence: {
+                level: "provider-readback",
+                source: "codex-project-api",
+                observedAt,
+                detail:
+                  "Native name readback compared with the last common field observation.",
+              },
+            });
+            if (
+              observation.state === "current" ||
+              (observation.state === "pull-required" &&
+                observation.authority === "follow-native")
+            ) {
+              project.name = nativeProject.name;
+              if (observation.state !== "current")
+                sync.reconcileField({
+                  projectId: project.id,
+                  targetId: field.targetId,
+                  field: "name",
+                  local: project.name,
+                  remote: nativeProject.name,
+                  expectedRevision: observation.revision,
+                  evidence: observation.evidence,
+                });
+            }
+          }
           project.nameSource = {
             sourceId: "codex-project-api",
             nativeProjectId: nativeProject.id,

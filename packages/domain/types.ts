@@ -211,6 +211,14 @@ export interface UsageFact {
   cached: number | null;
   source: string;
   scope: string;
+  projectId?: string;
+  conversationId?: string;
+  semantics?: "cumulative" | "delta";
+  scopeLevel?: "turn" | "session";
+  eventId?: string;
+  ordinal?: number;
+  cachedIncludedInInput?: boolean;
+  sessionId?: string | null;
 }
 export interface Approval {
   id: string;
@@ -275,6 +283,7 @@ export interface AppState {
   }>;
 }
 export interface ServiceEvent {
-  type: "state" | "terminal" | "native-open" | "auth-url";
+  type:
+    "state" | "terminal" | "native-open" | "auth-url" | "changes" | "activity";
   data: any;
 }
