@@ -1,0 +1,45 @@
+{
+  "sourceSizes": {
+    "databaseBytes": 119185408,
+    "walBytes": 119859072
+  },
+  "recordedAt": "2026-10-14T10:13:05.754Z",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "cores": 10,
+    "totalMemoryBytes": 34359738368,
+    "node": "24.21.0",
+    "electron": "44.4.5",
+    "sqlite": "3.53.4"
+  },
+  "workload": {
+    "messages": 100000,
+    "projects": 8,
+    "conversations": 16,
+    "payloadTextBytes": 202,
+    "streams": 4,
+    "streamUpdatesEach": 100,
+    "historyPageLimit": 200,
+    "eventBatchLimit": 200,
+    "transcriptWindowRows": 20
+  },
+  "measurements": {
+    "ingestMs": 8870.103500000001,
+    "historyQueryP95Ms": 5.57758400000057,
+    "fixtureCommitAndNormalizedClientP95Ms": 4.106415999998717,
+    "cancelControlRoundTripMs": 0.6868340000000899,
+    "resyncSnapshotMs": 1.4243339999993623,
+    "rssBefore": 95764480,
+    "rssAfter": 131235840,
+    "heapUsedBefore": 11744404,
+    "heapUsedAfter": 15584284
+  },
+  "limits": [
+    "Encrypted store plus normalized event consumer; Chromium paint and provider network/inference are excluded.",
+    "Four fixture streams measure ingestion headroom; live coordinator default remains two.",
+    "Cancellation measures a durable control update, not provider termination."
+  ]
+}

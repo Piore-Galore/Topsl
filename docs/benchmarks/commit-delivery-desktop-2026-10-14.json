@@ -1,0 +1,124 @@
+{
+  "recordedAt": "2026-10-14T11:41:12.806Z",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "cores": 10,
+    "node": "26.0.0",
+    "electron": "44.4.5"
+  },
+  "workload": {
+    "messages": 100000,
+    "projects": 2,
+    "nativeSources": 4,
+    "sourceBytes": [
+      7089932,
+      7089220,
+      7089217,
+      7089220
+    ],
+    "historyPage": 80,
+    "eventBatch": 200,
+    "renderedWindowLimit": 20
+  },
+  "measurements": {
+    "electronProcessesBefore": [
+      {
+        "type": "Browser",
+        "memory": {
+          "workingSetSize": 197200,
+          "peakWorkingSetSize": 232032
+        }
+      },
+      {
+        "type": "GPU",
+        "memory": {
+          "workingSetSize": 212192,
+          "peakWorkingSetSize": 215904
+        }
+      },
+      {
+        "type": "Utility",
+        "memory": {
+          "workingSetSize": 47936,
+          "peakWorkingSetSize": 47936
+        }
+      },
+      {
+        "type": "Tab",
+        "memory": {
+          "workingSetSize": 184512,
+          "peakWorkingSetSize": 184512
+        }
+      },
+      {
+        "type": "Utility",
+        "memory": {
+          "workingSetSize": 104272,
+          "peakWorkingSetSize": 104272
+        }
+      }
+    ],
+    "historyIpcQueryP95Ms": 1,
+    "ordinaryUiInteractionP95Ms": 35,
+    "selectedStreamCommitResponseToRenderedTextMs": 26.399999976158142,
+    "selectedReconciliationCommandStartToRenderedTextP95Ms": 352,
+    "selectedReconciliationSamplesMs": [
+      377,
+      351,
+      350,
+      351,
+      352
+    ],
+    "electronProcesses": [
+      {
+        "type": "Browser",
+        "cpu": 0.1705676164968341,
+        "memory": {
+          "workingSetSize": 224992,
+          "peakWorkingSetSize": 232032
+        }
+      },
+      {
+        "type": "GPU",
+        "cpu": 0.09567745527931656,
+        "memory": {
+          "workingSetSize": 138512,
+          "peakWorkingSetSize": 215904
+        }
+      },
+      {
+        "type": "Utility",
+        "cpu": 0.0006209270961694162,
+        "memory": {
+          "workingSetSize": 48032,
+          "peakWorkingSetSize": 48032
+        }
+      },
+      {
+        "type": "Tab",
+        "cpu": 0.29050126106189056,
+        "memory": {
+          "workingSetSize": 263376,
+          "peakWorkingSetSize": 263696
+        }
+      },
+      {
+        "type": "Utility",
+        "cpu": 9.330820762986402,
+        "memory": {
+          "workingSetSize": 420000,
+          "peakWorkingSetSize": 475568
+        }
+      }
+    ]
+  },
+  "limits": [
+    "Native JSONL source fixtures; no model turn or paid route.",
+    "Stream latency measures after four concurrent reconciliation command responses; service commit time and provider latency are excluded.",
+    "Selected command-start to paint samples include IPC, full-source reparse and durable reconciliation; they are conservative upper bounds, not direct commit-to-paint samples.",
+    "Interaction timing includes Playwright locator/visibility overhead; this is a measurement, not a release SLA."
+  ]
+}

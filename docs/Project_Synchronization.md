@@ -62,6 +62,8 @@ Official behavior references checked on 29 September 2026:
 
 ## Validation boundary
 
+The [14 October coordination baseline](Coordination_Baseline.md) adds independent expiring/revocable context grants and indexed scoped history pages. Visibility is enforced by the context server for every history/search route, while status explicitly identifies that filesystem/tool isolation is not supplied by that service. Native-registry observation, visible sidebar behavior, context delivery, history coverage, configuration reload and code integration retain separate evidence boundaries. The updated provider inventory is read-only: it does not establish authenticated execution or change billing routes.
+
 Unit and service fixtures cover source parsing, multi-root metadata, aliases, idempotent replay and lost replies, opt-in/trust, invalid/partial/missing sources, native additions/removals, pause/resume, concurrent refresh cancellation, moved/retargeted directories, history preservation, executable/profile changes, stale rename/order checks, Topsl sidebar order, and desktop route/trust checks. Claude link tests include spaces, Unicode, reserved characters, and rejected prompt/route injection. The real Electron smoke exercises discovery, duplicate merging, per-folder trust, native registry creation/rename/order/pause/resume, filtering, compact layout, and encrypted restart using synthetic provider homes.
 
 Real Claude folder-picker acceptance, visible Codex desktop-cache refresh, other native registry versions, other OS desktop launch behavior, and cloud/remote/device synchronization require separate validation. Tests do not mutate the user's real native project lists or submit any model turns.
