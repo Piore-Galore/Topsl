@@ -1,6 +1,15 @@
 import os from "node:os";
 import { spawn as spawnPty, type IPty } from "node-pty";
 import { RpcPeer } from "./rpc";
+import { Coordinator, type RuntimeExecution } from "./coordinator";
+import { CodexAdapter } from "../providers/codex";
+import type {
+  PreparedTurn,
+  ProviderAdapter,
+  ProviderConnection,
+} from "../providers/contract";
+import type { Workspace } from "../domain/workflow";
+import { canonicalWorkspaceIdentity } from "../workspace/ownership";
 import { Store } from "../persistence/store";
 import type {
   Approval,
@@ -28,7 +37,8 @@ import {
 
 type Active = {
   run: Run;
-  client: RpcPeer;
+  client: ProviderConnection;
+  adapter: ProviderAdapter;
   approvals: Map<string, { approval: Approval; params: any }>;
   finished: boolean;
   dispatched: boolean;
@@ -45,16 +55,24 @@ export class RuntimeManager {
       run: Run;
     }
   >();
-  private openingProjects = new Set<string>();
+  private openingWorkspaces = new Map<string, string>();
   private closing = false;
+  readonly coordinator: Coordinator;
+  private ownsCoordinator: boolean;
+  private adapters: Partial<Record<"codex" | "claude", ProviderAdapter>>;
   constructor(
     private store: Store,
     private emit: (event: ServiceEvent) => void,
     private changed: () => void,
     private peer = (executable: string, cwd: string) =>
       new RpcPeer(executable, ["app-server"], cwd),
+    coordinator?: Coordinator,
+    adapters: Partial<Record<"codex" | "claude", ProviderAdapter>> = {},
   ) {
-    for (const run of store.list<Run>("run"))
+    this.ownsCoordinator = !coordinator;
+    this.coordinator = coordinator ?? new Coordinator(store);
+    this.adapters = { codex: new CodexAdapter(this.peer), ...adapters };
+    for (const run of store.iterate<Run>("run"))
       if (["starting", "running", "awaiting-approval"].includes(run.status))
         store.save("run", {
           ...run,
@@ -62,12 +80,16 @@ export class RuntimeManager {
           error:
             "Topsl stopped while this native run was active. Inspect the native session before continuing; nothing was replayed.",
         });
-    for (const approval of store.list<Approval>("approval"))
+    for (const approval of store.iterate<Approval>("approval"))
       store.remove("approval", approval.id);
+  }
+  capabilities(installation: Installation) {
+    const provider = installation.appId.includes("claude") ? "claude" : "codex";
+    return this.adapters[provider]?.capabilities(installation) ?? [];
   }
   isProjectBusy(id: string): boolean {
     return (
-      this.openingProjects.has(id) ||
+      [...this.openingWorkspaces.values()].includes(id) ||
       [...this.active.values()].some((a) => a.run.projectId === id) ||
       [...this.terminals.values()].some((t) => t.projectId === id)
     );
@@ -89,7 +111,7 @@ export class RuntimeManager {
     return !!(
       this.active.size ||
       this.terminals.size ||
-      this.openingProjects.size
+      this.openingWorkspaces.size
     );
   }
   isUnitBusy(id: string): boolean {
@@ -126,33 +148,10 @@ export class RuntimeManager {
       throw new Error(
         "Use the Claude native terminal for account and model controls.",
       );
-    const client = this.peer(installation.path, os.homedir());
+    const adapter = this.adapters.codex!;
+    const client = adapter.connect(installation.path, os.homedir());
     try {
-      const info = await client.initialize();
-      const models = await client.request("model/list", { limit: 100 });
-      const account = await client.request("account/read", {
-        refreshToken: false,
-      });
-      return {
-        info: {
-          platformFamily: info.platformFamily,
-          platformOs: info.platformOs,
-        },
-        models: (models.data ?? []).map((m: any) => ({
-          id: m.id,
-          model: m.model,
-          name: m.displayName,
-          description: m.description,
-          isDefault: m.isDefault,
-        })),
-        account: account.account
-          ? {
-              type: account.account.type,
-              email: account.account.email,
-              planType: account.account.planType,
-            }
-          : null,
-      };
+      return await adapter.inspect(client);
     } finally {
       client.close();
     }
@@ -164,18 +163,19 @@ export class RuntimeManager {
     prompt: string,
     model: string,
     mode: "review" | "edit",
+    execution?: RuntimeExecution,
   ): Promise<Run> {
-    if (this.isProjectBusy(project.id))
-      throw new Error(
-        "This project already has a native session. Close it before starting another writer.",
-      );
-    this.assertReconciled(project.id);
-    this.openingProjects.add(project.id);
+    this.coordinator.ownership.assertOwner();
+    const workspaceReservation = this.reserveWorkspace(project);
     try {
       await this.preflight(installation);
+      const provider = installation.appId.includes("claude")
+        ? "claude"
+        : "codex";
+      const adapter = this.adapters[provider];
       if (
-        installation.appId !== "openai.codex-cli" ||
-        installation.compatibility !== "compatible"
+        !adapter ||
+        (provider === "codex" && installation.compatibility !== "compatible")
       )
         throw new Error(
           "Connect a compatible Codex runtime first. Claude runs through its native terminal.",
@@ -184,7 +184,7 @@ export class RuntimeManager {
         id: uid(),
         conversationId: conversation.id,
         projectId: project.id,
-        provider: "codex",
+        provider,
         installationId: installation.id,
         installationRevisionId: installation.revisionId,
         runtimeVersion: installation.version,
@@ -193,11 +193,62 @@ export class RuntimeManager {
         model,
         mode,
         status: "starting",
-        nativeSessionId: conversation.nativeSessions.codex ?? null,
+        nativeSessionId: execution?.freshSession
+          ? null
+          : (conversation.nativeSessions[provider] ?? null),
         nativeTurnId: null,
         error: null,
         createdAt: now(),
       };
+      if (execution) {
+        const preparedAttempt = this.coordinator.repository.require<any>(
+          "attempt",
+          execution.attemptId,
+        );
+        const preparedWorkspace =
+          this.coordinator.repository.require<Workspace>(
+            "workspace",
+            preparedAttempt.workspaceId,
+          );
+        if (
+          preparedAttempt.projectId !== project.id ||
+          preparedAttempt.provider !== provider ||
+          preparedWorkspace.canonicalRoot !== project.realPath
+        )
+          throw new Error(
+            "Attempt provider, project, or workspace differs from this dispatch.",
+          );
+        const task = this.coordinator.repository.require<any>(
+          "task",
+          preparedAttempt.taskId,
+        );
+        const capabilities = adapter.capabilities(installation);
+        if (
+          task.requiredCapabilities.some(
+            (name: string) =>
+              !capabilities.some(
+                (capability) =>
+                  capability.name === name &&
+                  capability.support === "enforceable",
+              ),
+          )
+        )
+          throw new Error(
+            "A required task capability is not enforced by this runtime.",
+          );
+      }
+      const attempt = execution
+        ? this.coordinator.beginAttempt(execution.attemptId, run.id)
+        : this.coordinator.beginLegacy(run, project, conversation);
+      if (execution) {
+        const session = this.coordinator.repository.require<any>(
+          "agent-session",
+          attempt.sessionId,
+        );
+        run.nativeSessionId = execution.freshSession
+          ? null
+          : session.nativeSessionId;
+      }
       this.store.transaction(() => {
         this.store.save("run", run, "run.start-requested");
         this.store.message({
@@ -205,19 +256,39 @@ export class RuntimeManager {
           conversationId: conversation.id,
           projectId: project.id,
           role: "user",
-          provider: "codex",
+          provider,
           text: prompt,
           runId: run.id,
           nativeId: null,
           createdAt: now(),
         });
       });
-      const client = this.peer(installation.path, project.realPath);
+      let client: ProviderConnection;
+      try {
+        client = adapter.connect(installation.path, project.realPath);
+      } catch (error) {
+        run.status = "failed";
+        run.error = safeError(error);
+        this.store.save("run", run);
+        this.coordinator.syncRun(run);
+        this.coordinator.confirmStopped(
+          run.id,
+          "Provider connection refused before process creation or dispatch.",
+        );
+        this.changed();
+        throw error;
+      }
       run.nativePid = client.process.pid;
+      if (run.nativePid)
+        this.coordinator.attachExecution(run.id, run.nativePid);
+      client.process.once("exit", () => {
+        if (!this.closing) this.coordinator.confirmStopped(run.id);
+      });
       this.store.save("run", run);
       const active: Active = {
         run,
         client,
+        adapter,
         approvals: new Map(),
         finished: false,
         dispatched: false,
@@ -238,76 +309,79 @@ export class RuntimeManager {
       };
       try {
         await client.initialize();
-        const account = await client.request("account/read", {
-          refreshToken: false,
-        });
-        if (account.account?.type !== "chatgpt")
-          throw new Error(
-            "A native ChatGPT subscription login is required. API-key and external-token modes are not supported by this pilot.",
-          );
-        const accountKey = hash(
-          stable({
-            type: account.account.type,
-            email: account.account.email,
-            accountId: account.account.chatgptAccountId ?? null,
-          }),
+        const account = await adapter.account(client, installation);
+        const priorSession = this.coordinator.repository.require<any>(
+          "agent-session",
+          attempt.sessionId,
         );
+        const bindings = this.coordinator.repository
+          .all<any>("agent-session", { projectId: project.id })
+          .filter(
+            (session) =>
+              session.nativeSessionId === run.nativeSessionId &&
+              session.continuity === "verified",
+          );
         if (
-          conversation.nativeSessions.codex &&
-          conversation.nativeAccounts?.codex !== accountKey
+          run.nativeSessionId &&
+          (conversation.nativeAccounts?.[provider] !== account.accountKey ||
+            (priorSession.profileId &&
+              priorSession.profileId !== account.profileId) ||
+            !bindings.length ||
+            bindings.some((session) => session.profileId !== account.profileId))
         )
           throw new Error(
-            "The native account changed or its original binding is unknown. Create a new conversation and explicitly review any handoff before sending history.",
+            "The native account changed or profile changed or its original binding is unknown. Create a fresh session and explicitly review any handoff before sending history.",
           );
-        run.nativeAccountKey = accountKey;
+        run.nativeAccountKey = account.accountKey;
         conversation.nativeAccounts = {
           ...conversation.nativeAccounts,
-          codex: accountKey,
+          [provider]: account.accountKey,
         };
-        const params = {
+        const workspace = this.coordinator.repository.require<Workspace>(
+          "workspace",
+          attempt.workspaceId,
+        );
+        const prepared: PreparedTurn = {
+          prompt,
           cwd: project.realPath,
-          model,
-          approvalPolicy: "untrusted",
-          sandbox: mode === "review" ? "read-only" : "workspace-write",
+          requestedModel: model,
+          mode,
+          contextPackageId: attempt.contextPackageId,
+          attemptId: attempt.id,
+          workspaceIdentity: workspace.filesystemIdentity!,
         };
-        const thread = run.nativeSessionId
-          ? await client.request("thread/resume", {
-              ...params,
-              threadId: run.nativeSessionId,
-            })
-          : await client.request("thread/start", params);
-        if (!thread.thread?.id)
-          throw new Error("Runtime did not return its session identity.");
-        run.nativeSessionId = thread.thread.id;
-        conversation.nativeSessions.codex = thread.thread.id;
+        const thread = await adapter.startSession(
+          client,
+          prepared,
+          run.nativeSessionId,
+        );
+        run.nativeSessionId = thread.nativeSessionId;
+        conversation.nativeSessions[provider] = thread.nativeSessionId;
+        this.coordinator.bindRunSession(
+          run,
+          account.profileId,
+          thread.evidence,
+        );
         this.store.transaction(() => {
           this.store.save("run", run);
           this.store.save("conversation", conversation);
         });
-        this.store.event("turn.dispatch-requested", {
-          runId: run.id,
-          nativeSessionId: run.nativeSessionId,
-        });
+        this.coordinator.recordDispatch(run, prompt);
         active.dispatched = true;
-        const turn = await client.request("turn/start", {
-          threadId: run.nativeSessionId,
-          input: [{ type: "text", text: prompt }],
-          cwd: project.realPath,
-          model,
-          approvalPolicy: "untrusted",
-          sandboxPolicy:
-            mode === "review"
-              ? { type: "readOnly" }
-              : {
-                  type: "workspaceWrite",
-                  writableRoots: [project.realPath],
-                  networkAccess: false,
-                },
-        });
-        run.nativeTurnId = turn.turn?.id ?? run.nativeTurnId;
+        const turn = await adapter.startTurn(
+          client,
+          prepared,
+          run.nativeSessionId,
+        );
+        run.nativeTurnId = turn.nativeTurnId ?? run.nativeTurnId;
+        this.coordinator.acknowledge(
+          run,
+          turn.reportedModel ?? thread.reportedModel,
+        );
         if (!active.finished) {
           run.status = active.approvals.size ? "awaiting-approval" : "running";
           this.store.save("run", run);
+          this.coordinator.syncRun(run);
           this.changed();
         }
         return run;
@@ -322,88 +396,64 @@ export class RuntimeManager {
         throw error;
       }
     } finally {
-      this.openingProjects.delete(project.id);
+      this.openingWorkspaces.delete(workspaceReservation);
     }
   }
-  private notification(active: Active, method: string, p: any): void {
+  private notification(active: Active, method: string, payload: unknown): void {
     const run = active.run;
-    if (active.finished || !p) return;
-    if (p.threadId && run.nativeSessionId && p.threadId !== run.nativeSessionId)
-      return;
-    if (p.turnId && run.nativeTurnId && p.turnId !== run.nativeTurnId) return;
-    if (method === "turn/started" && p.turn?.id) {
-      run.nativeTurnId = p.turn.id;
-      this.store.save("run", run);
-    }
+    if (active.finished) return;
+    const event = active.adapter.event(method, payload);
+    if (!event) return;
     if (
-      method === "item/agentMessage/delta" &&
-      typeof p.delta === "string" &&
-      p.itemId
-    ) {
-      const id = `${run.id}:${p.itemId}`;
-      const previous = this.store.get<Message>("message", id);
+      event.threadId &&
+      run.nativeSessionId &&
+      event.threadId !== run.nativeSessionId
+    )
+      return;
+    if (event.turnId && run.nativeTurnId && event.turnId !== run.nativeTurnId)
+      return;
+    if (event.type === "turn-started") {
+      run.nativeTurnId = event.turnId;
+      this.store.save("run", run);
+      this.coordinator.acknowledge(run, event.reportedModel ?? null);
+    }
+    if (event.type === "message-delta" || event.type === "message") {
+      const id = `${run.id}:${event.itemId}`,
+        previous = this.store.get<Message>("message", id);
       this.store.message({
         id,
         conversationId: run.conversationId,
         projectId: run.projectId,
-        role: "assistant",
-        provider: "codex",
-        text: ((previous?.text ?? "") + p.delta).slice(0, 2_000_000),
+        role: event.type === "message" ? event.role : "assistant",
+        provider: run.provider,
+        text:
+          event.type === "message-delta"
+            ? ((previous?.text ?? "") + event.text).slice(0, 2_000_000)
+            : event.text,
         runId: run.id,
-        nativeId: p.itemId,
+        nativeId: event.itemId,
         createdAt: previous?.createdAt ?? now(),
       });
     }
-    if (method === "item/completed" && p.item?.id) {
-      const item = p.item;
-      if (
-        [
-          "agentMessage",
-          "commandExecution",
-          "fileChange",
-          "mcpToolCall",
-          "plan",
-        ].includes(item.type)
-      ) {
-        const text =
-          item.type === "agentMessage" || item.type === "plan"
-            ? item.text
-            : item.type === "commandExecution"
-              ? `${item.command}\n${item.aggregatedOutput ?? ""}\nExit: ${item.exitCode ?? "unknown"}`
-              : JSON.stringify(item, null, 2);
-        this.store.message({
-          id: `${run.id}:${item.id}`,
-          conversationId: run.conversationId,
-          projectId: run.projectId,
-          role: item.type === "agentMessage" ? "assistant" : "tool",
-          provider: "codex",
-          text: String(text ?? "").slice(0, 2_000_000),
-          runId: run.id,
-          nativeId: item.id,
-          createdAt: now(),
-        });
-      }
-    }
-    // `last` is a native turn snapshot, not a delta and not the thread's cumulative total.
-    if (
-      method === "thread/tokenUsage/updated" &&
-      p.tokenUsage?.last &&
-      run.nativeTurnId
-    )
-      this.store.put(
-        "usage",
-        normalizeUsage("codex", p.tokenUsage.last, run.id, run.nativeTurnId),
-      );
-    if (method === "turn/completed") {
-      this.finish(
-        active,
-        p.turn?.status === "completed"
-          ? "completed"
-          : p.turn?.status === "interrupted"
-            ? "interrupted"
-            : "failed",
-        p.turn?.error?.message ? safeError(p.turn.error.message) : null,
-      );
+    if (event.type === "usage" && run.nativeTurnId)
+      this.store.put("usage", {
+        id: `${run.id}:${run.nativeTurnId}`,
+        runId: run.id,
+        provider: run.provider,
+        input: event.input,
+        output: event.output,
+        cached: event.cached,
+        source: "native-runtime",
+        scope: run.nativeTurnId,
+        projectId: run.projectId,
+        conversationId: run.conversationId,
+        semantics: "cumulative",
+        scopeLevel: "turn",
+        cachedIncludedInInput: true,
+        sessionId: run.nativeSessionId,
+      });
+    if (event.type === "completed") {
+      this.finish(active, event.status, event.error);
       return;
     }
     this.changed();
@@ -414,12 +464,8 @@ export class RuntimeManager {
     method: string,
     params: any,
   ): void {
-    if (
-      ![
-        "item/commandExecution/requestApproval",
-        "item/fileChange/requestApproval",
-      ].includes(method)
-    ) {
+    const request = active.adapter.approval(method, params);
+    if (!request) {
       active.client.reject(
         requestId,
         "Topsl does not support this request. Use the native terminal for this capability.",
@@ -427,15 +473,13 @@ export class RuntimeManager {
       return;
     }
     if (
-      !params?.threadId ||
-      params.threadId !== active.run.nativeSessionId ||
-      !params.turnId ||
-      (active.run.nativeTurnId && params.turnId !== active.run.nativeTurnId)
+      request.threadId !== active.run.nativeSessionId ||
+      (active.run.nativeTurnId && request.turnId !== active.run.nativeTurnId)
     ) {
       active.client.reject(requestId, "Approval is outside this active run.");
       return;
     }
-    if (!active.run.nativeTurnId) active.run.nativeTurnId = params.turnId;
+    if (!active.run.nativeTurnId) active.run.nativeTurnId = request.turnId;
     // Review mode never grants escalation or file writes, even if a native runtime asks.
     if (active.run.mode === "review") {
       active.client.reply(requestId, { decision: "decline" });
@@ -445,7 +489,7 @@ export class RuntimeManager {
       id: uid(),
       runId: active.run.id,
       method,
-      description: JSON.stringify(params, null, 2).slice(0, 30000),
+      description: request.description,
       digest: hash(
         stable({
           requestId,
@@ -463,6 +507,7 @@ export class RuntimeManager {
     this.store.transaction(() => {
       this.store.save("approval", approval);
       this.store.save("run", active.run);
+      this.coordinator.syncRun(active.run);
     });
     this.changed();
   }
@@ -499,6 +544,7 @@ export class RuntimeManager {
     });
     active.run.status = active.approvals.size ? "awaiting-approval" : "running";
     this.store.save("run", active.run);
+    this.coordinator.syncRun(active.run);
     this.changed();
   }
   private finish(
@@ -513,6 +559,7 @@ export class RuntimeManager {
     for (const { approval } of active.approvals.values())
       this.store.remove("approval", approval.id);
     this.store.save("run", active.run);
+    this.coordinator.syncRun(active.run);
     this.active.delete(active.run.id);
     active.client.close();
     this.changed();
@@ -531,22 +578,19 @@ export class RuntimeManager {
       );
       return;
     }
-    await active.client.request("turn/interrupt", {
-      threadId: active.run.nativeSessionId,
-      turnId: active.run.nativeTurnId,
-    });
+    await active.adapter.interrupt(
+      active.client,
+      active.run.nativeSessionId,
+      active.run.nativeTurnId,
+    );
   }
   async terminal(
     installation: Installation,
     project: Project,
     login = false,
   ): Promise<string> {
-    if (this.isProjectBusy(project.id))
-      throw new Error(
-        "Close this project’s active session before opening another writer.",
-      );
-    this.assertReconciled(project.id);
-    this.openingProjects.add(project.id);
+    this.coordinator.ownership.assertOwner();
+    const workspaceReservation = this.reserveWorkspace(project);
     try {
       await this.preflight(installation);
       const id = uid();
@@ -577,16 +621,22 @@ export class RuntimeManager {
         error: null,
         createdAt: now(),
       };
+      const conversation: Conversation = {
+        id: conversationId,
+        projectId: project.id,
+        title: `${provider} native ${login ? "login" : "session"}`,
+        nativeSessions: {},
+        createdAt: now(),
+      };
+      this.coordinator.beginLegacy(run, project, conversation);
       this.store.transaction(() => {
-        this.store.save("conversation", {
-          id: conversationId,
-          projectId: project.id,
-          title: `${provider} native ${login ? "login" : "session"}`,
-          nativeSessions: {},
-          createdAt: now(),
-        });
+        this.store.save("conversation", conversation);
         this.store.save("run", run, "terminal.start-requested");
       });
+      this.coordinator.recordDispatch(
+        run,
+        `native-terminal:${login ? "login" : "session"}`,
+      );
       // Full native mode: its own trust, slash commands, extensions, and approval UI remain intact.
       let terminal: IPty;
       try {
@@ -598,16 +648,22 @@ export class RuntimeManager {
           name: "xterm-256color",
         });
       } catch (e) {
-        this.store.save("run", {
-          ...run,
-          status: "failed",
-          error: safeError(e),
-        });
+        run.status = "failed";
+        run.error = safeError(e);
+        this.store.save("run", run);
+        this.coordinator.syncRun(run);
+        this.coordinator.confirmStopped(
+          run.id,
+          "Native terminal failed before a process was created.",
+        );
         throw e;
       }
       run.nativePid = terminal.pid;
+      this.coordinator.attachExecution(run.id, terminal.pid);
       run.status = "running";
       this.store.save("run", run);
+      this.coordinator.acknowledge(run);
+      this.coordinator.syncRun(run);
       this.terminals.set(id, {
         process: terminal,
         projectId: project.id,
@@ -629,6 +685,8 @@ export class RuntimeManager {
         if (this.closing) return;
         run.status = exitCode === 0 ? "completed" : "interrupted";
         this.store.save("run", run);
+        this.coordinator.syncRun(run);
+        this.coordinator.confirmStopped(run.id);
         this.emit({
           type: "terminal",
           data: {
@@ -642,7 +700,7 @@ export class RuntimeManager {
       this.changed();
       return id;
     } finally {
-      this.openingProjects.delete(project.id);
+      this.openingWorkspaces.delete(workspaceReservation);
     }
   }
   terminalInput(id: string, data: string): void {
@@ -650,15 +708,39 @@ export class RuntimeManager {
     if (!t) throw new Error("Terminal is closed.");
     t.process.write(data);
   }
-  private assertReconciled(projectId: string): void {
+  private reserveWorkspace(project: Project): string {
+    const identity = canonicalWorkspaceIdentity(project.realPath),
+      key = identity.filesystemIdentity;
+    const lease = this.coordinator.ownership.get(key);
     if (
-      this.store
-        .list<Run>("run")
-        .some((r) => r.projectId === projectId && r.status === "uncertain")
+      this.openingWorkspaces.has(key) ||
+      (lease && lease.state !== "released")
     )
       throw new Error(
-        "Reconcile this project’s uncertain run before starting another writer.",
+        lease?.state === "uncertain"
+          ? "Workspace has uncertain ownership; reconcile before starting another writer."
+          : "This workspace already has a native session or writer lease.",
       );
+    // Old records without an attempt are conservatively bound to their legacy root.
+    for (const run of this.store.iterate<Run>("run")) {
+      if (run.status !== "uncertain") continue;
+      const attempt = this.coordinator.attemptForRun(run.id);
+      const workspace =
+        attempt && this.store.get<Workspace>("workspace", attempt.workspaceId);
+      const legacy = !attempt
+        ? this.store.get<Project>("project", run.projectId)
+        : undefined;
+      if (
+        workspace?.filesystemIdentity === key ||
+        workspace?.canonicalRoot === identity.canonicalRoot ||
+        legacy?.realPath === identity.canonicalRoot
+      )
+        throw new Error(
+          "Reconcile this workspace’s uncertain run before starting another writer.",
+        );
+    }
+    this.openingWorkspaces.set(key, project.id);
+    return key;
   }
   async reconcile(id: string): Promise<void> {
     const run = this.store.get<Run>("run", id);
@@ -684,12 +766,11 @@ export class RuntimeManager {
           "The prior process identity was not recorded. Close the affected runtime and rediscover it before reconciliation.",
         );
     }
-    this.store.save("run", {
-      ...run,
-      status: "interrupted",
-      error:
-        "Native process no longer present; user inspected and reconciled the outcome. The prior turn was not replayed.",
-    });
+    run.status = "interrupted";
+    run.error =
+      "Native process no longer present; user inspected and reconciled the outcome. The prior turn was not replayed.";
+    this.store.save("run", run);
+    this.coordinator.reconcileRun(run);
     this.changed();
   }
   terminalResize(id: string, cols: number, rows: number): void {
@@ -715,7 +796,13 @@ export class RuntimeManager {
         error:
           "Topsl closed during a native session. Inspect its outcome before starting another writer.",
       });
+      this.coordinator.syncRun({
+        ...t.run,
+        status: "uncertain",
+        error: "Topsl closed during a native session.",
+      });
       t.process.kill();
     }
+    if (this.ownsCoordinator) this.coordinator.close();
   }
 }

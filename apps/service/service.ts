@@ -1,6 +1,14 @@
 import path from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
 import { Store } from "../../packages/persistence/store";
+import { SyncRepository } from "../../packages/sync/reconciler";
+import { RevisionRepository } from "../../packages/context/revisions";
+import { HistoryReconciler } from "../../packages/history/reconcile";
+import type {
+  NativeHistorySource,
+  NativeProjectLink,
+  SyncField,
+} from "../../packages/domain/sync";
 import type {
   AppId,
   AppState,
@@ -11,13 +19,20 @@ import type {
   Installation,
   LifecycleJob,
   LifecyclePlan,
+  Message,
   Project,
   ProjectOpenResult,
   ServiceEvent,
 } from "../../packages/domain/types";
 import type { Command } from "../../packages/domain/commands";
 import { catalog, capabilities } from "../../packages/domain/catalog";
-import { hash, now, safeError, uid } from "../../packages/domain/invariants";
+import {
+  hash,
+  now,
+  safeError,
+  stable,
+  uid,
+} from "../../packages/domain/invariants";
 import {
   discover,
   describeInstallation,
@@ -25,6 +40,31 @@ import {
 } from "../../packages/applications/discovery";
 import { Lifecycle } from "../../packages/applications/lifecycle";
 import { RuntimeManager } from "../../packages/runtime/manager";
+import { Coordinator } from "../../packages/runtime/coordinator";
+import { ClaudeAdapter } from "../../packages/providers/claude";
+import type { ProviderAdapter } from "../../packages/providers/contract";
+import { BuilderReviewerWorkflow } from "../../packages/workflows/builder-reviewer";
+import type {
+  BuilderReviewerState,
+  WorkflowFinding,
+} from "../../packages/workflows/builder-reviewer";
+import type { CandidateSnapshot } from "../../packages/workflows/candidates";
+import type { CheckPlan } from "../../packages/workflows/verification";
+import {
+  ManagedWorkspaces,
+  type WorkspacePlan,
+} from "../../packages/workspace/managed";
+import {
+  ParallelSpecialists,
+  type IntegrationPlan,
+} from "../../packages/workflows/parallel-specialists";
+import { AdvancedCollaboration } from "../../packages/workflows/advanced";
+import { LocalReplication } from "../../packages/replication/local";
+import type {
+  ExecutionAttempt,
+  Task,
+  Workspace,
+} from "../../packages/domain/workflow";
 import { Configuration } from "../../packages/workspace/configuration";
 import {
   importHistory,
@@ -50,35 +90,214 @@ export interface TrustedInput {
 }
 export class Service {
   readonly store: Store;
+  readonly synchronization: SyncRepository;
+  readonly revisions: RevisionRepository;
+  readonly nativeHistory: HistoryReconciler;
   readonly lifecycle: Lifecycle;
   readonly runtime: RuntimeManager;
+  readonly coordinator: Coordinator;
+  readonly workflows: BuilderReviewerWorkflow;
+  readonly managedWorkspaces: ManagedWorkspaces;
+  readonly parallel: ParallelSpecialists;
+  readonly advanced: AdvancedCollaboration;
+  readonly replication: LocalReplication;
   readonly configuration: Configuration;
   readonly context: ContextServer;
   readonly projects: ProjectSync;
   readonly codexProjects: CodexProjectSync;
   private timer?: ReturnType<typeof setInterval>;
+  private ownershipTimer?: ReturnType<typeof setInterval>;
+  private workflowTimer?: ReturnType<typeof setInterval>;
   private notificationTimer?: ReturnType<typeof setTimeout>;
   private discovery?: Promise<Installation[]>;
   private closing = false;
   private lastDiscoveryAt = 0;
+  private publishedSequence = 0;
+  private publishedActivity: boolean | undefined;
+  private catalogDirty = true;
   constructor(
     readonly directory: string,
     key: string,
     private emit: (event: ServiceEvent) => void,
     private isolatedTest = false,
+    fixtureProviders?: Partial<Record<"codex" | "claude", ProviderAdapter>>,
   ) {
     this.store = new Store(path.join(directory, "history.sqlite"), key);
-    this.runtime = new RuntimeManager(this.store, emit, () => this.changed());
+    this.synchronization = new SyncRepository(this.store);
+    this.revisions = new RevisionRepository(this.store);
+    this.nativeHistory = new HistoryReconciler(this.store);
+    try {
+      this.coordinator = new Coordinator(this.store, "local-profile");
+    } catch (error) {
+      this.store.close();
+      throw error;
+    }
+    if (fixtureProviders && !isolatedTest) {
+      this.coordinator.close();
+      this.store.close();
+      throw new Error(
+        "Fixture provider injection is available only to the isolated local test constructor.",
+      );
+    }
+    this.runtime = new RuntimeManager(
+      this.store,
+      emit,
+      () => this.changed(),
+      undefined,
+      this.coordinator,
+      { claude: new ClaudeAdapter(), ...fixtureProviders },
+    );
     this.configuration = new Configuration(this.store, () =>
       this.runtime.hasActive(),
     );
     this.context = new ContextServer(this.store, directory);
+    this.replication = new LocalReplication(this.store, {
+      enabled:
+        this.store.get<{ enabled: boolean }>(
+          "preference",
+          "optional-multi-device",
+        )?.enabled ?? false,
+    });
+    this.workflows = new BuilderReviewerWorkflow(
+      this.coordinator.repository,
+      {
+        capacity: (assignment, workflowId) =>
+          this.coordinator.concurrency.available(
+            assignment.provider,
+            workflowId,
+          ),
+        capabilities: (_assignment, installation) => {
+          const capabilities = this.runtime.capabilities(installation),
+            required = ["structured-turn", "read-only", "workspace-write"];
+          const unsupported = required.filter(
+            (name) =>
+              !capabilities.some(
+                (c) => c.name === name && c.support === "enforceable",
+              ),
+          );
+          return {
+            supported: !unsupported.length,
+            detail: unsupported.length
+              ? `Selected ${installation.appId} runtime ${installation.version ?? "unknown"} is gated for ${unsupported.join(", ")}. ${capabilities[0]?.restrictions.join(" ") ?? "Use its native terminal; live capability acceptance is pending."}`
+              : "Required selected-runtime capabilities are supported by recorded evidence.",
+          };
+        },
+        dispatch: async ({
+          attempt,
+          task,
+          installation,
+          project,
+          context,
+          mode,
+        }) => {
+          this.replication.assertLocalOwner(project.id);
+          const conversation: Conversation = {
+            id: uid(),
+            projectId: project.id,
+            title: task.title,
+            nativeSessions: {},
+            createdAt: now(),
+          };
+          this.store.save("conversation", conversation);
+          await this.runtime.start(
+            installation,
+            conversation,
+            project,
+            context.content,
+            attempt.requestedModel!,
+            mode,
+            { attemptId: attempt.id, freshSession: true },
+          );
+        },
+        interrupt: async (attempt) => {
+          if (attempt.legacyRunId)
+            await this.runtime.interrupt(attempt.legacyRunId);
+        },
+      },
+      this.context,
+      () => this.changed(),
+    );
+    this.managedWorkspaces = new ManagedWorkspaces(this.coordinator, directory);
+    this.parallel = new ParallelSpecialists(
+      this.coordinator,
+      this.managedWorkspaces,
+      {
+        capabilities: (installation) => this.runtime.capabilities(installation),
+        dispatch: async ({ attempt, task, installation, project, context }) => {
+          this.replication.assertLocalOwner(project.id);
+          const conversation: Conversation = {
+            id: uid(),
+            projectId: project.id,
+            title: task.title,
+            nativeSessions: {},
+            createdAt: now(),
+          };
+          this.store.save("conversation", conversation);
+          await this.runtime.start(
+            installation,
+            conversation,
+            project,
+            context.text,
+            attempt.requestedModel!,
+            "edit",
+            { attemptId: attempt.id, freshSession: true },
+          );
+        },
+        interrupt: async (attempt) => {
+          if (attempt.legacyRunId)
+            await this.runtime.interrupt(attempt.legacyRunId);
+        },
+      },
+      () => this.changed(),
+    );
+    this.advanced = new AdvancedCollaboration(
+      this.coordinator,
+      {
+        capabilities: (installation) => this.runtime.capabilities(installation),
+        dispatch: async ({ attempt, task, installation, project, context }) => {
+          if (task.role === "implementer")
+            this.replication.assertLocalOwner(project.id);
+          const conversation: Conversation = {
+            id: uid(),
+            projectId: project.id,
+            title: task.title,
+            nativeSessions: {},
+            createdAt: now(),
+          };
+          this.store.save("conversation", conversation);
+          await this.runtime.start(
+            installation,
+            conversation,
+            project,
+            context.text,
+            attempt.requestedModel!,
+            task.role === "implementer" ? "edit" : "review",
+            { attemptId: attempt.id, freshSession: true },
+          );
+        },
+        interrupt: async (attempt) => {
+          if (attempt.legacyRunId)
+            await this.runtime.interrupt(attempt.legacyRunId);
+        },
+        // Production adapters expose no independently enforced access-policy route.
+      },
+      {
+        enabled:
+          this.store.get<{ enabled: boolean }>(
+            "preference",
+            "optional-advanced",
+          )?.enabled ?? false,
+        changed: () => this.changed(),
+        assertOwnerHost: (projectId, action) =>
+          this.replication.assertLocalOwner(projectId, action),
+      },
+    );
     const projectPaths = isolatedTest
       ? projectSourcePaths(path.join(directory, "native-home"), {})
       : projectSourcePaths();
     this.projects = new ProjectSync(
       this.store,
-      () => this.changed(),
+      () => this.changed(true),
       projectPaths,
     );
     this.codexProjects = new CodexProjectSync(
@@ -86,18 +305,80 @@ export class Service {
       this.projects,
       directory,
       projectPaths.codexHome,
-      () => this.changed(),
+      () => this.changed(true),
     );
     this.lifecycle = new Lifecycle(this.store, directory, {
       installations: () => this.store.list("installation"),
       discover: () => this.discover(),
       active: (unit) => this.runtime.isUnitBusy(unit),
-      changed: () => this.changed(),
+      changed: () => this.changed(true),
       nativeOpen: async (target) =>
         emit({ type: "native-open", data: { target } }),
     });
   }
   async start(): Promise<void> {
+    this.workflowTimer = setInterval(() => {
+      void this.parallel.tick().catch(() => {});
+      for (const state of this.store.iterate<BuilderReviewerState>(
+        "builder-reviewer",
+      )) {
+        if (
+          ["ready-build", "ready-review", "ready-repair"].includes(
+            state.stage,
+          ) &&
+          state.detail.startsWith("Waiting for capacity:")
+        ) {
+          const workflow = this.store.get<{ revision: number }>(
+            "workflow",
+            state.id,
+          );
+          if (workflow)
+            void this.workflows
+              .advance(state.id, workflow.revision)
+              .catch(() => {});
+          continue;
+        }
+        if (
+          !state.activeAttemptId ||
+          !["building", "reviewing", "repairing"].includes(state.stage)
+        )
+          continue;
+        const attempt = this.store.get<ExecutionAttempt>(
+          "attempt",
+          state.activeAttemptId,
+        );
+        if (
+          !attempt ||
+          ["prepared", "starting", "running", "awaiting-approval"].includes(
+            attempt.state,
+          )
+        )
+          continue;
+        if (
+          attempt.state === "completed" &&
+          this.coordinator.ownership.forAttempt(attempt.id)
+        )
+          continue;
+        const workflow = this.store.get<{ revision: number }>(
+          "workflow",
+          state.id,
+        );
+        if (workflow)
+          void this.workflows
+            .advance(state.id, workflow.revision)
+            .catch(() => {});
+      }
+    }, 500);
+    this.ownershipTimer = setInterval(() => {
+      try {
+        this.coordinator.ownership.heartbeat();
+      } catch (error) {
+        this.emit({
+          type: "state",
+          data: { ...this.state(), serviceError: safeError(error) },
+        });
+      }
+    }, 10_000);
     await this.configuration.reconcile();
     await this.context.start();
     await this.refreshProjects();
@@ -116,7 +397,7 @@ export class Service {
     }
     this.changed();
   }
-  state(): AppState {
+  state(includeMessages = true): AppState {
     const codexProjectSync = this.codexProjects.state();
     return {
       locked: false,
@@ -136,20 +417,63 @@ export class Service {
       ),
       projectSync: this.projects.state(),
       codexProjectSync,
-      conversations: this.store.list("conversation"),
-      messages: this.store.list("message"),
-      runs: this.store.list("run"),
-      usage: this.store.list("usage"),
-      approvals: this.store.list("approval"),
-      terminals: this.runtime.terminalState(),
+      conversations: includeMessages ? this.store.list("conversation") : [],
+      messages: includeMessages
+        ? this.store
+            .page<Message>("message", { limit: 80 })
+            .items.map((message) => this.messagePreview(message))
+        : [],
+      runs: includeMessages ? this.store.list("run") : [],
+      usage: includeMessages ? this.store.list("usage") : [],
+      approvals: includeMessages ? this.store.list("approval") : [],
+      terminals: includeMessages ? this.runtime.terminalState() : [],
       configurationWrites: this.store.list("configuration-write"),
     };
   }
-  private changed(): void {
+  private changed(catalog = false): void {
+    if (catalog) this.catalogDirty = true;
     if (this.closing || this.notificationTimer) return;
     this.notificationTimer = setTimeout(() => {
       this.notificationTimer = undefined;
-      if (!this.closing) this.emit({ type: "state", data: this.state() });
+      if (!this.closing) {
+        const page = this.store.controlPage(this.publishedSequence);
+        if (page.throughSequence > this.publishedSequence) {
+          this.emit({
+            type: "changes",
+            data: { ...page, epoch: this.coordinator.ownership.instanceId },
+          });
+          this.publishedSequence = page.throughSequence;
+        }
+        // Catalog compatibility snapshots are narrow. Streaming records use
+        // durable metadata invalidations and project-scoped queries only.
+        const catalogKinds = [
+          "project",
+          "installation",
+          "check",
+          "job",
+          "configuration-write",
+          "preference",
+          "codex-native-project",
+          "codex-project-sync",
+        ];
+        if (
+          this.catalogDirty ||
+          page.events.some((event) => catalogKinds.includes(event.kind))
+        ) {
+          this.catalogDirty = false;
+          this.emit({ type: "state", data: this.state(false) });
+        }
+        const active = !!this.store.db
+          .prepare(
+            "SELECT 1 FROM documents WHERE (kind='run' AND json_extract(body,'$.status') IN ('starting','running','awaiting-approval')) OR (kind='job' AND json_extract(body,'$.state') IN ('downloading','verifying','applying')) LIMIT 1",
+          )
+          .get();
+        if (active !== this.publishedActivity) {
+          this.publishedActivity = active;
+          this.emit({ type: "activity", data: { active } });
+        }
+        if (page.hasMore) this.changed();
+      }
     }, 40);
   }
   private require<T>(kind: string, id: string): T {
@@ -165,6 +489,13 @@ export class Service {
   }
   private async refreshProjects(): Promise<void> {
     await this.projects.refresh();
+    for (const project of this.store.iterate<Project>("project")) {
+      try {
+        this.coordinator.repository.ensureWorkspace(project);
+      } catch {
+        /* Missing/changed folders remain unverified; dispatch revalidates. */
+      }
+    }
     // A failed native API probe is visible in Projects and must not block vault startup.
     await this.codexProjects.refresh().catch(() => {});
   }
@@ -208,13 +539,1136 @@ export class Service {
     }
   }
   review(
-    kind: "plan" | "configuration-plan" | "approval",
+    kind:
+      | "plan"
+      | "configuration-plan"
+      | "approval"
+      | "workflow-check-plan"
+      | "workflow-acceptance"
+      | "workspace-plan"
+      | "integration-plan"
+      | "parallel-acceptance"
+      | "advanced-acceptance"
+      | "replication-plan"
+      | "replication-conflict"
+      | "workflow-dispatch-inputs"
+      | "advanced-review-plan",
     id: string,
-  ): LifecyclePlan | ConfigurationPlan | Approval {
+  ): LifecyclePlan | ConfigurationPlan | Approval | CheckPlan | unknown {
+    if (kind === "workflow-dispatch-inputs") {
+      const state = this.require<BuilderReviewerState>("builder-reviewer", id),
+        workflow = this.require<{ revision: number; objective: string }>(
+          "workflow",
+          id,
+        ),
+        candidate = this.require<CandidateSnapshot>(
+          "candidate",
+          state.candidateId,
+        );
+      const body = {
+        workflowId: id,
+        projectId: state.projectId,
+        expectedRevision: workflow.revision,
+        objective: workflow.objective,
+        specificationId: state.specificationId,
+        builder: state.builder,
+        reviewer: state.reviewer,
+        workspace: candidate.sourceRoot,
+        baseRevision: candidate.baseRevision,
+        candidateRevision: candidate.revision,
+        files: candidate.files.map((file) => ({
+          path: file.path,
+          hash: file.hash,
+          bytes: file.bytes,
+        })),
+        omissions: candidate.omissions,
+        selection: state.selection,
+      };
+      return { ...body, digest: hash(stable(body)) };
+    }
+    if (kind === "advanced-acceptance")
+      return {
+        id,
+        state: this.advanced.state(id),
+        digest: this.advanced.acceptanceDigest(id),
+      };
+    if (kind === "replication-conflict")
+      return this.replication.conflictPreview(id);
+    if (kind === "parallel-acceptance") {
+      const state = this.parallel.state(id);
+      return {
+        id,
+        state,
+        digest: this.parallel.acceptanceDigest(id),
+        combinedCandidate: state.combinedCandidateId
+          ? this.require("candidate", state.combinedCandidateId)
+          : null,
+      };
+    }
+    if (kind === "workflow-acceptance") {
+      const state = this.require<BuilderReviewerState>("builder-reviewer", id),
+        candidate = this.require<CandidateSnapshot>(
+          "candidate",
+          state.candidateId,
+        );
+      return {
+        id,
+        objective: this.require<{ objective: string }>("workflow", id)
+          .objective,
+        targetRevision: candidate.revision,
+        digest: this.workflows.acceptanceDigest(id),
+        detail: state.detail,
+        reviewArtifactId: state.reviewArtifactId,
+        findings: state.findings.map((id) =>
+          this.require<WorkflowFinding>("workflow-finding", id),
+        ),
+        checks: this.workflows.list(state.projectId).find((w) => w.id === id)
+          ?.checksStatus,
+        isolation: state.isolation,
+      };
+    }
     return this.require(kind, id);
   }
   async command(command: Command, trusted: TrustedInput = {}): Promise<any> {
+    this.coordinator.ownership.assertOwner();
+    if (!("requestId" in command)) {
+      const result = await this.dispatchCommand(command, trusted);
+      if (
+        /^(theme|discover|trust-installation|select-runtime|runtime-(connect|models|account)|lifecycle-|project-|codex-project-|configuration-apply)/.test(
+          command.type,
+        )
+      )
+        this.changed(true);
+      return result;
+    }
+    const digest = hash(stable(command));
+    const existing = this.store.get<any>("command-receipt", command.requestId);
+    if (existing) {
+      if (existing.digest !== digest)
+        throw new Error("Request identity was reused with changed parameters.");
+      if (existing.state === "completed") return existing.result;
+      throw new Error(
+        existing.error ??
+          "This request is pending or its outcome is unknown. Inspect recorded state before issuing a replacement request.",
+      );
+    }
+    this.store.put("command-receipt", {
+      id: command.requestId,
+      digest,
+      state: "prepared",
+      createdAt: now(),
+    });
+    try {
+      const result = await this.dispatchCommand(command, trusted);
+      this.store.put("command-receipt", {
+        id: command.requestId,
+        digest,
+        state: "completed",
+        result: result ?? null,
+        completedAt: now(),
+      });
+      return result;
+    } catch (error) {
+      this.store.put("command-receipt", {
+        id: command.requestId,
+        digest,
+        state: "failed",
+        error: safeError(error),
+        completedAt: now(),
+      });
+      throw error;
+    }
+  }
+  private messagePreview(message: Message) {
+    return {
+      ...message,
+      text: message.text.slice(0, 6000),
+      totalChars: message.text.length,
+      truncated: message.text.length > 6000,
+    };
+  }
+  private assertCommandOwner(command: Command) {
+    let projectId: string | undefined,
+      action: "execution" | "integration" = "execution";
+    if (
+      [
+        "builder-reviewer-create",
+        "workflow-create",
+        "task-create",
+        "terminal-open",
+        "project-open",
+      ].includes(command.type)
+    )
+      projectId = (command as { projectId: string }).projectId;
+    else if (
+      [
+        "builder-reviewer-advance",
+        "builder-reviewer-specification-restart",
+        "builder-reviewer-accept",
+      ].includes(command.type)
+    )
+      projectId = this.require<{ projectId: string }>(
+        "builder-reviewer",
+        (command as { id: string }).id,
+      ).projectId;
+    else if (["parallel-create"].includes(command.type))
+      projectId = this.require<{ projectId: string }>(
+        "workflow",
+        (command as { workflowId: string }).workflowId,
+      ).projectId;
+    else if (
+      [
+        "parallel-dispatch",
+        "parallel-integration-preview",
+        "parallel-accept",
+      ].includes(command.type)
+    ) {
+      projectId = this.require<{ projectId: string }>(
+        "parallel-specialists",
+        (command as { id: string }).id,
+      ).projectId;
+      if (command.type !== "parallel-dispatch") action = "integration";
+    } else if (command.type === "parallel-integration-apply") {
+      projectId = this.require<{ projectId: string }>(
+        "integration-plan",
+        command.id,
+      ).projectId;
+      action = "integration";
+    } else if (command.type === "task-run")
+      projectId = this.require<Task>("task", command.id).projectId;
+    else if (command.type === "run-start")
+      projectId = this.require<Conversation>(
+        "conversation",
+        command.conversationId,
+      ).projectId;
+    if (projectId) this.replication.assertLocalOwner(projectId, action);
+  }
+  private async dispatchCommand(
+    command: Command,
+    trusted: TrustedInput,
+  ): Promise<any> {
+    this.coordinator.ownership.assertOwner();
+    this.assertCommandOwner(command);
     switch (command.type) {
+      case "usage-budget-query":
+        this.require<Project>("project", command.projectId);
+        return (
+          this.store.get("preference", `usage-budget:${command.projectId}`) ?? {
+            tokens: null,
+            wallMs: null,
+          }
+        );
+      case "usage-budget-save":
+        this.require<Project>("project", command.projectId);
+        this.store.put("preference", {
+          id: `usage-budget:${command.projectId}`,
+          projectId: command.projectId,
+          tokens: command.tokens,
+          wallMs: command.wallMs,
+        });
+        this.changed();
+        return { tokens: command.tokens, wallMs: command.wallMs };
+      case "advanced-query":
+        return this.advanced.status(command.projectId);
+      case "advanced-check-preview":
+        return this.advanced.previewCheck(
+          command.id,
+          command.expectedRevision,
+          command.submissionId,
+          command.definition,
+          command.candidateId,
+        );
+      case "advanced-check-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Advanced process checks require native approval of the exact frozen inputs and command.",
+          );
+        return this.advanced.runCheck(command.id, trusted.digest);
+      case "advanced-test-candidate-capture":
+        return this.advanced.captureVerificationCandidate(
+          command.id,
+          command.expectedRevision,
+          command.workspaceId,
+          command.selectedPaths,
+          command.approvedUntracked,
+        );
+      case "advanced-review-preview":
+        return this.advanced.previewProposalReview(
+          command.id,
+          command.expectedRevision,
+        );
+      case "advanced-review-confirm":
+        if (!trusted.digest)
+          throw new Error(
+            "Manual proposal verification requires native review of the exact frozen proposal and rubric.",
+          );
+        return this.advanced.confirmProposalReview(command.id, trusted.digest);
+      case "advanced-capture":
+        return this.advanced.capture(
+          command.id,
+          command.expectedRevision,
+          command.key,
+          command.approvedUntracked,
+        );
+      case "optional-feature-set": {
+        this.store.put("preference", {
+          id: `optional-${command.feature}`,
+          enabled: command.enabled,
+        });
+        const result =
+          command.feature === "advanced"
+            ? this.advanced.setEnabled(command.enabled)
+            : this.replication.setEnabled(command.enabled);
+        this.changed();
+        return result;
+      }
+      case "advanced-create": {
+        const { type: _, requestId: __, ...input } = command;
+        return this.advanced.create(input);
+      }
+      case "advanced-dispatch":
+        return this.advanced.dispatch(
+          command.id,
+          command.expectedRevision,
+          command.key,
+        );
+      case "advanced-freeze":
+        return this.advanced.freeze(
+          command.id,
+          command.expectedRevision,
+          command.key,
+          command.artifactId,
+        );
+      case "advanced-submissions":
+        return this.advanced.submissions(command.id);
+      case "advanced-evaluate":
+        return this.advanced.evaluate(
+          command.id,
+          command.expectedRevision,
+          command.submissionId,
+          command.measurements,
+        );
+      case "advanced-select":
+        return this.advanced.select(
+          command.id,
+          command.expectedRevision,
+          command.submissionId,
+        );
+      case "advanced-bind-verification":
+        return this.advanced.bindVerification(
+          command.id,
+          command.expectedRevision,
+          command.verificationIds,
+          command.frozenTestSubmissionId,
+        );
+      case "advanced-checkpoint":
+        return this.advanced.checkpoint(
+          command.id,
+          command.expectedRevision,
+          command.nextDriverKey,
+          command.reproductionVerificationId,
+          command.experimentArtifactId,
+        );
+      case "advanced-accept":
+        if (!trusted.digest)
+          throw new Error(
+            "Advanced acceptance requires explicit native review of current frozen evidence.",
+          );
+        return this.advanced.accept(
+          command.id,
+          command.expectedRevision,
+          trusted.digest,
+        );
+      case "routing-preset-save":
+        return this.advanced.savePreset(command);
+      case "routing-measure":
+        return this.advanced.measureRouting(
+          command.presetId,
+          command.taskId,
+          command.escapedDefects,
+        );
+      case "replication-query":
+        return this.replication.status(command.projectId);
+      case "replication-device-preview":
+        return this.replication.previewDevice(
+          command.identity,
+          command.approvedProjectIds,
+        );
+      case "replication-mapping-preview":
+        if (!trusted.selectedPath)
+          throw new Error(
+            "Select the local mapping folder in the native dialog.",
+          );
+        return this.replication.previewMapping(
+          command.projectId,
+          command.logicalWorkspaceId,
+          trusted.selectedPath,
+        );
+      case "replication-owner-preview":
+        return this.replication.previewOwner(command.projectId);
+      case "replication-stage-preview":
+        return this.replication.previewStage(
+          command.recordId,
+          command.projectId,
+          command.content,
+        );
+      case "replication-export-preview":
+        return this.replication.previewExport(
+          command.targetDeviceId,
+          command.recordIds,
+        );
+      case "replication-plan-apply": {
+        if (!trusted.digest)
+          throw new Error(
+            "Replication requires native approval of this exact preview.",
+          );
+        const plan = this.require<{
+          kind: "device" | "mapping" | "owner" | "stage" | "export";
+        }>("replication-plan", command.id);
+        if (plan.kind === "device")
+          return this.replication.approveDevice(command.id, trusted);
+        if (plan.kind === "mapping")
+          return this.replication.approveMapping(command.id, trusted);
+        if (plan.kind === "owner")
+          return this.replication.approveOwner(command.id, trusted);
+        if (plan.kind === "export")
+          return this.replication.exportApproved(command.id, trusted);
+        const record = this.replication.approveStage(command.id, trusted);
+        // Request receipts retain only identifiers/revisions, never a second portable content copy.
+        return {
+          id: record.id,
+          projectId: record.projectId,
+          revision: record.revision,
+          kind: record.content.kind,
+        };
+      }
+      case "replication-chunk":
+        return this.replication.outgoingChunk(command.id, command.index);
+      case "replication-import-begin":
+        return this.replication.beginImport(command.manifest);
+      case "replication-import-chunk":
+        return this.replication.receiveChunk(command.id, command.chunk);
+      case "replication-import-complete":
+        return this.replication.completeImport(command.id);
+      case "replication-conflict-preview":
+        return this.replication.conflictPreview(command.id);
+      case "replication-conflict-resolve": {
+        const record = this.replication.resolveConflict(
+          command.id,
+          command.choice,
+          trusted,
+        );
+        return {
+          id: record.id,
+          projectId: record.projectId,
+          revision: record.revision,
+        };
+      }
+      case "replication-delete":
+        if (!trusted.approved)
+          throw new Error("Deletion propagation requires native confirmation.");
+        this.replication.deleteRecord(command.recordId, command.projectId);
+        return null;
+      case "replication-device-revoke":
+        if (!trusted.approved)
+          throw new Error("Device revocation requires native confirmation.");
+        this.replication.revokeDevice(command.deviceId);
+        return null;
+      case "history-message": {
+        const message = this.require<Message>("message", command.id);
+        if (message.projectId !== command.projectId)
+          throw new Error("Message belongs to another project.");
+        const end = command.offset + command.limit;
+        return {
+          ...message,
+          text: message.text.slice(command.offset, end),
+          totalChars: message.text.length,
+          offset: command.offset,
+          nextOffset: end < message.text.length ? end : null,
+        };
+      }
+      case "navigation-query":
+        return (
+          this.store.get("preference", "navigation") ?? {
+            projectId: null,
+            workflowId: null,
+            projectView: "overview",
+          }
+        );
+      case "navigation-save":
+        const previous = this.store.get<any>("preference", "navigation");
+        this.store.put("preference", {
+          id: "navigation",
+          projectId: command.projectId,
+          workflowId:
+            command.workflowId ??
+            (previous?.projectId === command.projectId
+              ? previous.workflowId
+              : null),
+          projectView: command.projectView,
+        });
+        return null;
+      case "scope-events":
+        this.require<Project>("project", command.projectId);
+        return {
+          ...this.store.controlPage(
+            command.afterSequence,
+            command,
+            command.limit,
+          ),
+          epoch: this.coordinator.ownership.instanceId,
+        };
+      case "history-page": {
+        this.require<Project>("project", command.projectId);
+        const options = {
+          conversationId: command.conversationId,
+          cursor: command.cursor,
+          limit: command.limit,
+        };
+        const page =
+          command.query === undefined
+            ? this.store.messagesPage({
+                ...options,
+                projectId: command.projectId,
+              })
+            : this.store.searchPage(command.projectId, command.query, options);
+        return {
+          ...page,
+          items: page.items.map((message) => this.messagePreview(message)),
+        };
+      }
+      case "history-conversations":
+        this.require<Project>("project", command.projectId);
+        return this.store.page("conversation", {
+          projectId: command.projectId,
+          cursor: command.cursor,
+          limit: command.limit,
+        });
+      case "scope-snapshot":
+        this.require<Project>("project", command.projectId);
+        return this.store.transaction(() => ({
+          sequence: this.store.controlHead(),
+          epoch: this.coordinator.ownership.instanceId,
+          projectId: command.projectId,
+          coordination: this.coordinator.snapshot(command.projectId),
+          conversations: this.store.page("conversation", {
+            projectId: command.projectId,
+            limit: 200,
+          }).items,
+          conversationCursor: this.store.page("conversation", {
+            projectId: command.projectId,
+            limit: 200,
+          }).nextCursor,
+          runs: this.store.page("run", {
+            projectId: command.projectId,
+            limit: 200,
+          }).items,
+          approvals: this.store.db
+            .prepare(
+              "SELECT a.body FROM documents a JOIN documents r ON r.kind='run' AND r.id=json_extract(a.body,'$.runId') WHERE a.kind='approval' AND json_extract(r.body,'$.projectId')=? ORDER BY a.rowid DESC LIMIT 100",
+            )
+            .all(command.projectId)
+            .map((row) => JSON.parse(row.body)),
+          terminals: this.runtime
+            .terminalState()
+            .filter((terminal) => terminal.projectId === command.projectId),
+          usage: this.store.db
+            .prepare(
+              "SELECT u.body FROM documents u JOIN documents r ON r.kind='run' AND r.id=json_extract(u.body,'$.runId') WHERE u.kind='usage' AND json_extract(r.body,'$.projectId')=? ORDER BY u.rowid DESC LIMIT 500",
+            )
+            .all(command.projectId)
+            .map((row) => JSON.parse(row.body)),
+          messages: ((page) => ({
+            ...page,
+            items: page.items.map((message) => this.messagePreview(message)),
+          }))(
+            this.store.messagesPage({
+              projectId: command.projectId,
+              conversationId: command.conversationId,
+              limit: 80,
+            }),
+          ),
+        }));
+      case "managed-workspaces-query":
+        this.require<Project>("project", command.projectId);
+        return {
+          workspaces: this.managedWorkspaces.list(command.projectId),
+          concurrency: this.coordinator.concurrency.snapshot(),
+        };
+      case "workspace-create-preview":
+        return this.managedWorkspaces.previewCreate(command);
+      case "workspace-remove-preview":
+        return this.managedWorkspaces.previewRemove(command.id);
+      case "workspace-plan-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Workspace creation/cleanup requires native approval of this exact input snapshot and filesystem operation.",
+          );
+        return this.managedWorkspaces.apply(command.id, trusted.digest);
+      case "parallel-create":
+        return this.parallel.create(command);
+      case "parallel-query":
+        this.require<Project>("project", command.projectId);
+        for (const state of this.parallel.list(command.projectId))
+          await this.parallel.observe(state.id);
+        return {
+          workflows: this.parallel.list(command.projectId),
+          queue: this.coordinator.repository.all("integration-submission", {
+            projectId: command.projectId,
+          }),
+          concurrency: this.coordinator.concurrency.snapshot(),
+        };
+      case "parallel-dispatch":
+        return this.parallel.dispatch(
+          command.id,
+          command.expectedRevision,
+          command.key,
+        );
+      case "parallel-submit":
+        return this.parallel.submit(
+          command.id,
+          command.expectedRevision,
+          command.key,
+          command.approvedUntracked,
+        );
+      case "parallel-integration-preview":
+        return this.parallel.previewIntegration(
+          command.id,
+          command.expectedRevision,
+          command.resolutions,
+        );
+      case "parallel-integration-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Integration requires native approval of exact submitted candidates and conflict resolutions.",
+          );
+        return this.parallel.applyIntegration(command.id, trusted.digest);
+      case "parallel-checks-preview":
+        return this.parallel.previewChecks(
+          command.id,
+          command.expectedRevision,
+        );
+      case "parallel-check-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Combined checks require native approval of the exact command and revision.",
+          );
+        return this.parallel.runCheck(command.id, trusted.digest);
+      case "parallel-accept":
+        if (!trusted.digest)
+          throw new Error(
+            "Combined acceptance requires explicit native confirmation of current evidence.",
+          );
+        return this.parallel.accept(
+          command.id,
+          command.expectedRevision,
+          trusted.digest,
+        );
+      case "parallel-cancel":
+        return this.parallel.cancel(command.id, command.expectedRevision);
+      case "sync-field-push": {
+        if (!trusted.approved)
+          throw new Error(
+            "Native field writes require review of their exact value, direction and source revision.",
+          );
+        const field = this.require<SyncField>("sync-field", command.id);
+        if (
+          field.projectId !== command.projectId ||
+          field.revision !== command.expectedRevision ||
+          field.state !== "push-required" ||
+          field.field !== "name" ||
+          typeof field.local !== "string" ||
+          !/^[^\x00-\x1f\x7f]{1,200}$/.test(field.local)
+        )
+          throw new Error(
+            "Refresh and explicitly resolve a supported native name before pushing local intent.",
+          );
+        const link = this.require<NativeProjectLink>(
+          "native-project-link",
+          field.targetId,
+        );
+        if (
+          link.projectId !== field.projectId ||
+          link.provider !== "codex" ||
+          link.state !== "linked" ||
+          link.profileId !== this.codexProjects.boundProfileId()
+        )
+          throw new Error(
+            "This native write route or exact profile binding is unavailable. No fallback operation was sent.",
+          );
+        await this.codexProjects.rename(
+          link.nativeGroupId,
+          link.sourceRevision,
+          field.local,
+        );
+        const result = this.require<SyncField>("sync-field", field.id);
+        this.changed();
+        return {
+          field: result,
+          detail:
+            "Supported registry readback recorded; visible native sidebar remains a separate observation.",
+        };
+      }
+      case "synchronization-query": {
+        this.require<Project>("project", command.projectId);
+        const inputs = [
+          ...this.store.iterate<Task>("task", { projectId: command.projectId }),
+        ].map((task) => ({
+          taskId: task.id,
+          ...this.revisions.inspectTaskInputs(task.id),
+        }));
+        return {
+          projectId: command.projectId,
+          observations: this.synchronization.observations(command.projectId),
+          fields: this.synchronization.fields(command.projectId),
+          links: this.synchronization.links(command.projectId),
+          sharedHeads: this.revisions.heads(command.projectId),
+          sharedRevisions: this.revisions.revisions(command.projectId),
+          historySources: this.nativeHistory.sources(command.projectId),
+          configuration: this.synchronization.configuration(command.projectId),
+          inputs,
+        };
+      }
+      case "sync-field-intent": {
+        const field = this.require<SyncField>("sync-field", command.id);
+        if (
+          field.projectId !== command.projectId ||
+          field.authority === "provider"
+        )
+          throw new Error(
+            "This field belongs to another project or is provider-owned.",
+          );
+        const result = this.synchronization.reconcileField({
+          ...field,
+          expectedRevision: command.expectedRevision,
+          local: command.local,
+          authority: command.authority,
+          evidence: {
+            level: "topsl-transaction",
+            source: "explicit-local-field-intent",
+            observedAt: now(),
+            detail:
+              "User selected field intent and ownership; provider write/readback remains separate.",
+          },
+        });
+        if (field.field === "name" && typeof command.local === "string")
+          this.store.save("project", {
+            ...this.require<Project>("project", command.projectId),
+            name: command.local,
+          });
+        this.changed();
+        return result;
+      }
+      case "sync-field-resolve": {
+        const field = this.require<SyncField>("sync-field", command.id);
+        if (field.projectId !== command.projectId)
+          throw new Error("Synchronization field belongs to another project.");
+        const result = this.synchronization.resolveField(
+          command.id,
+          command.expectedRevision,
+          command.direction,
+        );
+        if (field.field === "name" && typeof result.local === "string")
+          this.store.save("project", {
+            ...this.require<Project>("project", command.projectId),
+            name: result.local,
+          });
+        this.changed();
+        return result;
+      }
+      case "native-link-state":
+      case "native-root-map": {
+        const link = this.require<NativeProjectLink>(
+          "native-project-link",
+          command.id,
+        );
+        if (link.projectId !== command.projectId)
+          throw new Error("Native project link belongs to another project.");
+        const result =
+          command.type === "native-link-state"
+            ? this.synchronization.setLinkState(
+                command.id,
+                command.expectedRevision,
+                command.state,
+              )
+            : this.synchronization.mapNativeRoot(
+                command.id,
+                command.expectedRevision,
+                command.nativeRoot,
+                command.workspaceId,
+              );
+        this.changed();
+        return result;
+      }
+      case "shared-revision-publish": {
+        this.require<Project>("project", command.projectId);
+        if (command.recordId.startsWith("workflow-specification:"))
+          throw new Error(
+            "Use the workflow specification publish action to update workflow requirements.",
+          );
+        const result = this.revisions.publish(command);
+        this.changed();
+        return result;
+      }
+      case "task-inputs-inspect":
+      case "task-context-bind": {
+        const task = this.require<Task>("task", command.id);
+        if (task.projectId !== command.projectId)
+          throw new Error("Task belongs to another project.");
+        if (command.type === "task-inputs-inspect")
+          return this.revisions.inspectTaskInputs(task.id);
+        if (
+          task.revision !== command.expectedRevision ||
+          !["draft", "ready", "blocked"].includes(task.state)
+        )
+          throw new Error(
+            "Only an inactive task with the current revision can bind a new immutable context.",
+          );
+        const result = this.revisions.bindPackage(
+          task.id,
+          command.contextPackageId,
+          null,
+          command.references,
+        );
+        this.changed();
+        return result;
+      }
+      case "builder-reviewer-specification-publish": {
+        const result = this.workflows.publishSpecification(
+          command.id,
+          command.expectedRevision,
+          {
+            objective: command.objective,
+            acceptanceCriteria: command.acceptanceCriteria,
+            interfaces: command.interfaces,
+          },
+        );
+        this.changed();
+        return result;
+      }
+      case "builder-reviewer-specification-restart": {
+        const result = await this.workflows.restartForSpecification(
+          command.id,
+          command.expectedRevision,
+          command.specificationId,
+        );
+        this.changed();
+        return result;
+      }
+      case "native-history-approve": {
+        if (!trusted.selectedPath || !trusted.approved)
+          throw new Error(
+            "Explicit native transcript selection and approval are required for each source/profile.",
+          );
+        const source = await this.nativeHistory.approve({
+          project: await this.project(command.projectId),
+          provider: command.provider,
+          profileId: command.profileId,
+          sessionId: command.sessionId,
+          file: trusted.selectedPath,
+        });
+        this.changed();
+        return source;
+      }
+      case "native-history-reconcile":
+      case "native-history-pause": {
+        const source = this.require<NativeHistorySource>(
+          "native-history-source",
+          command.id,
+        );
+        if (
+          source.projectId !== command.projectId ||
+          source.revision !== command.expectedRevision
+        )
+          throw new Error(
+            "History source scope or revision changed; refresh before this operation.",
+          );
+        const result =
+          command.type === "native-history-pause"
+            ? this.nativeHistory.pause(source.id, command.expectedRevision)
+            : await this.nativeHistory.reconcile(source.id);
+        this.changed();
+        return result;
+      }
+      case "builder-reviewer-query":
+        this.require<Project>("project", command.projectId);
+        for (const state of this.coordinator.repository.all<BuilderReviewerState>(
+          "builder-reviewer",
+          { projectId: command.projectId },
+        ))
+          await this.workflows.observe(state.id);
+        return {
+          workflows: this.workflows
+            .list(command.projectId)
+            .map((workflow) => ({
+              ...workflow,
+              objective: this.require<{ objective: string }>(
+                "workflow",
+                workflow.id,
+              ).objective,
+              latestSpecificationId:
+                this.revisions.head(
+                  command.projectId,
+                  `workflow-specification:${workflow.id}`,
+                )?.revisionId ?? workflow.specificationId,
+            })),
+          runtimes: this.store
+            .list<Installation>("installation")
+            .filter((i) =>
+              ["openai.codex-cli", "anthropic.claude-code-cli"].includes(
+                i.appId,
+              ),
+            )
+            .map((i) => ({
+              installation: i,
+              capabilities: this.runtime.capabilities(i),
+            })),
+          checkRuntime: process.execPath,
+        };
+      case "builder-reviewer-inspect": {
+        const state = this.require<BuilderReviewerState>(
+          "builder-reviewer",
+          command.id,
+        );
+        return {
+          state,
+          candidate: this.require("candidate", state.candidateId),
+          findings: state.findings.map((id) =>
+            this.require("workflow-finding", id),
+          ),
+          contexts: this.coordinator.repository
+            .all("task-context-package", { projectId: state.projectId })
+            .filter((c: any) => c.workflowId === state.id),
+          deliveries: this.coordinator.repository
+            .all("task-context-delivery", { projectId: state.projectId })
+            .filter(
+              (d: any) =>
+                this.store.get<any>("attempt", d.attemptId)?.taskId &&
+                this.store.get<any>(
+                  "task",
+                  this.store.get<any>("attempt", d.attemptId).taskId,
+                )?.workflowId === state.id,
+            ),
+        };
+      }
+      case "builder-reviewer-create":
+        return this.workflows.create(
+          await this.project(command.projectId),
+          command,
+        );
+      case "builder-reviewer-advance": {
+        const state = this.require<BuilderReviewerState>(
+          "builder-reviewer",
+          command.id,
+        );
+        if (state.stage === "ready-build") {
+          const reviewed: any = this.review(
+            "workflow-dispatch-inputs",
+            command.id,
+          );
+          if (
+            command.expectedRevision !== reviewed.expectedRevision ||
+            trusted.digest !== reviewed.digest
+          )
+            throw new Error(
+              "Review and approve the exact captured input manifest and selected agent assignments before the first dispatch.",
+            );
+          this.store.immutable("workflow-input-approval", {
+            ...reviewed,
+            id: uid(),
+            approvedAt: now(),
+            reviewedBy: "local-user-native-dialog",
+          });
+        }
+        return this.workflows.advance(command.id, command.expectedRevision);
+      }
+      case "builder-reviewer-checks-preview":
+        return this.workflows.previewChecks(
+          command.id,
+          command.expectedRevision,
+        );
+      case "builder-reviewer-check-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Check execution requires native approval of its exact command and candidate revision.",
+          );
+        return this.workflows.runCheck(command.id, trusted.digest);
+      case "builder-reviewer-accept":
+        if (!trusted.digest)
+          throw new Error(
+            "Final acceptance requires native confirmation of the exact candidate evidence.",
+          );
+        return this.workflows.accept(
+          command.id,
+          command.expectedRevision,
+          trusted.digest,
+        );
+      case "builder-reviewer-cancel":
+        return this.workflows.cancel(command.id, command.expectedRevision);
+      case "coordination-query":
+        this.require<Project>("project", command.projectId);
+        return this.coordinator.snapshot(command.projectId);
+      case "coordination-page":
+        this.require<Project>("project", command.projectId);
+        return this.store.page(command.kind, {
+          projectId: command.projectId,
+          cursor: command.cursor,
+          limit: command.limit,
+        });
+      case "task-inspect": {
+        const task = this.require<Task>("task", command.id);
+        if (task.projectId !== command.projectId)
+          throw new Error("Task belongs to another project.");
+        const snapshot = this.coordinator.snapshot(command.projectId);
+        return {
+          task,
+          inputStatus: this.revisions.inspectTaskInputs(task.id),
+          configuration: this.synchronization.configuration(task.projectId),
+          workspace: snapshot.workspaces.find(
+            (workspace) => workspace.id === task.workspaceId,
+          ),
+          attempts: snapshot.attempts.filter(
+            (attempt) => attempt.taskId === task.id,
+          ),
+          sessions: snapshot.sessions.filter((session) =>
+            snapshot.attempts.some(
+              (attempt) =>
+                attempt.taskId === task.id && attempt.sessionId === session.id,
+            ),
+          ),
+          leases: snapshot.leases.filter((lease) =>
+            task.attemptIds.includes(lease.attemptId),
+          ),
+        };
+      }
+      case "workflow-create": {
+        const result = this.coordinator.repository.createWorkflow(command);
+        this.changed();
+        return result;
+      }
+      case "task-create": {
+        const result = this.coordinator.repository.createTask(command);
+        this.changed();
+        return result;
+      }
+      case "task-transition": {
+        const result = this.coordinator.repository.transitionTask(
+          command.id,
+          command.expectedRevision,
+          command.state,
+          command.detail,
+        );
+        this.changed();
+        return result;
+      }
+      case "task-run": {
+        const task = this.require<Task>("task", command.id),
+          workspace = this.require<Workspace>("workspace", task.workspaceId);
+        if (task.workflowId)
+          throw new Error(
+            "This task belongs to a coordinated workflow. Use its workflow action so pinned code, context, specification and dispatch ownership remain bound.",
+          );
+        if (task.revision !== command.expectedRevision)
+          throw new Error("Task revision changed. Refresh before running it.");
+        const logical = await this.project(task.projectId);
+        const project = await requireProjectFolder({
+          ...logical,
+          path: workspace.root,
+          realPath: workspace.canonicalRoot,
+          trusted: !!workspace.trustRevision,
+        });
+        if (task.role === "reviewer" && command.mode !== "review")
+          throw new Error("Reviewer tasks require read-only execution.");
+        const installation = this.installation(command.installationId),
+          provider = installation.appId.includes("claude") ? "claude" : "codex";
+        const capabilityReport = this.runtime.capabilities(installation);
+        if (
+          task.requiredCapabilities.some(
+            (name) =>
+              !capabilityReport.some(
+                (c) => c.name === name && c.support === "enforceable",
+              ),
+          )
+        )
+          throw new Error(
+            "A required task capability is not enforced by this runtime. No attempt or provider turn was created.",
+          );
+        if (command.contextPackageId) {
+          this.revisions.bindPackage(task.id, command.contextPackageId);
+          this.revisions.assertTaskInputsCurrent(
+            task.id,
+            command.contextPackageId,
+          );
+        } else this.revisions.assertTaskInputsCurrent(task.id);
+        let conversation: Conversation,
+          taskRevision = command.expectedRevision;
+        if (task.conversationId)
+          conversation = this.require("conversation", task.conversationId);
+        else {
+          conversation = {
+            id: uid(),
+            projectId: task.projectId,
+            title: task.title,
+            nativeSessions: {},
+            createdAt: now(),
+          };
+          this.store.save("conversation", conversation);
+          this.store.save("task", {
+            ...task,
+            conversationId: conversation.id,
+            revision: task.revision + 1,
+            updatedAt: now(),
+          });
+          taskRevision = task.revision + 1;
+        }
+        const attempt = this.coordinator.repository.prepareAttempt({
+          taskId: task.id,
+          expectedRevision: taskRevision,
+          provider,
+          requestedModel: command.model,
+          contextPackageId: command.contextPackageId,
+          runtimeRevision: installation.revisionId,
+          executableIdentity: installation.identity,
+          freshSession: command.freshSession,
+        });
+        if (command.contextPackageId)
+          this.revisions.bindPackage(
+            task.id,
+            command.contextPackageId,
+            attempt.id,
+          );
+        try {
+          return await this.runtime.start(
+            installation,
+            conversation,
+            project,
+            command.prompt,
+            command.model,
+            command.mode,
+            { attemptId: attempt.id, freshSession: command.freshSession },
+          );
+        } catch (error) {
+          const current = this.require<ExecutionAttempt>("attempt", attempt.id);
+          if (current.state === "prepared") {
+            this.coordinator.repository.transitionAttempt(
+              current.id,
+              current.revision,
+              "failed",
+              { error: safeError(error) },
+            );
+            const latest = this.require<Task>("task", task.id);
+            if (latest.state === "active")
+              this.coordinator.repository.transitionTask(
+                latest.id,
+                latest.revision,
+                "blocked",
+                safeError(error),
+              );
+          }
+          this.changed();
+          throw error;
+        }
+      }
       case "state":
         return this.state();
       case "theme":
@@ -310,6 +1764,7 @@ export class Service {
             "Project trust requires a native folder selection and confirmation.",
           );
         const project = await this.projects.add(trusted.selectedPath);
+        this.coordinator.repository.ensureWorkspace(project);
         await this.codexProjects.refresh().catch(() => {});
         return project;
       }
@@ -362,6 +1817,7 @@ export class Service {
             command.id,
             trusted.selectedPath,
           );
+          this.coordinator.repository.ensureWorkspace(project);
           await this.codexProjects.refresh().catch(() => {});
           return project;
         }
@@ -386,6 +1842,25 @@ export class Service {
           const project = await this.projects.relink(
             command.id,
             trusted.selectedPath,
+            (updated) => {
+              if (
+                this.runtime.isProjectBusy(command.id) ||
+                [
+                  ...this.store.iterate<any>("run", { projectId: command.id }),
+                ].some((run) =>
+                  [
+                    "starting",
+                    "running",
+                    "awaiting-approval",
+                    "uncertain",
+                  ].includes(run.status),
+                )
+              )
+                throw new Error(
+                  "Close or reconcile this project's active sessions before relinking it.",
+                );
+              this.coordinator.repository.relinkDefaultWorkspace(updated);
+            },
           );
           await this.codexProjects.refresh().catch(() => {});
           return project;
@@ -584,12 +2059,36 @@ export class Service {
         );
       case "terminal-close":
         return this.runtime.terminalClose(command.id);
-      case "configuration-read":
-        return this.configuration.read(
+      case "configuration-read": {
+        const result = await this.configuration.read(
           command.provider,
           command.projectId ? await this.project(command.projectId) : null,
           command.kind,
         );
+        if (command.projectId)
+          this.synchronization.recordConfiguration({
+            projectId: command.projectId,
+            sessionId: "project-files",
+            provider: command.provider,
+            capability:
+              command.kind === "instructions"
+                ? "project-instructions"
+                : "native-configuration",
+            classification: "observable-only",
+            stage: "discovered",
+            value: result.path,
+            sourceHash: result.hash,
+            sourceRevision: result.hash,
+            evidence: {
+              level: "source-observation",
+              source: result.path,
+              observedAt: now(),
+              detail:
+                "File content observed; effective native session loading remains unverified.",
+            },
+          });
+        return result;
+      }
       case "configuration-preview":
         return this.configuration.preview(
           command.path,
@@ -600,6 +2099,40 @@ export class Service {
         if (!trusted.digest) throw new Error("A native approval is required.");
         try {
           await this.configuration.apply(command.id, trusted.digest);
+          const plan = this.require<ConfigurationPlan>(
+            "configuration-plan",
+            command.id,
+          );
+          for (const project of this.store.iterate<Project>("project"))
+            if (plan.path.startsWith(project.realPath + path.sep)) {
+              const provider =
+                plan.path.endsWith("CLAUDE.md") ||
+                plan.path.includes(path.sep + ".claude" + path.sep)
+                  ? "claude"
+                  : "codex";
+              this.synchronization.recordConfiguration({
+                projectId: project.id,
+                sessionId: "project-files",
+                provider,
+                capability:
+                  plan.path.endsWith("AGENTS.md") ||
+                  plan.path.endsWith("CLAUDE.md")
+                    ? "project-instructions"
+                    : "native-configuration",
+                classification: "observable-only",
+                stage: "configured",
+                value: plan.path,
+                sourceHash: hash(plan.after),
+                sourceRevision: command.id,
+                evidence: {
+                  level: "source-observation",
+                  source: plan.path,
+                  observedAt: now(),
+                  detail:
+                    "Reviewed file written. Native runtime reload and effective instruction loading remain unverified.",
+                },
+              });
+            }
           return { applied: true, loaded: false };
         } finally {
           await this.configuration.reconcile();
@@ -614,15 +2147,18 @@ export class Service {
         const grant = this.context.grant(project);
         const directory = path.join(this.directory, "context-grants");
         await mkdir(directory, { recursive: true, mode: 0o700 });
-        const file = path.join(directory, `${project.id}.json`);
-        await writeFile(file, JSON.stringify(grant), { mode: 0o600 });
+        const file = path.join(directory, `${grant.grant}.json`);
+        await writeFile(file, JSON.stringify(grant), {
+          mode: 0o600,
+          flag: "wx",
+        });
         return {
           file,
           companionPath: path
             .join(__dirname, "cli.cjs")
             .replace(/app\.asar([/\\])/, "app.asar.unpacked$1"),
-          expires:
-            "When Topsl closes or this project grant is replaced. Native configuration is not modified.",
+          expiresAt: grant.expiresAt,
+          expires: `At ${grant.expiresAt}, on revocation, or when Topsl closes. Native configuration is not modified.`,
         };
       }
       case "unlock":
@@ -630,13 +2166,17 @@ export class Service {
     }
   }
   close(): void {
+    this.workflows.close();
+    clearInterval(this.workflowTimer);
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.ownershipTimer) clearInterval(this.ownershipTimer);
     if (this.notificationTimer) clearTimeout(this.notificationTimer);
     this.context.close();
     this.projects.close();
     this.codexProjects.close();
     this.runtime.close();
+    this.coordinator.close();
     this.store.close();
   }
 }

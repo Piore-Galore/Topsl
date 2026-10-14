@@ -6,6 +6,7 @@ import {
   readFile,
   realpath,
   chmod,
+  appendFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -78,6 +79,7 @@ const app = await electron.launch({
   timeout: 90000,
 });
 const errors = [];
+let desktopBenchmark = null;
 try {
   const page = await app.firstWindow();
   page.on("pageerror", (e) => errors.push(e.message));
@@ -298,6 +300,408 @@ try {
   await page.getByRole("button", { name: "Prepare handoff" }).click();
   await expect(page.getByRole("dialog")).toContainText("user · codex");
   await page.getByRole("button", { name: "Close dialog" }).click();
+  // Phase 5 acceptance uses only disposable JSONL sources and coordinator records.
+  const benchmarkMemoryBefore = await app.evaluate(({ app }) =>
+    app
+      .getAppMetrics()
+      .map((metric) => ({ type: metric.type, memory: metric.memory })),
+  );
+  const stateBeforeBench = await page.evaluate(() =>
+    window.topsl.command({ type: "state" }),
+  );
+  const projectIds = [canonicalProject, canonicalDiscovered].map(
+    (root) =>
+      stateBeforeBench.projects.find((project) => project.realPath === root).id,
+  );
+  const streamFixtures = [];
+  for (let stream = 0; stream < 4; stream++) {
+    const root = stream % 2 ? canonicalDiscovered : canonicalProject;
+    const file = path.join(profile, `history-benchmark-${stream}.jsonl`);
+    const records = [
+      {
+        type: "session_meta",
+        payload: { id: `benchmark-session-${stream}`, cwd: root },
+      },
+      ...Array.from({ length: 25000 }, (_, index) => ({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: index % 2 ? "assistant" : "user",
+          content: [
+            {
+              type: index % 2 ? "output_text" : "input_text",
+              text: `Benchmark stream ${stream} · message ${index} · 测量 · ${"x".repeat(120)}`,
+            },
+          ],
+        },
+      })),
+    ];
+    await writeFile(
+      file,
+      records.map((record) => JSON.stringify(record)).join("\n") + "\n",
+    );
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({
+        canceled: false,
+        filePaths: [selected],
+      });
+    }, file);
+    const imported = await page.evaluate(
+      ({ projectId }) =>
+        window.topsl.command({
+          type: "history-import",
+          projectId,
+          provider: "codex",
+        }),
+      { projectId: projectIds[stream % 2] },
+    );
+    expect(imported.imported).toBe(25000);
+    streamFixtures.push({
+      file,
+      projectId: projectIds[stream % 2],
+      conversationId: imported.conversationId,
+      stream,
+    });
+  }
+  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Conversation", exact: true })
+    .selectOption(streamFixtures[0].conversationId);
+  await expect(page.locator(".virtual-message")).toHaveCount(20);
+  await expect(
+    page.getByRole("combobox", { name: "Runtime", exact: true }),
+  ).toHaveValue("");
+  await page.locator(".virtual-transcript").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(page.locator(".virtual-transcript")).toContainText(
+    "message 24999",
+  );
+  const historyQueries = [];
+  for (let sample = 0; sample < 30; sample++)
+    historyQueries.push(
+      await page.evaluate(async (projectId) => {
+        const begin = performance.now();
+        const result = await window.topsl.command({
+          type: "history-page",
+          projectId,
+          limit: 80,
+        });
+        if (result.items.length !== 80)
+          throw new Error("Scoped benchmark page missing");
+        return performance.now() - begin;
+      }, projectIds[0]),
+    );
+  const streamLatency = [];
+  for (const fixture of streamFixtures)
+    await appendFile(
+      fixture.file,
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: `Late stream ${fixture.stream} · isolated scoped update`,
+            },
+          ],
+        },
+      }) + "\n",
+    );
+  const reconciledAt = await page.evaluate(
+    async ({ projectIds, selected }) => {
+      const sources = (
+        await Promise.all(
+          projectIds.map((projectId) =>
+            window.topsl.command({ type: "synchronization-query", projectId }),
+          ),
+        )
+      )
+        .flatMap((value) => value.historySources)
+        .filter((source) => source.selectedFile.includes("history-benchmark-"));
+      await Promise.all(
+        sources.map((source) =>
+          window.topsl.command({
+            type: "native-history-reconcile",
+            requestId: crypto.randomUUID(),
+            projectId: source.projectId,
+            id: source.id,
+            expectedRevision: source.revision,
+          }),
+        ),
+      );
+      return performance.now();
+    },
+    { projectIds, selected: streamFixtures[0].conversationId },
+  );
+  await expect(page.locator(".virtual-transcript")).toContainText(
+    "Late stream 0",
+  );
+  expect(await page.locator(".virtual-transcript").textContent()).not.toContain(
+    "Late stream 1",
+  );
+  streamLatency.push(
+    await page.evaluate((begin) => performance.now() - begin, reconciledAt),
+  );
+  const selectedCommandToRender = [];
+  for (let sample = 0; sample < 5; sample++) {
+    const fixture = streamFixtures[0],
+      text = `Selected fixture update ${sample}`;
+    await appendFile(
+      fixture.file,
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text }],
+        },
+      }) + "\n",
+    );
+    const source = await page.evaluate(
+      async (projectId) =>
+        (
+          await window.topsl.command({
+            type: "synchronization-query",
+            projectId,
+          })
+        ).historySources.find((source) =>
+          source.selectedFile.endsWith("history-benchmark-0.jsonl"),
+        ),
+      fixture.projectId,
+    );
+    const begin = Date.now();
+    await page.evaluate(
+      (source) =>
+        window.topsl.command({
+          type: "native-history-reconcile",
+          requestId: crypto.randomUUID(),
+          projectId: source.projectId,
+          id: source.id,
+          expectedRevision: source.revision,
+        }),
+      source,
+    );
+    await expect(page.locator(".virtual-transcript")).toContainText(text);
+    selectedCommandToRender.push(Date.now() - begin);
+  }
+  const coordination = await page.evaluate(
+    (projectId) =>
+      window.topsl.command({ type: "coordination-query", projectId }),
+    projectIds[0],
+  );
+  const workflow = await page.evaluate(
+    (projectId) =>
+      window.topsl.command({
+        type: "workflow-create",
+        requestId: crypto.randomUUID(),
+        projectId,
+        objective: "Unicode fixture coordination",
+        template: "desktop-fixture",
+        templateVersion: "1",
+      }),
+    projectIds[0],
+  );
+  const task = await page.evaluate(
+    ({ projectId, workspaceId, workflowId }) =>
+      window.topsl.command({
+        type: "task-create",
+        requestId: crypto.randomUUID(),
+        projectId,
+        workspaceId,
+        workflowId,
+        title: "Inspect Unicode 项目 · long paths remain readable",
+        role: "planner",
+        acceptanceCriteria: [
+          "Rendered inputs remain scoped",
+          "Acceptance remains explicit",
+        ],
+      }),
+    {
+      projectId: projectIds[0],
+      workspaceId: coordination.workspaces[0].id,
+      workflowId: workflow.id,
+    },
+  );
+  await page.evaluate(
+    ({ projectId, workspaceId, workflowId }) =>
+      window.topsl.command({
+        type: "task-create",
+        requestId: crypto.randomUUID(),
+        projectId,
+        workspaceId,
+        workflowId,
+        title: "Alternate task for late inspector response",
+        role: "tester",
+        acceptanceCriteria: ["Only alternate task evidence belongs here"],
+      }),
+    {
+      projectId: projectIds[0],
+      workspaceId: coordination.workspaces[0].id,
+      workflowId: workflow.id,
+    },
+  );
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  const projectNav = page.getByRole("navigation", {
+    name: "Project navigation",
+  });
+  const interactions = [];
+  for (let sample = 0; sample < 20; sample++) {
+    const name = sample % 2 ? "Overview" : "Tasks";
+    const begin = Date.now();
+    await projectNav.getByRole("button", { name, exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name, exact: true }).first(),
+    ).toBeVisible();
+    interactions.push(Date.now() - begin);
+  }
+  await projectNav.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.getByRole("button", { name: /Inspect Unicode 项目/ }).click();
+  await page
+    .getByRole("button", { name: /Alternate task for late inspector response/ })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Task inspector" }),
+  ).toContainText("Only alternate task evidence belongs here");
+  await expect(
+    page.getByRole("complementary", { name: "Task inspector" }),
+  ).not.toContainText("Rendered inputs remain scoped");
+  await page.getByRole("button", { name: /Inspect Unicode 项目/ }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Task inspector" }),
+  ).toContainText("Rendered inputs remain scoped");
+  await expect(
+    page.getByRole("complementary", { name: "Task inspector" }),
+  ).toContainText("fixture-project");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({
+    path: "test-results/coordination-standard.png",
+    fullPage: true,
+  });
+  await page.evaluate(() =>
+    window.topsl.command({ type: "theme", theme: "night" }),
+  );
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
+  await page.screenshot({
+    path: "test-results/coordination-night.png",
+    fullPage: true,
+  });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.evaluate(() =>
+    window.topsl.command({ type: "theme", theme: "system" }),
+  );
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
+  await page.screenshot({
+    path: "test-results/coordination-system-dark.png",
+    fullPage: true,
+  });
+  await page.evaluate(() =>
+    window.topsl.command({ type: "theme", theme: "paper" }),
+  );
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "paper");
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5),
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+  ).toBe(false);
+  const enlargedCapture = await app.evaluate(async ({ BrowserWindow }) =>
+    (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
+      .toPNG()
+      .toString("base64"),
+  );
+  await writeFile(
+    "test-results/coordination-scale.png",
+    Buffer.from(enlargedCapture, "base64"),
+  );
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1),
+  );
+  await page.setViewportSize({ width: 560, height: 720 });
+  await page.getByRole("button", { name: /Inspect Unicode 项目/ }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Task details" }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/coordination-compact.png",
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+  ).toBe(false);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Task details" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Navigation", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Applications", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const p95 = (values) =>
+    values.slice().sort((a, b) => a - b)[
+      Math.floor((values.length - 1) * 0.95)
+    ];
+  desktopBenchmark = {
+    recordedAt: new Date().toISOString(),
+    environment: {
+      platform: process.platform,
+      arch: process.arch,
+      release: os.release(),
+      cpu: os.cpus()[0]?.model,
+      cores: os.cpus().length,
+      node: process.versions.node,
+      electron: await app.evaluate(() => process.versions.electron),
+    },
+    workload: {
+      messages: 100000,
+      projects: 2,
+      nativeSources: 4,
+      sourceBytes: await Promise.all(
+        streamFixtures.map(
+          async (fixture) => (await readFile(fixture.file)).length,
+        ),
+      ),
+      historyPage: 80,
+      eventBatch: 200,
+      renderedWindowLimit: 20,
+    },
+    measurements: {
+      electronProcessesBefore: benchmarkMemoryBefore,
+      historyIpcQueryP95Ms: p95(historyQueries),
+      ordinaryUiInteractionP95Ms: p95(interactions),
+      selectedStreamCommitResponseToRenderedTextMs: streamLatency[0],
+      selectedReconciliationCommandStartToRenderedTextP95Ms: p95(
+        selectedCommandToRender,
+      ),
+      selectedReconciliationSamplesMs: selectedCommandToRender,
+      electronProcesses: await app.evaluate(({ app }) =>
+        app
+          .getAppMetrics()
+          .map((metric) => ({
+            type: metric.type,
+            cpu: metric.cpu.percentCPUUsage,
+            memory: metric.memory,
+          })),
+      ),
+    },
+    limits: [
+      "Native JSONL source fixtures; no model turn or paid route.",
+      "Stream latency measures after four concurrent reconciliation command responses; service commit time and provider latency are excluded.",
+      "Selected command-start to paint samples include IPC, full-source reparse and durable reconciliation; they are conservative upper bounds, not direct commit-to-paint samples.",
+      "Interaction timing includes Playwright locator/visibility overhead; this is a measurement, not a release SLA.",
+    ],
+  };
+  await writeFile(
+    "test-results/desktop-coordination-benchmark.json",
+    JSON.stringify(desktopBenchmark, null, 2),
+  );
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Night", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
@@ -366,6 +770,10 @@ try {
     "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette.",
   );
   console.log(`Isolated test profile: ${profile}`);
+} catch (error) {
+  console.error(`Desktop failure profile: ${profile}`);
+  if (errors.length) console.error("Renderer failures:", errors);
+  throw error;
 } finally {
   await app.close();
 }
@@ -396,7 +804,26 @@ try {
     state.projects.find((project) => project.name === "external-project")
       .trusted,
   ).toBe(false);
-  expect(state.messages).toHaveLength(2);
+  expect(state.messages.length).toBeLessThanOrEqual(200);
+  const persisted = await page.evaluate(
+    async (projectId) =>
+      window.topsl.command({
+        type: "history-page",
+        projectId,
+        query: "quartz",
+      }),
+    state.projects.find((project) => project.realPath === canonicalProject).id,
+  );
+  expect(
+    persisted.items.some((message) => message.text.includes("quartz")),
+  ).toBe(true);
+  const navigation = await page.evaluate(() =>
+    window.topsl.command({ type: "navigation-query" }),
+  );
+  expect(navigation.projectId).toBe(
+    state.projects.find((project) => project.realPath === canonicalProject).id,
+  );
+  expect(navigation.projectView).toBe("tasks");
   if (process.platform !== "win32") {
     expect(state.codexProjectSync.enabled).toBe(true);
     expect(state.codexProjectSync.status).toBe("ready");

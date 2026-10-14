@@ -48,6 +48,7 @@ let unlocking = false;
 let quitting = false;
 let closeApproved = false;
 let closeReview = false;
+let activeControl = false;
 let state: AppState = {
   locked: true,
   lockReason: "Unlocking the local vault…",
@@ -161,7 +162,12 @@ async function unlock(passphrase?: string): Promise<AppState> {
             void shell.openPath(target).then((error) => {
               if (error) publish({ type: "error", data: error });
             });
-        } else if (message.event.type === "terminal") publish(message.event);
+        } else if (message.event.type === "activity") {
+          activeControl = message.event.data?.active === true;
+        } else if (
+          ["terminal", "changes", "auth-url"].includes(message.event.type)
+        )
+          publish(message.event);
       } else {
         const task = pending.get(message.id);
         if (!task) return;
@@ -234,6 +240,69 @@ async function dispatch(command: Command): Promise<any> {
       state.lockReason ?? state.serviceError ?? "The vault is locked.",
     );
   const trusted: TrustedInput = {};
+  if (command.type === "builder-reviewer-advance") {
+    const review: any = await request({
+      kind: "review",
+      recordKind: "workflow-dispatch-inputs",
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Approve captured inputs and start?",
+        `${JSON.stringify(review, null, 2)}\n\nThe captured manifest, omissions, specification and explicit provider/runtime/model assignments above are the reviewed execution inputs. Changed files or revisions invalidate this approval. Provider acknowledgement does not establish comprehension. Native permission and billing rules still apply.`,
+        "Approve inputs and start",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
+  if (command.type === "replication-mapping-preview") {
+    const chosen = await dialog.showOpenDialog(window!, {
+      title: "Select the approved local workspace mapping",
+      properties: ["openDirectory"],
+    });
+    if (chosen.canceled) return null;
+    trusted.selectedPath = chosen.filePaths[0];
+  }
+  if (
+    command.type === "replication-plan-apply" ||
+    command.type === "replication-conflict-resolve" ||
+    command.type === "advanced-accept"
+  ) {
+    const recordKind =
+      command.type === "replication-plan-apply"
+        ? "replication-plan"
+        : command.type === "replication-conflict-resolve"
+          ? "replication-conflict"
+          : "advanced-acceptance";
+    const review: any = await request({
+      kind: "review",
+      recordKind,
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Approve this optional coordination operation?",
+        `${JSON.stringify(review, null, 2)}\n\nOnly this exact digest is approved. Replicated metadata does not grant native runtime access or trust; remote native control remains unsupported.`,
+        "Approve exact operation",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
+  if (
+    command.type === "replication-delete" ||
+    command.type === "replication-device-revoke"
+  ) {
+    trusted.approved = await confirm(
+      command.type === "replication-delete"
+        ? "Delete this replicated metadata record?"
+        : "Revoke this approved peer device?",
+      `Selected record: ${command.type === "replication-delete" ? command.recordId : command.deviceId}\n\nDeletion boundaries propagate through explicitly exchanged encrypted metadata. Native folders, history and credentials remain with their owners.`,
+      "Confirm change",
+    );
+    if (!trusted.approved) return null;
+  }
   if (command.type === "project-add" || command.type === "project-relink") {
     const chosen = await dialog.showOpenDialog(window!, {
       title:
@@ -353,6 +422,97 @@ async function dispatch(command: Command): Promise<any> {
       return null;
     trusted.digest = plan.digest;
   }
+  if (
+    command.type === "workspace-plan-apply" ||
+    command.type === "parallel-integration-apply"
+  ) {
+    const recordKind =
+      command.type === "workspace-plan-apply"
+        ? "workspace-plan"
+        : "integration-plan";
+    const plan: any = await request({
+      kind: "review",
+      recordKind,
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Apply this reviewed workspace operation?",
+        `${(plan.effects ?? []).join("\n")}\n\n${JSON.stringify({ ...plan, files: plan.files?.map((file: any) => ({ path: file.path, hash: file.hash, bytes: file.bytes })) }, null, 2)}\n\nWorkspaces isolate code changes; they do not sandbox OS access. External changes invalidate this review.`,
+        "Apply operation",
+      ))
+    )
+      return null;
+    trusted.digest = plan.digest;
+  }
+  if (command.type === "parallel-accept") {
+    const review: any = await request({
+      kind: "review",
+      recordKind: "parallel-acceptance",
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Accept this combined candidate?",
+        `${review.state.detail}\n\nCombined candidate: ${review.combinedCandidate?.revision ?? "unknown"}\nChecks and submissions: ${JSON.stringify(review.state, null, 2).slice(0, 16000)}\n\nAcceptance does not commit or deploy.`,
+        "Accept candidate",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
+  if (command.type === "advanced-review-confirm") {
+    const plan: any = await request({
+      kind: "review",
+      recordKind: "advanced-review-plan",
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Confirm this frozen proposal review?",
+        `${JSON.stringify(plan, null, 2)}\n\nThis records your explicit review of the frozen proposal and rubric. It does not claim automated testing, independent comprehension or deployment.`,
+        "Confirm reviewed proposal",
+      ))
+    )
+      return null;
+    trusted.digest = plan.digest;
+  }
+  if (
+    command.type === "builder-reviewer-check-apply" ||
+    command.type === "parallel-check-apply" ||
+    command.type === "advanced-check-apply"
+  ) {
+    const plan: any = await request({
+      kind: "review",
+      recordKind: "workflow-check-plan",
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Run this required check?",
+        `${plan.definition.label}\n\nExecutable: ${plan.definition.executable}\nArguments: ${JSON.stringify(plan.definition.args)}\nCandidate: ${plan.targetRevision}\nTimeout: ${plan.definition.timeoutMs} ms\n\nThe check runs against a temporary copy of the exact captured files. Dependencies are not installed or copied. This process has the user's OS permissions; network and access outside the temporary directory are not sandboxed.\n\n${plan.environment}\nApproval expires: ${plan.expiresAt}`,
+        "Run check",
+      ))
+    )
+      return null;
+    trusted.digest = plan.digest;
+  }
+  if (command.type === "builder-reviewer-accept") {
+    const review: any = await request({
+      kind: "review",
+      recordKind: "workflow-acceptance",
+      recordId: command.id,
+    });
+    if (
+      !(await confirm(
+        "Accept this reviewed candidate?",
+        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nChecks: ${JSON.stringify(review.checks?.map((check: any) => ({ definition: check.definition, result: check.result, targetRevision: check.targetRevision })))}\nFindings: ${JSON.stringify(review.findings?.map((finding: any) => ({ title: finding.title, disposition: finding.disposition })))}\n\nIndependent filesystem isolation: ${review.isolation}\nAcceptance does not deploy or commit changes. External changes invalidate this confirmation.`,
+        "Accept candidate",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
   if (command.type === "configuration-apply") {
     const plan: ConfigurationPlan = await request({
       kind: "review",
@@ -386,15 +546,44 @@ async function dispatch(command: Command): Promise<any> {
       return null;
     trusted.digest = approval.digest;
   }
-  if (command.type === "history-import") {
+  if (command.type === "sync-field-push") {
+    const sync: any = await request({
+      command: { type: "synchronization-query", projectId: command.projectId },
+    });
+    const field = sync.fields.find(
+      (item: any) =>
+        item.id === command.id && item.revision === command.expectedRevision,
+    );
+    if (!field)
+      throw new Error(
+        "This synchronization field changed. Refresh before reviewing its write.",
+      );
+    trusted.approved = await confirm(
+      "Push this reviewed native name?",
+      `Direction: Topsl → native registry\nCurrent native value: ${JSON.stringify(field.remote)}\nReviewed Topsl value: ${JSON.stringify(field.local)}\nSource revision: ${field.revision}\n\nOnly the supported native registry field is written. Visible desktop presentation has separate readback.`,
+      "Push reviewed name",
+    );
+    if (!trusted.approved) return null;
+  }
+  if (
+    command.type === "history-import" ||
+    command.type === "native-history-approve"
+  ) {
     const selected = await dialog.showOpenDialog(window!, {
       title: `Import an attributed ${command.provider} transcript`,
       properties: ["openFile"],
-      filters: [{ name: "Native transcript", extensions: ["jsonl"] }],
+      filters: [{ name: "Native transcript", extensions: ["jsonl", "ndjson"] }],
     });
     if (selected.canceled) return null;
     trusted.selectedPath = selected.filePaths[0];
-    trusted.approved = true;
+    trusted.approved =
+      command.type === "history-import" ||
+      (await confirm(
+        "Observe this native history source?",
+        `${command.provider}\nProfile: ${command.type === "native-history-approve" ? command.profileId : "selected"}\n${trusted.selectedPath}\n\nTopsl will incrementally read this exact source and record coverage gaps. Native files remain with their owner.`,
+        "Approve source",
+      ));
+    if (!trusted.approved) return null;
   }
   if (command.type === "history-delete") {
     trusted.approved = await confirm(
@@ -552,6 +741,7 @@ app.whenReady().then(async () => {
   window.webContents.session.setPermissionCheckHandler(() => false);
   window.on("close", (event) => {
     const active =
+      activeControl ||
       state.runs.some((r) =>
         ["starting", "running", "awaiting-approval"].includes(r.status),
       ) ||

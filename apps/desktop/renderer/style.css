@@ -1149,3 +1149,243 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
 }
+
+.coordination-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.3fr);
+  gap: 24px;
+}
+.coordination-task {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  margin: 8px 0;
+  gap: 5px;
+}
+.coordination-task.selected {
+  outline: 2px solid var(--accent);
+}
+.coordination-task span {
+  font-size: 12px;
+}
+.coordination-inspector dl {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 8px 12px;
+}
+.coordination-inspector dt {
+  font-weight: 600;
+}
+.coordination-inspector dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.coordination-attempt {
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+}
+@media (max-width: 900px) {
+  .coordination-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Scoped project workspace and bounded transcripts. */
+.project-tabs,
+.project-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 24px;
+}
+.project-tabs button[aria-current="page"],
+.workflow-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.project-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.project-overview article,
+.workflow-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.workflow-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+.workflow-form textarea {
+  min-height: 90px;
+}
+.workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.workflow-card dl,
+.task-drawer dl {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 13px;
+}
+.workflow-card dd,
+.task-drawer dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-section {
+  margin: 28px 0;
+}
+.coordination-attempt {
+  border-top: 1px solid var(--line);
+}
+.identity-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+.identity-row span {
+  min-width: 0;
+  flex: 1;
+}
+.virtual-transcript {
+  height: 520px;
+  max-height: 65vh;
+  overflow: auto;
+  contain: strict;
+}
+.virtual-message {
+  position: absolute;
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+  overflow: hidden;
+}
+.virtual-message pre {
+  max-height: 174px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.virtual-message .message-meta {
+  margin-bottom: 10px;
+}
+.task-drawer {
+  max-height: 90vh;
+  overflow: auto;
+  width: min(92vw, 640px);
+}
+.navigation-toggle {
+  display: none;
+}
+.coordination-view *,
+.workflow-section *,
+.sidebar-projects,
+.sidebar-projects button {
+  min-width: 0;
+}
+.coordination-view p,
+.workflow-section p,
+.coordination-task,
+.project-link {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+@media (max-width: 1000px) {
+  .project-overview {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 700px) {
+  .navigation-toggle {
+    display: block;
+  }
+  .sidebar {
+    display: none;
+  }
+  .sidebar.navigation-open {
+    display: flex;
+    width: min(86vw, 280px);
+    position: fixed;
+    z-index: 10;
+    inset: 0 auto 0 0;
+    box-shadow: var(--shadow);
+  }
+  .main-column {
+    margin-left: 0;
+    width: 100%;
+  }
+  .topbar {
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  .content {
+    padding: 24px 16px;
+  }
+  .workflow-form {
+    grid-template-columns: 1fr;
+  }
+  .coordination-inspector {
+    display: none;
+  }
+  .project-tabs {
+    gap: 6px;
+  }
+  .project-tabs button {
+    flex: 1;
+  }
+  .section-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  button {
+    white-space: normal;
+  }
+}
+.virtual-message pre {
+  max-height: 134px;
+}
+.project-tabs,
+.project-shortcuts {
+  flex-direction: row;
+}
+.coordination-inspector dl {
+  font-size: 14px;
+}
+.coordination-inspector .path,
+.task-drawer .path {
+  font-size: 12px;
+}
+.project-tabs {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.project-tabs button {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.main-column {
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .project-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

@@ -4,14 +4,28 @@ import { readFileSync } from "node:fs";
 
 // This companion has only project context authority. It has no desktop control endpoint.
 const [mode, grantFile, ...rest] = process.argv.slice(2);
-if (!["mcp", "search", "history", "status"].includes(mode) || !grantFile) {
+if (
+  ![
+    "mcp",
+    "search",
+    "history",
+    "search-page",
+    "history-page",
+    "status",
+  ].includes(mode) ||
+  !grantFile
+) {
   process.stderr.write(
-    "Usage: topsl-context <mcp|search|history|status> <grant.json> [query]\n",
+    "Usage: topsl-context <mcp|search|history|search-page|history-page|status> <grant.json> [query] [--cursor cursor] [--limit 1..50]\n",
   );
   process.exit(2);
 }
 const grant = JSON.parse(readFileSync(grantFile, "utf8"));
-function call(method: string, query?: string): Promise<any> {
+function call(
+  method: string,
+  query?: string,
+  page: { cursor?: string; limit?: number } = {},
+): Promise<any> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(grant.endpoint);
     let data = "";
@@ -19,7 +33,7 @@ function call(method: string, query?: string): Promise<any> {
       socket.destroy(new Error("Topsl context timed out.")),
     );
     socket.on("connect", () =>
-      socket.write(JSON.stringify({ ...grant, method, query }) + "\n"),
+      socket.write(JSON.stringify({ ...grant, method, query, ...page }) + "\n"),
     );
     socket.on("data", (bytes) => {
       data += bytes.toString("utf8");
@@ -37,8 +51,15 @@ function call(method: string, query?: string): Promise<any> {
     });
   });
 }
-if (mode !== "mcp")
-  call(mode, rest.join(" "))
+if (mode !== "mcp") {
+  const page: { cursor?: string; limit?: number } = {};
+  const query: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--cursor") page.cursor = rest[++i];
+    else if (rest[i] === "--limit") page.limit = Number(rest[++i]);
+    else query.push(rest[i]);
+  }
+  call(mode, query.join(" "), page)
     .then((result) =>
       process.stdout.write(JSON.stringify(result, null, 2) + "\n"),
     )
@@ -46,7 +67,7 @@ if (mode !== "mcp")
       process.stderr.write(error.message + "\n");
       process.exitCode = 1;
     });
-else {
+} else {
   const lines = createInterface({ input: process.stdin });
   lines.on("line", async (line) => {
     if (line.length > 16000) return;
@@ -76,6 +97,34 @@ else {
               },
             },
             {
+              name: "topsl_search_page",
+              description:
+                "Page through attributed history search permitted by this grant. Use the returned nextCursor with the same query.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: { type: "string", maxLength: 500 },
+                  cursor: { type: "string" },
+                  limit: { type: "integer", minimum: 1, maximum: 50 },
+                },
+                required: ["query"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "topsl_history_page",
+              description:
+                "Page through attributed history permitted by this grant. Withheld records are filtered by the server.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  cursor: { type: "string" },
+                  limit: { type: "integer", minimum: 1, maximum: 50 },
+                },
+                additionalProperties: false,
+              },
+            },
+            {
               name: "topsl_status",
               description: "Read the scope of this Topsl project connection.",
               inputSchema: {
@@ -88,7 +137,12 @@ else {
         };
       else if (
         request.method === "tools/call" &&
-        ["topsl_search", "topsl_status"].includes(request.params?.name)
+        [
+          "topsl_search",
+          "topsl_search_page",
+          "topsl_history_page",
+          "topsl_status",
+        ].includes(request.params?.name)
       )
         result = {
           content: [
@@ -96,8 +150,19 @@ else {
               type: "text",
               text: JSON.stringify(
                 await call(
-                  request.params.name === "topsl_search" ? "search" : "status",
+                  (
+                    {
+                      topsl_search: "search",
+                      topsl_search_page: "search-page",
+                      topsl_history_page: "history-page",
+                      topsl_status: "status",
+                    } as Record<string, string>
+                  )[request.params.name],
                   request.params.arguments?.query,
+                  {
+                    cursor: request.params.arguments?.cursor,
+                    limit: request.params.arguments?.limit,
+                  },
                 ),
               ),
             },

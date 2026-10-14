@@ -1,3 +1,4 @@
+import { ActionButton } from "./components/action-button";
 import React, { useState } from "react";
 import type {
   AppState,
@@ -63,31 +64,31 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
         <p>Locate this project’s folder to keep using its existing history.</p>
       )}
       <div className="actions wrap">
-        <button disabled={busy} onClick={() => selectProject(project.id)}>
+        <ActionButton disabled={busy} onClick={() => selectProject(project.id)}>
           View workspace
-        </button>
+        </ActionButton>
         {!project.trusted && available && (
-          <button
+          <ActionButton
             disabled={busy}
             onClick={() => void act({ type: "project-trust", id: project.id })}
           >
             Trust folder…
-          </button>
+          </ActionButton>
         )}
-        <button
+        <ActionButton
           disabled={busy}
           onClick={() => void act({ type: "project-relink", id: project.id })}
         >
           Relink folder…
-        </button>
-        <button
+        </ActionButton>
+        <ActionButton
           disabled={busy}
           onClick={() =>
             void act({ type: "project-copy-path", id: project.id })
           }
         >
           Copy folder path
-        </button>
+        </ActionButton>
       </div>
       <div className="project-open">
         <label>
@@ -121,7 +122,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
             })}
           </select>
         </label>
-        <button
+        <ActionButton
           disabled={
             busy ||
             !available ||
@@ -140,7 +141,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
           }}
         >
           Open folder
-        </button>
+        </ActionButton>
       </div>
       {selectedInstallation && !selectedInstallation.trusted && (
         <p className="tiny">
@@ -201,10 +202,12 @@ function NativeProjectRow({
                 setEdit({ ...edit, name: event.target.value })
               }
             />
-            <button disabled={disabled || !edit.name.trim()}>Save name</button>
-            <button type="button" onClick={() => setEdit(null)}>
+            <ActionButton disabled={disabled || !edit.name.trim()}>
+              Save name
+            </ActionButton>
+            <ActionButton type="button" onClick={() => setEdit(null)}>
               Cancel
-            </button>
+            </ActionButton>
           </form>
         ) : (
           <strong>{project.name}</strong>
@@ -223,16 +226,16 @@ function NativeProjectRow({
       </div>
       <div className="actions wrap">
         {!edit && (
-          <button
+          <ActionButton
             disabled={disabled}
             onClick={() =>
               setEdit({ name: project.name, revision: project.revision })
             }
           >
             Rename
-          </button>
+          </ActionButton>
         )}
-        <button
+        <ActionButton
           aria-label={`Move ${project.name} up`}
           disabled={disabled || index === 0}
           onClick={() =>
@@ -245,8 +248,8 @@ function NativeProjectRow({
           }
         >
           ↑
-        </button>
-        <button
+        </ActionButton>
+        <ActionButton
           aria-label={`Move ${project.name} down`}
           disabled={disabled || index === sync.projects.length - 1}
           onClick={() =>
@@ -259,7 +262,7 @@ function NativeProjectRow({
           }
         >
           ↓
-        </button>
+        </ActionButton>
       </div>
     </div>
   );
@@ -319,7 +322,7 @@ function CodexRegistry(props: Props) {
           {(!sync.enabled ||
             sync.status === "error" ||
             installationId !== sync.installationId) && (
-            <button
+            <ActionButton
               disabled={
                 busy ||
                 sync.refreshing ||
@@ -330,22 +333,22 @@ function CodexRegistry(props: Props) {
               }
             >
               {sync.enabled ? "Reconnect…" : "Enable Codex sync…"}
-            </button>
+            </ActionButton>
           )}
           {sync.enabled && (
             <>
-              <button
+              <ActionButton
                 disabled={busy || sync.refreshing}
                 onClick={() => void act({ type: "codex-project-sync-refresh" })}
               >
                 Sync now
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 disabled={busy}
                 onClick={() => void act({ type: "codex-project-sync-pause" })}
               >
                 Pause Codex sync
-              </button>
+              </ActionButton>
             </>
           )}
         </div>
@@ -399,9 +402,9 @@ export function Projects(props: Props) {
           <h1>Projects</h1>
           <p>Use the same project folders in Topsl, Codex, and Claude.</p>
         </div>
-        <button className="primary" disabled={busy} onClick={addProject}>
+        <ActionButton className="primary" disabled={busy} onClick={addProject}>
           + Add project
-        </button>
+        </ActionButton>
       </div>
       <section className="settings-card" aria-label="Project synchronization">
         <div className="section-heading">
@@ -419,20 +422,20 @@ export function Projects(props: Props) {
           same files when they use the same folder.
         </p>
         <div className="actions wrap">
-          <button
+          <ActionButton
             disabled={busy}
             onClick={() =>
               void act({ type: "project-sync-enable", enabled: !sync.enabled })
             }
           >
             {sync.enabled ? "Pause discovery" : "Enable project discovery…"}
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             disabled={busy || !sync.enabled || sync.refreshing}
             onClick={() => void act({ type: "project-sync-refresh" })}
           >
             Refresh projects
-          </button>
+          </ActionButton>
         </div>
         <details className="project-sources">
           <summary>
