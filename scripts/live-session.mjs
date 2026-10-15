@@ -203,6 +203,7 @@ async function claudeTerminal(projectId) {
   const session = (report.session = {
     folderTrust: "not shown",
     folderTrustReadFrom: null,
+    apiError: null,
     exit: null,
     run: null,
     transcript: null,
@@ -271,9 +272,21 @@ async function claudeTerminal(projectId) {
   await until("Claude Code's reply", 240000, async () => {
     const output = plain((await terminalOutput()).slice(before)),
       screen = await terminalScreen();
-    if (signIn.test(`${output}\n${screen}`) || exitPattern.test(output))
-      throw new Error("Claude Code stopped instead of replying.");
-    return output.includes(expected) || screen.includes(expected);
+    if (output.includes(expected) || screen.includes(expected)) return true;
+    // An API error Claude Code has given up on stays on screen; while it
+    // retries one, it says so.
+    const apiError = /API Error: (\d{3})/.exec(screen);
+    if (apiError && !/Retrying in/i.test(screen)) {
+      session.apiError = Number(apiError[1]);
+      throw new Error(
+        `Claude Code reported API error ${apiError[1]} instead of replying.`,
+      );
+    }
+    if (signIn.test(`${output}\n${screen}`))
+      throw new Error("Claude Code asked to sign in instead of replying.");
+    if (exitPattern.test(output))
+      throw new Error("Claude Code exited instead of replying.");
+    return false;
   });
   report.replyObserved = true;
   report.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;

@@ -5,6 +5,9 @@
 // in a Claude Code style transcript. It moves the cursor over blank cells
 // instead of writing spaces, so, as with Claude Code's prompts, its words run
 // together in the raw output and read correctly only on the rendered screen.
+// If CLAUDE_CONFIG_DIR has a stand-in-api-error file, it shows an API error
+// with the status in that file instead of the answer. (Topsl passes only a few
+// environment variables to the native terminal, CLAUDE_CONFIG_DIR among them.)
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -74,9 +77,20 @@ process.stdin.on("data", (chunk) => {
       const sum = (text.match(/\d+/g) ?? [])
         .map(Number)
         .reduce((a, b) => a + b, 0);
+      const errorFile = path.join(
+        process.env.CLAUDE_CONFIG_DIR,
+        "stand-in-api-error",
+      );
+      const status = fs.existsSync(errorFile)
+        ? fs.readFileSync(errorFile, "utf8").trim()
+        : null;
       setTimeout(() => {
-        out(`\r\n⏺ ${sum}\r\n`);
-        record("assistant", String(sum));
+        if (status)
+          out(`\r\n⏺ Please run /login · API Error: ${status} stand-in\r\n`);
+        else {
+          out(`\r\n⏺ ${sum}\r\n`);
+          record("assistant", String(sum));
+        }
         prompt();
       }, 1000);
     } else if (character === "\x7f") line = line.slice(0, -1);
