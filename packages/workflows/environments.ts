@@ -1194,6 +1194,9 @@ export class PreparedEnvironments {
           timeout = true;
           void lifecycle.stop();
         }, command.timeoutMs);
+        // The limit covers the command, not the process-tree observation after
+        // it closes, which can take several seconds on Windows.
+        child.once("close", () => clearTimeout(timer));
         instance.preparationLifecycle = await lifecycle.completion(
           command.timeoutMs + 6100,
         );
