@@ -183,7 +183,7 @@ async function setup(
           label: "verify actual candidate value",
           executable: process.execPath,
           args: ["-e", checksCode],
-          timeoutMs: 10000,
+          timeoutMs: 30_000,
           ...(options.checkPolicy
             ? { executionPolicy: options.checkPolicy }
             : {}),

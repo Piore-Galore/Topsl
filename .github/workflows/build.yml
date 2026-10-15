@@ -18,7 +18,9 @@ jobs:
     # Standard public-repository runners are free. Do not silently consume private-repo minutes.
     if: github.event.repository.private == false
     name: ${{ matrix.name }}
-    timeout-minutes: 35
+    # A slower Windows runner took 20 minutes for setup and tests alone,
+    # before the desktop smoke and packaging steps.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

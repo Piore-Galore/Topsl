@@ -182,7 +182,7 @@ async function setup(label: string) {
     label: "Original receipt acceptance, dependency and tracked build",
     executable: node,
     args: [npm, "run", "check"],
-    timeoutMs: 10_000,
+    timeoutMs: 30_000,
     environmentRecipeId: selection.id,
   };
   const context = new ContextServer(f.store, f.directory);

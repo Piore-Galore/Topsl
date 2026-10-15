@@ -137,7 +137,7 @@ async function setup(initialUntracked = false) {
             "-e",
             'if(!require("fs").readFileSync("main.ts","utf8").includes("value = 2"))process.exit(1)',
           ],
-          timeoutMs: 10000,
+          timeoutMs: 30_000,
         },
       ],
     });

@@ -30,7 +30,10 @@ function barrier<T = void>() {
   });
   return { promise, resolve };
 }
-async function setup(program?: (marker: string) => string, timeoutMs = 5_000) {
+// Generous check budget for slow hosted runners: on Windows the check that
+// writes 2.4 MB of output once ended in error, most likely past its former
+// 5 second budget. Tests that need a check to time out pass their own budget.
+async function setup(program?: (marker: string) => string, timeoutMs = 30_000) {
   const f = await fixture(),
     source = path.join(f.directory, "source"),
     marker = path.join(f.directory, "effects.txt");
@@ -265,9 +268,9 @@ describe("R2 durable process executions", () => {
     );
     const checks = new CheckExecutions(f.store),
       verification = await checks.execute(f.repository, f.plan, f.plan.digest);
-    expect(verification.result).toBe("passed");
     const execution = checks.list("p").executions[0],
       inspected = checks.inspect("p", execution.id);
+    expect(verification.result, execution.error ?? undefined).toBe("passed");
     expect(execution.truncated).toBe(true);
     expect(execution.outputBytes).toBeLessThanOrEqual(1_000_000);
     expect(execution.outputBytes).toBeGreaterThan(1_500);
