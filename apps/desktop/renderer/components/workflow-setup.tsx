@@ -10,6 +10,24 @@ const lines = (value: string) =>
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+function qualificationSummary(result: any): string {
+  const observations: any[] = result.report?.observations ?? [],
+    passed = observations.filter((o) => o.passed).map((o) => o.capability),
+    failed = observations.filter((o) => !o.passed).map((o) => o.capability),
+    untested = (result.report?.notTested ?? []).map((n: any) => n.capability);
+  return [
+    result.acceptanceId
+      ? `Qualification recorded until ${result.expiresAt}.`
+      : "Nothing was recorded.",
+    `Passed: ${passed.join(", ") || "none"}.`,
+    failed.length ? `Not passed: ${failed.join(", ")}.` : "",
+    untested.length ? `Not tested: ${untested.join(", ")}.` : "",
+    `Model turns started: ${result.report?.turnsStarted ?? 0}.`,
+    result.report?.error ? `Stopped: ${result.report.error}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 export function WorkflowSetup({
   projectId,
   runtimes,
@@ -30,6 +48,7 @@ export function WorkflowSetup({
     [readiness, setReadiness] = useState<any>(null),
     [guidedEnabled, setGuidedEnabled] = useState(false),
     [environment, setEnvironment] = useState<any>(null),
+    [qualifications, setQualifications] = useState<Record<string, any>>({}),
     [created, setCreated] = useState("");
   const generation = useRef(0),
     edits = useRef(0),
@@ -78,6 +97,7 @@ export function WorkflowSetup({
     setPending("");
     setError("");
     setModels({});
+    setQualifications({});
     setGuidedEnabled(false);
     setEnvironment(null);
     setCreated("");
@@ -423,6 +443,46 @@ export function WorkflowSetup({
         >
           Validate {role} runtime
         </button>
+        {selected?.installation.appId === "openai.codex-cli" && (
+          <button
+            type="button"
+            disabled={!draft[modelKey] || !!pending}
+            title="Runs up to 4 live model turns after you review them"
+            onClick={() =>
+              void perform(`qualify-${role}`, async () => {
+                const ticket = generation.current,
+                  requested = selection.current,
+                  installationId = draft[runtimeKey];
+                const result = await window.topsl.command({
+                  type: "runtime-qualify",
+                  id: installationId,
+                  model: draft[modelKey],
+                  ...(draft[effortKey] ? { effort: draft[effortKey] } : {}),
+                });
+                if (result == null || ticket !== generation.current) return;
+                setQualifications((current) => ({
+                  ...current,
+                  [installationId]: result,
+                }));
+                const order = ++readinessOrder.current,
+                  value = await window.topsl.command(readinessCommand());
+                if (
+                  ticket === generation.current &&
+                  requested === selection.current &&
+                  order === readinessOrder.current
+                )
+                  setReadiness(value);
+              })
+            }
+          >
+            Qualify {role} runtime
+          </button>
+        )}
+        {qualifications[draft[runtimeKey]] && (
+          <p role="status">
+            {qualificationSummary(qualifications[draft[runtimeKey]])}
+          </p>
+        )}
         <label>
           Requested {role} model
           <select

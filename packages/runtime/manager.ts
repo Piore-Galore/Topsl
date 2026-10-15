@@ -7,6 +7,11 @@ import {
 } from "../providers/acceptance";
 import { runtimeBinding } from "../providers/runtime-binding";
 import {
+  qualificationValidityDays,
+  runCodexQualification,
+  type QualificationReport,
+} from "../providers/qualification";
+import {
   capabilitySatisfies,
   roleRequirements,
   evaluateRoleReadiness,
@@ -80,6 +85,8 @@ export class RuntimeManager {
   private settling = new Set<Promise<void>>();
   private operations = new Set<Promise<unknown>>();
   private probes = new Set<ProviderConnection>();
+  /** Installation id → management unit of a running qualification. */
+  private qualifying = new Map<string, string>();
   readonly coordinator: Coordinator;
   private ownsCoordinator: boolean;
   readonly acceptance: RuntimeAcceptanceRegistry;
@@ -247,6 +254,149 @@ export class RuntimeManager {
       );
     return readiness;
   }
+  /** Runs the consented qualification suite against a connected, trusted Codex
+   * runtime and records what it observed. The caller must have obtained the
+   * user's explicit consent through a trusted dialog. */
+  qualify(
+    installation: Installation,
+    selection: { model: string; effort?: string },
+    parent: string,
+  ): Promise<{
+    acceptanceId: string | null;
+    expiresAt: string;
+    report: QualificationReport;
+  }> {
+    if (this.closing)
+      return Promise.reject(
+        new Error("Runtime dispatch is stopped for shutdown."),
+      );
+    const operation = this.qualifyOwned(installation, selection, parent);
+    this.operations.add(operation);
+    void operation.then(
+      () => this.operations.delete(operation),
+      () => this.operations.delete(operation),
+    );
+    return operation;
+  }
+  private async qualifyOwned(
+    installation: Installation,
+    selection: { model: string; effort?: string },
+    parent: string,
+  ) {
+    if (this.fixtureMode)
+      throw new Error(
+        "An injected fixture runtime cannot be qualified; only a launched native executable can.",
+      );
+    if (installation.appId !== "openai.codex-cli")
+      throw new Error(
+        "Only the Codex CLI structured route can be qualified. The Claude route remains unapproved; use the assisted native workflow.",
+      );
+    if (installation.compatibility !== "compatible")
+      throw new Error("Connect this runtime before qualifying it.");
+    if (this.qualifying.has(installation.id))
+      throw new Error("A qualification is already running for this runtime.");
+    const catalog = this.store.get<{
+        models: ProviderModel[];
+        runtimeRevision: string;
+        executableIdentity: string;
+      }>("runtime-model-catalog", installation.id),
+      model =
+        catalog?.runtimeRevision === installation.revisionId &&
+        catalog.executableIdentity === installation.identity
+          ? catalog.models.find((m) => m.model === selection.model)
+          : undefined;
+    if (
+      !model ||
+      (selection.effort &&
+        !model.supportedReasoningEfforts?.includes(selection.effort))
+    )
+      throw new Error(
+        "Discover this runtime's models and select a reported model and effort before qualifying.",
+      );
+    this.qualifying.set(installation.id, installation.managementUnitId);
+    try {
+      await this.preflight(installation);
+      const adapter = this.adapters.codex!,
+        connections = new Set<ProviderConnection>(),
+        // Shutdown closes qualification processes like any other probe.
+        tracked: ProviderAdapter = Object.assign(Object.create(adapter), {
+          connect: (executable: string, cwd: string) => {
+            const client = adapter.connect(executable, cwd);
+            connections.add(client);
+            this.probes.add(client);
+            return client;
+          },
+        });
+      let report: QualificationReport;
+      try {
+        report = await runCodexQualification({
+          adapter: tracked,
+          installation,
+          model: selection.model,
+          ...(selection.effort ? { effort: selection.effort } : {}),
+          parent,
+        });
+      } finally {
+        for (const client of connections) this.probes.delete(client);
+      }
+      const expiresAt = new Date(
+        Date.now() + qualificationValidityDays * 86_400_000,
+      ).toISOString();
+      let acceptanceId: string | null = null;
+      if (report.account) {
+        // The executable must still be the one that was probed.
+        if (
+          (await identity(installation.path)).identity !== installation.identity
+        )
+          throw new Error(
+            "The executable changed during qualification. Nothing was recorded.",
+          );
+        this.observeAccount(installation, report.account);
+        acceptanceId = this.acceptance.recordTrustedValidation(
+          runtimeBinding(installation, report.account),
+          report.observations,
+          expiresAt,
+        ).id;
+      }
+      const sanitized: QualificationReport = {
+        ...report,
+        account: report.account && {
+          ...report.account,
+          sanitized: {
+            type: report.account.sanitized.type,
+            email: null,
+            planType: report.account.sanitized.planType,
+          },
+        },
+      };
+      this.store.immutable("runtime-qualification-report", {
+        id: uid(),
+        installationId: installation.id,
+        acceptanceId,
+        expiresAt,
+        report: sanitized,
+        createdAt: now(),
+      });
+      this.changed();
+      return { acceptanceId, expiresAt, report: sanitized };
+    } finally {
+      this.qualifying.delete(installation.id);
+    }
+  }
+  qualificationReports(installationId: string) {
+    return [
+      ...this.store.iterate<{
+        id: string;
+        installationId: string;
+        acceptanceId: string | null;
+        expiresAt: string;
+        report: QualificationReport;
+        createdAt: string;
+      }>("runtime-qualification-report"),
+    ]
+      .filter((r) => r.installationId === installationId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
   isProjectBusy(id: string): boolean {
     return (
       [...this.openingWorkspaces.values()].includes(id) ||
@@ -271,7 +421,8 @@ export class RuntimeManager {
     return !!(
       this.active.size ||
       this.terminals.size ||
-      this.openingWorkspaces.size
+      this.openingWorkspaces.size ||
+      this.qualifying.size
     );
   }
   isUnitBusy(id: string): boolean {
@@ -279,7 +430,8 @@ export class RuntimeManager {
       [...this.active.values()].some((a) => a.run.managementUnitId === id) ||
       [...this.terminals.values()].some(
         (t) => t.installation.managementUnitId === id,
-      )
+      ) ||
+      [...this.qualifying.values()].includes(id)
     );
   }
   private async preflight(installation: Installation): Promise<void> {

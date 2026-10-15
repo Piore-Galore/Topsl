@@ -395,6 +395,16 @@ async function dispatch(command: Command): Promise<any> {
     );
     if (!trusted.approved) return null;
   }
+  if (command.type === "runtime-qualify") {
+    const i = state.installations.find((i) => i.id === command.id);
+    if (!i) throw new Error("Rediscover this installation first.");
+    trusted.approved = await confirm(
+      "Qualify this Codex runtime with live model turns?",
+      `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\nModel: ${command.model}${command.effort ? ` · effort ${command.effort}` : ""}\n\nTopsl will start up to 4 model turns through your native ChatGPT sign-in. They count against your subscription usage. In a disposable folder inside Topsl's profile it will:\n• ask for a marker reply (structured turn)\n• ask a read-only session to write a file, and check that nothing was written\n• ask an editing session to write one file inside its workspace and one outside it, and check that only the inside file exists\n• interrupt a turn that is writing a long answer\n• check that the runtime process exits when the connection closes\n\nApprovals are accepted only for those exact sentinel commands, once each; all others are declined. The folder is deleted afterwards. The result is recorded for 30 days and only for this executable, account, policy and host. It does not qualify the Claude route or the reviewer's candidate reader.`,
+      "Run qualification",
+    );
+    if (!trusted.approved) return null;
+  }
   if (command.type === "lifecycle-apply") {
     const plan: LifecyclePlan = await request({
       kind: "review",
@@ -646,7 +656,11 @@ async function dispatch(command: Command): Promise<any> {
     );
     if (!trusted.approved) return null;
   }
-  const result = await request({ kind: "command", command, trusted });
+  const result = await request(
+    { kind: "command", command, trusted },
+    // Qualification runs bounded live turns: 4 × 3 minutes plus connection setup.
+    command.type === "runtime-qualify" ? 20 * 60_000 : undefined,
+  );
   if (command.type === "project-copy-path" && result?.copyProjectPath) {
     clipboard.writeText(result.copyProjectPath);
     return;

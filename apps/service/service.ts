@@ -2498,6 +2498,27 @@ export class Service {
           throw e;
         }
       }
+      case "runtime-qualify": {
+        if (!trusted.approved)
+          throw new Error(
+            "Review the qualification operations and their model-turn budget first.",
+          );
+        const result = await this.runtime.qualify(
+          this.installation(command.id),
+          {
+            model: command.model,
+            ...(command.effort ? { effort: command.effort } : {}),
+          },
+          path.join(this.directory, "runtime-qualification"),
+        );
+        this.changed();
+        return result;
+      }
+      case "runtime-qualification-query":
+        this.installation(command.id);
+        return {
+          reports: this.runtime.qualificationReports(command.id).slice(0, 5),
+        };
       case "run-start": {
         const conversation = this.require<Conversation>(
           "conversation",

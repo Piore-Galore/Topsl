@@ -24,8 +24,17 @@ History and its search index are encrypted with SQLCipher. The database key uses
 3. Open **Native terminal** for either provider. Use **Native login** to authenticate through the provider's own CLI. Topsl does not read or broker native OAuth tokens. Terminal output is transient, including login output.
 4. For structured Codex chats, choose **Connect / test**, load the native models, create a chat, and select read-only review or workspace edits. This is an explicitly experimental local stdio integration. Unknown native client requests are rejected, and unsupported features remain available in the native terminal.
 5. Import a selected native JSONL transcript under **History**, then search it or prepare an attributed handoff. Imported transcripts are reference history; they are never silently resumed or written back into the provider's store.
+6. To use a Codex runtime as a coordinated workflow builder, connect it and select a reported model under **Create a workflow → Team**, then choose **Qualify builder runtime**. See [Qualify a Codex runtime](#qualify-a-codex-runtime).
 
 The subscription-only pilot blocks known API billing environment overrides. Structured Codex turns require native ChatGPT authentication. Claude's native terminal owns its login, model choice, billing mode, and permissions; inspect these in the native UI before submitting work. Multiple isolated provider profiles, optional API accounts, and remote hosts remain separate roadmap items.
+
+### Qualify a Codex runtime
+
+Coordinated workflow roles run only on a runtime that Topsl has qualified for the exact executable, native account/profile, managed policy and host. **Qualify builder/reviewer runtime** shows a trusted dialog listing the operations, then runs them through your native ChatGPT sign-in. It starts up to four model turns, which count against your subscription usage.
+
+In a disposable folder inside the Topsl profile, the suite asks for a marker reply, asks a read-only session to write a file, asks an editing session to write one file inside its workspace and one outside it, interrupts a long answer, and checks that the runtime process exits. Topsl inspects the folder itself after each probe. Approvals are accepted only for the exact sentinel commands, once each, so a write that lands shows the sandbox let it through. A refusal or a changed command never counts as enforcement. The folder is deleted afterwards.
+
+The result is recorded for 30 days. Changing the executable, account/profile or native policy files invalidates it, and a later run replaces it. A passing run satisfies the builder (implementer) role. The reviewer role also needs the immutable candidate reader installed over the provider's tool channel, which is not implemented yet, so reviewers stay blocked and the assisted native handoff remains the alternative. The Claude structured route cannot be qualified. The suite uses POSIX shell probes and runs on macOS and Linux. It has been exercised only against a scripted app-server fixture, not a live Codex runtime.
 
 ## Shared local projects
 

@@ -800,6 +800,13 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("runtime-models"), id }),
   z.object({ type: z.literal("runtime-account"), id }),
   z.object({
+    type: z.literal("runtime-qualify"),
+    id,
+    model: z.string().min(1).max(200),
+    effort: z.string().min(1).max(100).optional(),
+  }),
+  z.object({ type: z.literal("runtime-qualification-query"), id }),
+  z.object({
     type: z.literal("run-start"),
     conversationId: id,
     installationId: id,

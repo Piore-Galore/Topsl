@@ -31,3 +31,5 @@ The [Claude programmatic guide](https://code.claude.com/docs/en/headless), check
 No provider inference, account access, native-store mutation, API subscription, package installation, publication or live acceptance was performed. Actual supported structured execution, selected-runtime schema/flag acceptance, filesystem restrictions, cancellation, account binding and usage remain pending authorized live tests. The full automated two-provider milestone and cross-platform release qualification remain R2-6 gates.
 
 Follow-up, 15 October 2026: the runtime's final readiness gate now applies to coordinated attempts only. Direct structured chats are outside role readiness. See the [review follow-up](Round_2_Execution.md#review-follow-up--15-october-2026).
+
+Follow-up, 15 October 2026: a consented Codex qualification runner now calls the registry writer. It passes only operations it observed through its own filesystem checks; the candidate reader remains untested, so reviewer roles stay blocked. See the [qualification follow-up](Round_2_Execution.md#follow-up--runtime-qualification-and-check-caches-15-october-2026).

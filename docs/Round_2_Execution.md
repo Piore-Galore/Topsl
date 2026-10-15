@@ -78,3 +78,45 @@ Open items noted by the review but not changed:
 - If opening an assisted handoff fails, the handoff stays `externally-controlled` until a report is imported. That import is the only way to clear the managed-writer block for the project.
 - `assisted-handoff-prepare/open/import` carry no `requestId`, so a retried request is not deduplicated by the command journal.
 - The lifecycle-stress workflow runs 20 iterations on four hosted runners for every push to `main` and every pull request.
+
+## Follow-up — runtime qualification and check caches (15 October 2026)
+
+This follow-up adds the production qualification runner that the [acceptance boundaries](#acceptance-boundaries) listed as open, and resolves the check-cache item from the [review follow-up](#review-follow-up--15-october-2026). Everything above remains the dated record of the earlier runs.
+
+### Runtime qualification runner
+
+`runtime-qualify {id, model, effort?}` runs [`runCodexQualification`](../packages/providers/qualification.ts) against a connected, trusted Codex CLI after a trusted native dialog lists the operations and the four-turn budget. [`RuntimeManager.qualify`](../packages/runtime/manager.ts) refuses injected fixture peers, the Claude route, unconnected runtimes and models or efforts absent from the current runtime catalog. It runs the usual preflight, re-checks the executable identity afterwards, and records the observations through `RuntimeAcceptanceRegistry.recordTrustedValidation` with a 30-day expiry. A sanitized report (no account email) is stored as `runtime-qualification-report`; `runtime-qualification-query {id}` returns the latest five. Configuration writes and lifecycle changes for the same management unit wait while a qualification runs.
+
+The suite works in a disposable folder under the Topsl profile, not the system temporary directory, because the native workspace-write policy may leave temporary directories writable.
+
+| Capability | Operation | Passes only when |
+|---|---|---|
+| `native-subscription` | `account/read` | The runtime reports a native ChatGPT subscription account |
+| `structured-turn` | One turn asking for a random marker | The turn completes and returns the marker |
+| `fresh-session` | Two `thread/start` requests | The thread identities differ |
+| `read-only` | A read-only session asked to `printf` a sentinel file | The write reached the sandbox (exact approval accepted, or run without asking) and Topsl finds no new file anywhere in the folder |
+| `workspace-write` | An editing session asked to write one sentinel inside and one outside the workspace | The inside file holds the expected bytes, the outside write reached the sandbox, and the outside folder stays empty |
+| `interrupt` | `turn/interrupt` once a long answer starts | The turn ends `interrupted` |
+| `process-lifecycle` | Closing the connection | Process evidence is `quiescent` |
+
+Approvals are accepted only for the exact sentinel command (optionally wrapped in `sh -c`, `bash -lc` or `zsh -lc`) or a single-file change to the sentinel path, once each; requests carrying `grantRoot` and everything else are declined. A refusal, a declined request or an altered command is therefore never counted as enforcement, and a write that lands is recorded as `unsupported`. `candidate-reader` is reported as not tested: no provider tool channel installs the immutable reader yet, so reviewer roles stay blocked with `candidate-reader-unavailable`. The probes use POSIX shell commands and are refused on Windows.
+
+The UI adds **Qualify builder/reviewer runtime** beside **Validate** in the guided workflow team step, shows a one-line result, and re-reads readiness.
+
+### Check caches
+
+[`assertExecutionIntegrity`](../packages/workflows/environments.ts) now skips well-known tool caches that are not candidate inputs: directories `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.hypothesis`, `.nyc_output`, `.parcel-cache`, `.turbo`, `.cache`, and files `.eslintcache`, `.coverage`. A cache directory must contain only regular files and directories. The check log records the ignored paths. The materialized copy is discarded, so a cache cannot affect a later execution.
+
+The minimal check `PATH` (the reviewed Node directory plus `/usr/bin:/bin`) is unchanged. Recipes bind each check to recorded toolchain identities, and inheriting the user's `PATH` would let unrecorded tools run.
+
+### Validation
+
+Linux x64 cloud container, Node 22.22.0 (not Electron), dependencies from `npm ci --ignore-scripts` with SQLite and PTY rebuilt for Node. `ANTHROPIC_BASE_URL` was unset for test runs because the container sets it and the billing guard correctly refuses it.
+
+- `tsc --noEmit` (TypeScript 7.0.2) passed.
+- `npx vitest run --testTimeout=120000`: **321 passed, 2 failed, 3 skipped** across 37 files, including 8 new qualification tests and 1 new cache test. The two failures (R2-AT-07 incremental logs and R2-AT-04 awaited shutdown in `tests/durable-executions.test.ts`) also fail on unmodified `main` in this container: their `vi.waitFor` uses the 1-second default while the first check log arrives later here. With a 15-second wait they pass on both trees; the test files were not changed.
+- `node --test tests/release.test.mjs tests/release-packaging.test.mjs tests/mac-package.test.mjs`: 16 passed, 1 skipped (macOS only).
+- `npm run build` passed, with the existing renderer chunk-size warning.
+- A mutation check that dropped the "write reached the sandbox" requirement from the read-only probe made the refusal test fail, as intended.
+
+Not run here: `npm run test:desktop`, `npm run package` and `npm run verify:mac-package` (no Electron binary or macOS in the container), and any live Codex qualification. The suite has been exercised only against the scripted [qualification fixture](../tests/fixtures/codex-qualify.cjs); its protocol assumptions (approval parameters, item shapes, decision values) match the existing adapter but are unverified against a live runtime.
