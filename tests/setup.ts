@@ -9,7 +9,8 @@ import { vi } from "vitest";
 const waitFor = vi.waitFor.bind(vi);
 const minimumTimeout = 30_000;
 vi.waitFor = ((callback, options) => {
-  const requested = typeof options === "number" ? { timeout: options } : options;
+  const requested =
+    typeof options === "number" ? { timeout: options } : options;
   return waitFor(callback, {
     interval: 50,
     ...requested,

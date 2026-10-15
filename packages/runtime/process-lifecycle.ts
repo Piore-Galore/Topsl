@@ -1,6 +1,9 @@
 import { execFile, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { nativeEnvironment } from "../platform/system";
+import {
+  nativeEnvironment,
+  WINDOWS_PROCESS_QUERY_MODULES,
+} from "../platform/system";
 import { now } from "../domain/invariants";
 
 export interface ProcessEvidence {
@@ -35,6 +38,7 @@ export async function windowsDescendants(
     "powershell.exe",
   );
   const script =
+    WINDOWS_PROCESS_QUERY_MODULES +
     "Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; parent=$_.ParentProcessId; created=$_.CreationDate.ToUniversalTime().ToString('o') } } | ConvertTo-Json -Compress";
   return new Promise((resolve) => {
     execFile(
@@ -43,7 +47,8 @@ export async function windowsDescendants(
       {
         windowsHide: true,
         shell: false,
-        timeout: 4_000,
+        // The first query after boot took 7.5 s on a hosted runner.
+        timeout: 15_000,
         maxBuffer: 2_000_000,
         env: nativeEnvironment(),
       },
@@ -123,7 +128,11 @@ export function processGroupPresent(groupId: number): boolean | null {
   } catch (error: any) {
     // EPERM still means the group has a member, one this process may not
     // signal; macOS reports it for an exited member that is not yet reaped.
-    return error.code === "ESRCH" ? false : error.code === "EPERM" ? true : null;
+    return error.code === "ESRCH"
+      ? false
+      : error.code === "EPERM"
+        ? true
+        : null;
   }
 }
 
