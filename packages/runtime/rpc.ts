@@ -128,7 +128,7 @@ export class RpcPeer {
       clientInfo: {
         name: "topsl",
         title: "Topsl personal pilot",
-        version: "0.1.1",
+        version: "0.1.2",
       },
     });
     this.notify("initialized");

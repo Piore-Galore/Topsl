@@ -434,7 +434,7 @@ export class Service {
       locked: false,
       lockReason: null,
       platform: `${process.platform}/${process.arch}`,
-      version: "0.1.1",
+      version: "0.1.2",
       theme: this.store.get<any>("preference", "theme")?.value ?? "paper",
       applications: catalog,
       capabilities,

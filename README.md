@@ -6,7 +6,7 @@ This repository now contains a working **personal pilot**, alongside the complet
 
 ## Run locally
 
-Use Node.js 24 LTS or newer and a native compiler toolchain if prebuilt dependencies are unavailable.
+Use Node.js 22.12 or newer (the GitHub workflows use Node.js 24) and a native compiler toolchain if prebuilt dependencies are unavailable.
 
 ```sh
 npm ci
@@ -100,7 +100,7 @@ The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. T
 
 ### macOS reports that Topsl is damaged
 
-The published v0.1.1 Mac ZIPs were built with signing disabled. This leaves an invalid Electron bundle signature, so macOS can report that the app is damaged even when the download matches its SHA-256 checksum. Rebuild from the corrected packaging configuration above; the existing GitHub assets have not been replaced. To check a particular archive on macOS, run `npm run verify:mac-package -- /absolute/path/to/Topsl.zip`.
+The published v0.1.1 Mac ZIPs were built with signing disabled. This leaves an invalid Electron bundle signature, so macOS can report that the app is damaged even when the download matches its SHA-256 checksum. The v0.1.1 assets have not been replaced; v0.1.2 is the first release built with the corrected packaging configuration above. To check a particular archive on macOS, run `npm run verify:mac-package -- /absolute/path/to/Topsl.zip`.
 
 Extract the repaired ZIP before opening Topsl. Because the pilot is not notarized, macOS may still request approval. For your own build or a checksum-verified release you trust, try opening the app, then use **System Settings → Privacy & Security → Open Anyway** if offered. [Apple's guidance for opening apps](https://support.apple.com/en-us/102445) explains this approval. A Mac download that opens without this approval requires a Developer ID signature and Apple notarization.
 
@@ -112,11 +112,11 @@ The compile workflow uses read-only repository permissions, pinned actions, boun
 
 [Release Topsl](https://github.com/Piore-Galore/Topsl/actions/workflows/release.yml) runs when a `v<version>` tag matching `package.json` is pushed. It builds and tests all four platforms, uploads each package and SHA-256 checksum directly to a draft GitHub Release, and publishes a personal-pilot prerelease without distribution signing/notarization only after every platform passes and the uploaded checksums are verified. Mac archives must also pass extracted-bundle signature verification. Release jobs have repository-content write permission through the temporary `GITHUB_TOKEN`. They use the same public standard runners and pinned actions, without Actions artifact storage or dependency caches. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 
-To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the repaired pilot:
+To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the current pilot:
 
 ```sh
-git tag -a v0.1.1 -m "Topsl v0.1.1 personal pilot"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "Topsl v0.1.2 personal pilot"
+git push origin v0.1.2
 ```
 
 Failed builds leave the release in draft. Rerun failed jobs on the same tag to resume; each platform replaces only its own draft assets. Published releases are never overwritten by this workflow. Use a new version and tag for subsequent releases; do not move an existing release tag. Downloads appear on the [releases page](https://github.com/Piore-Galore/Topsl/releases).
@@ -138,8 +138,8 @@ docs/                 Full design, review, and implementation acceptance matrix
 
 ## Round 2 implementation — 15 October 2026
 
-The current working tree adds durable check/preparation records, protected candidate manifests and bounded retrieval, qualified role readiness, assisted handoffs, scoped UI recovery, and guided workflow setup. See the [Round 2 implementation and evidence](docs/Round_2_Execution.md) for commands, phase reports, preserved failures and the exact source/export identity. Structured dispatch requires service-owned qualification for the selected runtime, account and policy; trusting an executable or loading its model catalog does not supply that qualification. Native-assisted operation remains a separate, attributed flow.
+Round 2 adds durable check/preparation records, protected candidate manifests and bounded retrieval, qualified role readiness, assisted handoffs, scoped UI recovery, and guided workflow setup. See the [Round 2 implementation and evidence](docs/Round_2_Execution.md) for commands, phase reports, preserved failures and the exact source/export identity. Structured dispatch requires service-owned qualification for the selected runtime, account and policy; trusting an executable or loading its model catalog does not supply that qualification. Native-assisted operation remains a separate, attributed flow.
 
-The changes are uncommitted local implementation. Scripted provider fixtures and real offline project checks do not qualify live Codex/Claude operation or packaged platforms. Live provider acceptance, the delivery commit and all four remote platform jobs remain pending.
+Round 2 was committed to `main` on 15 October 2026 (596d3dd and the fixes after it) and ships in v0.1.2. Scripted provider fixtures and real offline project checks do not qualify live Codex/Claude operation or packaged platforms. Live provider acceptance and four-platform release qualification remain pending.
 
 Review follow-up (15 October 2026): qualification gates *coordinated* workflow roles only. Direct structured Codex chats (step 4 above) keep the pilot preflight and are not blocked by role readiness. See the [review follow-up](docs/Round_2_Execution.md#review-follow-up--15-october-2026).

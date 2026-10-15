@@ -80,7 +80,7 @@ if (mode !== "mcp") {
         result = {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "topsl-project-context", version: "0.1.1" },
+          serverInfo: { name: "topsl-project-context", version: "0.1.2" },
         };
       else if (request.method === "tools/list")
         result = {

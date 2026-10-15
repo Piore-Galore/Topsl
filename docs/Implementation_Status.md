@@ -91,3 +91,9 @@ The working tree implements awaited process shutdown; durable single-use executi
 No live provider direction, delivered commit or four-platform release qualification is established by the local fixtures. See the linked record for exact completed checks and remaining gates. Existing packaging edits remain retained; this follow-up appends documentation without rewriting their text.
 
 Review follow-up, 15 October 2026: "current unqualified provider routes stay blocked" applies to coordinated workflow roles. Direct structured Codex chats are not gated by role readiness. The same review made explicit stops escalate surviving owned process-group members and narrowed check-log redaction. Details and validation: [review follow-up](Round_2_Execution.md#review-follow-up--15-october-2026).
+
+## v0.1.2 follow-up — 15 October 2026
+
+- **Runtime qualification runner.** A consented, service-owned suite now records Codex runtime qualifications ([details](Round_2_Execution.md#follow-up--runtime-qualification-and-check-caches-15-october-2026)). A passing run satisfies the implementer role for 30 days for the exact executable, account/profile, policy and host. Reviewer roles stay blocked until the immutable candidate reader is installed over a provider tool channel, and the Claude structured route cannot be qualified. The suite has fixture evidence only; remaining gate 2 (live paid execution) is unchanged.
+- **Check caches.** Prepared check integrity ignores well-known tool caches that are not candidate inputs and still fails on links inside them.
+- **Release.** Version 0.1.2 carries the corrected Mac signing configuration. Its four-platform release run is the evidence for gate 4; the published v0.1.1 assets remain unchanged.

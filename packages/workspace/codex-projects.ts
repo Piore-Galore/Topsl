@@ -459,7 +459,7 @@ export class CodexProjectSync {
           clientInfo: {
             name: "topsl-projects",
             title: "Topsl project synchronization",
-            version: "0.1.1",
+            version: "0.1.2",
           },
           capabilities: { experimentalApi: true },
         });
