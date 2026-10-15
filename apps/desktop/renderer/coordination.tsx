@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { ParallelActivity } from "./components/parallel-activity";
 import { OptionalCoordination, UsageBudget } from "./components/reporting";
 import { Workflows } from "./workflows";
-import { useScopedRefresh } from "./state/scoped";
+import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
+import { Freshness } from "./components/freshness";
+import { usageReadout } from "./state/usage-view";
+import { SynchronizationSummary } from "./components/synchronization-summary";
 import type { Task } from "../../../packages/domain/workflow";
 import type { Command } from "../../../packages/domain/commands";
 import { summarizeUsage, budgetAlerts } from "../../../packages/domain/usage";
@@ -73,13 +76,19 @@ export function Coordination({
     ),
     [workspacePaths, setWorkspacePaths] = useState("");
   const generation = useRef(0),
+    reads = useRef(new ScopedReadFence(projectId)),
+    inspectionReads = useRef(new ScopedReadFence(projectId)),
     selectedTask = useRef(""),
     inspectionGeneration = useRef(0),
+    pendingInspections = useRef(new Map<string, number>()),
+    taskTrigger = useRef<HTMLButtonElement | null>(null),
     dialog = useRef<HTMLDialogElement>(null);
   async function readInspection(taskId: string) {
     const scopeTicket = generation.current,
       ticket = ++inspectionGeneration.current,
+      readTicket = inspectionReads.current.begin(),
       key = `inspect:${taskId}`;
+    pendingInspections.current.set(key, ticket);
     setPending((current) => ({ ...current, [key]: true }));
     try {
       const value = await window.topsl.command({
@@ -90,30 +99,36 @@ export function Coordination({
       if (
         scopeTicket === generation.current &&
         ticket === inspectionGeneration.current &&
-        selectedTask.current === taskId
+        selectedTask.current === taskId &&
+        inspectionReads.current.accept(readTicket, value)
       )
         setInspection(value);
     } catch (error: any) {
       if (
         scopeTicket === generation.current &&
-        ticket === inspectionGeneration.current
+        ticket === inspectionGeneration.current &&
+        selectedTask.current === taskId
       )
         setErrors((current) => ({ ...current, [key]: error.message }));
     } finally {
-      if (ticket === inspectionGeneration.current)
+      if (
+        scopeTicket === generation.current &&
+        pendingInspections.current.get(key) === ticket
+      ) {
+        pendingInspections.current.delete(key);
         setPending((current) => ({ ...current, [key]: false }));
+      }
     }
   }
-  async function refresh() {
+  async function refresh(acceptedSnapshot?: any) {
     if (!projectId) return;
-    const ticket = generation.current;
-    const [next, synchronization] = await Promise.all([
-      window.topsl.command({ type: "scope-snapshot", projectId }),
-      window.topsl.command({ type: "synchronization-query", projectId }),
-    ]);
-    if (ticket === generation.current) {
+    const ticket = reads.current.begin();
+    const next =
+      acceptedSnapshot ??
+      (await window.topsl.command({ type: "scope-snapshot", projectId }));
+    if (reads.current.accept(ticket, next)) {
       setSnapshot(next);
-      setSync(synchronization);
+      setSync(next.synchronization);
       if (
         selectedTask.current &&
         next.coordination.tasks.some(
@@ -125,7 +140,10 @@ export function Coordination({
   }
   useEffect(() => {
     generation.current++;
+    reads.current.reset(projectId);
+    inspectionReads.current.reset(projectId);
     inspectionGeneration.current++;
+    pendingInspections.current.clear();
     selectedTask.current = "";
     setSnapshot(null);
     setSync(null);
@@ -133,11 +151,19 @@ export function Coordination({
     setInspection(null);
     setDrawer(false);
     setErrors({});
+    setPending({});
+    setProfile("");
+    setNativeSession("");
+    setRevisionTitle("");
+    setRevisionContent("");
+    setWorkspaceWorkflow("");
+    setWorkspaceSource("");
+    setWorkspacePaths("");
     return () => {
       generation.current++;
     };
   }, [projectId]);
-  useScopedRefresh(projectId, refresh);
+  const freshness = useScopedRefresh(projectId, refresh);
   async function run(key: string, command: Command) {
     if (pending[key]) return;
     const ticket = generation.current;
@@ -152,7 +178,8 @@ export function Coordination({
       if (ticket === generation.current)
         setErrors((p) => ({ ...p, [key]: error.message }));
     } finally {
-      setPending((p) => ({ ...p, [key]: false }));
+      if (ticket === generation.current)
+        setPending((p) => ({ ...p, [key]: false }));
     }
   }
   async function inspect(task: Task) {
@@ -263,6 +290,14 @@ export function Coordination({
               reported = summarizeUsage(
                 snapshot.usage ?? [],
                 attempt.legacyRunId ? [attempt.legacyRunId] : [],
+              ),
+              metadata = inspection.runtimeMetadata?.find(
+                (item: any) =>
+                  item.attemptId === attempt.id || item.id === attempt.id,
+              ),
+              resultMetadata = inspection.runtimeResultMetadata?.find(
+                (item: any) =>
+                  item.attemptId === attempt.id || item.id === attempt.id,
               );
             return (
               <article key={attempt.id} className="coordination-attempt">
@@ -273,7 +308,33 @@ export function Coordination({
                   <dt>Requested model</dt>
                   <dd>{attempt.requestedModel ?? "Native controlled"}</dd>
                   <dt>Effective model</dt>
-                  <dd>{attempt.reportedModel ?? "Unconfirmed"}</dd>
+                  <dd>
+                    {resultMetadata?.reported.model ??
+                      metadata?.reported.model ??
+                      attempt.reportedModel ??
+                      "Unknown; not reported"}
+                  </dd>
+                  <dt>Requested effort</dt>
+                  <dd>
+                    {metadata?.requested.effort ??
+                      "Runtime default requested; exact effort unknown"}
+                  </dd>
+                  <dt>Effective effort</dt>
+                  <dd>
+                    {resultMetadata?.reported.effort ??
+                      metadata?.reported.effort ??
+                      "Unknown; not reported"}
+                  </dd>
+                  <dt>Settings source</dt>
+                  <dd>
+                    {resultMetadata?.source ??
+                      metadata?.source ??
+                      "No runtime settings observation"}{" "}
+                    ·{" "}
+                    {resultMetadata?.observedAt ??
+                      metadata?.observedAt ??
+                      "freshness unknown"}
+                  </dd>
                   <dt>Runtime</dt>
                   <dd>
                     {run?.runtimeVersion
@@ -317,9 +378,8 @@ export function Coordination({
                   </dd>
                   <dt>Usage</dt>
                   <dd>
-                    {reported.knownInput.toLocaleString()} known input ·{" "}
-                    {reported.knownOutput.toLocaleString()} known output ·
-                    cached {reported.cached ?? "unknown"} ·{" "}
+                    {usageReadout(reported)} · cached{" "}
+                    {reported.cached ?? "unknown"} ·{" "}
                     {reported.complete
                       ? "recorded native report"
                       : "incomplete / unknown coverage"}
@@ -330,6 +390,29 @@ export function Coordination({
                   <summary>Source identities</summary>
                   <Identity name="Attempt" value={attempt.id} />
                   <Identity name="Session" value={session?.nativeSessionId} />
+                  <Identity
+                    name="Native thread"
+                    value={metadata?.nativeThreadId}
+                  />
+                  <Identity
+                    name="Provider session"
+                    value={metadata?.providerSessionId}
+                  />
+                  <p>
+                    Thread and provider session identities remain distinct;
+                    missing identities are unknown.
+                  </p>
+                  <h4>Reported instruction sources</h4>
+                  {metadata?.instructionSources?.length ? (
+                    metadata.instructionSources.map((source: any) => (
+                      <p className="path" key={source.path}>
+                        {source.path} · {source.source} · {source.observedAt} ·
+                        content hash {source.contentHash ?? "not reported"}
+                      </p>
+                    ))
+                  ) : (
+                    <p>No instruction source paths were reported.</p>
+                  )}
                   <Identity
                     name="Runtime revision"
                     value={session?.runtimeRevision}
@@ -386,6 +469,7 @@ export function Coordination({
           Refresh activity
         </button>
       </div>
+      {projectId && <Freshness state={freshness} retry={freshness.retry} />}
       <nav className="project-tabs" aria-label="Project navigation">
         {views.map((item) => (
           <button
@@ -453,10 +537,7 @@ export function Coordination({
                 </article>
                 <article>
                   <h2>Usage and billing</h2>
-                  <p>
-                    {usage.knownInput.toLocaleString()} known input ·{" "}
-                    {usage.knownOutput.toLocaleString()} known output
-                  </p>
+                  <p>{usageReadout(usage)}</p>
                   <p>
                     {usage.coveredRuns}/{usage.totalRuns} turns report usage ·{" "}
                     {usage.complete
@@ -495,7 +576,10 @@ export function Coordination({
                       className={`coordination-task ${selected === item.id ? "selected" : ""}`}
                       aria-pressed={selected === item.id}
                       disabled={pending[`inspect:${item.id}`]}
-                      onClick={() => void inspect(item)}
+                      onClick={(event) => {
+                        taskTrigger.current = event.currentTarget;
+                        void inspect(item);
+                      }}
                     >
                       <strong>{item.title}</strong>
                       <span>
@@ -715,6 +799,7 @@ export function Coordination({
           )}
           {view === "synchronization" && (
             <>
+              <SynchronizationSummary synchronization={sync} />
               <h2>Native synchronization</h2>
               {sync?.observations.map((observation: any) => (
                 <article key={observation.id} className="workflow-card">
@@ -729,7 +814,7 @@ export function Coordination({
                   </p>
                   <p>
                     Last successful observation:{" "}
-                    {observation.lastSuccessAt ?? "Unknown"}
+                    {observation.lastSuccessfulObservationAt ?? "Unknown"}
                   </p>
                 </article>
               ))}
@@ -904,12 +989,16 @@ export function Coordination({
           className="task-drawer"
           ref={dialog}
           aria-label="Task details"
-          onCancel={() => setDrawer(false)}
+          onCancel={() => {
+            setDrawer(false);
+            requestAnimationFrame(() => taskTrigger.current?.focus());
+          }}
         >
           <button
             onClick={() => {
               dialog.current?.close();
               setDrawer(false);
+              requestAnimationFrame(() => taskTrigger.current?.focus());
             }}
           >
             Close task details

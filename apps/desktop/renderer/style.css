@@ -1386,6 +1386,228 @@ summary:focus-visible {
 }
 @media (max-width: 700px) {
   .project-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .project-tabs button {
+    overflow-wrap: normal;
+  }
+}
+
+.scope-freshness {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.scope-freshness p {
+  margin: 0;
+  flex: 1 1 240px;
+}
+.scope-freshness small {
+  flex-basis: 100%;
+}
+.scope-freshness.stale,
+.scope-freshness.failed,
+.scope-freshness.disconnected {
+  border-left-color: var(--accent);
+}
+.scope-freshness strong {
+  text-transform: capitalize;
+}
+.workflow-step-nav {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin: 16px 0;
+  gap: 8px;
+}
+.workflow-step-nav button[aria-current="step"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.workflow-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.workflow-form legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.workflow-form fieldset > label {
+  margin: 12px 0;
+}
+.workflow-form .full-width {
+  grid-column: 1 / -1;
+}
+.workflow-readiness {
+  background: var(--nav);
+  border-radius: 6px;
+  padding: 12px;
+}
+.workflow-readiness p:last-child {
+  margin-bottom: 0;
+}
+.workflow-form button {
+  white-space: normal;
+}
+.evidence-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 3fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.evidence-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  margin: 6px 0;
+}
+.finding-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.finding-list button {
+  white-space: normal;
+  text-align: left;
+}
+.finding-line {
+  background: var(--accent-soft);
+  display: inline;
+}
+.line-number {
+  color: var(--muted);
+  display: inline-block;
+  min-width: 3em;
+  padding-right: 1em;
+  user-select: none;
+}
+.workflow-evidence pre {
+  max-height: 420px;
+  overflow: auto;
+}
+@media (max-width: 700px) {
+  .evidence-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+label.checkbox {
+  flex-direction: row;
+  align-items: start;
+  margin: 14px 0;
+  line-height: 1.5;
+}
+label.checkbox input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+.synchronization-dimensions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.synchronization-dimensions article {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  background: var(--card);
+}
+.synchronization-dimensions p:last-child {
+  margin-bottom: 0;
+}
+@media (max-width: 700px) {
+  .synchronization-dimensions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workflow-card dl,
+  .task-drawer dl,
+  .coordination-inspector dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .workflow-card dt,
+  .task-drawer dt,
+  .coordination-inspector dt {
+    font-weight: 600;
+  }
+  .workflow-card dd,
+  .task-drawer dd,
+  .coordination-inspector dd {
+    margin-bottom: 12px;
+  }
+}
+.candidate-diff-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.diff-text {
+  max-height: 380px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px;
+}
+.diff-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.finding-inline {
+  display: block;
+  white-space: normal;
+  font-size: 11px;
+  margin: 4px 0;
+  text-align: left;
+}
+@media (max-width: 900px) {
+  .candidate-diff-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.artifact-review-row {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.artifact-review-row label {
+  margin: 8px 0;
+}
+.candidate-artifact-review figure {
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+}
+.candidate-artifact-review figure img {
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  display: block;
+  margin: 12px auto;
+}
+.candidate-artifact-review figure figcaption {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.candidate-artifact-review h5,
+.workflow-evidence h5 {
+  font-size: 13px;
+}
+.candidate-artifact-review h6,
+.workflow-evidence h6 {
+  font-size: 12px;
+  margin: 16px 0 8px;
 }

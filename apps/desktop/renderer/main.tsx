@@ -39,7 +39,12 @@ function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
+    const trigger = document.activeElement;
     ref.current?.showModal();
+    return () => {
+      if (trigger instanceof HTMLElement && trigger.isConnected)
+        trigger.focus();
+    };
   }, []);
   return (
     <dialog ref={ref} aria-label={title} onCancel={close}>
@@ -172,18 +177,19 @@ function App() {
   const [scopedData, setScopedData] = useState<any>(null);
   const scopeGeneration = useRef(0);
   useEffect(() => {
-    scopeGeneration.current++;
     setScopedData(null);
     setSearchResults(null);
     setSearchCursor(null);
   }, [projectId]);
-  useScopedRefresh(projectId, async () => {
-    const ticket = scopeGeneration.current;
-    const value = await window.topsl.command({
-      type: "scope-snapshot",
-      projectId,
-    });
-    if (ticket === scopeGeneration.current) setScopedData(value);
+  useEffect(() => {
+    scopeGeneration.current++;
+    setPrompt("");
+    setSnapshot(null);
+    setAttachedSnapshot(null);
+    setOperationErrors({});
+  }, [projectId, conversationId]);
+  useScopedRefresh(projectId, (value) => {
+    if (value.projectId === selectedProject.current) setScopedData(value);
   });
   const [provider, setProvider] = useState<Provider>("codex");
   const [configuration, setConfiguration] = useState<{
@@ -201,6 +207,18 @@ function App() {
   const [terminalId, setTerminalId] = useState("");
   const terminalBuffers = useRef(new Map<string, string>());
   async function act(command: Command): Promise<any> {
+    const scopeTicket = scopeGeneration.current;
+    const scoped = "projectId" in command || "conversationId" in command;
+    const inScope = () =>
+      (!scoped || scopeTicket === scopeGeneration.current) &&
+      (!("projectId" in command) ||
+        !command.projectId ||
+        command.projectId === selectedProject.current) &&
+      (!("conversationId" in command) ||
+        command.conversationId === selectedConversation.current) &&
+      (!command.type.startsWith("runtime-") ||
+        !("id" in command) ||
+        command.id === selectedRuntime.current);
     const key = [
       command.type,
       ...["id", "projectId", "conversationId", "installationId"].map(
@@ -215,20 +233,11 @@ function App() {
     setOperationErrors((p) => ({ ...p, [key]: "" }));
     try {
       const result = await window.topsl.command(command);
-      if (
-        "projectId" in command &&
-        command.projectId &&
-        command.projectId !== selectedProject.current
-      )
-        return undefined;
-      if (
-        "conversationId" in command &&
-        command.conversationId !== selectedConversation.current
-      )
-        return undefined;
+      if (!inScope()) return undefined;
       return result;
     } catch (error: any) {
-      setOperationErrors((p) => ({ ...p, [key]: error.message }));
+      if (inScope())
+        setOperationErrors((p) => ({ ...p, [key]: error.message }));
       return undefined;
     } finally {
       inFlight.current.delete(key);
@@ -939,6 +948,7 @@ function App() {
             )}
             {page === "activity" && (
               <Coordination
+                key={projectId}
                 projectId={projectId}
                 view={projectView}
                 onView={setProjectView}
@@ -1162,6 +1172,7 @@ function App() {
                         </span>
                       </div>
                       <Transcript
+                        key={`${projectId}:${conversationId}`}
                         projectId={projectId}
                         conversationId={conversationId}
                       />

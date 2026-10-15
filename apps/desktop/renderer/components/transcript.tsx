@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "../../../../packages/domain/types";
-import { useScopedRefresh } from "../state/scoped";
+import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
+import { Freshness } from "./freshness";
 type PreviewMessage = Message & { totalChars?: number; truncated?: boolean };
 const ROW = 236,
   OVERSCAN = 4;
@@ -19,17 +20,27 @@ export function Transcript({
   const [expanded, setExpanded] = useState<Record<string, string>>({}),
     [contentPending, setContentPending] = useState<Record<string, boolean>>({});
   const generation = useRef(0),
+    reads = useRef(new ScopedReadFence(projectId)),
     viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     generation.current++;
+    reads.current.reset(projectId);
     setItems([]);
     setCursor(null);
     setTop(0);
     setExpanded({});
+    setContentPending({});
+    setError("");
+    setPending(false);
+    return () => {
+      generation.current++;
+      reads.current.reset("");
+    };
   }, [projectId, conversationId]);
-  async function load(older = false) {
+  async function load(older = false, propagate = false) {
     if (!projectId || !conversationId) return;
-    const ticket = generation.current;
+    const ticket = generation.current,
+      readTicket = reads.current.begin();
     const follow =
       !!viewport.current &&
       viewport.current.scrollHeight -
@@ -45,7 +56,7 @@ export function Transcript({
         cursor: older ? cursor : undefined,
         limit: 80,
       });
-      if (ticket !== generation.current) return;
+      if (!reads.current.accept(readTicket, page)) return;
       setItems((previous) =>
         [
           ...new Map(
@@ -68,6 +79,7 @@ export function Transcript({
       setError("");
     } catch (e: any) {
       if (ticket === generation.current) setError(e.message);
+      if (propagate) throw e;
     } finally {
       if (ticket === generation.current) setPending(false);
     }
@@ -92,10 +104,11 @@ export function Transcript({
     } catch (error: any) {
       if (ticket === generation.current) setError(error.message);
     } finally {
-      setContentPending((current) => ({ ...current, [message.id]: false }));
+      if (ticket === generation.current)
+        setContentPending((current) => ({ ...current, [message.id]: false }));
     }
   }
-  useScopedRefresh(`${projectId}`, () => load());
+  const freshness = useScopedRefresh(`${projectId}`, () => load(false, true));
   useEffect(() => {
     void load();
   }, [conversationId]);
@@ -103,6 +116,7 @@ export function Transcript({
     visible = items.slice(start, start + 12 + OVERSCAN * 2);
   return (
     <section className="transcript" aria-label="Conversation transcript">
+      <Freshness state={freshness} retry={freshness.retry} />
       {error && <p role="alert">{error}</p>}
       {cursor && (
         <button disabled={pending} onClick={() => void load(true)}>

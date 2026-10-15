@@ -1,32 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import type { Command } from "../../../../packages/domain/commands";
-import { useScopedRefresh } from "../state/scoped";
+import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
+import { Freshness } from "./freshness";
 export function ParallelActivity({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<any>(null),
     [inspection, setInspection] = useState<any>(null),
     [pending, setPending] = useState<Record<string, boolean>>({}),
     [errors, setErrors] = useState<Record<string, string>>({}),
     [resolutions, setResolutions] = useState<Record<string, string>>({});
-  const generation = useRef(0);
+  const generation = useRef(0),
+    reads = useRef(new ScopedReadFence(projectId));
   useEffect(() => {
     generation.current++;
+    reads.current.reset(projectId);
     setSnapshot(null);
     setInspection(null);
     setResolutions({});
     setErrors({});
+    setPending({});
     return () => {
       generation.current++;
     };
   }, [projectId]);
   async function refresh() {
-    const ticket = generation.current;
+    const ticket = reads.current.begin();
     const value = await window.topsl.command({
       type: "parallel-query",
       projectId,
     });
-    if (ticket === generation.current) setSnapshot(value);
+    if (reads.current.accept(ticket, value)) setSnapshot(value);
   }
-  useScopedRefresh(projectId, refresh);
+  const freshness = useScopedRefresh(projectId, refresh);
   async function run(key: string, command: Command) {
     const ticket = generation.current;
     setPending((current) => ({ ...current, [key]: true }));
@@ -40,12 +44,14 @@ export function ParallelActivity({ projectId }: { projectId: string }) {
       if (ticket === generation.current)
         setErrors((current) => ({ ...current, [key]: error.message }));
     } finally {
-      setPending((current) => ({ ...current, [key]: false }));
+      if (ticket === generation.current)
+        setPending((current) => ({ ...current, [key]: false }));
     }
   }
   return (
     <section aria-label="Parallel integration queue">
       <h2>Parallel integration</h2>
+      <Freshness state={freshness} retry={freshness.retry} />
       <p>
         Specialists keep separate approved workspaces. Combined checks and
         acceptance apply to the combined candidate; individual successes do not

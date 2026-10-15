@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import type { UsageSummary } from "../../../../packages/domain/usage";
 import { budgetAlerts } from "../../../../packages/domain/usage";
-import { useScopedRefresh } from "../state/scoped";
+import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
+import { Freshness } from "./freshness";
 export function UsageBudget({
   projectId,
   summary,
@@ -125,32 +126,36 @@ export function OptionalCoordination({ projectId }: { projectId: string }) {
     [replication, setReplication] = useState<any>(null),
     [pending, setPending] = useState<Record<string, boolean>>({}),
     [error, setError] = useState("");
-  const generation = useRef(0);
+  const generation = useRef(0),
+    reads = useRef(new ScopedReadFence(projectId));
   useEffect(() => {
     generation.current++;
+    reads.current.reset(projectId);
     setAdvanced(null);
     setReplication(null);
     setError("");
+    setPending({});
     return () => {
       generation.current++;
     };
   }, [projectId]);
   async function refresh() {
-    const ticket = generation.current;
+    const ticket = reads.current.begin();
     const values = await Promise.all([
       window.topsl.command({ type: "advanced-query", projectId }),
       window.topsl.command({ type: "replication-query", projectId }),
     ]);
-    if (ticket === generation.current) {
+    if (reads.current.accept(ticket)) {
       setAdvanced(values[0]);
       setReplication(values[1]);
     }
   }
-  useScopedRefresh(projectId, refresh);
+  const freshness = useScopedRefresh(projectId, refresh);
   async function toggle(
     feature: "advanced" | "multi-device",
     enabled: boolean,
   ) {
+    const ticket = generation.current;
     setPending((p) => ({ ...p, [feature]: true }));
     setError("");
     try {
@@ -160,16 +165,18 @@ export function OptionalCoordination({ projectId }: { projectId: string }) {
         feature,
         enabled,
       });
-      await refresh();
+      if (ticket === generation.current) await refresh();
     } catch (error: any) {
-      setError(error.message);
+      if (ticket === generation.current) setError(error.message);
     } finally {
-      setPending((p) => ({ ...p, [feature]: false }));
+      if (ticket === generation.current)
+        setPending((p) => ({ ...p, [feature]: false }));
     }
   }
   return (
     <section className="optional-coordination">
       <h2>Optional coordination</h2>
+      <Freshness state={freshness} retry={freshness.retry} />
       {error && <p role="alert">{error}</p>}
       <details>
         <summary>
