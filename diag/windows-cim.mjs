@@ -57,8 +57,20 @@ function run(label, script, timeout, env) {
   });
 }
 
-for (let i = 1; i <= 3; i++) await run(`native-env#${i}`, original, 60_000, native);
-for (let i = 1; i <= 3; i++) await run(`full-env#${i}`, original, 60_000);
-await Promise.all([1, 2, 3, 4].map((i) => run(`native-env-parallel#${i}`, original, 60_000, native)));
-await Promise.all([1, 2, 3, 4].map((i) => run(`full-env-parallel#${i}`, original, 60_000)));
-for (let i = 1; i <= 2; i++) await run(`native-env-after#${i}`, original, 60_000, native);
+const groups = {
+  psmodule: ["PSModulePath"],
+  programs: ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "SystemDrive", "ALLUSERSPROFILE", "PUBLIC"],
+  identity: ["COMPUTERNAME", "USERNAME", "USERDOMAIN", "USERDNSDOMAIN", "LOGONSERVER"],
+  processor: ["NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "OS"],
+  home: ["HOMEDRIVE", "HOMEPATH"],
+};
+const withKeys = (keys) => {
+  const env = { ...native };
+  for (const key of keys) if (process.env[key]) env[key] = process.env[key];
+  return env;
+};
+await run("full-env-warmup", original, 60_000);
+for (const [name, keys] of Object.entries(groups)) await run(`native+${name}`, original, 60_000, withKeys(keys));
+await run("native+all", original, 60_000, withKeys(Object.values(groups).flat()));
+await run("native+all#2", original, 60_000, withKeys(Object.values(groups).flat()));
+await run("native-only", original, 60_000, native);
