@@ -50,25 +50,27 @@ function run(label, script, timeout, env) {
             stderr: String(stderr).slice(0, 800),
           }),
         );
-        if (label === "null-creation-dates") console.log(String(stdout));
+        if (label === "null-creation-dates" || label.startsWith("show-")) console.log(String(stdout));
         resolve();
       },
     );
   });
 }
 
-// Candidate fix: point PSModulePath at Windows PowerShell's own module folder
-// (where CimCmdlets lives) instead of inheriting it.
-const systemModules = path.join(
-  process.env.SystemRoot ?? "C:\\Windows",
-  "System32",
-  "WindowsPowerShell",
-  "v1.0",
-  "Modules",
-);
-const fixed = { ...native, PSModulePath: systemModules };
-console.log("PSModulePath candidate:", systemModules);
+// Candidate fix: skip command auto-discovery. Import the two modules the query
+// needs from Windows PowerShell's own folder and turn module auto-loading off,
+// so PowerShell never searches PSModulePath for Get-CimInstance.
+const importCim =
+  "Import-Module -Name ($PSHOME + '\\Modules\\CimCmdlets') -ErrorAction Stop; ";
+const noAutoload =
+  "$PSModuleAutoLoadingPreference = 'None'; Import-Module -Name ($PSHOME + '\\Modules\\Microsoft.PowerShell.Utility'), ($PSHOME + '\\Modules\\CimCmdlets') -ErrorAction Stop; ";
+const full = { ...process.env };
 console.log("runner PSModulePath:", process.env.PSModulePath);
-for (let i = 1; i <= 3; i++) await run(`native+systemModules#${i}`, original, 60_000, fixed);
-await Promise.all([1, 2, 3, 4].map((i) => run(`native+systemModules-parallel#${i}`, original, 60_000, fixed)));
+await run("native-startup", "$null", 60_000, native);
+await run("native-utility-lookup", "ConvertTo-Json -Compress @(1)", 60_000, native);
+for (let i = 1; i <= 2; i++) await run(`native+importCim#${i}`, importCim + original, 60_000, native);
+for (let i = 1; i <= 3; i++) await run(`native+noAutoload#${i}`, noAutoload + original, 60_000, native);
+await Promise.all([1, 2, 3, 4].map((i) => run(`native+noAutoload-parallel#${i}`, noAutoload + original, 60_000, native)));
+await run("full+noAutoload", noAutoload + original, 60_000, full);
+await run("show-modules", noAutoload + original + " | Out-Null; (Get-Module | ForEach-Object { $_.Name + '=' + $_.Path }) -join ' ; '", 60_000, native);
 await run("native-only", original, 60_000, native);
