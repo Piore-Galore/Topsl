@@ -305,6 +305,32 @@ describe("R2-AT-13/15: runtime protocol metadata", () => {
       ),
     ).toThrow("Unsupported");
   });
+  test("Claude per-content-block assistant records with one message id accumulate text instead of failing", () => {
+    const events: ClaudeStreamEvent[] = [],
+      parser = new ClaudeStreamParser((e) => events.push(e));
+    const block = (uuid: string, content: unknown[]) => ({
+      type: "assistant",
+      session_id: "s",
+      uuid,
+      message: { id: "m", content },
+    });
+    const records = [
+      { type: "system", subtype: "init", session_id: "s", uuid: "init" },
+      block("a1", [{ type: "thinking", thinking: "private" }]),
+      block("a2", [{ type: "text", text: "first" }]),
+      block("a3", [{ type: "tool_use", id: "tool-1", name: "Read" }]),
+      block("a4", [{ type: "text", text: "second" }]),
+      block("a5", [{ type: "text", text: "second" }]),
+    ];
+    parser.push(records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const messages = events.filter((e) => e.type === "message");
+    expect(messages.map((e) => e.type === "message" && e.text)).toEqual([
+      "first",
+      "first\nsecond",
+    ]);
+    expect(new Set(messages.map((e) => e.sourceId))).toEqual(new Set(["m"]));
+    expect(events.filter((e) => e.type === "tool")).toHaveLength(1);
+  });
   test("Codex paginates catalog, keeps model/effort modalities, thread/session identities, instruction provenance and output schema", async () => {
     const calls: Array<{ method: string; params: any }> = [];
     const connection = {

@@ -218,9 +218,22 @@ async function readCapturedFile(
       const chunk = Buffer.alloc(
         Math.min(BLOB_CHUNK_BYTES, before.size - offset),
       );
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, offset);
-      if (!bytesRead)
-        throw new Error(`Candidate changed while being captured: ${relative}`);
+      // Fill the whole chunk: protected range reads assume every chunk except
+      // the last is exactly BLOB_CHUNK_BYTES, so short reads must not split one.
+      let bytesRead = 0;
+      while (bytesRead < chunk.length) {
+        const result = await handle.read(
+          chunk,
+          bytesRead,
+          chunk.length - bytesRead,
+          offset + bytesRead,
+        );
+        if (!result.bytesRead)
+          throw new Error(
+            `Candidate changed while being captured: ${relative}`,
+          );
+        bytesRead += result.bytesRead;
+      }
       const bytes = chunk.subarray(0, bytesRead);
       digest.update(bytes);
       if (bytes.includes(0)) binary = true;

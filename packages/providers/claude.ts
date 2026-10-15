@@ -73,7 +73,7 @@ export class ClaudeStreamParser {
   private messageId: string | null = null;
   private result = false;
   private finalFingerprint: string | null = null;
-  private messages = new Map<string, string>();
+  private messages = new Map<string, string[]>();
   constructor(
     private emit: (event: ClaudeStreamEvent) => void,
     private maxLineBytes = 2_000_000,
@@ -211,19 +211,23 @@ export class ClaudeStreamParser {
           .filter((b) => b.type === "text")
           .map((b) => b.text ?? "")
           .join("\n");
+        // Claude Code emits one assistant record per content block (thinking,
+        // text, tool_use) under a shared message id, and may repeat a final
+        // record under a new uuid. Accumulate distinct text blocks per message
+        // and re-emit the combined text for the same item instead of failing.
         const messageKey = value.message.id ?? sourceId,
-          previousText = this.messages.get(messageKey);
-        if (previousText !== undefined && previousText !== text)
-          throw new Error("Claude final message identity changed its text.");
-        if (previousText !== undefined) break;
-        this.messages.set(messageKey, text);
-        if (text)
-          this.emit({
-            type: "message",
-            sourceId: value.message.id ?? sourceId,
-            text,
-            reportedModel: this.model,
-          });
+          parts = this.messages.get(messageKey) ?? [];
+        if (!text || parts.includes(text)) break;
+        if (parts.length >= 1_000)
+          throw new Error("Claude message exceeds the bounded block limit.");
+        parts.push(text);
+        this.messages.set(messageKey, parts);
+        this.emit({
+          type: "message",
+          sourceId: messageKey,
+          text: parts.join("\n"),
+          reportedModel: this.model,
+        });
         break;
       }
       case "stream_event": {
@@ -668,7 +672,7 @@ class ClaudeConnection implements ProviderConnection {
   execution?: ReturnType<ClaudeAdapter["start"]>;
   lifecycle?: ProcessLifecycle;
   private closing?: Promise<ProcessEvidence>;
-  private texts: string[] = [];
+  private texts = new Map<string, string>();
   constructor(
     readonly adapter: ClaudeAdapter,
     readonly executable: string,
@@ -716,12 +720,12 @@ class ClaudeConnection implements ProviderConnection {
       throw new Error(
         "Claude native session differs from the requested fresh session.",
       );
-    if (event.type === "message") this.texts.push(event.text);
+    if (event.type === "message") this.texts.set(event.sourceId, event.text);
     if (event.type === "completed") {
       const text = event.structuredOutput
         ? JSON.stringify(event.structuredOutput)
         : event.text;
-      if (text && this.texts.join("\n") !== text)
+      if (text && [...this.texts.values()].join("\n") !== text)
         this.onNotification("claude/event", {
           threadId: this.sessionId,
           turnId: this.turnId,
