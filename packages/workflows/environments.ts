@@ -786,16 +786,40 @@ async function treeIdentity(
   await walk(root);
   return digest.digest("hex");
 }
+/** Caches that common test tools create beside the sources they run. They are
+ * never captured as outputs and the materialized copy is discarded. */
+const toolCacheDirectories = new Set([
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".hypothesis",
+  ".nyc_output",
+  ".parcel-cache",
+  ".turbo",
+  ".cache",
+]);
+const toolCacheFiles = new Set([".eslintcache", ".coverage"]);
+async function assertPlainTree(directory: string, rel: string) {
+  for (const name of await readdir(directory)) {
+    const stat = await lstat(path.join(directory, name));
+    if (stat.isDirectory())
+      await assertPlainTree(path.join(directory, name), rel);
+    else if (!stat.isFile())
+      throw new Error(`Tool cache contains a link or special file: ${rel}`);
+  }
+}
 export async function assertExecutionIntegrity(
   store: Store,
   candidate: CandidateSnapshot,
   root: string,
   recipe: EnvironmentRecipe,
-) {
+): Promise<{ ignoredCaches: string[] }> {
   const files = new Map(
     candidate.files.filter((f) => f.hash).map((f) => [f.path, f]),
   );
-  const seen = new Set<string>();
+  const seen = new Set<string>(),
+    ignoredCaches: string[] = [];
   async function walk(directory: string, relative = "") {
     for (const name of await readdir(directory)) {
       const file = path.join(directory, name),
@@ -835,7 +859,14 @@ export async function assertExecutionIntegrity(
         )
       )
         await walk(file, rel);
-      else
+      else if (
+        !stat.isSymbolicLink() &&
+        ((stat.isDirectory() && toolCacheDirectories.has(name)) ||
+          (stat.isFile() && toolCacheFiles.has(name)))
+      ) {
+        if (stat.isDirectory()) await assertPlainTree(file, rel);
+        ignoredCaches.push(rel);
+      } else
         throw new Error(
           `Unexpected execution output outside reviewed writable paths: ${rel}`,
         );
@@ -855,6 +886,7 @@ export async function assertExecutionIntegrity(
           { offset, length: Math.min(256 * 1024, file.bytes - offset) },
           store,
         );
+  return { ignoredCaches };
 }
 export class PreparedEnvironments {
   constructor(readonly store: Store) {}
@@ -1235,7 +1267,7 @@ export class PreparedEnvironments {
     if (instance.state !== "ready" || instance.recipeDigest !== recipe.digest)
       throw new Error("Environment is not ready for candidate verification.");
     await verifyEnvironmentRecipe(this.store, recipe, candidate);
-    await assertExecutionIntegrity(
+    const integrity = await assertExecutionIntegrity(
       this.store,
       candidate,
       instance.root,
@@ -1250,5 +1282,6 @@ export class PreparedEnvironments {
       this.save(instance);
       throw new Error(instance.error);
     }
+    return integrity;
   }
 }

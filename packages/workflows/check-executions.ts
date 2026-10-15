@@ -682,9 +682,18 @@ export class CheckExecutions {
       if (execution.lifecycle.state !== "quiescent")
         throw new Error(execution.lifecycle.detail);
       execution.failurePhase = "integrity";
-      if (recipe && environmentInstance)
-        await prepared.verify(environmentInstance, recipe, candidate);
-      else await materialized.assertUnchanged();
+      if (recipe && environmentInstance) {
+        const { ignoredCaches } = await prepared.verify(
+          environmentInstance,
+          recipe,
+          candidate,
+        );
+        if (ignoredCaches.length)
+          log(
+            "system",
+            `Ignored tool caches (not captured): ${ignoredCaches.slice(0, 20).join(", ")}${ignoredCaches.length > 20 ? ` and ${ignoredCaches.length - 20} more` : ""}\n`,
+          );
+      } else await materialized.assertUnchanged();
       await assertCandidateCurrent(candidate);
       execution.failurePhase = null;
       if (

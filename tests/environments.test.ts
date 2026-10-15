@@ -462,6 +462,35 @@ test("R2-AT-28: reviewed build outputs are allowed; unapproved shadow scripts ar
   );
 });
 
+test("common tool caches are ignored; a cache holding a link is still invalid", async () => {
+  const script =
+    "const fs=require('fs');for(const d of ['__pycache__','tests/__pycache__','.pytest_cache/v/cache'])fs.mkdirSync(d,{recursive:true});fs.writeFileSync('__pycache__/src.cpython-312.pyc','x');fs.writeFileSync('tests/__pycache__/check.pyc','x');fs.writeFileSync('.pytest_cache/v/cache/lastfailed','{}');fs.writeFileSync('.eslintcache','[]');";
+  const f = await setup({ script }),
+    checks = CheckExecutions.for(f.store);
+  expect(
+    (await checks.execute(f.repository, f.plan, f.plan.digest)).result,
+  ).toBe("passed");
+  const execution = checks.list("p").executions[0];
+  expect(
+    checks
+      .inspect("p", execution.id)
+      .logs.map((l: { text: string }) => l.text)
+      .join(""),
+  ).toContain("Ignored tool caches (not captured)");
+  const linked = await setup({
+      script:
+        "const fs=require('fs');fs.mkdirSync('.pytest_cache');fs.symlinkSync('../src.cjs','.pytest_cache/escape');",
+    }),
+    other = CheckExecutions.for(linked.store);
+  expect(
+    (await other.execute(linked.repository, linked.plan, linked.plan.digest))
+      .result,
+  ).toBe("error");
+  expect(other.list("p").executions[0].error).toContain(
+    "Tool cache contains a link",
+  );
+});
+
 test("R2-AT-29: concurrent checks have separate database, port, home, cache and output resources", async () => {
   const script =
     "const fs=require('fs');fs.mkdirSync('build');fs.writeFileSync('build/result.json',JSON.stringify({database:process.env.TOPSL_TASK_DATABASE,port:process.env.TOPSL_TASK_PORT,home:process.env.HOME}));fs.writeFileSync(process.env.TOPSL_TASK_DATABASE,'test-only-db');console.log(JSON.stringify({database:process.env.TOPSL_TASK_DATABASE,port:process.env.TOPSL_TASK_PORT,home:process.env.HOME}));";
