@@ -1,6 +1,8 @@
-// Diagnostic only: reproduce Topsl's Windows process-tree query exactly as
-// packages/runtime/process-lifecycle.ts runs it, and report how it fails.
-import { execFile } from "node:child_process";
+// Diagnostic only: does a descendant survive its Node parent's exit on Windows,
+// and does Topsl's process query then find it? Mirrors the R2-AT-03 fixture in
+// tests/durable-executions.test.ts and windowsDescendants in
+// packages/runtime/process-lifecycle.ts.
+import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 
 const executable = path.join(
@@ -10,67 +12,68 @@ const executable = path.join(
   "v1.0",
   "powershell.exe",
 );
-const original =
+const query =
+  "$PSModuleAutoLoadingPreference = 'None'; Import-Module -Name ($PSHOME + '\\Modules\\Microsoft.PowerShell.Utility'), ($PSHOME + '\\Modules\\CimCmdlets') -ErrorAction Stop; " +
   "Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; parent=$_.ParentProcessId; created=$_.CreationDate.ToUniversalTime().ToString('o') } } | ConvertTo-Json -Compress";
-const nullSafe =
-  "Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; parent=$_.ParentProcessId; created=if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null } } } | ConvertTo-Json -Compress";
-const nullDates =
-  "Get-CimInstance Win32_Process | Where-Object { -not $_.CreationDate } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.Name }";
 
-// Same keys and PATH handling as nativeEnvironment() in packages/platform/system.ts.
-const nativeKeys = ["PATH","HOME","USERPROFILE","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","SystemRoot","SYSTEMROOT","WINDIR","COMSPEC","PATHEXT","APPDATA","LOCALAPPDATA","XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_RUNTIME_DIR","LANG","LC_ALL","TERM","DISPLAY","WAYLAND_DISPLAY","SSH_AUTH_SOCK","CODEX_HOME","CLAUDE_CONFIG_DIR","HTTPS_PROXY","HTTP_PROXY","NO_PROXY"];
-const native = {};
-for (const key of nativeKeys) if (process.env[key]) native[key] = process.env[key];
-console.log("native env keys:", Object.keys(native).join(","));
-
-function run(label, script, timeout, env) {
-  return new Promise((resolve) => {
-    const started = Date.now();
+function processes() {
+  return new Promise((resolve, reject) =>
     execFile(
       executable,
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-      { windowsHide: true, shell: false, timeout, maxBuffer: 20_000_000, ...(env ? { env } : {}) },
-      (error, stdout, stderr) => {
-        const ms = Date.now() - started;
-        let rows = "unparsed";
-        try {
-          const parsed = JSON.parse(String(stdout).replace(/^\uFEFF/, ""));
-          rows = Array.isArray(parsed) ? parsed.length : 1;
-        } catch {}
-        console.log(
-          JSON.stringify({
-            label,
-            timeout,
-            ms,
-            error: error
-              ? { code: error.code, killed: error.killed, signal: error.signal }
-              : null,
-            stdoutChars: String(stdout).length,
-            rows,
-            stderr: String(stderr).slice(0, 800),
-          }),
-        );
-        if (label === "null-creation-dates" || label.startsWith("show-")) console.log(String(stdout));
-        resolve();
-      },
-    );
-  });
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", query],
+      { windowsHide: true, timeout: 60_000, maxBuffer: 20_000_000 },
+      (error, stdout) =>
+        error
+          ? reject(error)
+          : resolve(JSON.parse(String(stdout).replace(/^\uFEFF/, ""))),
+    ),
+  );
+}
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
 }
 
-// Candidate fix: skip command auto-discovery. Import the two modules the query
-// needs from Windows PowerShell's own folder and turn module auto-loading off,
-// so PowerShell never searches PSModulePath for Get-CimInstance.
-const importCim =
-  "Import-Module -Name ($PSHOME + '\\Modules\\CimCmdlets') -ErrorAction Stop; ";
-const noAutoload =
-  "$PSModuleAutoLoadingPreference = 'None'; Import-Module -Name ($PSHOME + '\\Modules\\Microsoft.PowerShell.Utility'), ($PSHOME + '\\Modules\\CimCmdlets') -ErrorAction Stop; ";
-const full = { ...process.env };
-console.log("runner PSModulePath:", process.env.PSModulePath);
-await run("native-startup", "$null", 60_000, native);
-await run("native-utility-lookup", "ConvertTo-Json -Compress @(1)", 60_000, native);
-for (let i = 1; i <= 2; i++) await run(`native+importCim#${i}`, importCim + original, 60_000, native);
-for (let i = 1; i <= 3; i++) await run(`native+noAutoload#${i}`, noAutoload + original, 60_000, native);
-await Promise.all([1, 2, 3, 4].map((i) => run(`native+noAutoload-parallel#${i}`, noAutoload + original, 60_000, native)));
-await run("full+noAutoload", noAutoload + original, 60_000, full);
-await run("show-modules", noAutoload + original + " | Out-Null; (Get-Module | ForEach-Object { $_.Name + '=' + $_.Path }) -join ' ; '", 60_000, native);
-await run("native-only", original, 60_000, native);
+async function scenario(label, detachedChild) {
+  const childProgram = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},10000)'],{stdio:'ignore',env:process.env,detached:${detachedChild}});console.log(c.pid);c.unref();`;
+  const startedAt = new Date().toISOString();
+  const parent = spawn(process.execPath, ["-e", childProgram], {
+    stdio: "pipe",
+  });
+  const closed = new Promise((resolve) => parent.once("close", resolve));
+  const descendant = await new Promise((resolve) =>
+    parent.stdout.once("data", (bytes) =>
+      resolve(Number(bytes.toString().trim())),
+    ),
+  );
+  await closed;
+  const aliveAtClose = alive(descendant);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const rows = await processes();
+  const row = rows.find((r) => r.pid === descendant) ?? null;
+  console.log(
+    JSON.stringify({
+      label,
+      node: process.version,
+      parent: parent.pid,
+      descendant,
+      aliveAtClose,
+      aliveAfter500ms: alive(descendant),
+      cimRow: row,
+      cimParentMatches: row ? row.parent === parent.pid : null,
+      createdInWindow: row
+        ? Date.parse(row.created) >= Date.parse(startedAt) - 2_000
+        : null,
+    }),
+  );
+  try {
+    process.kill(descendant, "SIGKILL");
+  } catch {}
+}
+
+await scenario("child not detached (current R2-AT-03 fixture)", false);
+await scenario("child detached (proposed Windows fixture)", true);
