@@ -60,6 +60,9 @@ jobs:
         run: xvfb-run --auto-servernum npm run test:desktop
       - name: Compile installable application
         run: npm run package -- ${{ matrix.target }}
+      - name: Verify extracted macOS package signature
+        if: runner.os == 'macOS'
+        run: npm run verify:mac-package
       - name: Record package checksums
         run: node scripts/package-summary.mjs
       # No artifact or dependency-cache uploads: avoid storage charges as well as paid runners.

@@ -7,7 +7,7 @@ const files = (await readdir("release")).filter((name) =>
 );
 if (!files.length)
   throw new Error("Packaging produced no installable artifact.");
-let report = `### Topsl ${process.platform}/${process.arch}\n\nCompiled personal-pilot packages (unsigned; platform/provider acceptance is separate).\n\n`;
+let report = `### Topsl ${process.platform}/${process.arch}\n\nCompiled personal-pilot packages (no distribution signing/notarization; Mac bundles are ad-hoc signed; platform/provider acceptance is separate).\n\n`;
 for (const name of files) {
   const file = path.join("release", name);
   const digest = createHash("sha256");

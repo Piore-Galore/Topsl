@@ -16,7 +16,8 @@
     "dev": "npm run start",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
-    "test:release": "node --test tests/release.test.mjs tests/release-packaging.test.mjs",
+    "test:release": "node --test tests/release.test.mjs tests/release-packaging.test.mjs tests/mac-package.test.mjs",
+    "verify:mac-package": "node scripts/verify-mac-package.mjs",
     "test:desktop": "node scripts/desktop-test-runner.mjs",
     "rebuild": "electron-builder install-app-deps",
     "package": "npm run build && electron-builder --publish never",
@@ -61,12 +62,13 @@
       "**/node-pty/**",
       "dist/cli.cjs"
     ],
+    "afterSign": "./scripts/verify-mac-package.mjs",
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
         "zip"
       ],
-      "identity": null
+      "identity": "-"
     },
     "win": {
       "target": [
