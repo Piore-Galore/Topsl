@@ -150,13 +150,14 @@ The Windows query change also affects users. `affectedProcesses` decides whether
 
 ## Follow-up — v0.1.2 release run (15 October 2026)
 
-The tag-triggered [release run](https://github.com/Piore-Galore/Topsl/actions/runs/38780563793) for `0768a59` failed on Windows x64 in two tests on its first attempt, so its publish job was skipped. [Compile Topsl on `main`](https://github.com/Piore-Galore/Topsl/actions/runs/38780147207) ran the same commit on another Windows runner, and both tests passed there. The release runner's test step took 1039 s, against 903 s on `main`'s.
+The tag-triggered [release run](https://github.com/Piore-Galore/Topsl/actions/runs/38780563793) for `0768a59` failed on Windows x64 in two tests on its first attempt, so its publish job was skipped. [Compile Topsl on `main`](https://github.com/Piore-Galore/Topsl/actions/runs/38780147207) ran the same commit on another Windows runner, and both tests passed there; the release runner's test step took 1039 s, against 903 s. Shortly afterwards, a Windows runner in the [lifecycle stress run for pull request #2](https://github.com/Piore-Galore/Topsl/actions/runs/38783557705), whose change no test uses, ran a third test past its limit in the first iteration.
 
-| Test | Release runner | `main`'s Windows runner | Change |
+| Test | Slow run | Same test on another Windows runner | Change |
 |---|---|---|---|
-| R2-AT-37/38, `reverse=true` | Exceeded the 120 s test limit at 170 s. Removing its folder afterwards failed with `EBUSY` because its check was still running | 65 s | The test allows 300 s |
-| R2-AT-26, reviewed package hook | The check ended `error` instead of `passed`; the whole test took 100 s. The assertion did not say why | 54 s | The assertion reports the execution's failure phase, environment failure kind and error. The cause on that runner is not known |
+| R2-AT-37/38, `reverse=true` | Release: exceeded the 120 s test limit at 170 s. Removing its folder afterwards failed with `EBUSY` because its check was still running | 65 s (`main`) | Tests are allowed 300 s ([`vitest.config.ts`](../vitest.config.ts)), and the Round 2 acceptance tests no longer set their own 120 s limits |
+| Parallel workspaces: fanout capability gate and third task wait | Lifecycle stress for pull request #2: exceeded the 120 s test limit, then `EBUSY` while removing its workspace | 34–38 s (`main` and the release run) | The same 300 s limit |
+| R2-AT-26, reviewed package hook | Release: the check ended `error` instead of `passed`; the whole test took 100 s. The assertion did not say why | 54 s (`main`) | The assertion reports the execution's failure phase, environment failure kind and error. The cause on that runner is not known |
 
 ### Validation
 
-- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed. `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` passed 1 test, and `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2. With the hook changed to exit with status 3, the hook test failed with `environment phase, environment preparation: Environment preparation command failed; candidate tests were not executed.`
+- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed. `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` passed 1 test, `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2, and `npm test -- tests/parallel-workspaces.test.ts -t "fanout capability gate"` passed 1. With the hook changed to exit with status 3, the hook test failed with `environment phase, environment preparation: Environment preparation command failed; candidate tests were not executed.`
