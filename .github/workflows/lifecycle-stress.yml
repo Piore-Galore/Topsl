@@ -1,0 +1,51 @@
+name: Round 2 lifecycle stress
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: topsl-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lifecycle:
+    if: github.event.repository.private == false
+    name: Lifecycle / ${{ matrix.name }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple silicon
+            os: macos-15
+          - name: macOS Intel
+            os: macos-15-intel
+          - name: Windows x64
+            os: windows-2025
+          - name: Linux x64
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Linux Electron libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1
+      - name: Install locked test dependencies
+        run: npm ci
+      - name: Twenty independent lifecycle iterations
+        run: node scripts/lifecycle-stress.mjs --iterations 20 --seed ci-${{ github.run_id }}-${{ github.run_attempt }} --output round2-lifecycle-results
+      - name: Retain machine-readable run identity in job logs and summary
+        if: always()
+        run: node scripts/lifecycle-ci-summary.mjs round2-lifecycle-results/manifest.json
+      # No artifact/cache uploads, release actions, provider requests or billing.
