@@ -121,7 +121,9 @@ export function processGroupPresent(groupId: number): boolean | null {
     process.kill(-groupId, 0);
     return true;
   } catch (error: any) {
-    return error.code === "ESRCH" ? false : null;
+    // EPERM still means the group has a member, one this process may not
+    // signal; macOS reports it for an exited member that is not yet reaped.
+    return error.code === "ESRCH" ? false : error.code === "EPERM" ? true : null;
   }
 }
 

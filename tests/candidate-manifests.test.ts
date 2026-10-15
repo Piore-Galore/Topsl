@@ -528,7 +528,8 @@ test("R2-AT-24 legacy candidate IDs/hash/bytes retain their original semantics a
         path: "legacy.txt",
         hash: hash("legacy bytes"),
         bytes: 12,
-        mode: 0o644,
+        // The platform's own mode for this file (Windows reports 0o666).
+        mode: v2.files.find((file) => file.path === "legacy.txt")!.mode,
         content: Buffer.from("legacy bytes").toString("base64"),
       },
     ],
@@ -636,7 +637,11 @@ test("capture rejects a parent replaced by an outside hardlink directory before 
   });
   await expect(
     captureCandidate(f.store, select(f.root, ["parent/source.txt"])),
-  ).rejects.toThrow("outside");
+  ).rejects.toThrow(
+    // Windows refuses to move a directory while capture holds a file in it
+    // open, so the swap itself fails there. Either way nothing is published.
+    process.platform === "win32" ? /EPERM|outside/ : /outside/,
+  );
   expect([...f.store.iterate("candidate")]).toEqual([]);
   expect(
     f.store.db.prepare("SELECT COUNT(*) AS n FROM protected_blob_staging").get()
