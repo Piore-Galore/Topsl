@@ -2,7 +2,9 @@
 // Stand-in for the parts of Claude Code's terminal that scripts/live-session.mjs
 // drives, so the procedure can be checked without a model or an account. It
 // asks for folder trust, answers the sum in a prompt, and records the exchange
-// in a Claude Code style transcript.
+// in a Claude Code style transcript. It moves the cursor over blank cells
+// instead of writing spaces, so, as with Claude Code's prompts, its words run
+// together in the raw output and read correctly only on the rendered screen.
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -16,7 +18,7 @@ if (!process.env.CLAUDE_CONFIG_DIR) {
   );
   process.exit(2);
 }
-const out = (text) => process.stdout.write(text);
+const out = (text) => process.stdout.write(text.replace(/ /g, "\x1b[C"));
 const sessionId = crypto.randomUUID();
 const cwd = process.cwd();
 const folder = path.join(
@@ -42,14 +44,14 @@ const record = (role, text) =>
     }) + "\n",
   );
 const prompt = () =>
-  out("\r\n+--------+\r\n| > \r\n+--------+\r\n  ? for shortcuts\r\n");
+  out("\r\n────────\r\n> \r\n────────\r\n  ? for shortcuts\r\n");
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 let trusted = false;
 let line = "";
 let interrupts = 0;
 out(
-  "Claude Code stand-in\r\n\r\n Do you trust the files in this folder?\r\n\r\n > 1. Yes, proceed\r\n   2. No, exit\r\n",
+  `Claude Code stand-in\r\n\r\n Accessing workspace:\r\n\r\n ${cwd}\r\n\r\n Quick safety check: Is this a project you created or one you trust?\r\n\r\n ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n`,
 );
 process.stdin.on("data", (chunk) => {
   for (const character of chunk.toString("utf8")) {
@@ -73,7 +75,7 @@ process.stdin.on("data", (chunk) => {
         .map(Number)
         .reduce((a, b) => a + b, 0);
       setTimeout(() => {
-        out(`\r\n* ${sum}\r\n`);
+        out(`\r\n⏺ ${sum}\r\n`);
         record("assistant", String(sum));
         prompt();
       }, 1000);

@@ -31,9 +31,11 @@ Topsl runs Claude Code only in its native terminal. Production builds refuse the
 |---|---|
 | **Native terminal** in the disposable folder | Claude Code starts with no arguments, under its own login, model and permission settings |
 | Claude Code's folder trust prompt | Accepted with its default answer, which trusts the new folder |
-| One prompt | The sum appears in the terminal; a sign-in screen stops the run before any prompt is sent |
+| One prompt | Sent once Claude Code shows its shortcuts hint, or its permission mode in place of the hint, below the input. The sum appears in the terminal; a sign-in screen stops the run before any prompt is sent |
 | `/exit` | The session exits with code 0, Topsl records the run as `completed`, no terminal stays open and the process is gone. If `/exit` has not ended it after 30 seconds, the script presses Ctrl+C twice and then uses **Close session**, and the report says which ended it |
 | History import | Claude Code's transcript for the folder (matched by its `cwd` under `~/.claude/projects`, or `CLAUDE_CONFIG_DIR`) imports through **History → Import Claude JSONL**, and the imported history has Claude's reply with the sum |
+
+Claude Code's prompts are read from Topsl's terminal screen as well as from its output. In the first live run below, Topsl's terminal showed the folder trust prompt, but the output with escape sequences removed did not contain it, so the run timed out. The likely cause is that Claude Code moves the cursor over blank cells instead of writing spaces, which runs its words together in the output. The report's `folderTrustReadFrom` says whether the output or only the screen showed that prompt.
 
 Claude Code keeps that transcript in its own history; the script does not delete it.
 
@@ -68,5 +70,7 @@ The Claude stand-in refuses to start without `CLAUDE_CONFIG_DIR`, so it never wr
 | Date | Provider | Host | Topsl | Result |
 |---|---|---|---|---|
 | 15 October 2026 | Stand-ins for Claude Code and Codex | Linux x64 cloud container, `xvfb-run`, Node 22 | `b803825` with this script | Both passed: Claude's folder trust, reply, `/exit` with code 0 and transcript import; Codex's connection, reply and one usage record |
+| 15 October 2026 | Claude Code 2.1.183 (Homebrew) | macOS, Apple silicon (`darwin/arm64 27.0.0`) | `0768a59` (v0.1.2), with the script from `ce4ec31` | Failed before any prompt was sent. Topsl's terminal showed Claude Code's folder trust prompt, but the script read only the terminal output, did not find the prompt there and timed out after 120 seconds |
+| 15 October 2026 | Stand-ins, with the Claude Code stand-in drawing spaces as cursor movements | Linux x64 cloud container, `xvfb-run`, Node 22 | `7f75708` with the screen fix | The script without the fix failed as on the Mac. With the fix, both passed, and the folder trust prompt was read from the screen |
 
-No live provider session has been recorded yet.
+No live provider session has passed yet. Codex has not been run: it was not installed on the Mac above.

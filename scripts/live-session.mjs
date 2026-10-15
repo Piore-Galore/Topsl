@@ -189,10 +189,12 @@ function question(shown) {
 
 const terminal = page.getByRole("region", { name: "Native terminal" });
 const terminalOutput = () => page.evaluate(() => window.__liveTerminal.output);
+/** The text Topsl's terminal shows, which can differ from the raw output. */
 const terminalScreen = () =>
   terminal
     .locator(".xterm-rows")
     .innerText()
+    .then((text) => text.replace(/\u00a0/g, " "))
     .catch(() => "");
 const exitPattern = /\[Native session exited: (-?\d+)\]/;
 let terminalOpen = false;
@@ -200,6 +202,7 @@ let terminalOpen = false;
 async function claudeTerminal(projectId) {
   const session = (report.session = {
     folderTrust: "not shown",
+    folderTrustReadFrom: null,
     exit: null,
     run: null,
     transcript: null,
@@ -224,25 +227,34 @@ async function claudeTerminal(projectId) {
 
   // Claude Code asks once whether to trust a new folder; its default answer
   // trusts it. A sign-in screen stops the procedure before any prompt is sent.
+  // Once escape sequences are removed, Claude Code's words can run together in
+  // its raw output (it can move the cursor over blank cells instead of writing
+  // spaces), so its prompts are matched against the terminal screen as well.
   const signIn =
     /select login method|please run \/login|not logged in|invalid api key/i;
+  const trustPrompt = /trust (the files in )?this folder|do you trust/i;
+  // Below the input, Claude Code shows the shortcuts hint or, in place of it,
+  // the permission mode.
+  const inputReady =
+    /for shortcuts|accept edits on|plan mode on|auto mode on|bypass permissions on/i;
   await until("Claude Code to accept a prompt", 120000, async () => {
-    const text = plain(await terminalOutput());
+    const output = plain(await terminalOutput()),
+      text = `${output}\n${await terminalScreen()}`;
     if (signIn.test(text))
       throw new Error(
         "Claude Code is not signed in. Sign in with `claude` in a terminal, then run this again.",
       );
-    if (exitPattern.test(text))
+    if (exitPattern.test(output))
       throw new Error("Claude Code exited before accepting a prompt.");
-    if (
-      session.folderTrust === "not shown" &&
-      /trust (the files in )?this folder|do you trust/i.test(text)
-    ) {
+    if (session.folderTrust === "not shown" && trustPrompt.test(text)) {
+      session.folderTrustReadFrom = trustPrompt.test(output)
+        ? "output"
+        : "screen";
       await press("Enter");
       session.folderTrust = "accepted";
       return null;
     }
-    return /for shortcuts/i.test(text);
+    return inputReady.test(text);
   });
   await screenshot("claude-ready");
 
@@ -257,12 +269,11 @@ async function claudeTerminal(projectId) {
   await page.keyboard.press("Enter");
   report.modelTurns = 1;
   await until("Claude Code's reply", 240000, async () => {
-    const text = plain((await terminalOutput()).slice(before));
-    if (signIn.test(text) || exitPattern.test(text))
+    const output = plain((await terminalOutput()).slice(before)),
+      screen = await terminalScreen();
+    if (signIn.test(`${output}\n${screen}`) || exitPattern.test(output))
       throw new Error("Claude Code stopped instead of replying.");
-    return (
-      text.includes(expected) || (await terminalScreen()).includes(expected)
-    );
+    return output.includes(expected) || screen.includes(expected);
   });
   report.replyObserved = true;
   report.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
