@@ -57,20 +57,18 @@ function run(label, script, timeout, env) {
   });
 }
 
-const groups = {
-  psmodule: ["PSModulePath"],
-  programs: ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "SystemDrive", "ALLUSERSPROFILE", "PUBLIC"],
-  identity: ["COMPUTERNAME", "USERNAME", "USERDOMAIN", "USERDNSDOMAIN", "LOGONSERVER"],
-  processor: ["NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "OS"],
-  home: ["HOMEDRIVE", "HOMEPATH"],
-};
-const withKeys = (keys) => {
-  const env = { ...native };
-  for (const key of keys) if (process.env[key]) env[key] = process.env[key];
-  return env;
-};
-await run("full-env-warmup", original, 60_000);
-for (const [name, keys] of Object.entries(groups)) await run(`native+${name}`, original, 60_000, withKeys(keys));
-await run("native+all", original, 60_000, withKeys(Object.values(groups).flat()));
-await run("native+all#2", original, 60_000, withKeys(Object.values(groups).flat()));
+// Candidate fix: point PSModulePath at Windows PowerShell's own module folder
+// (where CimCmdlets lives) instead of inheriting it.
+const systemModules = path.join(
+  process.env.SystemRoot ?? "C:\\Windows",
+  "System32",
+  "WindowsPowerShell",
+  "v1.0",
+  "Modules",
+);
+const fixed = { ...native, PSModulePath: systemModules };
+console.log("PSModulePath candidate:", systemModules);
+console.log("runner PSModulePath:", process.env.PSModulePath);
+for (let i = 1; i <= 3; i++) await run(`native+systemModules#${i}`, original, 60_000, fixed);
+await Promise.all([1, 2, 3, 4].map((i) => run(`native+systemModules-parallel#${i}`, original, 60_000, fixed)));
 await run("native-only", original, 60_000, native);
