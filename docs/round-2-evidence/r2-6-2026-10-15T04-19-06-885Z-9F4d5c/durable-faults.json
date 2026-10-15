@@ -1,0 +1,2194 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-15T04:19:19.444Z",
+  "providerRequests": 0,
+  "billedUsage": 0,
+  "status": "passed-local-process",
+  "scope": "Real checks, injected storage/cleanup faults and actual encrypted vault close/reopen; abrupt service-process crash is not exercised here",
+  "fixture": {
+    "root": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-test-unit-d9xbbu/receipt-demo",
+    "gitExecutable": "/opt/homebrew/bin/git",
+    "baseCommit": "e5212e0179730615a203b82d354c37abf682754c",
+    "manifest": {
+      "version": 1,
+      "evidenceClass": "deterministic-generated-fixture",
+      "seed": "topsl-round2-v1",
+      "stress": false,
+      "sourceFiles": [
+        {
+          "path": ".gitignore",
+          "bytes": 30,
+          "sha256": "a007b7d202a27b523714c3a39524cc9f7f4e0f9f17a8994684ad24470fcccec3"
+        },
+        {
+          "path": "assets/logo.png",
+          "bytes": 68,
+          "sha256": "5c47a63785c6fd125f760fd1b2adccdadb1362ca6fb315cc458cd17df446d9ef"
+        },
+        {
+          "path": "build/receipt.mjs",
+          "bytes": 387,
+          "sha256": "f4f5ab623698368769b299d782fbb7fc66e0c9e800d06c7e871d9f19328ce8b6"
+        },
+        {
+          "path": "package-lock.json",
+          "bytes": 566,
+          "sha256": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+        },
+        {
+          "path": "package.json",
+          "bytes": 289,
+          "sha256": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+        },
+        {
+          "path": "src/cart.mjs",
+          "bytes": 148,
+          "sha256": "22d23141779e937aeba6cfab632c70a0a1cc971c0cd9b3fad699a7bd4ac792a2"
+        },
+        {
+          "path": "src/catalog.mjs",
+          "bytes": 108,
+          "sha256": "3db3493f1e0f185de2df5115a49cfc8ec89901ac35159c08c7266ada21b8cfae"
+        },
+        {
+          "path": "src/contracts.ts",
+          "bytes": 142,
+          "sha256": "3ae392b33c9c66f90aab6974ca7e5f91253a6df26ec8ac344e8caff67424474c"
+        },
+        {
+          "path": "src/order.mjs",
+          "bytes": 105,
+          "sha256": "04512d5c62c463ffe29d8064a01a64c5e00ca69e9b970ff437caa18a55643da9"
+        },
+        {
+          "path": "src/reference.ts",
+          "bytes": 1200084,
+          "sha256": "74ba4cb1efdad2f1f8daba6cdb533df91ef2d9badfe82cd0604bdf23373a6bb3"
+        },
+        {
+          "path": "TASK.md",
+          "bytes": 310,
+          "sha256": "bf78019ded02f6fd1c928ff9be80f2a2671e66ef59d086d56fa99deae3a3efd0"
+        },
+        {
+          "path": "tests/check.mjs",
+          "bytes": 1051,
+          "sha256": "7f74f680970b2a2b02c4a4b29d9b97b4120b9c72c4754c74ccc0aa1d5dad15f6"
+        },
+        {
+          "path": "vendor/topsl-demo-money-1.0.0.tgz",
+          "bytes": 249,
+          "sha256": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+        }
+      ],
+      "logicalBytes": 1203537,
+      "dependency": {
+        "path": "vendor/topsl-demo-money-1.0.0.tgz",
+        "sha256": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02",
+        "origin": "generated local archive; no registry fetch; no install hooks"
+      },
+      "feature": {
+        "newPath": "src/discount.mjs",
+        "expectedTotalCents": 900
+      },
+      "sourceIdentity": "4684c2a1b93efce59247d27738d96390ed58b03e1daf69e7f6dad03ef32e4a1a"
+    },
+    "paths": [
+      ".gitignore",
+      "TASK.md",
+      "assets/logo.png",
+      "build/receipt.mjs",
+      "fixture-manifest.json",
+      "package-lock.json",
+      "package.json",
+      "src/cart.mjs",
+      "src/catalog.mjs",
+      "src/contracts.ts",
+      "src/order.mjs",
+      "src/reference.ts",
+      "tests/check.mjs",
+      "vendor/topsl-demo-money-1.0.0.tgz"
+    ]
+  },
+  "candidate": {
+    "id": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+    "revision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391"
+  },
+  "before": {
+    "checks": [
+      {
+        "execution": {
+          "version": 1,
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+          "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+          "planId": "8cd6c6d0-5b32-4340-9b1e-a7cf6afa4dd4",
+          "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "definition": {
+            "id": "receipt-check",
+            "label": "Original receipt acceptance, dependency and tracked build",
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "run",
+              "check"
+            ],
+            "timeoutMs": 10000,
+            "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+          },
+          "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"afc0b9a5-833b-4212-bb55-5cf4a53505e6\",\"serviceNodeVersion\":\"24.21.0\"}",
+          "environmentRecipeId": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+          "failurePhase": null,
+          "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+          "ownerBinding": null,
+          "state": "passed",
+          "eligibility": "eligible",
+          "dispatchIntentAt": "2026-10-15T04:19:16.715Z",
+          "materializedRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+          "resourceId": "7768aa9f-f9bf-4150-ad33-8d02e5091940",
+          "lifecycle": {
+            "version": 1,
+            "pid": 67932,
+            "groupId": 67932,
+            "scope": "posix-process-group",
+            "state": "quiescent",
+            "startedAt": "2026-10-15T04:19:17.390Z",
+            "stopRequestedAt": null,
+            "exitedAt": "2026-10-15T04:19:17.636Z",
+            "closedAt": "2026-10-15T04:19:17.636Z",
+            "observedAt": "2026-10-15T04:19:17.637Z",
+            "exitCode": 0,
+            "signal": null,
+            "remainingGroup": "absent",
+            "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+          },
+          "outputBytes": 109,
+          "ownedRoots": [
+            {
+              "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+              "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+              "dev": "16777231",
+              "ino": "48052892"
+            },
+            {
+              "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+              "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+              "dev": "16777231",
+              "ino": "48052918"
+            }
+          ],
+          "truncated": false,
+          "verificationId": "bdbc64a8-85b4-4b45-a3b0-29cf45c6958b",
+          "error": null,
+          "storageError": null,
+          "createdAt": "2026-10-15T04:19:16.715Z",
+          "updatedAt": "2026-10-15T04:19:17.798Z",
+          "environmentInstanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7"
+        },
+        "plan": {
+          "id": "8cd6c6d0-5b32-4340-9b1e-a7cf6afa4dd4",
+          "projectId": "p",
+          "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+          "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+          "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "definition": {
+            "id": "receipt-check",
+            "label": "Original receipt acceptance, dependency and tracked build",
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "run",
+              "check"
+            ],
+            "timeoutMs": 10000,
+            "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+          },
+          "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+          "environmentRecipeId": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+          "environmentRecipe": {
+            "version": 1,
+            "id": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+            "projectId": "p",
+            "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+            "kind": "locked-node",
+            "profile": "user-approved-local",
+            "platform": "darwin",
+            "architecture": "arm64",
+            "hostId": "darwin:Piores-MacBook-Air.local",
+            "toolchains": [
+              {
+                "role": "check",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "npm-cli",
+                "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+                "version": null,
+                "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+                "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+              }
+            ],
+            "inputs": [
+              {
+                "path": "package.json",
+                "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+              },
+              {
+                "path": "package-lock.json",
+                "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+              },
+              {
+                "path": "vendor/topsl-demo-money-1.0.0.tgz",
+                "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+              }
+            ],
+            "repositoryScripts": [
+              {
+                "name": "build",
+                "command": "node build/receipt.mjs",
+                "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+              },
+              {
+                "name": "check",
+                "command": "node tests/check.mjs",
+                "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+              }
+            ],
+            "preparationProbes": [
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              },
+              {
+                "role": "npm",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              }
+            ],
+            "preparation": {
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "ci",
+                "--offline",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--cache",
+                "{cache}"
+              ],
+              "timeoutMs": 30000
+            },
+            "hooks": [],
+            "requiredHooks": [],
+            "writablePaths": [
+              "output"
+            ],
+            "values": {},
+            "network": {
+              "preparation": "offline-package-manager; OS-network-not-enforced",
+              "execution": "not-enforced"
+            },
+            "restrictions": {
+              "filesystem": "disposable-copy; OS-access-not-enforced",
+              "processes": "observed-process-group-or-tree",
+              "resources": "unique-temp-database-and-loopback-port",
+              "cpuMemory": "not-enforced",
+              "secrets": "disposable-home; no inherited provider credentials"
+            },
+            "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+            "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+            "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+            "createdAt": "2026-10-15T04:19:16.548Z"
+          },
+          "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"afc0b9a5-833b-4212-bb55-5cf4a53505e6\",\"serviceNodeVersion\":\"24.21.0\"}",
+          "digest": "af5e59992323be0ecdfbb4942c308c19b80ba5b6fe4398c7b277b6b74474b60b",
+          "createdAt": "2026-10-15T04:19:16.549Z",
+          "expiresAt": "2026-10-15T04:29:16.549Z",
+          "authorizationId": "8cd6c6d0-5b32-4340-9b1e-a7cf6afa4dd4"
+        },
+        "logs": [
+          {
+            "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:1",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 1,
+            "stream": "stdout",
+            "text": "\n",
+            "createdAt": "2026-10-15T04:19:17.526Z"
+          },
+          {
+            "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:2",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 2,
+            "stream": "stdout",
+            "text": "> topsl-round2-receipt-demo@1.0.0 check\n",
+            "createdAt": "2026-10-15T04:19:17.526Z"
+          },
+          {
+            "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:3",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 3,
+            "stream": "stdout",
+            "text": "> node tests/check.mjs\n",
+            "createdAt": "2026-10-15T04:19:17.527Z"
+          },
+          {
+            "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:4",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 4,
+            "stream": "stdout",
+            "text": "\n",
+            "createdAt": "2026-10-15T04:19:17.527Z"
+          },
+          {
+            "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:5",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 5,
+            "stream": "stdout",
+            "text": "receipt-build-complete\n",
+            "createdAt": "2026-10-15T04:19:17.631Z"
+          },
+          {
+            "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:6",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 6,
+            "stream": "stdout",
+            "text": "receipt-check-passed\n",
+            "createdAt": "2026-10-15T04:19:17.631Z"
+          }
+        ],
+        "cleanup": {
+          "version": 1,
+          "id": "4b1dc562-2538-4219-827b-aba914d8dc8b",
+          "projectId": "p",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "state": "completed",
+          "roots": [
+            {
+              "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+              "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+              "dev": "16777231",
+              "ino": "48052892"
+            },
+            {
+              "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+              "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+              "dev": "16777231",
+              "ino": "48052918"
+            }
+          ],
+          "attempts": 2,
+          "error": null,
+          "createdAt": "2026-10-15T04:19:17.798Z",
+          "updatedAt": "2026-10-15T04:19:17.815Z"
+        },
+        "environment": {
+          "instance": {
+            "version": 1,
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "projectId": "p",
+            "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+            "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+            "candidateRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "recipeId": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+            "recipeDigest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+            "state": "ready",
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+            "home": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e/home",
+            "cacheRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e/npm-cache",
+            "resourceId": "7768aa9f-f9bf-4150-ad33-8d02e5091940",
+            "dependencyIdentity": "31d2f5a5cfac13a1b1e9500fe836aaa5418b879f43c1bebf24afc29a0d20b2b1",
+            "preparationLifecycle": {
+              "version": 1,
+              "pid": 67920,
+              "groupId": 67920,
+              "scope": "posix-process-group",
+              "state": "quiescent",
+              "startedAt": "2026-10-15T04:19:16.980Z",
+              "stopRequestedAt": null,
+              "exitedAt": "2026-10-15T04:19:17.216Z",
+              "closedAt": "2026-10-15T04:19:17.216Z",
+              "observedAt": "2026-10-15T04:19:17.217Z",
+              "exitCode": 0,
+              "signal": null,
+              "remainingGroup": "absent",
+              "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+            },
+            "preparationCommandId": "e5a6814a-f434-4fa3-8aea-9561de297ce2",
+            "commandIndex": 3,
+            "observedToolVersions": {
+              "node": "v26.0.0",
+              "npm": "11.12.1"
+            },
+            "failureKind": null,
+            "error": null,
+            "outputBytes": 468,
+            "truncated": false,
+            "createdAt": "2026-10-15T04:19:16.715Z",
+            "updatedAt": "2026-10-15T04:19:17.221Z"
+          },
+          "recipe": {
+            "version": 1,
+            "id": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+            "projectId": "p",
+            "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+            "kind": "locked-node",
+            "profile": "user-approved-local",
+            "platform": "darwin",
+            "architecture": "arm64",
+            "hostId": "darwin:Piores-MacBook-Air.local",
+            "toolchains": [
+              {
+                "role": "check",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "npm-cli",
+                "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+                "version": null,
+                "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+                "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+              }
+            ],
+            "inputs": [
+              {
+                "path": "package.json",
+                "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+              },
+              {
+                "path": "package-lock.json",
+                "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+              },
+              {
+                "path": "vendor/topsl-demo-money-1.0.0.tgz",
+                "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+              }
+            ],
+            "repositoryScripts": [
+              {
+                "name": "build",
+                "command": "node build/receipt.mjs",
+                "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+              },
+              {
+                "name": "check",
+                "command": "node tests/check.mjs",
+                "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+              }
+            ],
+            "preparationProbes": [
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              },
+              {
+                "role": "npm",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              }
+            ],
+            "preparation": {
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "ci",
+                "--offline",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--cache",
+                "{cache}"
+              ],
+              "timeoutMs": 30000
+            },
+            "hooks": [],
+            "requiredHooks": [],
+            "writablePaths": [
+              "output"
+            ],
+            "values": {},
+            "network": {
+              "preparation": "offline-package-manager; OS-network-not-enforced",
+              "execution": "not-enforced"
+            },
+            "restrictions": {
+              "filesystem": "disposable-copy; OS-access-not-enforced",
+              "processes": "observed-process-group-or-tree",
+              "resources": "unique-temp-database-and-loopback-port",
+              "cpuMemory": "not-enforced",
+              "secrets": "disposable-home; no inherited provider credentials"
+            },
+            "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+            "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+            "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+            "createdAt": "2026-10-15T04:19:16.548Z"
+          },
+          "logs": [
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:1",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 1,
+              "stream": "system",
+              "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"--version\"]\n",
+              "createdAt": "2026-10-15T04:19:16.865Z"
+            },
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:2",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 2,
+              "stream": "stdout",
+              "text": "v26.0.0\n",
+              "createdAt": "2026-10-15T04:19:16.885Z"
+            },
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:3",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 3,
+              "stream": "system",
+              "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"--version\"]\n",
+              "createdAt": "2026-10-15T04:19:16.888Z"
+            },
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:4",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 4,
+              "stream": "stdout",
+              "text": "11.12.1\n",
+              "createdAt": "2026-10-15T04:19:16.967Z"
+            },
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:5",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 5,
+              "stream": "system",
+              "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"ci\",\"--offline\",\"--ignore-scripts\",\"--no-audit\",\"--no-fund\",\"--cache\",\"/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e/npm-cache\"]\n",
+              "createdAt": "2026-10-15T04:19:16.978Z"
+            },
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:6",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 6,
+              "stream": "stdout",
+              "text": "\n",
+              "createdAt": "2026-10-15T04:19:17.164Z"
+            },
+            {
+              "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:7",
+              "projectId": "p",
+              "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+              "sequence": 7,
+              "stream": "stdout",
+              "text": "added 1 package in 121ms\n",
+              "createdAt": "2026-10-15T04:19:17.164Z"
+            }
+          ]
+        }
+      },
+      {
+        "execution": {
+          "version": 1,
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+          "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+          "planId": "9a151641-7224-4245-a9e3-3c273cedafb7",
+          "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "definition": {
+            "id": "receipt-check",
+            "label": "Original receipt acceptance, dependency and tracked build",
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "run",
+              "check"
+            ],
+            "timeoutMs": 10000,
+            "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+          },
+          "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"599fb574-a01f-4ad8-9c0b-ebb4d69d4d27\",\"serviceNodeVersion\":\"24.21.0\"}",
+          "environmentRecipeId": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+          "failurePhase": null,
+          "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+          "ownerBinding": null,
+          "state": "uncertain",
+          "eligibility": "uncertain",
+          "dispatchIntentAt": "2026-10-15T04:19:18.125Z",
+          "materializedRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+          "resourceId": "1b2fbe21-8a95-4a6c-82b9-9f2bf5694e26",
+          "lifecycle": {
+            "version": 1,
+            "pid": 67983,
+            "groupId": 67983,
+            "scope": "posix-process-group",
+            "state": "quiescent",
+            "startedAt": "2026-10-15T04:19:18.770Z",
+            "stopRequestedAt": null,
+            "exitedAt": "2026-10-15T04:19:19.013Z",
+            "closedAt": "2026-10-15T04:19:19.014Z",
+            "observedAt": "2026-10-15T04:19:19.014Z",
+            "exitCode": 0,
+            "signal": null,
+            "remainingGroup": "absent",
+            "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+          },
+          "outputBytes": 109,
+          "ownedRoots": [
+            {
+              "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+              "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+              "dev": "16777231",
+              "ino": "48053639"
+            },
+            {
+              "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n",
+              "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n",
+              "dev": "16777231",
+              "ino": "48053660"
+            }
+          ],
+          "truncated": false,
+          "verificationId": null,
+          "error": null,
+          "storageError": "Injected lost final storage commit",
+          "createdAt": "2026-10-15T04:19:18.125Z",
+          "updatedAt": "2026-10-15T04:19:19.188Z",
+          "environmentInstanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5"
+        },
+        "plan": {
+          "id": "9a151641-7224-4245-a9e3-3c273cedafb7",
+          "projectId": "p",
+          "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+          "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+          "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "definition": {
+            "id": "receipt-check",
+            "label": "Original receipt acceptance, dependency and tracked build",
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "run",
+              "check"
+            ],
+            "timeoutMs": 10000,
+            "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+          },
+          "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+          "environmentRecipeId": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+          "environmentRecipe": {
+            "version": 1,
+            "id": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+            "projectId": "p",
+            "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+            "kind": "locked-node",
+            "profile": "user-approved-local",
+            "platform": "darwin",
+            "architecture": "arm64",
+            "hostId": "darwin:Piores-MacBook-Air.local",
+            "toolchains": [
+              {
+                "role": "check",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "npm-cli",
+                "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+                "version": null,
+                "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+                "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+              }
+            ],
+            "inputs": [
+              {
+                "path": "package.json",
+                "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+              },
+              {
+                "path": "package-lock.json",
+                "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+              },
+              {
+                "path": "vendor/topsl-demo-money-1.0.0.tgz",
+                "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+              }
+            ],
+            "repositoryScripts": [
+              {
+                "name": "build",
+                "command": "node build/receipt.mjs",
+                "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+              },
+              {
+                "name": "check",
+                "command": "node tests/check.mjs",
+                "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+              }
+            ],
+            "preparationProbes": [
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              },
+              {
+                "role": "npm",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              }
+            ],
+            "preparation": {
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "ci",
+                "--offline",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--cache",
+                "{cache}"
+              ],
+              "timeoutMs": 30000
+            },
+            "hooks": [],
+            "requiredHooks": [],
+            "writablePaths": [
+              "output"
+            ],
+            "values": {},
+            "network": {
+              "preparation": "offline-package-manager; OS-network-not-enforced",
+              "execution": "not-enforced"
+            },
+            "restrictions": {
+              "filesystem": "disposable-copy; OS-access-not-enforced",
+              "processes": "observed-process-group-or-tree",
+              "resources": "unique-temp-database-and-loopback-port",
+              "cpuMemory": "not-enforced",
+              "secrets": "disposable-home; no inherited provider credentials"
+            },
+            "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+            "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+            "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+            "createdAt": "2026-10-15T04:19:17.973Z"
+          },
+          "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"599fb574-a01f-4ad8-9c0b-ebb4d69d4d27\",\"serviceNodeVersion\":\"24.21.0\"}",
+          "digest": "27f474d6925035b37ddf375069170ae91e1959afddb022738ee49c048dc89660",
+          "createdAt": "2026-10-15T04:19:17.974Z",
+          "expiresAt": "2026-10-15T04:29:17.974Z",
+          "authorizationId": "9a151641-7224-4245-a9e3-3c273cedafb7"
+        },
+        "logs": [
+          {
+            "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:1",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 1,
+            "stream": "stdout",
+            "text": "\n",
+            "createdAt": "2026-10-15T04:19:18.904Z"
+          },
+          {
+            "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:2",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 2,
+            "stream": "stdout",
+            "text": "> topsl-round2-receipt-demo@1.0.0 check\n",
+            "createdAt": "2026-10-15T04:19:18.904Z"
+          },
+          {
+            "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:3",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 3,
+            "stream": "stdout",
+            "text": "> node tests/check.mjs\n",
+            "createdAt": "2026-10-15T04:19:18.905Z"
+          },
+          {
+            "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:4",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 4,
+            "stream": "stdout",
+            "text": "\n",
+            "createdAt": "2026-10-15T04:19:18.905Z"
+          },
+          {
+            "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:5",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 5,
+            "stream": "stdout",
+            "text": "receipt-build-complete\n",
+            "createdAt": "2026-10-15T04:19:19.008Z"
+          },
+          {
+            "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:6",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "projectId": "p",
+            "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "sequence": 6,
+            "stream": "stdout",
+            "text": "receipt-check-passed\n",
+            "createdAt": "2026-10-15T04:19:19.009Z"
+          }
+        ],
+        "cleanup": null,
+        "environment": {
+          "instance": {
+            "version": 1,
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "projectId": "p",
+            "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+            "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+            "candidateRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+            "recipeId": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+            "recipeDigest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+            "state": "ready",
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+            "home": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n/home",
+            "cacheRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n/npm-cache",
+            "resourceId": "1b2fbe21-8a95-4a6c-82b9-9f2bf5694e26",
+            "dependencyIdentity": "31d2f5a5cfac13a1b1e9500fe836aaa5418b879f43c1bebf24afc29a0d20b2b1",
+            "preparationLifecycle": {
+              "version": 1,
+              "pid": 67977,
+              "groupId": 67977,
+              "scope": "posix-process-group",
+              "state": "quiescent",
+              "startedAt": "2026-10-15T04:19:18.364Z",
+              "stopRequestedAt": null,
+              "exitedAt": "2026-10-15T04:19:18.600Z",
+              "closedAt": "2026-10-15T04:19:18.600Z",
+              "observedAt": "2026-10-15T04:19:18.601Z",
+              "exitCode": 0,
+              "signal": null,
+              "remainingGroup": "absent",
+              "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+            },
+            "preparationCommandId": "c76ad737-9345-49d5-a87e-c5142b328986",
+            "commandIndex": 3,
+            "observedToolVersions": {
+              "node": "v26.0.0",
+              "npm": "11.12.1"
+            },
+            "failureKind": null,
+            "error": null,
+            "outputBytes": 468,
+            "truncated": false,
+            "createdAt": "2026-10-15T04:19:18.126Z",
+            "updatedAt": "2026-10-15T04:19:18.607Z"
+          },
+          "recipe": {
+            "version": 1,
+            "id": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+            "projectId": "p",
+            "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+            "kind": "locked-node",
+            "profile": "user-approved-local",
+            "platform": "darwin",
+            "architecture": "arm64",
+            "hostId": "darwin:Piores-MacBook-Air.local",
+            "toolchains": [
+              {
+                "role": "check",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+                "version": null
+              },
+              {
+                "role": "npm-cli",
+                "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+                "version": null,
+                "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+                "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+              }
+            ],
+            "inputs": [
+              {
+                "path": "package.json",
+                "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+              },
+              {
+                "path": "package-lock.json",
+                "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+              },
+              {
+                "path": "vendor/topsl-demo-money-1.0.0.tgz",
+                "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+              }
+            ],
+            "repositoryScripts": [
+              {
+                "name": "build",
+                "command": "node build/receipt.mjs",
+                "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+              },
+              {
+                "name": "check",
+                "command": "node tests/check.mjs",
+                "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+              }
+            ],
+            "preparationProbes": [
+              {
+                "role": "node",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              },
+              {
+                "role": "npm",
+                "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+                "args": [
+                  "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                  "--version"
+                ],
+                "timeoutMs": 5000
+              }
+            ],
+            "preparation": {
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "ci",
+                "--offline",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--cache",
+                "{cache}"
+              ],
+              "timeoutMs": 30000
+            },
+            "hooks": [],
+            "requiredHooks": [],
+            "writablePaths": [
+              "output"
+            ],
+            "values": {},
+            "network": {
+              "preparation": "offline-package-manager; OS-network-not-enforced",
+              "execution": "not-enforced"
+            },
+            "restrictions": {
+              "filesystem": "disposable-copy; OS-access-not-enforced",
+              "processes": "observed-process-group-or-tree",
+              "resources": "unique-temp-database-and-loopback-port",
+              "cpuMemory": "not-enforced",
+              "secrets": "disposable-home; no inherited provider credentials"
+            },
+            "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+            "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+            "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+            "createdAt": "2026-10-15T04:19:17.973Z"
+          },
+          "logs": [
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:1",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 1,
+              "stream": "system",
+              "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"--version\"]\n",
+              "createdAt": "2026-10-15T04:19:18.253Z"
+            },
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:2",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 2,
+              "stream": "stdout",
+              "text": "v26.0.0\n",
+              "createdAt": "2026-10-15T04:19:18.273Z"
+            },
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:3",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 3,
+              "stream": "system",
+              "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"--version\"]\n",
+              "createdAt": "2026-10-15T04:19:18.276Z"
+            },
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:4",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 4,
+              "stream": "stdout",
+              "text": "11.12.1\n",
+              "createdAt": "2026-10-15T04:19:18.352Z"
+            },
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:5",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 5,
+              "stream": "system",
+              "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"ci\",\"--offline\",\"--ignore-scripts\",\"--no-audit\",\"--no-fund\",\"--cache\",\"/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n/npm-cache\"]\n",
+              "createdAt": "2026-10-15T04:19:18.363Z"
+            },
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:6",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 6,
+              "stream": "stdout",
+              "text": "\n",
+              "createdAt": "2026-10-15T04:19:18.549Z"
+            },
+            {
+              "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:7",
+              "projectId": "p",
+              "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+              "sequence": 7,
+              "stream": "stdout",
+              "text": "added 1 package in 121ms\n",
+              "createdAt": "2026-10-15T04:19:18.549Z"
+            }
+          ]
+        }
+      }
+    ],
+    "verificationCount": 1,
+    "dispatches": 2
+  },
+  "recovered": [
+    {
+      "execution": {
+        "version": 1,
+        "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+        "projectId": "p",
+        "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+        "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+        "planId": "8cd6c6d0-5b32-4340-9b1e-a7cf6afa4dd4",
+        "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+        "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+        "definition": {
+          "id": "receipt-check",
+          "label": "Original receipt acceptance, dependency and tracked build",
+          "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+          "args": [
+            "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+            "run",
+            "check"
+          ],
+          "timeoutMs": 10000,
+          "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+        },
+        "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"afc0b9a5-833b-4212-bb55-5cf4a53505e6\",\"serviceNodeVersion\":\"24.21.0\"}",
+        "environmentRecipeId": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+        "failurePhase": null,
+        "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+        "ownerBinding": null,
+        "state": "passed",
+        "eligibility": "eligible",
+        "dispatchIntentAt": "2026-10-15T04:19:16.715Z",
+        "materializedRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+        "resourceId": "7768aa9f-f9bf-4150-ad33-8d02e5091940",
+        "lifecycle": {
+          "version": 1,
+          "pid": 67932,
+          "groupId": 67932,
+          "scope": "posix-process-group",
+          "state": "quiescent",
+          "startedAt": "2026-10-15T04:19:17.390Z",
+          "stopRequestedAt": null,
+          "exitedAt": "2026-10-15T04:19:17.636Z",
+          "closedAt": "2026-10-15T04:19:17.636Z",
+          "observedAt": "2026-10-15T04:19:17.637Z",
+          "exitCode": 0,
+          "signal": null,
+          "remainingGroup": "absent",
+          "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+        },
+        "outputBytes": 109,
+        "ownedRoots": [
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+            "dev": "16777231",
+            "ino": "48052892"
+          },
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+            "dev": "16777231",
+            "ino": "48052918"
+          }
+        ],
+        "truncated": false,
+        "verificationId": "bdbc64a8-85b4-4b45-a3b0-29cf45c6958b",
+        "error": null,
+        "storageError": null,
+        "createdAt": "2026-10-15T04:19:16.715Z",
+        "updatedAt": "2026-10-15T04:19:17.798Z",
+        "environmentInstanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7"
+      },
+      "plan": {
+        "id": "8cd6c6d0-5b32-4340-9b1e-a7cf6afa4dd4",
+        "projectId": "p",
+        "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+        "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+        "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+        "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+        "definition": {
+          "id": "receipt-check",
+          "label": "Original receipt acceptance, dependency and tracked build",
+          "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+          "args": [
+            "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+            "run",
+            "check"
+          ],
+          "timeoutMs": 10000,
+          "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+        },
+        "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+        "environmentRecipeId": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+        "environmentRecipe": {
+          "version": 1,
+          "id": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+          "projectId": "p",
+          "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+          "kind": "locked-node",
+          "profile": "user-approved-local",
+          "platform": "darwin",
+          "architecture": "arm64",
+          "hostId": "darwin:Piores-MacBook-Air.local",
+          "toolchains": [
+            {
+              "role": "check",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "npm-cli",
+              "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+              "version": null,
+              "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+              "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+            }
+          ],
+          "inputs": [
+            {
+              "path": "package.json",
+              "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+            },
+            {
+              "path": "package-lock.json",
+              "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+            },
+            {
+              "path": "vendor/topsl-demo-money-1.0.0.tgz",
+              "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+            }
+          ],
+          "repositoryScripts": [
+            {
+              "name": "build",
+              "command": "node build/receipt.mjs",
+              "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+            },
+            {
+              "name": "check",
+              "command": "node tests/check.mjs",
+              "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+            }
+          ],
+          "preparationProbes": [
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "--version"
+              ],
+              "timeoutMs": 5000
+            },
+            {
+              "role": "npm",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "--version"
+              ],
+              "timeoutMs": 5000
+            }
+          ],
+          "preparation": {
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "ci",
+              "--offline",
+              "--ignore-scripts",
+              "--no-audit",
+              "--no-fund",
+              "--cache",
+              "{cache}"
+            ],
+            "timeoutMs": 30000
+          },
+          "hooks": [],
+          "requiredHooks": [],
+          "writablePaths": [
+            "output"
+          ],
+          "values": {},
+          "network": {
+            "preparation": "offline-package-manager; OS-network-not-enforced",
+            "execution": "not-enforced"
+          },
+          "restrictions": {
+            "filesystem": "disposable-copy; OS-access-not-enforced",
+            "processes": "observed-process-group-or-tree",
+            "resources": "unique-temp-database-and-loopback-port",
+            "cpuMemory": "not-enforced",
+            "secrets": "disposable-home; no inherited provider credentials"
+          },
+          "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+          "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+          "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+          "createdAt": "2026-10-15T04:19:16.548Z"
+        },
+        "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"afc0b9a5-833b-4212-bb55-5cf4a53505e6\",\"serviceNodeVersion\":\"24.21.0\"}",
+        "digest": "af5e59992323be0ecdfbb4942c308c19b80ba5b6fe4398c7b277b6b74474b60b",
+        "createdAt": "2026-10-15T04:19:16.549Z",
+        "expiresAt": "2026-10-15T04:29:16.549Z",
+        "authorizationId": "8cd6c6d0-5b32-4340-9b1e-a7cf6afa4dd4"
+      },
+      "logs": [
+        {
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:1",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 1,
+          "stream": "stdout",
+          "text": "\n",
+          "createdAt": "2026-10-15T04:19:17.526Z"
+        },
+        {
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:2",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 2,
+          "stream": "stdout",
+          "text": "> topsl-round2-receipt-demo@1.0.0 check\n",
+          "createdAt": "2026-10-15T04:19:17.526Z"
+        },
+        {
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:3",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 3,
+          "stream": "stdout",
+          "text": "> node tests/check.mjs\n",
+          "createdAt": "2026-10-15T04:19:17.527Z"
+        },
+        {
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:4",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 4,
+          "stream": "stdout",
+          "text": "\n",
+          "createdAt": "2026-10-15T04:19:17.527Z"
+        },
+        {
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:5",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 5,
+          "stream": "stdout",
+          "text": "receipt-build-complete\n",
+          "createdAt": "2026-10-15T04:19:17.631Z"
+        },
+        {
+          "id": "8c6104c4-188f-4dc9-82ad-df95c09e44dc:6",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 6,
+          "stream": "stdout",
+          "text": "receipt-check-passed\n",
+          "createdAt": "2026-10-15T04:19:17.631Z"
+        }
+      ],
+      "cleanup": {
+        "version": 1,
+        "id": "4b1dc562-2538-4219-827b-aba914d8dc8b",
+        "projectId": "p",
+        "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+        "state": "completed",
+        "roots": [
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+            "dev": "16777231",
+            "ino": "48052892"
+          },
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e",
+            "dev": "16777231",
+            "ino": "48052918"
+          }
+        ],
+        "attempts": 2,
+        "error": null,
+        "createdAt": "2026-10-15T04:19:17.798Z",
+        "updatedAt": "2026-10-15T04:19:17.815Z"
+      },
+      "environment": {
+        "instance": {
+          "version": 1,
+          "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+          "projectId": "p",
+          "executionId": "8c6104c4-188f-4dc9-82ad-df95c09e44dc",
+          "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+          "candidateRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "recipeId": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+          "recipeDigest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+          "state": "ready",
+          "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-f646eac0-98c6-4d9e-a6ae-9b26f32f5ca3",
+          "home": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e/home",
+          "cacheRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e/npm-cache",
+          "resourceId": "7768aa9f-f9bf-4150-ad33-8d02e5091940",
+          "dependencyIdentity": "31d2f5a5cfac13a1b1e9500fe836aaa5418b879f43c1bebf24afc29a0d20b2b1",
+          "preparationLifecycle": {
+            "version": 1,
+            "pid": 67920,
+            "groupId": 67920,
+            "scope": "posix-process-group",
+            "state": "quiescent",
+            "startedAt": "2026-10-15T04:19:16.980Z",
+            "stopRequestedAt": null,
+            "exitedAt": "2026-10-15T04:19:17.216Z",
+            "closedAt": "2026-10-15T04:19:17.216Z",
+            "observedAt": "2026-10-15T04:19:17.217Z",
+            "exitCode": 0,
+            "signal": null,
+            "remainingGroup": "absent",
+            "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+          },
+          "preparationCommandId": "e5a6814a-f434-4fa3-8aea-9561de297ce2",
+          "commandIndex": 3,
+          "observedToolVersions": {
+            "node": "v26.0.0",
+            "npm": "11.12.1"
+          },
+          "failureKind": null,
+          "error": null,
+          "outputBytes": 468,
+          "truncated": false,
+          "createdAt": "2026-10-15T04:19:16.715Z",
+          "updatedAt": "2026-10-15T04:19:17.221Z"
+        },
+        "recipe": {
+          "version": 1,
+          "id": "afc0b9a5-833b-4212-bb55-5cf4a53505e6",
+          "projectId": "p",
+          "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+          "kind": "locked-node",
+          "profile": "user-approved-local",
+          "platform": "darwin",
+          "architecture": "arm64",
+          "hostId": "darwin:Piores-MacBook-Air.local",
+          "toolchains": [
+            {
+              "role": "check",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "npm-cli",
+              "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+              "version": null,
+              "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+              "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+            }
+          ],
+          "inputs": [
+            {
+              "path": "package.json",
+              "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+            },
+            {
+              "path": "package-lock.json",
+              "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+            },
+            {
+              "path": "vendor/topsl-demo-money-1.0.0.tgz",
+              "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+            }
+          ],
+          "repositoryScripts": [
+            {
+              "name": "build",
+              "command": "node build/receipt.mjs",
+              "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+            },
+            {
+              "name": "check",
+              "command": "node tests/check.mjs",
+              "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+            }
+          ],
+          "preparationProbes": [
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "--version"
+              ],
+              "timeoutMs": 5000
+            },
+            {
+              "role": "npm",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "--version"
+              ],
+              "timeoutMs": 5000
+            }
+          ],
+          "preparation": {
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "ci",
+              "--offline",
+              "--ignore-scripts",
+              "--no-audit",
+              "--no-fund",
+              "--cache",
+              "{cache}"
+            ],
+            "timeoutMs": 30000
+          },
+          "hooks": [],
+          "requiredHooks": [],
+          "writablePaths": [
+            "output"
+          ],
+          "values": {},
+          "network": {
+            "preparation": "offline-package-manager; OS-network-not-enforced",
+            "execution": "not-enforced"
+          },
+          "restrictions": {
+            "filesystem": "disposable-copy; OS-access-not-enforced",
+            "processes": "observed-process-group-or-tree",
+            "resources": "unique-temp-database-and-loopback-port",
+            "cpuMemory": "not-enforced",
+            "secrets": "disposable-home; no inherited provider credentials"
+          },
+          "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+          "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+          "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+          "createdAt": "2026-10-15T04:19:16.548Z"
+        },
+        "logs": [
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:1",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 1,
+            "stream": "system",
+            "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"--version\"]\n",
+            "createdAt": "2026-10-15T04:19:16.865Z"
+          },
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:2",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 2,
+            "stream": "stdout",
+            "text": "v26.0.0\n",
+            "createdAt": "2026-10-15T04:19:16.885Z"
+          },
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:3",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 3,
+            "stream": "system",
+            "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"--version\"]\n",
+            "createdAt": "2026-10-15T04:19:16.888Z"
+          },
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:4",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 4,
+            "stream": "stdout",
+            "text": "11.12.1\n",
+            "createdAt": "2026-10-15T04:19:16.967Z"
+          },
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:5",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 5,
+            "stream": "system",
+            "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"ci\",\"--offline\",\"--ignore-scripts\",\"--no-audit\",\"--no-fund\",\"--cache\",\"/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-Fjq70e/npm-cache\"]\n",
+            "createdAt": "2026-10-15T04:19:16.978Z"
+          },
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:6",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 6,
+            "stream": "stdout",
+            "text": "\n",
+            "createdAt": "2026-10-15T04:19:17.164Z"
+          },
+          {
+            "id": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7:7",
+            "projectId": "p",
+            "instanceId": "b8b7a061-c416-42b3-a91d-45f2cf55b6c7",
+            "sequence": 7,
+            "stream": "stdout",
+            "text": "added 1 package in 121ms\n",
+            "createdAt": "2026-10-15T04:19:17.164Z"
+          }
+        ]
+      }
+    },
+    {
+      "execution": {
+        "version": 1,
+        "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+        "projectId": "p",
+        "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+        "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+        "planId": "9a151641-7224-4245-a9e3-3c273cedafb7",
+        "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+        "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+        "definition": {
+          "id": "receipt-check",
+          "label": "Original receipt acceptance, dependency and tracked build",
+          "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+          "args": [
+            "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+            "run",
+            "check"
+          ],
+          "timeoutMs": 10000,
+          "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+        },
+        "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"599fb574-a01f-4ad8-9c0b-ebb4d69d4d27\",\"serviceNodeVersion\":\"24.21.0\"}",
+        "environmentRecipeId": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+        "failurePhase": null,
+        "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+        "ownerBinding": null,
+        "state": "error",
+        "eligibility": "ineligible",
+        "dispatchIntentAt": "2026-10-15T04:19:18.125Z",
+        "materializedRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+        "resourceId": "1b2fbe21-8a95-4a6c-82b9-9f2bf5694e26",
+        "lifecycle": {
+          "version": 1,
+          "pid": 67983,
+          "groupId": 67983,
+          "scope": "posix-process-group",
+          "state": "quiescent",
+          "startedAt": "2026-10-15T04:19:18.770Z",
+          "stopRequestedAt": null,
+          "exitedAt": "2026-10-15T04:19:19.013Z",
+          "closedAt": "2026-10-15T04:19:19.014Z",
+          "observedAt": "2026-10-15T04:19:19.426Z",
+          "exitCode": 0,
+          "signal": null,
+          "remainingGroup": "absent",
+          "detail": "Explicit recovery observed original PID and scoped group/tree absent. This cannot substantiate a lost check result."
+        },
+        "outputBytes": 109,
+        "ownedRoots": [
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+            "dev": "16777231",
+            "ino": "48053639"
+          },
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n",
+            "dev": "16777231",
+            "ino": "48053660"
+          }
+        ],
+        "truncated": false,
+        "verificationId": null,
+        "error": "Process absence explicitly reconciled. The original result remains unproven; nothing was rerun.",
+        "storageError": "Injected lost final storage commit",
+        "createdAt": "2026-10-15T04:19:18.125Z",
+        "updatedAt": "2026-10-15T04:19:19.426Z",
+        "environmentInstanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5"
+      },
+      "plan": {
+        "id": "9a151641-7224-4245-a9e3-3c273cedafb7",
+        "projectId": "p",
+        "workflowId": "7c8b7ef7-8a18-4f73-a0a4-bd2ddb5baaf6",
+        "taskId": "8f58a678-0a7b-4797-9075-cda62053fb7a",
+        "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+        "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+        "definition": {
+          "id": "receipt-check",
+          "label": "Original receipt acceptance, dependency and tracked build",
+          "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+          "args": [
+            "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+            "run",
+            "check"
+          ],
+          "timeoutMs": 10000,
+          "environmentRecipeId": "d39a6032-14df-4418-8c17-b6b124ec898a"
+        },
+        "executableIdentity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+        "environmentRecipeId": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+        "environmentRecipe": {
+          "version": 1,
+          "id": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+          "projectId": "p",
+          "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+          "kind": "locked-node",
+          "profile": "user-approved-local",
+          "platform": "darwin",
+          "architecture": "arm64",
+          "hostId": "darwin:Piores-MacBook-Air.local",
+          "toolchains": [
+            {
+              "role": "check",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "npm-cli",
+              "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+              "version": null,
+              "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+              "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+            }
+          ],
+          "inputs": [
+            {
+              "path": "package.json",
+              "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+            },
+            {
+              "path": "package-lock.json",
+              "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+            },
+            {
+              "path": "vendor/topsl-demo-money-1.0.0.tgz",
+              "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+            }
+          ],
+          "repositoryScripts": [
+            {
+              "name": "build",
+              "command": "node build/receipt.mjs",
+              "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+            },
+            {
+              "name": "check",
+              "command": "node tests/check.mjs",
+              "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+            }
+          ],
+          "preparationProbes": [
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "--version"
+              ],
+              "timeoutMs": 5000
+            },
+            {
+              "role": "npm",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "--version"
+              ],
+              "timeoutMs": 5000
+            }
+          ],
+          "preparation": {
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "ci",
+              "--offline",
+              "--ignore-scripts",
+              "--no-audit",
+              "--no-fund",
+              "--cache",
+              "{cache}"
+            ],
+            "timeoutMs": 30000
+          },
+          "hooks": [],
+          "requiredHooks": [],
+          "writablePaths": [
+            "output"
+          ],
+          "values": {},
+          "network": {
+            "preparation": "offline-package-manager; OS-network-not-enforced",
+            "execution": "not-enforced"
+          },
+          "restrictions": {
+            "filesystem": "disposable-copy; OS-access-not-enforced",
+            "processes": "observed-process-group-or-tree",
+            "resources": "unique-temp-database-and-loopback-port",
+            "cpuMemory": "not-enforced",
+            "secrets": "disposable-home; no inherited provider credentials"
+          },
+          "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+          "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+          "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+          "createdAt": "2026-10-15T04:19:17.973Z"
+        },
+        "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"locked-node\",\"executable\":\"/opt/homebrew/Cellar/node/26.0.0/bin/node\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8\",\"recipeId\":\"599fb574-a01f-4ad8-9c0b-ebb4d69d4d27\",\"serviceNodeVersion\":\"24.21.0\"}",
+        "digest": "27f474d6925035b37ddf375069170ae91e1959afddb022738ee49c048dc89660",
+        "createdAt": "2026-10-15T04:19:17.974Z",
+        "expiresAt": "2026-10-15T04:29:17.974Z",
+        "authorizationId": "9a151641-7224-4245-a9e3-3c273cedafb7"
+      },
+      "logs": [
+        {
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:1",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 1,
+          "stream": "stdout",
+          "text": "\n",
+          "createdAt": "2026-10-15T04:19:18.904Z"
+        },
+        {
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:2",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 2,
+          "stream": "stdout",
+          "text": "> topsl-round2-receipt-demo@1.0.0 check\n",
+          "createdAt": "2026-10-15T04:19:18.904Z"
+        },
+        {
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:3",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 3,
+          "stream": "stdout",
+          "text": "> node tests/check.mjs\n",
+          "createdAt": "2026-10-15T04:19:18.905Z"
+        },
+        {
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:4",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 4,
+          "stream": "stdout",
+          "text": "\n",
+          "createdAt": "2026-10-15T04:19:18.905Z"
+        },
+        {
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:5",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 5,
+          "stream": "stdout",
+          "text": "receipt-build-complete\n",
+          "createdAt": "2026-10-15T04:19:19.008Z"
+        },
+        {
+          "id": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41:6",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "projectId": "p",
+          "targetRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "sequence": 6,
+          "stream": "stdout",
+          "text": "receipt-check-passed\n",
+          "createdAt": "2026-10-15T04:19:19.009Z"
+        }
+      ],
+      "cleanup": {
+        "version": 1,
+        "id": "b91a269b-2f61-48a7-b712-a5b4304783c9",
+        "projectId": "p",
+        "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+        "state": "completed",
+        "roots": [
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+            "dev": "16777231",
+            "ino": "48053639"
+          },
+          {
+            "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n",
+            "realPath": "/private/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n",
+            "dev": "16777231",
+            "ino": "48053660"
+          }
+        ],
+        "attempts": 1,
+        "error": null,
+        "createdAt": "2026-10-15T04:19:19.426Z",
+        "updatedAt": "2026-10-15T04:19:19.443Z"
+      },
+      "environment": {
+        "instance": {
+          "version": 1,
+          "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+          "projectId": "p",
+          "executionId": "33728f03-c06c-4c1f-ba8e-76c59aa1cf41",
+          "candidateId": "60c852c4-f5b3-45d9-9b27-a586adf3b36a",
+          "candidateRevision": "e649715f7e2ec4b2ff0fb860ec794680ace659150c559cfee66c0be8cfef1391",
+          "recipeId": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+          "recipeDigest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+          "state": "ready",
+          "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-candidate-41f25705-c22a-4044-a674-f04d7bbcd0e7",
+          "home": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n/home",
+          "cacheRoot": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n/npm-cache",
+          "resourceId": "1b2fbe21-8a95-4a6c-82b9-9f2bf5694e26",
+          "dependencyIdentity": "31d2f5a5cfac13a1b1e9500fe836aaa5418b879f43c1bebf24afc29a0d20b2b1",
+          "preparationLifecycle": {
+            "version": 1,
+            "pid": 67977,
+            "groupId": 67977,
+            "scope": "posix-process-group",
+            "state": "quiescent",
+            "startedAt": "2026-10-15T04:19:18.364Z",
+            "stopRequestedAt": null,
+            "exitedAt": "2026-10-15T04:19:18.600Z",
+            "closedAt": "2026-10-15T04:19:18.600Z",
+            "observedAt": "2026-10-15T04:19:18.601Z",
+            "exitCode": 0,
+            "signal": null,
+            "remainingGroup": "absent",
+            "detail": "Child exit, stdio closure and owned POSIX process-group absence observed. Detached/escaped descendants are outside this observation boundary."
+          },
+          "preparationCommandId": "c76ad737-9345-49d5-a87e-c5142b328986",
+          "commandIndex": 3,
+          "observedToolVersions": {
+            "node": "v26.0.0",
+            "npm": "11.12.1"
+          },
+          "failureKind": null,
+          "error": null,
+          "outputBytes": 468,
+          "truncated": false,
+          "createdAt": "2026-10-15T04:19:18.126Z",
+          "updatedAt": "2026-10-15T04:19:18.607Z"
+        },
+        "recipe": {
+          "version": 1,
+          "id": "599fb574-a01f-4ad8-9c0b-ebb4d69d4d27",
+          "projectId": "p",
+          "selectionId": "d39a6032-14df-4418-8c17-b6b124ec898a",
+          "kind": "locked-node",
+          "profile": "user-approved-local",
+          "platform": "darwin",
+          "architecture": "arm64",
+          "hostId": "darwin:Piores-MacBook-Air.local",
+          "toolchains": [
+            {
+              "role": "check",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "identity": "20cf1d17c9aa91ab03ef5941563c4aa1a83e50aea7332322f4f583d368532e2c",
+              "version": null
+            },
+            {
+              "role": "npm-cli",
+              "executable": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "identity": "f6dbf1f9fb1cda543616ae4fb6344c5e640496dba69f043b688979fe83b951cf",
+              "version": null,
+              "supportRoot": "/opt/homebrew/lib/node_modules/npm",
+              "supportIdentity": "a7282f7d57309a5d18ce32d3c158294d76dfd159d8bb1a9ef4617b9fecea727e"
+            }
+          ],
+          "inputs": [
+            {
+              "path": "package.json",
+              "hash": "e36fa0095ef018e060b0fa23ae27589588bbe21bb853c9033337f78d0200b8dc"
+            },
+            {
+              "path": "package-lock.json",
+              "hash": "3c8f58a0c774297c9b766eb39d2ba1bc7c2fec113ac5d3415216cf6e7a358bf7"
+            },
+            {
+              "path": "vendor/topsl-demo-money-1.0.0.tgz",
+              "hash": "109e1dd0ba0264738acc2ec7f1e7ff1e27f621a158eb9d9e876fb3760548ed02"
+            }
+          ],
+          "repositoryScripts": [
+            {
+              "name": "build",
+              "command": "node build/receipt.mjs",
+              "hash": "2a4d993c949050230b0fad54847454bbc27c47e3b736ef2ebdaf7063ef66f6ad"
+            },
+            {
+              "name": "check",
+              "command": "node tests/check.mjs",
+              "hash": "be7aeb8cc2af1fb9f676ab75b840d1de0079b8797fc00046c51ceb63b5ba0461"
+            }
+          ],
+          "preparationProbes": [
+            {
+              "role": "node",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "--version"
+              ],
+              "timeoutMs": 5000
+            },
+            {
+              "role": "npm",
+              "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+              "args": [
+                "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+                "--version"
+              ],
+              "timeoutMs": 5000
+            }
+          ],
+          "preparation": {
+            "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+            "args": [
+              "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+              "ci",
+              "--offline",
+              "--ignore-scripts",
+              "--no-audit",
+              "--no-fund",
+              "--cache",
+              "{cache}"
+            ],
+            "timeoutMs": 30000
+          },
+          "hooks": [],
+          "requiredHooks": [],
+          "writablePaths": [
+            "output"
+          ],
+          "values": {},
+          "network": {
+            "preparation": "offline-package-manager; OS-network-not-enforced",
+            "execution": "not-enforced"
+          },
+          "restrictions": {
+            "filesystem": "disposable-copy; OS-access-not-enforced",
+            "processes": "observed-process-group-or-tree",
+            "resources": "unique-temp-database-and-loopback-port",
+            "cpuMemory": "not-enforced",
+            "secrets": "disposable-home; no inherited provider credentials"
+          },
+          "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+          "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+          "digest": "37cdb3acb4cf0580aafc8320c2ea7a465fcd2206de349a6a69370247d3e942e8",
+          "createdAt": "2026-10-15T04:19:17.973Z"
+        },
+        "logs": [
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:1",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 1,
+            "stream": "system",
+            "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"--version\"]\n",
+            "createdAt": "2026-10-15T04:19:18.253Z"
+          },
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:2",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 2,
+            "stream": "stdout",
+            "text": "v26.0.0\n",
+            "createdAt": "2026-10-15T04:19:18.273Z"
+          },
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:3",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 3,
+            "stream": "system",
+            "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"--version\"]\n",
+            "createdAt": "2026-10-15T04:19:18.276Z"
+          },
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:4",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 4,
+            "stream": "stdout",
+            "text": "11.12.1\n",
+            "createdAt": "2026-10-15T04:19:18.352Z"
+          },
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:5",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 5,
+            "stream": "system",
+            "text": "/opt/homebrew/Cellar/node/26.0.0/bin/node [\"/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js\",\"ci\",\"--offline\",\"--ignore-scripts\",\"--no-audit\",\"--no-fund\",\"--cache\",\"/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-check-resources/task-jSSq6n/npm-cache\"]\n",
+            "createdAt": "2026-10-15T04:19:18.363Z"
+          },
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:6",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 6,
+            "stream": "stdout",
+            "text": "\n",
+            "createdAt": "2026-10-15T04:19:18.549Z"
+          },
+          {
+            "id": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5:7",
+            "projectId": "p",
+            "instanceId": "2cc47a8c-b6ca-4784-917a-07bb4ed1dda5",
+            "sequence": 7,
+            "stream": "stdout",
+            "text": "added 1 package in 121ms\n",
+            "createdAt": "2026-10-15T04:19:18.549Z"
+          }
+        ]
+      }
+    }
+  ],
+  "replayedCommands": 0
+}

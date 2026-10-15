@@ -1,0 +1,60 @@
+{
+  "scope": "Original Electron smoke with synthetic profile, including 100000-message fixture and encrypted restart; provider routes not qualified",
+  "records": [
+    {
+      "path": "applications.png",
+      "bytes": 274893,
+      "sha256": "7919e04571c11696e9465763c1af70104f259279cf37e4769cbcd61b20b0850b"
+    },
+    {
+      "path": "codex-projects.png",
+      "bytes": 488905,
+      "sha256": "28769709a238a73cc1860f10ea45995ea52599c6248586d7bd0c09975689dceb"
+    },
+    {
+      "path": "compact.png",
+      "bytes": 166101,
+      "sha256": "f05b1b04415ff4f208c1c4265e34266e70e13b91be2f190d18fa3d972766c904"
+    },
+    {
+      "path": "coordination-compact.png",
+      "bytes": 107779,
+      "sha256": "4b5f903bd187b57ffcace752af5c036eec720c71ea95b96c524fafa5ac170e72"
+    },
+    {
+      "path": "coordination-night.png",
+      "bytes": 194565,
+      "sha256": "a61300dceb0e65e8aa4557f02020ac3f809d13b06d4152c7f70d3abcab2d8d6a"
+    },
+    {
+      "path": "coordination-scale.png",
+      "bytes": 306045,
+      "sha256": "3f0f42387e1af009f57265db4728696c92f251de559aaad6aad67d7bf98f576f"
+    },
+    {
+      "path": "coordination-standard.png",
+      "bytes": 192368,
+      "sha256": "8767d5eaa1887b752d5a1b9d777e2af47d505260a90a1bed11e98cc6db22b647"
+    },
+    {
+      "path": "coordination-system-dark.png",
+      "bytes": 194565,
+      "sha256": "a61300dceb0e65e8aa4557f02020ac3f809d13b06d4152c7f70d3abcab2d8d6a"
+    },
+    {
+      "path": "desktop-coordination-benchmark.json",
+      "bytes": 3073,
+      "sha256": "a064199e039f9b4d1de47c44f58ff7b11e54aeb2a0f54a7ed0c4f5c2c9721f3e"
+    },
+    {
+      "path": "projects-compact.png",
+      "bytes": 187667,
+      "sha256": "0ec0511d9d0a03fe316b53aa71f5948729adf2526a36c7c8f166a0d76199d79d"
+    },
+    {
+      "path": "projects.png",
+      "bytes": 309825,
+      "sha256": "991e8895736d980a07598da92234a80793972c351317dac8059228786bb59386"
+    }
+  ]
+}

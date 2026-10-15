@@ -2987,3 +2987,7 @@ Architecture, schemas, defaults, platform packaging choices, thresholds, workflo
 [S48]: https://learn.chatgpt.com/docs/enterprise/manage-app-updates
 [S49]: https://learn.chatgpt.com/docs/codex/cli
 [S50]: https://support.claude.com/en/articles/10065433-install-claude-desktop
+
+## 15 October 2026 lifecycle implementation follow-up
+
+The [Round 2 Phase 1 record](Round_2_Phase_1.md) supersedes earlier synchronous teardown and cleanup-before-result ordering: provider close is awaited, scoped process quiescence controls ownership release, and checks persist consumed authorization/dispatch intent plus incremental bounded protected logs before final evidence and independent retryable cleanup. Schema 5 preserves historical evidence and rejects older writers. POSIX process-group and Windows CIM tree observations are scoped observations, not sandbox or escaped-descendant enforcement. Local fixtures and pending live/platform/delivery gates are distinguished in that record.

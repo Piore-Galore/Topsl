@@ -1,0 +1,127 @@
+
+> topsl@0.1.1 check
+> npm run typecheck && npm test && npm run test:release && npm run build
+
+
+> topsl@0.1.1 typecheck
+> tsc --noEmit
+
+
+> topsl@0.1.1 test
+> node scripts/test.mjs
+
+
+ RUN  v5.0.2 /Users/piore/repos/Topsl
+
+ ❯ tests/advanced-workflows.test.ts (9 tests | 3 failed) 5237ms
+   ❯ advanced collaboration templates (9)
+     × separate verification, explicit acceptance and task lineage remain consistent; model routing measures outcomes without token ranking 473ms
+     × frozen independent tests run as a separate actual process against a later pinned implementation 568ms
+     × service executes the same declared checks for competing candidates, binds genuine evidence and accepts exact selected bytes 811ms
+ ❯ tests/workflow-service.test.ts (4 tests | 2 failed) 4232ms
+   × service automatically completes both adapter turns for reversible assignment false, requires native check/acceptance 1565ms
+   × service automatically completes both adapter turns for reversible assignment true, requires native check/acceptance 1558ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/advanced-workflows.test.ts > advanced collaboration templates > separate verification, explicit acceptance and task lineage remain consistent; model routing measures outcomes without token ranking
+Error: Every required task needs current acceptance or an explicit verified replacement.
+ ❯ CoordinationRepository.assertAcceptedLineage packages/persistence/repositories/coordination.ts:766:15
+    764|         !replacement.inputRefs.includes(predecessor.id)
+    765|       )
+    766|         throw new Error(
+       |               ^
+    767|           "Every required task needs current acceptance or an explicit…
+    768|         );
+ ❯ packages/persistence/repositories/coordination.ts:326:16
+ ❯ sqliteTransaction node_modules/better-sqlite3-multiple-ciphers/lib/methods/transaction.js:65:24
+ ❯ Store.transaction packages/persistence/store.ts:384:35
+ ❯ CoordinationRepository.transitionWorkflow packages/persistence/repositories/coordination.ts:316:23
+ ❯ packages/workflows/advanced.ts:1884:23
+ ❯ sqliteTransaction node_modules/better-sqlite3-multiple-ciphers/lib/methods/transaction.js:65:24
+ ❯ Store.transaction packages/persistence/store.ts:384:35
+ ❯ AdvancedCollaboration.accept packages/workflows/advanced.ts:1819:34
+ ❯ tests/advanced-workflows.test.ts:315:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/advanced-workflows.test.ts > advanced collaboration templates > frozen independent tests run as a separate actual process against a later pinned implementation
+Error: Every required task needs current acceptance or an explicit verified replacement.
+ ❯ CoordinationRepository.assertAcceptedLineage packages/persistence/repositories/coordination.ts:766:15
+    764|         !replacement.inputRefs.includes(predecessor.id)
+    765|       )
+    766|         throw new Error(
+       |               ^
+    767|           "Every required task needs current acceptance or an explicit…
+    768|         );
+ ❯ packages/persistence/repositories/coordination.ts:326:16
+ ❯ sqliteTransaction node_modules/better-sqlite3-multiple-ciphers/lib/methods/transaction.js:65:24
+ ❯ Store.transaction packages/persistence/store.ts:384:35
+ ❯ CoordinationRepository.transitionWorkflow packages/persistence/repositories/coordination.ts:316:23
+ ❯ packages/workflows/advanced.ts:1884:23
+ ❯ sqliteTransaction node_modules/better-sqlite3-multiple-ciphers/lib/methods/transaction.js:65:24
+ ❯ Store.transaction packages/persistence/store.ts:384:35
+ ❯ AdvancedCollaboration.accept packages/workflows/advanced.ts:1819:34
+ ❯ tests/advanced-workflows.test.ts:488:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/advanced-workflows.test.ts > advanced collaboration templates > service executes the same declared checks for competing candidates, binds genuine evidence and accepts exact selected bytes
+Error: Every required task needs current acceptance or an explicit verified replacement.
+ ❯ CoordinationRepository.assertAcceptedLineage packages/persistence/repositories/coordination.ts:766:15
+    764|         !replacement.inputRefs.includes(predecessor.id)
+    765|       )
+    766|         throw new Error(
+       |               ^
+    767|           "Every required task needs current acceptance or an explicit…
+    768|         );
+ ❯ packages/persistence/repositories/coordination.ts:326:16
+ ❯ sqliteTransaction node_modules/better-sqlite3-multiple-ciphers/lib/methods/transaction.js:65:24
+ ❯ Store.transaction packages/persistence/store.ts:384:35
+ ❯ CoordinationRepository.transitionWorkflow packages/persistence/repositories/coordination.ts:316:23
+ ❯ packages/workflows/advanced.ts:1884:23
+ ❯ sqliteTransaction node_modules/better-sqlite3-multiple-ciphers/lib/methods/transaction.js:65:24
+ ❯ Store.transaction packages/persistence/store.ts:384:35
+ ❯ AdvancedCollaboration.accept packages/workflows/advanced.ts:1819:34
+ ❯ Service.commandOwned apps/service/service.ts:892:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/workflow-service.test.ts > service automatically completes both adapter turns for reversible assignment false, requires native check/acceptance
+AssertionError: [{"nativeId":"fixture-message","text":"Fixture changed value; no model was contacted."},{"nativeId":"message-1","text":"{\"summary\":\"no substantiated findings\",\"findings\":[]}"}]: expected 'blocked' to be 'checking' // Object.is equality
+
+Expected: "checking"
+Received: "blocked"
+
+ ❯ tests/workflow-service.test.ts:149:7
+    147|           .map((m) => ({ nativeId: m.nativeId, text: m.text })),
+    148|       ),
+    149|     ).toBe("checking");
+       |       ^
+    150|     const attempts = [
+    151|       ...f.service.store.iterate<any>("attempt", { projectId: "p" }),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/workflow-service.test.ts > service automatically completes both adapter turns for reversible assignment true, requires native check/acceptance
+AssertionError: [{"nativeId":"message-1","text":"Fixture changed value; no model was contacted."},{"nativeId":"fixture-message","text":"{\"summary\":\"no substantiated findings\",\"findings\":[]}"}]: expected 'blocked' to be 'checking' // Object.is equality
+
+Expected: "checking"
+Received: "blocked"
+
+ ❯ tests/workflow-service.test.ts:149:7
+    147|           .map((m) => ({ nativeId: m.nativeId, text: m.text })),
+    148|       ),
+    149|     ).toBe("checking");
+       |       ^
+    150|     const attempts = [
+    151|       ...f.service.store.iterate<any>("attempt", { projectId: "p" }),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  2 failed | 31 passed | 2 skipped (35)
+      Tests  5 failed | 303 passed | 3 skipped (311)
+   Start at  12:27:04
+   Duration  95.10s (tests 99%, import 1%)
+

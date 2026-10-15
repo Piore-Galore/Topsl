@@ -1,0 +1,47 @@
+
+ RUN  v5.0.2 /Users/piore/repos/Topsl
+
+ ✓ tests/runtime.test.ts (12 tests) 5876ms
+   ✓ native process adapter (12)
+     ✓ protocol probe loads native models without submitting a turn 518ms
+     ✓ streaming preserves exact run revision, native IDs, and deduplicated usage 567ms
+     ✓ review mode cannot grant escalation requests 567ms
+     ✓ editing approval is bound to the exact native request and consumed once 613ms
+     ✓ requests for other native threads are never approved 614ms
+     ✓ a project has one writer; interruption uses its native turn ID 504ms
+     ✓ uncertain crash is recorded, never replayed, and blocks another writer 505ms
+     ✓ uncertain malformed is recorded, never replayed, and blocks another writer 500ms
+     ✓ API billing mode cannot silently replace subscription execution 501ms
+     ✓ changing the native account cannot silently resume private history 491ms
+     ✓ untrusted executable never starts 449ms
+ ✓ tests/durable-executions.test.ts (10 tests) 5325ms
+   ✓ R2 durable process executions (10)
+     ✓ durable-check rollout switch prevents dispatch and keeps historical inspection available 479ms
+     ✓ R2-AT-05: cleanup failure preserves committed success and retries without dispatch 538ms
+     ✓ R2-AT-06/08: final storage failure leaves original intent unresolved and recovery never duplicates effects 544ms
+     ✓ R2-AT-07: concurrent approval and pre-dispatch cancellation produce one intent and no command 492ms
+     ✓ R2-AT-07: incremental bounded logs survive active cancellation and redact split credentials 581ms
+     ✓ protected logs retain bounded full output with explicit truncation, separate from the short UI summary 701ms
+     ✓ timeout records termination evidence and cannot become a passing result 602ms
+     ✓ R2-AT-04: awaited idempotent shutdown drains active checks before closing storage and reopening does not replay 784ms
+     ✓ R2-AT-04: finalized execution callbacks never access persistence after shutdown 558ms
+ ✓ tests/parallel-workspaces.test.ts (11 tests) 19084ms
+   ✓ managed parallel workspace safety (11)
+     ✓ two actual fixture writers share one logical project but separate roots; aliases collide 1316ms
+     ✓ dirty inputs require reviewed capture; digest change and late source edit block creation 1393ms
+     ✓ worker checks pass but combined checks fail and block acceptance 2035ms
+     ✓ overlapping candidates record conflict and preserve all bases until explicit resolution 1633ms
+     ✓ staged deletion cannot bypass specialist file ownership 1444ms
+     ✓ accepted combined evidence is invalidated on external edit; stable review bytes and visibility gate 1872ms
+     ✓ fanout capability gate and third task wait without dispatch or orphan attempt 2869ms
+     ✓ completed inference keeps capacity until observed exit and queued dispatch resumes afterward 1802ms
+     ✓ late cancellation evidence stays historical; active cleanup blocked and explicit inactive cleanup retains content 1436ms
+     ✓ mutable resources use distinct reserved ports, databases and temp paths outside candidate 1175ms
+     ✓ shared service commands require reviewed workspace/integration actions and report external acceptance drift 2107ms
+
+ Test Files  3 passed (3)
+      Tests  33 passed (33)
+   Start at  12:20:17
+   Duration  19.37s (tests 99%, transform 1%)
+
+JSON report written to /Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-2.json

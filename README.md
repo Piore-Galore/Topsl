@@ -69,7 +69,8 @@ The grant file is created through **Settings → Project context connection**. K
 ```sh
 npm run check          # strict TypeScript, deterministic tests, application compilation
 npm run test:desktop   # real Electron UI and encrypted restart in a temporary profile
-npm run package       # unsigned local package for this OS and architecture
+npm run package       # personal-pilot package for this OS and architecture
+npm run verify:mac-package # macOS: verify the app extracted from the ZIP
 ```
 
 The test suite runs with Electron's Node ABI so the same native SQLite and PTY modules are exercised. Desktop tests use synthetic projects/transcripts; no vendor account, paid model turn, or real application installation is involved. Linux GUI tests need a display, for example `xvfb-run --auto-servernum npm run test:desktop`. The Linux CI smoke process uses Chromium's `--no-sandbox` only for that isolated fixture run; shipped application configuration keeps renderer sandboxing enabled.
@@ -86,7 +87,13 @@ To verify the selected runtime's experimental project API, run the optional nati
 TOPSL_NATIVE_PROJECT_BINARY=/absolute/path/to/codex npm test -- tests/codex-projects-native.test.ts
 ```
 
-The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without distribution signing/notarization. Native runtime compatibility and production eligibility are separate from compilation.
+The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without Developer ID signing/notarization or Windows publisher signing. macOS bundles use an ad-hoc signature to seal the finished app, helpers, and native modules. Packaging checks the bundle with Apple's strict signature verifier; both Mac CI jobs also extract the ZIP and verify it before recording checksums or uploading a release. An ad-hoc signature verifies bundle integrity but does not identify the publisher or provide Apple notarization. Native runtime compatibility and production eligibility are separate from compilation.
+
+### macOS reports that Topsl is damaged
+
+The published v0.1.1 Mac ZIPs were built with signing disabled. This leaves an invalid Electron bundle signature, so macOS can report that the app is damaged even when the download matches its SHA-256 checksum. Rebuild from the corrected packaging configuration above; the existing GitHub assets have not been replaced. To check a particular archive on macOS, run `npm run verify:mac-package -- /absolute/path/to/Topsl.zip`.
+
+Extract the repaired ZIP before opening Topsl. Because the pilot is not notarized, macOS may still request approval. For your own build or a checksum-verified release you trust, try opening the app, then use **System Settings → Privacy & Security → Open Anyway** if offered. [Apple's guidance for opening apps](https://support.apple.com/en-us/102445) explains this approval. A Mac download that opens without this approval requires a Developer ID signature and Apple notarization.
 
 ## GitHub builds and releases
 
@@ -94,7 +101,7 @@ The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. T
 
 The compile workflow uses read-only repository permissions, pinned actions, bounded job timeouts, and no artifact/cache uploads. Package names, sizes, and checksums appear in the run summary. Its packages are not retained after the runner finishes. [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 
-[Release Topsl](https://github.com/Piore-Galore/Topsl/actions/workflows/release.yml) runs when a `v<version>` tag matching `package.json` is pushed. It builds and tests all four platforms, uploads each package and SHA-256 checksum directly to a draft GitHub Release, and publishes an unsigned personal-pilot prerelease only after every platform passes and the uploaded checksums are verified. Release jobs have repository-content write permission through the temporary `GITHUB_TOKEN`. They use the same public standard runners and pinned actions, without Actions artifact storage or dependency caches. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+[Release Topsl](https://github.com/Piore-Galore/Topsl/actions/workflows/release.yml) runs when a `v<version>` tag matching `package.json` is pushed. It builds and tests all four platforms, uploads each package and SHA-256 checksum directly to a draft GitHub Release, and publishes a personal-pilot prerelease without distribution signing/notarization only after every platform passes and the uploaded checksums are verified. Mac archives must also pass extracted-bundle signature verification. Release jobs have repository-content write permission through the temporary `GITHUB_TOKEN`. They use the same public standard runners and pinned actions, without Actions artifact storage or dependency caches. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 
 To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the repaired pilot:
 
@@ -119,3 +126,11 @@ packages/domain/      Contracts, catalog, command validation, invariants
 tests/                Controlled native process, lifecycle, privacy, persistence tests
 docs/                 Full design, review, and implementation acceptance matrix
 ```
+
+## Round 2 implementation — 15 October 2026
+
+The current working tree adds durable check/preparation records, protected candidate manifests and bounded retrieval, qualified role readiness, assisted handoffs, scoped UI recovery, and guided workflow setup. See the [Round 2 implementation and evidence](docs/Round_2_Execution.md) for commands, phase reports, preserved failures and the exact source/export identity. Structured dispatch requires service-owned qualification for the selected runtime, account and policy; trusting an executable or loading its model catalog does not supply that qualification. Native-assisted operation remains a separate, attributed flow.
+
+The changes are uncommitted local implementation. Scripted provider fixtures and real offline project checks do not qualify live Codex/Claude operation or packaged platforms. Live provider acceptance, the delivery commit and all four remote platform jobs remain pending.
+
+Review follow-up (15 October 2026): qualification gates *coordinated* workflow roles only. Direct structured Codex chats (step 4 above) keep the pilot preflight and are not blocked by role readiness. See the [review follow-up](docs/Round_2_Execution.md#review-follow-up--15-october-2026).

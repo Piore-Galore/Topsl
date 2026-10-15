@@ -1,0 +1,27 @@
+
+> topsl@0.1.1 test
+> node scripts/test.mjs tests/parallel-workspaces.test.ts --reporter=default --reporter=json --outputFile.json=/Users/piore/repos/Topsl/docs/round-2-evidence/2026-10-15-r2-0-e5e004e/concurrency-report.json
+
+
+ RUN  v5.0.2 /Users/piore/repos/Topsl
+
+ ✓ tests/parallel-workspaces.test.ts (11 tests) 17395ms
+   ✓ managed parallel workspace safety (11)
+     ✓ two actual fixture writers share one logical project but separate roots; aliases collide 1019ms
+     ✓ dirty inputs require reviewed capture; digest change and late source edit block creation 1037ms
+     ✓ worker checks pass but combined checks fail and block acceptance 1739ms
+     ✓ overlapping candidates record conflict and preserve all bases until explicit resolution 1437ms
+     ✓ staged deletion cannot bypass specialist file ownership 1266ms
+     ✓ accepted combined evidence is invalidated on external edit; stable review bytes and visibility gate 1640ms
+     ✓ fanout capability gate and third task wait without dispatch or orphan attempt 2554ms
+     ✓ completed inference keeps capacity until observed exit and queued dispatch resumes afterward 2325ms
+     ✓ late cancellation evidence stays historical; active cleanup blocked and explicit inactive cleanup retains content 1809ms
+     ✓ mutable resources use distinct reserved ports, databases and temp paths outside candidate 824ms
+     ✓ shared service commands require reviewed workspace/integration actions and report external acceptance drift 1745ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  11:41:01
+   Duration  17.64s (tests 99%, transform 1%)
+
+JSON report written to /Users/piore/repos/Topsl/docs/round-2-evidence/2026-10-15-r2-0-e5e004e/concurrency-report.json

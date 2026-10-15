@@ -1,0 +1,51 @@
+[
+  {
+    "id": "check",
+    "command": [
+      "/opt/homebrew/bin/npm",
+      "run",
+      "check"
+    ],
+    "cwd": "/Users/piore/repos/Topsl",
+    "startedAt": "2026-10-15T03:39:51.787Z",
+    "endedAt": "2026-10-15T03:40:35.244Z",
+    "exitCode": 0,
+    "signal": null,
+    "output": "check.txt",
+    "outputSha256": "82f1f43b06266947e99fb8e5472c5af0bd7f5f1ed5f25bfe8f1d0ea1fb84b4ed"
+  },
+  {
+    "id": "desktop",
+    "command": [
+      "/opt/homebrew/bin/npm",
+      "run",
+      "test:desktop"
+    ],
+    "cwd": "/Users/piore/repos/Topsl",
+    "startedAt": "2026-10-15T03:40:35.245Z",
+    "endedAt": "2026-10-15T03:41:01.679Z",
+    "exitCode": 0,
+    "signal": null,
+    "output": "desktop.txt",
+    "outputSha256": "fb341ab4e769c3789db3a8fcff3372ecdb6ab2be139ded591ed7c306aa7b6a08"
+  },
+  {
+    "id": "concurrency",
+    "command": [
+      "/opt/homebrew/bin/npm",
+      "test",
+      "--",
+      "tests/parallel-workspaces.test.ts",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Users/piore/repos/Topsl/docs/round-2-evidence/2026-10-15-r2-0-e5e004e/concurrency-report.json"
+    ],
+    "cwd": "/Users/piore/repos/Topsl",
+    "startedAt": "2026-10-15T03:41:01.685Z",
+    "endedAt": "2026-10-15T03:41:19.621Z",
+    "exitCode": 0,
+    "signal": null,
+    "output": "concurrency.txt",
+    "outputSha256": "ec7b300d6fea1aeb48f0388df9209488fc7df120d19f853b6d9693f4e06e310f"
+  }
+]

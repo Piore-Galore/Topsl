@@ -1,0 +1,540 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-15T04:48:33.004Z",
+  "status": "local-implementation-and-frozen-source-validation-passed",
+  "baseCommit": "e5e004e31e428d77d2242d3ab472e66d88bb0cc6",
+  "branch": "main",
+  "uncommitted": true,
+  "indexUnchanged": true,
+  "host": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "node": "26.0.0",
+    "applicationRuntime": {
+      "electron": "44.4.5",
+      "node": "24.21.0",
+      "chrome": "152.0.7977.130"
+    }
+  },
+  "sourceExport": {
+    "root": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-round2-export-81IgG0/source",
+    "contentRevision": "b7bf86bd1a38fddb35c6de80b19a31cd7f6c163d5467f72afba84cad37600307",
+    "files": 376,
+    "dependencyMode": "shared-installed-engineering-toolchain",
+    "exportMismatches": 0,
+    "executableSourceMismatches": 0
+  },
+  "commands": [
+    {
+      "command": "npm run check",
+      "cwd": "/Users/piore/repos/Topsl",
+      "exitCode": 0,
+      "unitPassed": 309,
+      "unitSkipped": 3,
+      "releasePassed": 17,
+      "log": "check.txt"
+    },
+    {
+      "command": "npm run build",
+      "cwd": "/Users/piore/repos/Topsl",
+      "exitCode": 0,
+      "log": "build-final.txt"
+    },
+    {
+      "command": "npm run test:desktop",
+      "cwd": "/Users/piore/repos/Topsl",
+      "exitCode": 0,
+      "encryptedRestart": true,
+      "log": "desktop.txt"
+    },
+    {
+      "command": "npm run check",
+      "cwd": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-round2-export-81IgG0/source",
+      "exitCode": 0,
+      "unitPassed": 309,
+      "unitSkipped": 3,
+      "releasePassed": 16,
+      "log": "export-check.txt"
+    },
+    {
+      "command": "npm run test:desktop",
+      "cwd": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-round2-export-81IgG0/source",
+      "exitCode": 0,
+      "encryptedRestart": true,
+      "log": "export-desktop.txt"
+    },
+    {
+      "command": "node scripts/lifecycle-stress.mjs --iterations 20 --seed r2-frozen-export-20261015 --output /Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-validation/export-lifecycle-20",
+      "cwd": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-round2-export-81IgG0/source",
+      "exitCode": 0,
+      "iterations": 20,
+      "passed": 660,
+      "failed": 0,
+      "log": "export-lifecycle.txt"
+    },
+    {
+      "command": "node --test tests/round2-demo-fixture.test.mjs",
+      "cwd": "/Users/piore/repos/Topsl",
+      "exitCode": 0,
+      "passed": 1,
+      "log": "demo-fixture.txt"
+    }
+  ],
+  "phaseEvidence": {
+    "ui": {
+      "reportedBy": "r2_5_ui",
+      "focusedTestsPassed": 9,
+      "electronJourneysPassed": 15,
+      "samples": 30,
+      "p95Ms": 132
+    },
+    "acceptance": {
+      "localCasesPassed": 5,
+      "manifest": "../r2-6-2026-10-15T04-23-52-811Z-cZYZRT/manifest.json"
+    },
+    "synthetic": {
+      "files": 10018,
+      "logicalBytes": 109411000,
+      "manifest": "../r2-6-2026-10-15T04-17-30-880Z-e5ywXu/manifest.json"
+    }
+  },
+  "originalContentsPreserved": 8,
+  "originalContentsMode": "six byte-identical, README/status exact original prefix plus separately hashed dated appendices",
+  "retainedFailures": [
+    {
+      "log": "check-initial-failed.txt",
+      "failed": 5,
+      "reason": "advanced selection lineage contract and old fixture context parser; corrected without weakening assertions"
+    },
+    {
+      "log": "desktop-initial-failed.txt",
+      "reason": "superseded inspection retained pending flag; per-task request cleanup fixed and regression added"
+    }
+  ],
+  "pending": [
+    "live provider R2-AT-37/38 and qualified production runner/reader tool installation",
+    "four-platform committed delivery R2-AT-40",
+    "Windows abrupt coordinator termination qualification",
+    "OS filesystem/network/CPU/memory sandbox enforcement; online preparation execution"
+  ],
+  "qualification": "No Topsl branch/commit/push/release or paid provider inference. Fixture Git commits remain test-only. Local evidence is not live-provider or packaged-platform qualification.",
+  "artifacts": [
+    {
+      "path": "build-final.txt",
+      "bytes": 469,
+      "sha256": "44e4cd2c9336226019e5be860f7d58654335a1a6ac6729483d689b3515eb71fd"
+    },
+    {
+      "path": "check-initial-failed.txt",
+      "bytes": 7066,
+      "sha256": "0bd2cda407bd340f452be42fcfc60d2291b3aee085acccd7904f3e3ad0176fe3"
+    },
+    {
+      "path": "check.txt",
+      "bytes": 2519,
+      "sha256": "1db0296789a853949660a786808915e432f499cebb2bfd5e9e370c88efb5cd6f"
+    },
+    {
+      "path": "demo-fixture.txt",
+      "bytes": 214,
+      "sha256": "57c77240c6c6cbbe0a4850d4f2d4caf76d3678cdb34f9d7859ff3682ea5f8a6a"
+    },
+    {
+      "path": "desktop-artifacts/applications.png",
+      "bytes": 274893,
+      "sha256": "7919e04571c11696e9465763c1af70104f259279cf37e4769cbcd61b20b0850b"
+    },
+    {
+      "path": "desktop-artifacts/codex-projects.png",
+      "bytes": 488905,
+      "sha256": "28769709a238a73cc1860f10ea45995ea52599c6248586d7bd0c09975689dceb"
+    },
+    {
+      "path": "desktop-artifacts/compact.png",
+      "bytes": 166101,
+      "sha256": "f05b1b04415ff4f208c1c4265e34266e70e13b91be2f190d18fa3d972766c904"
+    },
+    {
+      "path": "desktop-artifacts/coordination-compact.png",
+      "bytes": 107779,
+      "sha256": "4b5f903bd187b57ffcace752af5c036eec720c71ea95b96c524fafa5ac170e72"
+    },
+    {
+      "path": "desktop-artifacts/coordination-night.png",
+      "bytes": 194565,
+      "sha256": "a61300dceb0e65e8aa4557f02020ac3f809d13b06d4152c7f70d3abcab2d8d6a"
+    },
+    {
+      "path": "desktop-artifacts/coordination-scale.png",
+      "bytes": 306045,
+      "sha256": "3f0f42387e1af009f57265db4728696c92f251de559aaad6aad67d7bf98f576f"
+    },
+    {
+      "path": "desktop-artifacts/coordination-standard.png",
+      "bytes": 192368,
+      "sha256": "8767d5eaa1887b752d5a1b9d777e2af47d505260a90a1bed11e98cc6db22b647"
+    },
+    {
+      "path": "desktop-artifacts/coordination-system-dark.png",
+      "bytes": 194565,
+      "sha256": "a61300dceb0e65e8aa4557f02020ac3f809d13b06d4152c7f70d3abcab2d8d6a"
+    },
+    {
+      "path": "desktop-artifacts/desktop-coordination-benchmark.json",
+      "bytes": 3073,
+      "sha256": "a064199e039f9b4d1de47c44f58ff7b11e54aeb2a0f54a7ed0c4f5c2c9721f3e"
+    },
+    {
+      "path": "desktop-artifacts/manifest.json",
+      "bytes": 1908,
+      "sha256": "ad18ee7ee23a0853fd92189589b08383b31512a9044ade225cdf7e0c9abf31ce"
+    },
+    {
+      "path": "desktop-artifacts/projects-compact.png",
+      "bytes": 187667,
+      "sha256": "0ec0511d9d0a03fe316b53aa71f5948729adf2526a36c7c8f166a0d76199d79d"
+    },
+    {
+      "path": "desktop-artifacts/projects.png",
+      "bytes": 309825,
+      "sha256": "991e8895736d980a07598da92234a80793972c351317dac8059228786bb59386"
+    },
+    {
+      "path": "desktop-initial-failed.txt",
+      "bytes": 4066,
+      "sha256": "ef5c805b840cd0c4794c17dc333ce034f32b4a57574d38f118112c5b4e6c803e"
+    },
+    {
+      "path": "desktop.txt",
+      "bytes": 5175,
+      "sha256": "1888aa0b0054521ae7e5ba742399c65831131c24de4f345bb268a63f33854e7d"
+    },
+    {
+      "path": "document-links.json",
+      "bytes": 37,
+      "sha256": "6d7a5b8bdc6f2e0291083150a975e12a521a96fff943546ad50bc54c3d14ac89"
+    },
+    {
+      "path": "export-check.txt",
+      "bytes": 2472,
+      "sha256": "3d74fba1ac862f3180b5b0f7578caa308074f3f1f661d97a93a20cb38e995395"
+    },
+    {
+      "path": "export-desktop-artifacts/applications.png",
+      "bytes": 274893,
+      "sha256": "7919e04571c11696e9465763c1af70104f259279cf37e4769cbcd61b20b0850b"
+    },
+    {
+      "path": "export-desktop-artifacts/codex-projects.png",
+      "bytes": 487914,
+      "sha256": "4baa837a843b6efe4487ac12e00a67a76e846adf59897a17d00cecf371ec87cf"
+    },
+    {
+      "path": "export-desktop-artifacts/compact.png",
+      "bytes": 166128,
+      "sha256": "3e392e2c183802f2a4eb5839ab6a1bcb456c8c6f87d6e04bf742b3c5d651643b"
+    },
+    {
+      "path": "export-desktop-artifacts/coordination-compact.png",
+      "bytes": 107615,
+      "sha256": "1e4a68ee527e90447c3e3eb772dfd02b0d8ffc853730bf282e1666092e0611e5"
+    },
+    {
+      "path": "export-desktop-artifacts/coordination-night.png",
+      "bytes": 194597,
+      "sha256": "e2197513c909ebdbca62a95116349bd304426607ee2f8b8c05dac6a4e9c509a2"
+    },
+    {
+      "path": "export-desktop-artifacts/coordination-scale.png",
+      "bytes": 348879,
+      "sha256": "171583acdf2d35b8831a7a3ead2dfb3baca7d7f4fab8c7b43be785e19e5e4cf3"
+    },
+    {
+      "path": "export-desktop-artifacts/coordination-standard.png",
+      "bytes": 192084,
+      "sha256": "08e292cad4072f64262e4357bb27227db0cc1550c044125235eb77ce2749ce78"
+    },
+    {
+      "path": "export-desktop-artifacts/coordination-system-dark.png",
+      "bytes": 193691,
+      "sha256": "2bba8ba1d3ec25d245f66ccddfdf67347ccd9618cc6773766ffb92166641c959"
+    },
+    {
+      "path": "export-desktop-artifacts/desktop-coordination-benchmark.json",
+      "bytes": 3071,
+      "sha256": "af71e6176a6c660c2f7ee0f0abe0889b5d352efe085c7f87a3bd09f38fd6cc4d"
+    },
+    {
+      "path": "export-desktop-artifacts/manifest.json",
+      "bytes": 1911,
+      "sha256": "49dc1f94e1e1d310fcc0d3f6bed7eecda1a1c32c3daccb9932cc0b924c01309b"
+    },
+    {
+      "path": "export-desktop-artifacts/projects-compact.png",
+      "bytes": 187407,
+      "sha256": "78eb54ca488141a500eedb944be7903cfb0743314006fbc955ed7fe72517a472"
+    },
+    {
+      "path": "export-desktop-artifacts/projects.png",
+      "bytes": 309570,
+      "sha256": "b493d064f02c94e16081cb7e325bb9e3e23cbe248e58b37d1c9d7de510ffd666"
+    },
+    {
+      "path": "export-desktop.txt",
+      "bytes": 4929,
+      "sha256": "9f58d4f16d7ad36015f77e54204914cf05d7fd0fd29a8392bc67d1f11049cd22"
+    },
+    {
+      "path": "export-initial-check.txt",
+      "bytes": 2469,
+      "sha256": "1e0e118911936a1daa3a4b34b017e76c3e48b0a00f536f9f500474c780d6667c"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-1.json",
+      "bytes": 13217,
+      "sha256": "295215d529c1c5dd069dd783c231880dd578a0990bc7ce2e250363a3680e4f23"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-1.txt",
+      "bytes": 3597,
+      "sha256": "0b5b98d5c96e5947f437a40cd77bc865d49aaf4e11857efcb35c54836e9dd505"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-10.json",
+      "bytes": 13205,
+      "sha256": "e67d2a2f98a34884f5501a79dcc31a240ff3383518859d086f9407b7512d5675"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-10.txt",
+      "bytes": 3609,
+      "sha256": "f6727d22782f5e5c355c89d6c5397bf745b5f40114484db698c939ca547fa37b"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-11.json",
+      "bytes": 13257,
+      "sha256": "095c8b37c439e24fc226c7963b511d77cece0256571d9a41474bc052d75fb4bb"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-11.txt",
+      "bytes": 3598,
+      "sha256": "f88cd345e692a416eac769811a97d3ec27a52263f969dab576bdf2c45c5b74c7"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-12.json",
+      "bytes": 13224,
+      "sha256": "f18bb17ce3f25ac5e30988a6fc2ede2a24f8fce9316a83232a4bbf060718f501"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-12.txt",
+      "bytes": 3598,
+      "sha256": "996370b0fcb6272f37d9c7e165bb58319c3c2fcff6f9f6868453527671e6a002"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-13.json",
+      "bytes": 13228,
+      "sha256": "f73af4483077d6b166aa9edb2c3ead01453cad2e19487bbe2247d69ee257b0ae"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-13.txt",
+      "bytes": 3598,
+      "sha256": "e10ec35569c23c68f56ae31056415823957d3360f419e7fd7dfab96d65aea3d5"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-14.json",
+      "bytes": 13225,
+      "sha256": "e77f708392f2dc8c6901ec9ca9800b0720a023e0b7591521e636ad11956fed3b"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-14.txt",
+      "bytes": 3598,
+      "sha256": "da4f1e99fcb04e95a01b6100557805103b732f2c7f73d5b8364462c4534a9ac5"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-15.json",
+      "bytes": 13224,
+      "sha256": "e8889487f929bf24b7ae21d8e7939f85a3c9d25a15806d119ea80a1ecee7fd8d"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-15.txt",
+      "bytes": 3598,
+      "sha256": "3318453b0e9bafa6da5c40f7f24e662cbbe39a7c54ae3f57171103da6b36d4bb"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-16.json",
+      "bytes": 13229,
+      "sha256": "e5d1c3508ec4d8752b6490e774bf4f717818a0dc4c958486edc96e8c3330eaa6"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-16.txt",
+      "bytes": 3598,
+      "sha256": "3728ef67d183e34668e0f6be351cb2b883f482d89dea98f327fe10037f3f1204"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-17.json",
+      "bytes": 13207,
+      "sha256": "91fe271c99992852dbdeac4aae269d97f280192ad9623d8eca6da567940c0b0c"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-17.txt",
+      "bytes": 3598,
+      "sha256": "22b29aa82fb8b8f6d7213b9d150b6978ed23f9bce365af1554105e06403d06b4"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-18.json",
+      "bytes": 13241,
+      "sha256": "8e4f94a877d641499f25e269e447a21979a623adc2ac7adcccfdbaf15fae355c"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-18.txt",
+      "bytes": 3598,
+      "sha256": "9b35f21826d08b299fe3fb8805123bd5efc76dea070572d815295d77b4bdc7ba"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-19.json",
+      "bytes": 13234,
+      "sha256": "ad3312018d210243a35d936614f12ccdca801a814f058f114cbce6f2f60664f7"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-19.txt",
+      "bytes": 3598,
+      "sha256": "a31ca94edc9d8661cba00bcd021a3a22f7ee00e3978e94b72334c5744db48b45"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-2.json",
+      "bytes": 13223,
+      "sha256": "82f4d8de8ad3a51bccf35730064bc8306b561e5b4bc0530d0633237e63e37cab"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-2.txt",
+      "bytes": 3597,
+      "sha256": "16d2cec571bde58684f8c39b8d5f58c3971fd8f0d9e50df422e27fc0b35defa6"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-20.json",
+      "bytes": 13213,
+      "sha256": "90a20caf550dd5047f32600789ba6e0353f8bb907644225f83d4a811a822d7ff"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-20.txt",
+      "bytes": 3598,
+      "sha256": "bc92dc2011ee86c2a70eb47e96422e39bf16ea8af24158692abb652123b60c9a"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-3.json",
+      "bytes": 13203,
+      "sha256": "57d0ff42fd5c37cd98f2db41911fcd5b463a3da3455c17243eddd714b5c19de7"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-3.txt",
+      "bytes": 3597,
+      "sha256": "75ba4c0b7fef352d8f3260026303d7ea3270e4bc42dde21913ff9d568cd9b694"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-4.json",
+      "bytes": 13257,
+      "sha256": "bce2c44c21308cbc76aa0a57a06498a31f5af3b32c9d9ff5a810e64faa6c1333"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-4.txt",
+      "bytes": 3597,
+      "sha256": "187e027b1aa255e14b875ca261e550fb9a3afa2255d9bae14ff2f2d8e51ce3fa"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-5.json",
+      "bytes": 13225,
+      "sha256": "3a772aee1404906eef7060ee4adf81d3fc2a8566ad75703de957c3a973ba9a69"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-5.txt",
+      "bytes": 3597,
+      "sha256": "33d89e7f505d57305bde95c7b0034867f80ce80324521d8e1413859079cd94f8"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-6.json",
+      "bytes": 13259,
+      "sha256": "823038d448e23ec0f02406df01874b2d2e0c3fe99315762504170b060f6702e8"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-6.txt",
+      "bytes": 3597,
+      "sha256": "9372f0516a7c823a4ab15bfd59e0c8ae2a31a72ddeaf92b554a4b3883732ce25"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-7.json",
+      "bytes": 13225,
+      "sha256": "c9ce4c6e8369cd797a34d3dd7451d77ec5f90c03314922ba7da6b954672f9411"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-7.txt",
+      "bytes": 3597,
+      "sha256": "63ecc14dd78f48c899614628763f685553c6dae80d5f101835d70f6ab345d882"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-8.json",
+      "bytes": 13208,
+      "sha256": "f737028e6ff883d663cd9272635762f213dbb0c588b3ec1bee58af09dbf9a7bf"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-8.txt",
+      "bytes": 3597,
+      "sha256": "99b49abdc39fdacb0e71c9daa5666f909eaede9dae49ba70efa2125019a83e63"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-9.json",
+      "bytes": 13252,
+      "sha256": "01bbbcc263ed40a8beb9bbc7151f315194a4c5fac8fb8be0b727d63f57ab91ce"
+    },
+    {
+      "path": "export-lifecycle-20/iteration-9.txt",
+      "bytes": 3597,
+      "sha256": "d1fe77c70f859d4e03119cb5e33a720d4101429fc0340c024d936c932adb0891"
+    },
+    {
+      "path": "export-lifecycle-20/manifest.json",
+      "bytes": 8760,
+      "sha256": "bae01fa4ca2a85c6752183ea87587c245c3a04f7a4d558052f7e5a909c665230"
+    },
+    {
+      "path": "export-lifecycle.txt",
+      "bytes": 73040,
+      "sha256": "60a3e6ffee28659e4302fbad684ba0cca04d721bc3ff98bfa8e0bd888fad3e3f"
+    },
+    {
+      "path": "preservation.json",
+      "bytes": 2461,
+      "sha256": "dd1330e8f9c5b995b6c8253ce5ca0b82c8de94879cbc133093a4d00a78f1aca7"
+    },
+    {
+      "path": "source-consistency.json",
+      "bytes": 313,
+      "sha256": "5ce0afa1115180a5375e4ad96d905a567f051e2d48c43ccdeaaca35c03e95abc"
+    },
+    {
+      "path": "source-export-initial-manifest.json",
+      "bytes": 81805,
+      "sha256": "54fa9bc9d480fe75db89af4a81257bcdc6c4af546fb2ed531cd2deb8fd40c8ef"
+    },
+    {
+      "path": "source-export-initial-result.json",
+      "bytes": 365,
+      "sha256": "8690d1d088ee522807f2da68aca09b298166d2457cdeb692556f5466b8ce5067"
+    },
+    {
+      "path": "source-export-manifest.json",
+      "bytes": 90046,
+      "sha256": "d1975a05b7ab5dba8c5e13ff3da83a530f89493c79aab2bc4d98d8be6641b67e"
+    },
+    {
+      "path": "source-export-result.json",
+      "bytes": 386,
+      "sha256": "8ad7184e1ad9a36646deeab9a76869c8b4a2b0e822c41ff0df91cca1e57771a6"
+    }
+  ],
+  "documentation": {
+    "relativeLinksChecked": 98,
+    "missing": 0,
+    "trackedDiffWhitespace": "passed"
+  }
+}

@@ -1,0 +1,67 @@
+
+> topsl@0.1.1 test:desktop
+> node scripts/desktop-test-runner.mjs
+
+2026-10-15T04:32:23.639Z pw:browser <launching> /Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -r /Users/piore/repos/Topsl/node_modules/playwright-core/lib/server/electron/loader.js --inspect=0 --remote-debugging-port=0 .
+2026-10-15T04:32:23.640Z pw:browser <launched> pid=41227
+2026-10-15T04:32:23.713Z pw:browser [pid=41227][err] Debugger listening on ws://127.0.0.1:63776/79db4610-e4c4-481c-8a1f-2b9dc00b4dab
+2026-10-15T04:32:23.714Z pw:browser [pid=41227][err] For help, see: https://nodejs.org/learn/getting-started/debugging
+2026-10-15T04:32:23.714Z pw:browser <ws connecting> ws://127.0.0.1:63776/79db4610-e4c4-481c-8a1f-2b9dc00b4dab
+2026-10-15T04:32:23.716Z pw:browser [pid=41227][err] Debugger attached.
+2026-10-15T04:32:23.717Z pw:browser <ws connected> ws://127.0.0.1:63776/79db4610-e4c4-481c-8a1f-2b9dc00b4dab
+2026-10-15T04:32:23.745Z pw:browser [pid=41227][err] 
+2026-10-15T04:32:23.745Z pw:browser [pid=41227][err] DevTools listening on ws://127.0.0.1:63778/devtools/browser/9417ab2f-27f3-4488-8e8a-5d60a13c5601
+2026-10-15T04:32:23.745Z pw:browser <ws connecting> ws://127.0.0.1:63778/devtools/browser/9417ab2f-27f3-4488-8e8a-5d60a13c5601
+2026-10-15T04:32:23.771Z pw:browser <ws connected> ws://127.0.0.1:63778/devtools/browser/9417ab2f-27f3-4488-8e8a-5d60a13c5601
+Desktop failure profile: /var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-test-desktop-X3ke7Y
+2026-10-15T04:33:16.045Z pw:browser <ws disconnecting> ws://127.0.0.1:63776/79db4610-e4c4-481c-8a1f-2b9dc00b4dab
+2026-10-15T04:33:16.047Z pw:browser [pid=41227][err] Debugger ending on ws://127.0.0.1:63776/79db4610-e4c4-481c-8a1f-2b9dc00b4dab
+2026-10-15T04:33:16.047Z pw:browser [pid=41227][err] For help, see: https://nodejs.org/learn/getting-started/debugging
+2026-10-15T04:33:16.048Z pw:browser <ws disconnected> ws://127.0.0.1:63776/79db4610-e4c4-481c-8a1f-2b9dc00b4dab code=1005 reason=
+2026-10-15T04:33:16.217Z pw:browser <ws disconnected> ws://127.0.0.1:63778/devtools/browser/9417ab2f-27f3-4488-8e8a-5d60a13c5601 code=1006 reason=
+2026-10-15T04:33:16.218Z pw:browser [pid=41227] <process did exit: exitCode=0, signal=null>
+2026-10-15T04:33:16.218Z pw:browser [pid=41227] starting temporary directories cleanup
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+locator.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('button', { name: /Inspect Unicode 项目/ })[22m
+[2m    - locator resolved to <button disabled aria-pressed="false" class="coordination-task ">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not enabled[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not enabled[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    57 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not enabled[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+    at /Users/piore/repos/Topsl/scripts/desktop-test.mjs:571:66 {
+  log: [
+    "  - waiting for getByRole('button', { name: /Inspect Unicode 项目/ })",
+    '    - locator resolved to <button disabled aria-pressed="false" class="coordination-task ">…</button>',
+    '  - attempting click action',
+    '    2 × waiting for element to be visible, enabled and stable',
+    '      - element is not enabled',
+    '    - retrying click action',
+    '    - waiting 20ms',
+    '    2 × waiting for element to be visible, enabled and stable',
+    '      - element is not enabled',
+    '    - retrying click action',
+    '      - waiting 100ms',
+    '    57 × waiting for element to be visible, enabled and stable',
+    '       - element is not enabled',
+    '     - retrying click action',
+    '       - waiting 500ms'
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v26.0.0

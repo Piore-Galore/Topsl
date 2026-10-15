@@ -1,0 +1,502 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-15T04:23:32.144Z",
+  "providerRequests": 0,
+  "billedUsage": 0,
+  "status": "passed-real-process-fault",
+  "evidenceClass": "actual-local-coordinator-SIGKILL-and-check-subprocess",
+  "platform": "darwin",
+  "worker": {
+    "pid": 96843,
+    "entryHash": "a67a6423496124fefb4bc4871847c5901799280c57a90300297b2df38170f102",
+    "coordinatorExit": {
+      "code": null,
+      "signal": "SIGKILL"
+    }
+  },
+  "barrier": {
+    "executionId": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+    "pid": 96925,
+    "groupId": 96925
+  },
+  "beforeReconciliation": {
+    "execution": {
+      "version": 1,
+      "id": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+      "projectId": "crash-project",
+      "workflowId": "e12c24bd-acb0-4558-8000-642bbf7d2f22",
+      "taskId": "b66e0462-7c1e-452e-9a44-a53f6c4658ab",
+      "planId": "bf833c95-b526-4804-90b5-c987c0265783",
+      "candidateId": "4e65b3df-c549-4485-bb24-eb38b09c3757",
+      "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+      "definition": {
+        "id": "abrupt-check",
+        "label": "Real check retained across abrupt coordinator death",
+        "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "args": [
+          "tests/check.cjs"
+        ],
+        "timeoutMs": 60000
+      },
+      "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"self-contained\",\"executable\":\"/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b\",\"recipeId\":\"13232baf-24c9-4096-a4e5-16c388ca870a\",\"serviceNodeVersion\":\"24.21.0\"}",
+      "environmentRecipeId": "13232baf-24c9-4096-a4e5-16c388ca870a",
+      "failurePhase": null,
+      "executableIdentity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+      "ownerBinding": null,
+      "state": "uncertain",
+      "eligibility": "uncertain",
+      "dispatchIntentAt": "2026-10-15T04:23:31.921Z",
+      "materializedRoot": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+      "resourceId": "bc6c9f1d-0564-4f89-bcea-69541e137815",
+      "lifecycle": {
+        "version": 1,
+        "pid": 96925,
+        "groupId": 96925,
+        "scope": "posix-process-group",
+        "state": "running",
+        "startedAt": "2026-10-15T04:23:31.937Z",
+        "stopRequestedAt": null,
+        "exitedAt": null,
+        "closedAt": null,
+        "observedAt": "2026-10-15T04:23:31.937Z",
+        "exitCode": null,
+        "signal": null,
+        "remainingGroup": "present",
+        "detail": "Child started. Exit, stdio closure and group absence are separate observations."
+      },
+      "outputBytes": 25,
+      "ownedRoots": [
+        {
+          "root": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+          "realPath": "/private/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+          "dev": "16777231",
+          "ino": "48113396"
+        },
+        {
+          "root": "/tmp/topsl-check-resources/task-Ss9N4F",
+          "realPath": "/private/tmp/topsl-check-resources/task-Ss9N4F",
+          "dev": "16777231",
+          "ino": "48113403"
+        }
+      ],
+      "truncated": false,
+      "verificationId": null,
+      "error": "Service restarted during a check. Reconcile the original execution; no command was replayed.",
+      "storageError": null,
+      "createdAt": "2026-10-15T04:23:31.921Z",
+      "updatedAt": "2026-10-15T04:23:32.081Z",
+      "environmentInstanceId": "95ac30ed-41c1-4b3f-a336-df62354107bb"
+    },
+    "plan": {
+      "id": "bf833c95-b526-4804-90b5-c987c0265783",
+      "projectId": "crash-project",
+      "workflowId": "e12c24bd-acb0-4558-8000-642bbf7d2f22",
+      "taskId": "b66e0462-7c1e-452e-9a44-a53f6c4658ab",
+      "candidateId": "4e65b3df-c549-4485-bb24-eb38b09c3757",
+      "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+      "definition": {
+        "id": "abrupt-check",
+        "label": "Real check retained across abrupt coordinator death",
+        "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "args": [
+          "tests/check.cjs"
+        ],
+        "timeoutMs": 60000
+      },
+      "executableIdentity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+      "environmentRecipeId": "13232baf-24c9-4096-a4e5-16c388ca870a",
+      "environmentRecipe": {
+        "version": 1,
+        "id": "13232baf-24c9-4096-a4e5-16c388ca870a",
+        "projectId": "crash-project",
+        "selectionId": null,
+        "kind": "self-contained",
+        "profile": "user-approved-local",
+        "platform": "darwin",
+        "architecture": "arm64",
+        "hostId": "darwin:Piores-MacBook-Air.local",
+        "toolchains": [
+          {
+            "role": "check",
+            "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+            "identity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+            "version": null
+          }
+        ],
+        "inputs": [],
+        "repositoryScripts": [],
+        "preparationProbes": [],
+        "preparation": null,
+        "hooks": [],
+        "requiredHooks": [],
+        "writablePaths": [],
+        "values": {},
+        "network": {
+          "preparation": "offline-package-manager; OS-network-not-enforced",
+          "execution": "not-enforced"
+        },
+        "restrictions": {
+          "filesystem": "disposable-copy; OS-access-not-enforced",
+          "processes": "observed-process-group-or-tree",
+          "resources": "unique-temp-database-and-loopback-port",
+          "cpuMemory": "not-enforced",
+          "secrets": "disposable-home; no inherited provider credentials"
+        },
+        "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+        "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+        "digest": "a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b",
+        "createdAt": "2026-10-15T04:23:31.913Z"
+      },
+      "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"self-contained\",\"executable\":\"/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b\",\"recipeId\":\"13232baf-24c9-4096-a4e5-16c388ca870a\",\"serviceNodeVersion\":\"24.21.0\"}",
+      "digest": "0a16de4264ee581b1e1dfbad3f18a0a00e1a3f4740d76164085871eb798c3dff",
+      "createdAt": "2026-10-15T04:23:31.913Z",
+      "expiresAt": "2026-10-15T04:33:31.913Z",
+      "authorizationId": "bf833c95-b526-4804-90b5-c987c0265783"
+    },
+    "logs": [
+      {
+        "id": "ed8cd46d-dc37-45f8-a96d-005bb308b85d:1",
+        "executionId": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+        "projectId": "crash-project",
+        "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+        "sequence": 1,
+        "stream": "stdout",
+        "text": "abrupt-crash-check-ready\n",
+        "createdAt": "2026-10-15T04:23:31.979Z"
+      }
+    ],
+    "cleanup": null,
+    "environment": {
+      "instance": {
+        "version": 1,
+        "id": "95ac30ed-41c1-4b3f-a336-df62354107bb",
+        "projectId": "crash-project",
+        "executionId": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+        "candidateId": "4e65b3df-c549-4485-bb24-eb38b09c3757",
+        "candidateRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+        "recipeId": "13232baf-24c9-4096-a4e5-16c388ca870a",
+        "recipeDigest": "a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b",
+        "state": "ready",
+        "root": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+        "home": "/tmp/topsl-check-resources/task-Ss9N4F/home",
+        "cacheRoot": "/tmp/topsl-check-resources/task-Ss9N4F/npm-cache",
+        "resourceId": "bc6c9f1d-0564-4f89-bcea-69541e137815",
+        "dependencyIdentity": "5ad38304b535c2987dbd24657c1a11b884984ff600d9f389deb0d4e634fee792",
+        "preparationLifecycle": null,
+        "preparationCommandId": null,
+        "commandIndex": 0,
+        "observedToolVersions": {},
+        "failureKind": null,
+        "error": null,
+        "outputBytes": 0,
+        "truncated": false,
+        "createdAt": "2026-10-15T04:23:31.921Z",
+        "updatedAt": "2026-10-15T04:23:31.929Z"
+      },
+      "recipe": {
+        "version": 1,
+        "id": "13232baf-24c9-4096-a4e5-16c388ca870a",
+        "projectId": "crash-project",
+        "selectionId": null,
+        "kind": "self-contained",
+        "profile": "user-approved-local",
+        "platform": "darwin",
+        "architecture": "arm64",
+        "hostId": "darwin:Piores-MacBook-Air.local",
+        "toolchains": [
+          {
+            "role": "check",
+            "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+            "identity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+            "version": null
+          }
+        ],
+        "inputs": [],
+        "repositoryScripts": [],
+        "preparationProbes": [],
+        "preparation": null,
+        "hooks": [],
+        "requiredHooks": [],
+        "writablePaths": [],
+        "values": {},
+        "network": {
+          "preparation": "offline-package-manager; OS-network-not-enforced",
+          "execution": "not-enforced"
+        },
+        "restrictions": {
+          "filesystem": "disposable-copy; OS-access-not-enforced",
+          "processes": "observed-process-group-or-tree",
+          "resources": "unique-temp-database-and-loopback-port",
+          "cpuMemory": "not-enforced",
+          "secrets": "disposable-home; no inherited provider credentials"
+        },
+        "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+        "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+        "digest": "a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b",
+        "createdAt": "2026-10-15T04:23:31.913Z"
+      },
+      "logs": []
+    }
+  },
+  "afterReconciliation": {
+    "execution": {
+      "version": 1,
+      "id": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+      "projectId": "crash-project",
+      "workflowId": "e12c24bd-acb0-4558-8000-642bbf7d2f22",
+      "taskId": "b66e0462-7c1e-452e-9a44-a53f6c4658ab",
+      "planId": "bf833c95-b526-4804-90b5-c987c0265783",
+      "candidateId": "4e65b3df-c549-4485-bb24-eb38b09c3757",
+      "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+      "definition": {
+        "id": "abrupt-check",
+        "label": "Real check retained across abrupt coordinator death",
+        "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "args": [
+          "tests/check.cjs"
+        ],
+        "timeoutMs": 60000
+      },
+      "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"self-contained\",\"executable\":\"/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b\",\"recipeId\":\"13232baf-24c9-4096-a4e5-16c388ca870a\",\"serviceNodeVersion\":\"24.21.0\"}",
+      "environmentRecipeId": "13232baf-24c9-4096-a4e5-16c388ca870a",
+      "failurePhase": null,
+      "executableIdentity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+      "ownerBinding": null,
+      "state": "error",
+      "eligibility": "ineligible",
+      "dispatchIntentAt": "2026-10-15T04:23:31.921Z",
+      "materializedRoot": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+      "resourceId": "bc6c9f1d-0564-4f89-bcea-69541e137815",
+      "lifecycle": {
+        "version": 1,
+        "pid": 96925,
+        "groupId": 96925,
+        "scope": "posix-process-group",
+        "state": "quiescent",
+        "startedAt": "2026-10-15T04:23:31.937Z",
+        "stopRequestedAt": null,
+        "exitedAt": null,
+        "closedAt": null,
+        "observedAt": "2026-10-15T04:23:32.141Z",
+        "exitCode": null,
+        "signal": null,
+        "remainingGroup": "absent",
+        "detail": "Explicit recovery observed original PID and scoped group/tree absent. This cannot substantiate a lost check result."
+      },
+      "outputBytes": 25,
+      "ownedRoots": [
+        {
+          "root": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+          "realPath": "/private/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+          "dev": "16777231",
+          "ino": "48113396"
+        },
+        {
+          "root": "/tmp/topsl-check-resources/task-Ss9N4F",
+          "realPath": "/private/tmp/topsl-check-resources/task-Ss9N4F",
+          "dev": "16777231",
+          "ino": "48113403"
+        }
+      ],
+      "truncated": false,
+      "verificationId": null,
+      "error": "Process absence explicitly reconciled. The original result remains unproven; nothing was rerun.",
+      "storageError": null,
+      "createdAt": "2026-10-15T04:23:31.921Z",
+      "updatedAt": "2026-10-15T04:23:32.141Z",
+      "environmentInstanceId": "95ac30ed-41c1-4b3f-a336-df62354107bb"
+    },
+    "plan": {
+      "id": "bf833c95-b526-4804-90b5-c987c0265783",
+      "projectId": "crash-project",
+      "workflowId": "e12c24bd-acb0-4558-8000-642bbf7d2f22",
+      "taskId": "b66e0462-7c1e-452e-9a44-a53f6c4658ab",
+      "candidateId": "4e65b3df-c549-4485-bb24-eb38b09c3757",
+      "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+      "definition": {
+        "id": "abrupt-check",
+        "label": "Real check retained across abrupt coordinator death",
+        "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "args": [
+          "tests/check.cjs"
+        ],
+        "timeoutMs": 60000
+      },
+      "executableIdentity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+      "environmentRecipeId": "13232baf-24c9-4096-a4e5-16c388ca870a",
+      "environmentRecipe": {
+        "version": 1,
+        "id": "13232baf-24c9-4096-a4e5-16c388ca870a",
+        "projectId": "crash-project",
+        "selectionId": null,
+        "kind": "self-contained",
+        "profile": "user-approved-local",
+        "platform": "darwin",
+        "architecture": "arm64",
+        "hostId": "darwin:Piores-MacBook-Air.local",
+        "toolchains": [
+          {
+            "role": "check",
+            "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+            "identity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+            "version": null
+          }
+        ],
+        "inputs": [],
+        "repositoryScripts": [],
+        "preparationProbes": [],
+        "preparation": null,
+        "hooks": [],
+        "requiredHooks": [],
+        "writablePaths": [],
+        "values": {},
+        "network": {
+          "preparation": "offline-package-manager; OS-network-not-enforced",
+          "execution": "not-enforced"
+        },
+        "restrictions": {
+          "filesystem": "disposable-copy; OS-access-not-enforced",
+          "processes": "observed-process-group-or-tree",
+          "resources": "unique-temp-database-and-loopback-port",
+          "cpuMemory": "not-enforced",
+          "secrets": "disposable-home; no inherited provider credentials"
+        },
+        "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+        "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+        "digest": "a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b",
+        "createdAt": "2026-10-15T04:23:31.913Z"
+      },
+      "environment": "{\"arch\":\"arm64\",\"checkToolVersions\":\"unobserved until approved environment preparation\",\"dependencyPreparation\":\"self-contained\",\"executable\":\"/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron\",\"inheritedEnvironment\":\"disposable home and explicit non-secret values; no native auth homes, proxy or provider credentials\",\"input\":\"materialized-candidate\",\"isolation\":\"temporary-workspace; no OS sandbox\",\"mutableResources\":\"unique task temp/database; reserved loopback port with explicit handoff; resources outside candidate\",\"network\":\"not-enforced\",\"platform\":\"darwin\",\"recipeDigest\":\"a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b\",\"recipeId\":\"13232baf-24c9-4096-a4e5-16c388ca870a\",\"serviceNodeVersion\":\"24.21.0\"}",
+      "digest": "0a16de4264ee581b1e1dfbad3f18a0a00e1a3f4740d76164085871eb798c3dff",
+      "createdAt": "2026-10-15T04:23:31.913Z",
+      "expiresAt": "2026-10-15T04:33:31.913Z",
+      "authorizationId": "bf833c95-b526-4804-90b5-c987c0265783"
+    },
+    "logs": [
+      {
+        "id": "ed8cd46d-dc37-45f8-a96d-005bb308b85d:1",
+        "executionId": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+        "projectId": "crash-project",
+        "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+        "sequence": 1,
+        "stream": "stdout",
+        "text": "abrupt-crash-check-ready\n",
+        "createdAt": "2026-10-15T04:23:31.979Z"
+      }
+    ],
+    "cleanup": {
+      "version": 1,
+      "id": "53b4e490-7faf-4548-905a-0d78a451c594",
+      "projectId": "crash-project",
+      "executionId": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+      "state": "completed",
+      "roots": [
+        {
+          "root": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+          "realPath": "/private/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+          "dev": "16777231",
+          "ino": "48113396"
+        },
+        {
+          "root": "/tmp/topsl-check-resources/task-Ss9N4F",
+          "realPath": "/private/tmp/topsl-check-resources/task-Ss9N4F",
+          "dev": "16777231",
+          "ino": "48113403"
+        }
+      ],
+      "attempts": 1,
+      "error": null,
+      "createdAt": "2026-10-15T04:23:32.141Z",
+      "updatedAt": "2026-10-15T04:23:32.143Z"
+    },
+    "environment": {
+      "instance": {
+        "version": 1,
+        "id": "95ac30ed-41c1-4b3f-a336-df62354107bb",
+        "projectId": "crash-project",
+        "executionId": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+        "candidateId": "4e65b3df-c549-4485-bb24-eb38b09c3757",
+        "candidateRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+        "recipeId": "13232baf-24c9-4096-a4e5-16c388ca870a",
+        "recipeDigest": "a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b",
+        "state": "ready",
+        "root": "/tmp/topsl-candidate-18a75131-2c96-40a1-b7d2-bfcf1e1fe0a3",
+        "home": "/tmp/topsl-check-resources/task-Ss9N4F/home",
+        "cacheRoot": "/tmp/topsl-check-resources/task-Ss9N4F/npm-cache",
+        "resourceId": "bc6c9f1d-0564-4f89-bcea-69541e137815",
+        "dependencyIdentity": "5ad38304b535c2987dbd24657c1a11b884984ff600d9f389deb0d4e634fee792",
+        "preparationLifecycle": null,
+        "preparationCommandId": null,
+        "commandIndex": 0,
+        "observedToolVersions": {},
+        "failureKind": null,
+        "error": null,
+        "outputBytes": 0,
+        "truncated": false,
+        "createdAt": "2026-10-15T04:23:31.921Z",
+        "updatedAt": "2026-10-15T04:23:31.929Z"
+      },
+      "recipe": {
+        "version": 1,
+        "id": "13232baf-24c9-4096-a4e5-16c388ca870a",
+        "projectId": "crash-project",
+        "selectionId": null,
+        "kind": "self-contained",
+        "profile": "user-approved-local",
+        "platform": "darwin",
+        "architecture": "arm64",
+        "hostId": "darwin:Piores-MacBook-Air.local",
+        "toolchains": [
+          {
+            "role": "check",
+            "executable": "/Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+            "identity": "747eba8e1c161644377b9d4dba5c66eaf40b598b5faee1b076fc4368e4d318f7",
+            "version": null
+          }
+        ],
+        "inputs": [],
+        "repositoryScripts": [],
+        "preparationProbes": [],
+        "preparation": null,
+        "hooks": [],
+        "requiredHooks": [],
+        "writablePaths": [],
+        "values": {},
+        "network": {
+          "preparation": "offline-package-manager; OS-network-not-enforced",
+          "execution": "not-enforced"
+        },
+        "restrictions": {
+          "filesystem": "disposable-copy; OS-access-not-enforced",
+          "processes": "observed-process-group-or-tree",
+          "resources": "unique-temp-database-and-loopback-port",
+          "cpuMemory": "not-enforced",
+          "secrets": "disposable-home; no inherited provider credentials"
+        },
+        "cache": "fresh-disposable-install; no-host-node_modules-or-shared-cache",
+        "integrityCoverage": "before-and-after content checks; local process may mutate and restore files; no runtime write enforcement",
+        "digest": "a80b022282beaae4f1f84274e7c5f002f36462d2a398a85b268d05c00f65745b",
+        "createdAt": "2026-10-15T04:23:31.913Z"
+      },
+      "logs": []
+    }
+  },
+  "dispatchIntents": [
+    {
+      "id": "ed8cd46d-dc37-45f8-a96d-005bb308b85d",
+      "projectId": "crash-project",
+      "planId": "bf833c95-b526-4804-90b5-c987c0265783",
+      "digest": "0a16de4264ee581b1e1dfbad3f18a0a00e1a3f4740d76164085871eb798c3dff",
+      "targetRevision": "27c616dd8f0a478ff2ae44192575e336128270af3fbe6918048cd5c94da08269",
+      "createdAt": "2026-10-15T04:23:31.921Z"
+    }
+  ],
+  "effectCount": 1,
+  "replayedCommands": 0,
+  "durablePasses": 0,
+  "limitations": [
+    "POSIX process-group observation on this host; no escaped-process containment guarantee",
+    "Windows abrupt-termination route is skipped until separately implemented and executed",
+    "The killed process is an isolated CheckExecutions coordinator fixture, not a production profile or native provider"
+  ]
+}

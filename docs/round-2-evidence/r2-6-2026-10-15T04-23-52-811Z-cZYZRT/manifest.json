@@ -1,0 +1,381 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-15T04:23:52.811Z",
+  "completedAt": "2026-10-15T04:24:08.918Z",
+  "baseCommit": "e5e004e31e428d77d2242d3ab472e66d88bb0cc6",
+  "sourceIdentity": "599bd784e6e46d8c11474999208e2ad84dec45dd1035a0f12f5d6e16ff903285",
+  "sourceHashes": "source-hashes.json",
+  "sourceConsistency": {
+    "path": "source-consistency.json",
+    "unchangedAtEnd": false
+  },
+  "sourceBasis": "uncommitted working tree; includes contemporaneous agent changes; no commit, branch, push, install of Topsl dependencies, live turn or release",
+  "dirtyStatus": " M .github/workflows/build.yml\n M .github/workflows/release.yml\n M README.md\n M apps/desktop/main.ts\n M apps/desktop/renderer/components/parallel-activity.tsx\n M apps/desktop/renderer/components/reporting.tsx\n M apps/desktop/renderer/components/transcript.tsx\n M apps/desktop/renderer/coordination.tsx\n M apps/desktop/renderer/main.tsx\n M apps/desktop/renderer/state/scoped.ts\n M apps/desktop/renderer/style.css\n M apps/desktop/renderer/workflows.tsx\n M apps/service/service.ts\n M apps/service/worker.ts\n M docs/Implementation_Status.md\n M docs/Project_Synchronization.md\n M docs/Topsl_Design.md\n M package.json\n M packages/context/packages.ts\n M packages/domain/advanced-inputs.ts\n M packages/domain/commands.ts\n M packages/persistence/repositories/coordination.ts\n M packages/persistence/store.ts\n M packages/providers/claude.ts\n M packages/providers/codex.ts\n M packages/providers/contract.ts\n M packages/runtime/manager.ts\n M packages/runtime/rpc.ts\n M packages/workflows/advanced.ts\n M packages/workflows/builder-reviewer.ts\n M packages/workflows/candidates.ts\n M packages/workflows/check-inputs.ts\n M packages/workflows/parallel-specialists.ts\n M packages/workflows/verification.ts\n M packages/workspace/codex-projects.ts\n M packages/workspace/context.ts\n M packages/workspace/managed.ts\n M packages/workspace/projects.ts\n M scripts/package-summary.mjs\n M scripts/probe-codex.mjs\n M tests/advanced-workflows.test.ts\n M tests/builder-reviewer.test.ts\n M tests/codex-projects-native.test.ts\n M tests/codex-projects.test.ts\n M tests/context-pagination.test.ts\n M tests/coordination.test.ts\n M tests/fixtures/parallel-worker.cjs\n M tests/parallel-workspaces.test.ts\n M tests/projects.test.ts\n M tests/runtime.test.ts\n M tests/scoped-events-service.test.ts\n M tests/specification-updates.test.ts\n M tests/sync-reconciliation.test.ts\n M tests/workflow-service.test.ts\n?? .github/workflows/lifecycle-stress.yml\n?? AGENTS.md\n?? CLAUDE.md\n?? apps/desktop/renderer/components/assisted-handoff.tsx\n?? apps/desktop/renderer/components/candidate-artifacts.tsx\n?? apps/desktop/renderer/components/environment-evidence.tsx\n?? apps/desktop/renderer/components/freshness.tsx\n?? apps/desktop/renderer/components/specification-draft.tsx\n?? apps/desktop/renderer/components/synchronization-summary.tsx\n?? apps/desktop/renderer/components/workflow-dispatch.tsx\n?? apps/desktop/renderer/components/workflow-evidence.tsx\n?? apps/desktop/renderer/components/workflow-setup.tsx\n?? apps/desktop/renderer/state/scoped-controller.ts\n?? apps/desktop/renderer/state/usage-view.ts\n?? docs/Round_2_Baseline.md\n?? docs/Round_2_Execution.md\n?? docs/Round_2_Phase_1.md\n?? docs/Round_2_Phase_2.md\n?? docs/Round_2_Phase_3.md\n?? docs/Round_2_Phase_4.md\n?? docs/Round_2_Phase_5.md\n?? docs/Round_2_Phase_6.md\n?? docs/Topsl_Round_2_Improvement_Plan_Reviewed.md\n?? docs/round-2-evidence/\n?? packages/context/candidate-reader.ts\n?? packages/domain/candidate-reviews.ts\n?? packages/domain/read-model.ts\n?? packages/domain/round2-features.ts\n?? packages/domain/workflow-drafts.ts\n?? packages/persistence/blobs.ts\n?? packages/persistence/candidate-binding.ts\n?? packages/persistence/migrations/blobs.ts\n?? packages/persistence/migrations/executions.ts\n?? packages/providers/acceptance.ts\n?? packages/providers/readiness.ts\n?? packages/providers/runtime-binding.ts\n?? packages/runtime/process-lifecycle.ts\n?? packages/workflows/assisted.ts\n?? packages/workflows/candidate-diff.ts\n?? packages/workflows/candidate-reviews.ts\n?? packages/workflows/check-executions.ts\n?? packages/workflows/drafts.ts\n?? packages/workflows/environments.ts\n?? packages/workflows/finding-decisions.ts\n?? scripts/lifecycle-ci-summary.mjs\n?? scripts/lifecycle-stress.mjs\n?? scripts/round2-acceptance.mjs\n?? scripts/round2-demo-fixture.d.mts\n?? scripts/round2-demo-fixture.mjs\n?? scripts/round2-source-export.mjs\n?? scripts/round2-ui-test.mjs\n?? scripts/verify-mac-package.mjs\n?? tests/candidate-diff.test.ts\n?? tests/candidate-manifests.test.ts\n?? tests/candidate-reviews.test.ts\n?? tests/durable-executions.test.ts\n?? tests/environments.test.ts\n?? tests/fixtures/round2-crash-worker.ts\n?? tests/mac-package.test.mjs\n?? tests/provider-readiness.test.ts\n?? tests/round2-acceptance.test.ts\n?? tests/round2-demo-fixture.test.mjs\n?? tests/scoped-read-models.test.ts\n?? tests/scoped-ui.test.ts\n?? tests/workflow-drafts.test.ts\n",
+  "host": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "node": "v26.0.0",
+    "nodeExecutable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+    "electron": "44.4.5",
+    "vitest": "5.0.2",
+    "npm": "11.12.1"
+  },
+  "command": {
+    "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+    "args": [
+      "scripts/test.mjs",
+      "tests/round2-acceptance.test.ts",
+      "--reporter=json",
+      "--outputFile",
+      "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-6-2026-10-15T04-23-52-811Z-cZYZRT/vitest.json"
+    ],
+    "cwd": "/Users/piore/repos/Topsl",
+    "environment": {
+      "ELECTRON_RUN_AS_NODE": "set by scripts/test.mjs",
+      "npm_node_execpath": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+      "npm_execpath": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+      "TOPSL_R2_EVIDENCE": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-6-2026-10-15T04-23-52-811Z-cZYZRT",
+      "TOPSL_R2_STRESS": null
+    }
+  },
+  "result": {
+    "exitCode": 0,
+    "signal": null,
+    "elapsedMs": 16017,
+    "success": true,
+    "tests": 6,
+    "passed": 5,
+    "failed": 0,
+    "pending": 1
+  },
+  "evidenceClass": [
+    "deterministic-provider-fixture",
+    "actual-local-subprocess-check",
+    "optional-synthetic-performance"
+  ],
+  "authenticationRoute": "none; provider dependency injection",
+  "usage": {
+    "providerRequests": 0,
+    "billedInference": 0,
+    "approvedUsageLimit": 0
+  },
+  "artifacts": [
+    {
+      "path": "abrupt-posix-coordinator-crash.json",
+      "bytes": 23804,
+      "sha256": "02b3fe451591d33008c313a7e924daf33d5644f71c748f7d9150f87ce43e2238"
+    },
+    {
+      "path": "command.json",
+      "bytes": 688,
+      "sha256": "7fe8c840553f5f220eb5e2dbbfb8dd1e15d9212face088267e5e265da8afa75e"
+    },
+    {
+      "path": "direction-claude-codex.json",
+      "bytes": 68645,
+      "sha256": "609fcc08cfe72c445547d44de88a324fffa13fc848f79ade4680c4dbad175941"
+    },
+    {
+      "path": "direction-codex-claude.json",
+      "bytes": 68641,
+      "sha256": "b38fdfae47d1f1c797986a4534dbeec02ee5add481bbcebee9723d723efa3bba"
+    },
+    {
+      "path": "durable-faults.json",
+      "bytes": 98599,
+      "sha256": "9b3de8edbf42866342e3738741a0e56460fbb8c44c8e6c5316502449d4893563"
+    },
+    {
+      "path": "fault-recovery.bundle",
+      "bytes": 8452,
+      "sha256": "dbb57f431476150a4ba8ac91a2c31284c7d0c3193282290848572b8c9da47b59"
+    },
+    {
+      "path": "offline-claude-codex.bundle",
+      "bytes": 8452,
+      "sha256": "c97ac229af1039e0dc6f9633351e78eae0f0c25eb5f250b225441a6db83fd372"
+    },
+    {
+      "path": "offline-codex-claude.bundle",
+      "bytes": 8452,
+      "sha256": "c71ee8616cd689b5d5824821e5f8532ab25e3eb30485bec0024d550afb27ecd5"
+    },
+    {
+      "path": "source-consistency.json",
+      "bytes": 448,
+      "sha256": "2ecb1c17258b49dbae3d2e1254dcaa72954e4c93266ca14250c23a450688d0de"
+    },
+    {
+      "path": "source-hashes.json",
+      "bytes": 55037,
+      "sha256": "54286a1217d2b96be53ff2b83dedc98004cf8456bf36e1b3a9fe5b9dfee7e9cb"
+    },
+    {
+      "path": "stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "stdout.log",
+      "bytes": 119,
+      "sha256": "a60cefd1e9779ab5ae3ed2418f6c53df4bb65c6a83422b04fb0622a909294403"
+    },
+    {
+      "path": "unknown-dispatch-active-restart.json",
+      "bytes": 24499,
+      "sha256": "dc5b2fa90c6e10add411398d81564e1adc71d643893d124b89427f2e87d51c70"
+    },
+    {
+      "path": "unknown-dispatch-and-restart.bundle",
+      "bytes": 8452,
+      "sha256": "f1e616fa2138f01a139b7d61bc3a6e42a11b457389e255d96e271c87dea18bca"
+    },
+    {
+      "path": "vitest.json",
+      "bytes": 2816,
+      "sha256": "b69e18a3f03ff0489728430d44c3abb3d72f13f532921bf72165d2a95890a69c"
+    }
+  ],
+  "traceability": [
+    {
+      "id": "R2-AT-01",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-02",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-03",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-04",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-05",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-06",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-07",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-08",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-09",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-10",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-11",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-12",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-13",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-14",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-15",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-16",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-17",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-18",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-19",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-20",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-21",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-22",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-23",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-24",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-25",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-26",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-27",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-28",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-29",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-30",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-31",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-32",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-33",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-34",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-35",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-36",
+      "status": "not-run-by-this-command",
+      "scope": "Phase-specific deterministic suites; see Round_2_Phase_6.md traceability and final full-suite evidence"
+    },
+    {
+      "id": "R2-AT-37",
+      "status": "pending-live-provider-authorization-and-supported-route",
+      "fixtureSupplement": "passed deterministic driver plus actual local dependency checks",
+      "automaticLiveAcceptance": false
+    },
+    {
+      "id": "R2-AT-38",
+      "status": "pending-live-provider-authorization-and-supported-route",
+      "fixtureSupplement": "passed deterministic driver plus actual local dependency checks",
+      "automaticLiveAcceptance": false
+    },
+    {
+      "id": "R2-AT-39",
+      "status": "partial-local-process-and-injected-fault-evidence",
+      "remaining": "Live provider workflow/full negative journey remain pending. Actual POSIX coordinator SIGKILL is separately recorded when present; Windows abrupt termination is gated."
+    },
+    {
+      "id": "R2-AT-40",
+      "status": "pending-delivery-commit-clean-export-and-four-platform-CI",
+      "localTreeIsDelivery": false
+    }
+  ],
+  "supportMatrix": [
+    {
+      "feature": "Codex builder / Claude reviewer",
+      "implementation": "coordinator and adapters in working tree",
+      "fixture": "local fixture passed",
+      "live": "pending",
+      "packagedPlatforms": "pending all four"
+    },
+    {
+      "feature": "Claude builder / Codex reviewer",
+      "implementation": "coordinator and adapters in working tree",
+      "fixture": "local fixture passed",
+      "live": "pending",
+      "packagedPlatforms": "pending all four"
+    },
+    {
+      "feature": "Locked local-archive checks and durable faults",
+      "implementation": "prepared verification and execution records in working tree",
+      "fixture": "actual local subprocess plus injected faults passed",
+      "live": "provider-independent",
+      "packagedPlatforms": "pending all four"
+    },
+    {
+      "feature": "100 MB / 10,000 source capture",
+      "implementation": "manifest capture and bounded reader in working tree",
+      "fixture": "skipped unless --stress",
+      "live": "no inference; not required",
+      "packagedPlatforms": "not established by this measurement"
+    }
+  ],
+  "limitations": [
+    "Fixture responses cannot qualify a provider, authentication route or model",
+    "A local source snapshot is review evidence, not a delivered commit",
+    "Cross-platform CI and packaged runtime acceptance are not run by this command",
+    "Read-only source hashing does not prove independent clean export; use round2-source-export.mjs and retain its own outcome"
+  ]
+}

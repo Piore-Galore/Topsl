@@ -1,0 +1,310 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-10-15-r2-0-e5e004e",
+  "capturedAt": "2026-10-15T03:39:51.693Z",
+  "repository": "/Users/piore/repos/Topsl",
+  "commit": "e5e004e31e428d77d2242d3ab472e66d88bb0cc6",
+  "branch": "main",
+  "workingTree": {
+    "porcelain": " M .github/workflows/build.yml\n M .github/workflows/release.yml\n M README.md\n M docs/Implementation_Status.md\n M package.json\n M scripts/package-summary.mjs\n?? docs/round-2-evidence/2026-10-15-r2-0-e5e004e/capture-baseline.mjs\n?? scripts/verify-mac-package.mjs\n?? tests/mac-package.test.mjs\n",
+    "preExistingDirty": [
+      {
+        "path": ".github/workflows/build.yml",
+        "sha256": "20e47f6420104b5b69a112676780111033709145a46cfff654322b8aa01cfcae"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "sha256": "8222f0e8b40b4635ca5c1eed8272ad1c2b89d4bfab1d2da6ff46f61899039b2e"
+      },
+      {
+        "path": "README.md",
+        "sha256": "e7d7f9063c1ace67aab840eea2de4d3c422ace1079a146b4e98d7c25cda8b0e7"
+      },
+      {
+        "path": "docs/Implementation_Status.md",
+        "sha256": "fe8983ed3f7b94d76425e25509b5e876349916447e87851e03341e374c1f77b7"
+      },
+      {
+        "path": "package.json",
+        "sha256": "941a3b5638fee3f732ce6f809cf626cfbd129a7dcffac87ff3ac5eff1cfd51ec"
+      },
+      {
+        "path": "scripts/package-summary.mjs",
+        "sha256": "cf272e796616014d69298662f96c94d0e355b24aefbb71ea74779c986d0cc4b9"
+      },
+      {
+        "path": "scripts/verify-mac-package.mjs",
+        "sha256": "c2d52035350e5ddd80c20aef5c3ace91e991b990815bab15343d4f16a22689fe"
+      },
+      {
+        "path": "tests/mac-package.test.mjs",
+        "sha256": "2b67c0ea5e2aec71494cda82b204a3a960e1a1ae4f3d9664d4fad7a42cac1fc8"
+      }
+    ]
+  },
+  "host": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "osVersion": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434"
+  },
+  "tooling": {
+    "node": "v26.0.0",
+    "nodePath": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+    "npm": "11.12.1",
+    "npmPath": "/opt/homebrew/bin/npm",
+    "electron": "44.4.5",
+    "packageVersion": "0.1.1",
+    "git": "git version 2.54.0",
+    "gitPath": "/opt/homebrew/bin/git"
+  },
+  "packageScripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run start",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "test:release": "node --test tests/release.test.mjs tests/release-packaging.test.mjs tests/mac-package.test.mjs",
+    "verify:mac-package": "node scripts/verify-mac-package.mjs",
+    "test:desktop": "node scripts/desktop-test-runner.mjs",
+    "rebuild": "electron-builder install-app-deps",
+    "package": "npm run build && electron-builder --publish never",
+    "check": "npm run typecheck && npm test && npm run test:release && npm run build",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "inputs": {
+    "reviewedPlan": {
+      "path": "/Users/piore/Desktop/Topsl_Round_2_Improvement_Plan_Reviewed.md",
+      "sha256": "776240b446b1c8ea2c597c4e6cf585a7e724b4479fd066536b04a452b478ed7e"
+    },
+    "originalPlan": {
+      "path": "docs/Topsl_Improvement_Plan.md",
+      "sha256": "ace92a78275c364131b8b018fb959fab035c247e68432030f5a4eeef47f3a477"
+    },
+    "originalEvidence": {
+      "path": "docs/Improvement_Execution.md",
+      "sha256": "d59ecae15b84eff1981683f143ca321b328d0a02a7e80e834b5f6f967abde01c"
+    },
+    "packageLock": {
+      "path": "package-lock.json",
+      "sha256": "9cc514a11c05c8881f465efe281284548bf3e54ee0947ceafef282be81b4f0c6"
+    }
+  },
+  "safety": {
+    "fixtureProfiles": true,
+    "nativeProviderOptInRemoved": true,
+    "heavyBenchmarkOptInRemoved": true,
+    "providerModelTurns": 0,
+    "downloadsOrInstalls": false,
+    "accountOrAuthenticationChanges": false,
+    "nativeDatabaseMutation": false
+  },
+  "runs": [
+    {
+      "id": "check",
+      "command": [
+        "/opt/homebrew/bin/npm",
+        "run",
+        "check"
+      ],
+      "cwd": "/Users/piore/repos/Topsl",
+      "startedAt": "2026-10-15T03:39:51.787Z",
+      "endedAt": "2026-10-15T03:40:35.244Z",
+      "exitCode": 0,
+      "signal": null,
+      "output": "check.txt",
+      "outputSha256": "82f1f43b06266947e99fb8e5472c5af0bd7f5f1ed5f25bfe8f1d0ea1fb84b4ed"
+    },
+    {
+      "id": "desktop",
+      "command": [
+        "/opt/homebrew/bin/npm",
+        "run",
+        "test:desktop"
+      ],
+      "cwd": "/Users/piore/repos/Topsl",
+      "startedAt": "2026-10-15T03:40:35.245Z",
+      "endedAt": "2026-10-15T03:41:01.679Z",
+      "exitCode": 0,
+      "signal": null,
+      "output": "desktop.txt",
+      "outputSha256": "fb341ab4e769c3789db3a8fcff3372ecdb6ab2be139ded591ed7c306aa7b6a08"
+    },
+    {
+      "id": "concurrency",
+      "command": [
+        "/opt/homebrew/bin/npm",
+        "test",
+        "--",
+        "tests/parallel-workspaces.test.ts",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile.json=/Users/piore/repos/Topsl/docs/round-2-evidence/2026-10-15-r2-0-e5e004e/concurrency-report.json"
+      ],
+      "cwd": "/Users/piore/repos/Topsl",
+      "startedAt": "2026-10-15T03:41:01.685Z",
+      "endedAt": "2026-10-15T03:41:19.621Z",
+      "exitCode": 0,
+      "signal": null,
+      "output": "concurrency.txt",
+      "outputSha256": "ec7b300d6fea1aeb48f0388df9209488fc7df120d19f853b6d9693f4e06e310f"
+    }
+  ],
+  "completedAt": "2026-10-15T03:41:19.621Z",
+  "finalDirtyPreservation": [
+    {
+      "path": ".github/workflows/build.yml",
+      "initialSha256": "20e47f6420104b5b69a112676780111033709145a46cfff654322b8aa01cfcae",
+      "finalSha256": "20e47f6420104b5b69a112676780111033709145a46cfff654322b8aa01cfcae",
+      "preserved": true
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "initialSha256": "8222f0e8b40b4635ca5c1eed8272ad1c2b89d4bfab1d2da6ff46f61899039b2e",
+      "finalSha256": "8222f0e8b40b4635ca5c1eed8272ad1c2b89d4bfab1d2da6ff46f61899039b2e",
+      "preserved": true
+    },
+    {
+      "path": "README.md",
+      "initialSha256": "e7d7f9063c1ace67aab840eea2de4d3c422ace1079a146b4e98d7c25cda8b0e7",
+      "finalSha256": "e7d7f9063c1ace67aab840eea2de4d3c422ace1079a146b4e98d7c25cda8b0e7",
+      "preserved": true
+    },
+    {
+      "path": "docs/Implementation_Status.md",
+      "initialSha256": "fe8983ed3f7b94d76425e25509b5e876349916447e87851e03341e374c1f77b7",
+      "finalSha256": "fe8983ed3f7b94d76425e25509b5e876349916447e87851e03341e374c1f77b7",
+      "preserved": true
+    },
+    {
+      "path": "package.json",
+      "initialSha256": "941a3b5638fee3f732ce6f809cf626cfbd129a7dcffac87ff3ac5eff1cfd51ec",
+      "finalSha256": "941a3b5638fee3f732ce6f809cf626cfbd129a7dcffac87ff3ac5eff1cfd51ec",
+      "preserved": true
+    },
+    {
+      "path": "scripts/package-summary.mjs",
+      "initialSha256": "cf272e796616014d69298662f96c94d0e355b24aefbb71ea74779c986d0cc4b9",
+      "finalSha256": "cf272e796616014d69298662f96c94d0e355b24aefbb71ea74779c986d0cc4b9",
+      "preserved": true
+    },
+    {
+      "path": "scripts/verify-mac-package.mjs",
+      "initialSha256": "c2d52035350e5ddd80c20aef5c3ace91e991b990815bab15343d4f16a22689fe",
+      "finalSha256": "c2d52035350e5ddd80c20aef5c3ace91e991b990815bab15343d4f16a22689fe",
+      "preserved": true
+    },
+    {
+      "path": "tests/mac-package.test.mjs",
+      "initialSha256": "2b67c0ea5e2aec71494cda82b204a3a960e1a1ae4f3d9664d4fad7a42cac1fc8",
+      "finalSha256": "2b67c0ea5e2aec71494cda82b204a3a960e1a1ae4f3d9664d4fad7a42cac1fc8",
+      "preserved": true
+    }
+  ],
+  "finalCommit": "e5e004e31e428d77d2242d3ab472e66d88bb0cc6",
+  "desktopArtifacts": [
+    {
+      "path": "desktop-artifacts/applications.png",
+      "bytes": 274893,
+      "sha256": "7919e04571c11696e9465763c1af70104f259279cf37e4769cbcd61b20b0850b",
+      "sourceModifiedAt": "2026-10-15T03:40:36.888Z"
+    },
+    {
+      "path": "desktop-artifacts/codex-projects.png",
+      "bytes": 487609,
+      "sha256": "ac457f2508537add0d4af714eb3f673b21f02098743f1550baed4efaf3b08af9",
+      "sourceModifiedAt": "2026-10-15T03:40:40.441Z"
+    },
+    {
+      "path": "desktop-artifacts/compact.png",
+      "bytes": 166045,
+      "sha256": "dc6d5c2168c62c017973ce4f30e79ca3db9c0b4a982431e07467acc32fbb73fb",
+      "sourceModifiedAt": "2026-10-15T03:40:59.673Z"
+    },
+    {
+      "path": "desktop-artifacts/coordination-compact.png",
+      "bytes": 95185,
+      "sha256": "dc710182faf434fbf5eeefda8dcf278063ebfefdbc109c88e57a993dfe35d27a",
+      "sourceModifiedAt": "2026-10-15T03:40:59.044Z"
+    },
+    {
+      "path": "desktop-artifacts/coordination-night.png",
+      "bytes": 156251,
+      "sha256": "a8d599666d00c65254b9daf675fb548637146067a50c2aecf6deb2ab2586d768",
+      "sourceModifiedAt": "2026-10-15T03:40:58.701Z"
+    },
+    {
+      "path": "desktop-artifacts/coordination-scale.png",
+      "bytes": 329797,
+      "sha256": "1ea4e855bb44250913b29454ea16f13866d5cd286917af7302c86b06963fb855",
+      "sourceModifiedAt": "2026-10-15T03:40:58.954Z"
+    },
+    {
+      "path": "desktop-artifacts/coordination-standard.png",
+      "bytes": 154497,
+      "sha256": "876ffb987e20a5102191ae6569415971beb4532a30a8d4411c2eb8fa2eafbd84",
+      "sourceModifiedAt": "2026-10-15T03:40:58.568Z"
+    },
+    {
+      "path": "desktop-artifacts/coordination-system-dark.png",
+      "bytes": 156251,
+      "sha256": "a8d599666d00c65254b9daf675fb548637146067a50c2aecf6deb2ab2586d768",
+      "sourceModifiedAt": "2026-10-15T03:40:58.840Z"
+    },
+    {
+      "path": "desktop-artifacts/desktop-coordination-benchmark.json",
+      "bytes": 3052,
+      "sha256": "770260731b958c22b5b35c9d7c68b4dfe2f7a3dec5901c0ad561a3baecec0f17",
+      "sourceModifiedAt": "2026-10-15T03:40:59.086Z"
+    },
+    {
+      "path": "desktop-artifacts/projects-compact.png",
+      "bytes": 187344,
+      "sha256": "1911a27248541b33ea9d615f4d45f0d65ca42d4735a92bb97919eed988bc7d45",
+      "sourceModifiedAt": "2026-10-15T03:40:59.573Z"
+    },
+    {
+      "path": "desktop-artifacts/projects.png",
+      "bytes": 309667,
+      "sha256": "57a185d094170c2897a55e890fb0e39a01899b519556e8255906cb493a23f9f6",
+      "sourceModifiedAt": "2026-10-15T03:40:37.473Z"
+    }
+  ],
+  "staleDesktopArtifactsExcluded": [
+    "coordination-benchmark.json",
+    "packaged-mac.png"
+  ],
+  "summary": {
+    "unit": {
+      "passed": 235,
+      "skipped": 2
+    },
+    "release": {
+      "passed": 17,
+      "skipped": 0
+    },
+    "concurrency": {
+      "passed": 11,
+      "skipped": 0
+    },
+    "desktop": {
+      "passed": true,
+      "encryptedRestart": true,
+      "profileMode": "temporary synthetic native homes"
+    },
+    "productionProviderExecution": "not-run",
+    "crossPlatformConcurrencyFailure": "not-reproduced-on-darwin-arm64"
+  },
+  "initialState": {
+    "path": "initial-state.json",
+    "sha256": "9043d19be42f87d4ac6013e88833b96c065373c6c47314d27ab8c2eff604b713"
+  },
+  "additionalEvidence": {
+    "runtimeIdentities": "runtime-identities.json",
+    "findingsLedger": "findings-ledger.json",
+    "historicalCIRequest": "historical-ci-fetch.json",
+    "historicalCIAnnotations": "historical-ci-jobs.json",
+    "focusedConcurrencyReport": "concurrency-report.json"
+  }
+}

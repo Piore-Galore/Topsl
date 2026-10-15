@@ -1,0 +1,467 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-15T03:42:47.944Z",
+  "request": "https://api.github.com/repos/Piore-Galore/Topsl/actions/runs/38558938712/jobs?per_page=100",
+  "status": 200,
+  "authenticated": false,
+  "jobs": [
+    {
+      "id": 115834912949,
+      "name": "macOS Apple silicon",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-14T11:46:32Z",
+      "completed_at": "2026-10-14T11:49:50Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Linux desktop libraries",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4
+        },
+        {
+          "name": "Install locked dependencies and compile native modules",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Typecheck, integration tests, and application build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Linux desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 8
+        },
+        {
+          "name": "Compile installable application",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Record package checksums",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Post Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19
+        },
+        {
+          "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21
+        }
+      ]
+    },
+    {
+      "id": 115834913116,
+      "name": "Windows x64",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-10-14T11:46:28Z",
+      "completed_at": "2026-10-14T11:54:28Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Linux desktop libraries",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4
+        },
+        {
+          "name": "Install locked dependencies and compile native modules",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Typecheck, integration tests, and application build",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 6
+        },
+        {
+          "name": "Desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7
+        },
+        {
+          "name": "Linux desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 8
+        },
+        {
+          "name": "Compile installable application",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9
+        },
+        {
+          "name": "Record package checksums",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 10
+        },
+        {
+          "name": "Post Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 19
+        },
+        {
+          "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21
+        }
+      ],
+      "annotations": {
+        "status": 200,
+        "data": [
+          {
+            "path": ".github",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/.github",
+            "start_line": 381,
+            "start_column": null,
+            "end_line": 381,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "",
+            "message": "Process completed with exit code 1.",
+            "raw_details": ""
+          },
+          {
+            "path": "tests/parallel-workspaces.test.ts",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/tests/parallel-workspaces.test.ts",
+            "start_line": 477,
+            "start_column": null,
+            "end_line": 477,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "tests/parallel-workspaces.test.ts > managed parallel workspace safety > completed inference keeps capacity until observed exit and queued dispatch resumes afterward",
+            "message": "Error: Test timed out in 15000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/parallel-workspaces.test.ts:477:3\n\n",
+            "raw_details": ""
+          },
+          {
+            "path": "tests/parallel-workspaces.test.ts",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/tests/parallel-workspaces.test.ts",
+            "start_line": 459,
+            "start_column": null,
+            "end_line": 459,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "tests/parallel-workspaces.test.ts > managed parallel workspace safety > fanout capability gate and third task wait without dispatch or orphan attempt",
+            "message": "Error: Test timed out in 15000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/parallel-workspaces.test.ts:459:3\n\n",
+            "raw_details": ""
+          },
+          {
+            "path": "tests/parallel-workspaces.test.ts",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/tests/parallel-workspaces.test.ts",
+            "start_line": 357,
+            "start_column": null,
+            "end_line": 357,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "tests/parallel-workspaces.test.ts > managed parallel workspace safety > overlapping candidates record conflict and preserve all bases until explicit resolution",
+            "message": "Error: Test timed out in 15000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/parallel-workspaces.test.ts:357:3\n\n",
+            "raw_details": ""
+          },
+          {
+            "path": "tests/parallel-workspaces.test.ts",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/tests/parallel-workspaces.test.ts",
+            "start_line": 307,
+            "start_column": null,
+            "end_line": 307,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "tests/parallel-workspaces.test.ts > managed parallel workspace safety > worker checks pass but combined checks fail and block acceptance",
+            "message": "Error: Test timed out in 15000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/parallel-workspaces.test.ts:307:3\n\n",
+            "raw_details": ""
+          },
+          {
+            "path": "tests/parallel-workspaces.test.ts",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/tests/parallel-workspaces.test.ts",
+            "start_line": 246,
+            "start_column": null,
+            "end_line": 246,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "tests/parallel-workspaces.test.ts > managed parallel workspace safety > two actual fixture writers share one logical project but separate roots; aliases collide",
+            "message": "AssertionError: expected [ { …(18) } ] to have a length of 2 but got 1\n\n- Expected\n+ Received\n\n- 2\n+ 1\n\n ❯ tests/parallel-workspaces.test.ts:246:7\n\n",
+            "raw_details": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": 115834913156,
+      "name": "macOS Intel",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-10-14T11:46:29Z",
+      "completed_at": "2026-10-14T11:50:41Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Linux desktop libraries",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4
+        },
+        {
+          "name": "Install locked dependencies and compile native modules",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Typecheck, integration tests, and application build",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 6
+        },
+        {
+          "name": "Desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7
+        },
+        {
+          "name": "Linux desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 8
+        },
+        {
+          "name": "Compile installable application",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9
+        },
+        {
+          "name": "Record package checksums",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 10
+        },
+        {
+          "name": "Post Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 19
+        },
+        {
+          "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21
+        }
+      ],
+      "annotations": {
+        "status": 200,
+        "data": [
+          {
+            "path": ".github",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/.github",
+            "start_line": 289,
+            "start_column": null,
+            "end_line": 289,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "",
+            "message": "Process completed with exit code 1.",
+            "raw_details": ""
+          },
+          {
+            "path": "tests/parallel-workspaces.test.ts",
+            "blob_href": "https://github.com/Piore-Galore/Topsl/blob/e5e004e31e428d77d2242d3ab472e66d88bb0cc6/tests/parallel-workspaces.test.ts",
+            "start_line": 488,
+            "start_column": null,
+            "end_line": 488,
+            "end_column": null,
+            "annotation_level": "failure",
+            "title": "tests/parallel-workspaces.test.ts > managed parallel workspace safety > completed inference keeps capacity until observed exit and queued dispatch resumes afterward",
+            "message": "AssertionError: expected 'Specialist c dispatched against pinne…' to contain 'Waiting for capacity'\n\nExpected: \"Waiting for capacity\"\nReceived: \"Specialist c dispatched against pinned interfaces and inputs.\"\n\n ❯ tests/parallel-workspaces.test.ts:488:26\n\n",
+            "raw_details": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": 115834913168,
+      "name": "Linux x64",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-14T11:46:28Z",
+      "completed_at": "2026-10-14T11:49:19Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Linux desktop libraries",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Install locked dependencies and compile native modules",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Typecheck, integration tests, and application build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7
+        },
+        {
+          "name": "Linux desktop acceptance smoke",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Compile installable application",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Record package checksums",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Post Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19
+        },
+        {
+          "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "seed": "r2-local-a",
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "26.0.0",
+  "requestedIterations": 2,
+  "results": [
+    {
+      "iteration": 1,
+      "seed": "7a04f1b498172196",
+      "startedAt": "2026-10-15T03:52:39.925Z",
+      "completedAt": "2026-10-15T03:52:52.989Z",
+      "exitCode": 1,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-1-lifecycle-stress/iteration-1.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-1-lifecycle-stress/iteration-1.txt"
+    }
+  ],
+  "passed": false
+}

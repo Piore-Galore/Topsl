@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-15T04:36:35.904Z",
+  "fixtureOnly": true,
+  "deliveryQualified": false,
+  "host": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "osRelease": "27.0.0",
+    "cpu": "Apple M5",
+    "runnerNode": "v26.0.0",
+    "runtime": {
+      "electron": "44.4.5",
+      "node": "24.21.0",
+      "chrome": "152.0.7977.130"
+    }
+  },
+  "workload": {
+    "selectedProjects": 1,
+    "availableProjects": 2,
+    "workflows": 1,
+    "candidateManifestPaths": 1004,
+    "renderedManifestPathLimit": 100,
+    "update": "one stored workflow objective and control event",
+    "observation": "production renderer DOM update plus two animation frames",
+    "transport": "isolated local Electron IPC fixture; no provider inference or network"
+  },
+  "samples": [
+    {
+      "committedAt": 1792038992008,
+      "observedAt": 1792038992138,
+      "latencyMs": 130
+    },
+    {
+      "committedAt": 1792038992139,
+      "observedAt": 1792038992271,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038992272,
+      "observedAt": 1792038992404,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038992406,
+      "observedAt": 1792038992538,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038992539,
+      "observedAt": 1792038992670,
+      "latencyMs": 131
+    },
+    {
+      "committedAt": 1792038992672,
+      "observedAt": 1792038992804,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038992806,
+      "observedAt": 1792038992938,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038992939,
+      "observedAt": 1792038993071,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038993072,
+      "observedAt": 1792038993204,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038993206,
+      "observedAt": 1792038993338,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038993339,
+      "observedAt": 1792038993471,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038993472,
+      "observedAt": 1792038993604,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038993606,
+      "observedAt": 1792038993738,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038993739,
+      "observedAt": 1792038993854,
+      "latencyMs": 115
+    },
+    {
+      "committedAt": 1792038993856,
+      "observedAt": 1792038993971,
+      "latencyMs": 115
+    },
+    {
+      "committedAt": 1792038993972,
+      "observedAt": 1792038994088,
+      "latencyMs": 116
+    },
+    {
+      "committedAt": 1792038994089,
+      "observedAt": 1792038994205,
+      "latencyMs": 116
+    },
+    {
+      "committedAt": 1792038994206,
+      "observedAt": 1792038994321,
+      "latencyMs": 115
+    },
+    {
+      "committedAt": 1792038994322,
+      "observedAt": 1792038994438,
+      "latencyMs": 116
+    },
+    {
+      "committedAt": 1792038994439,
+      "observedAt": 1792038994571,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038994573,
+      "observedAt": 1792038994704,
+      "latencyMs": 131
+    },
+    {
+      "committedAt": 1792038994706,
+      "observedAt": 1792038994838,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038994839,
+      "observedAt": 1792038994971,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038994972,
+      "observedAt": 1792038995104,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038995106,
+      "observedAt": 1792038995238,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038995239,
+      "observedAt": 1792038995371,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038995372,
+      "observedAt": 1792038995504,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038995506,
+      "observedAt": 1792038995638,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038995639,
+      "observedAt": 1792038995771,
+      "latencyMs": 132
+    },
+    {
+      "committedAt": 1792038995772,
+      "observedAt": 1792038995903,
+      "latencyMs": 131
+    }
+  ],
+  "p50Ms": 132,
+  "p95Ms": 132,
+  "maxMs": 132,
+  "targetP95Ms": 250
+}

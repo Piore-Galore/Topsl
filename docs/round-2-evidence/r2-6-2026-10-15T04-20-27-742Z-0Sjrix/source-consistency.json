@@ -1,0 +1,11 @@
+{
+  "unchangedAtEnd": false,
+  "changes": [
+    {
+      "path": "apps/desktop/renderer/components/candidate-artifacts.tsx",
+      "beforeSha256": null,
+      "afterSha256": "0cfabd670752585d616f88a3161eaef6bc39b9334347f7f704c4ba9ff8462bb1"
+    }
+  ],
+  "scope": "Before/after comparison of working-tree source. It cannot prove a process never changed and restored a file or establish an immutable delivery export."
+}

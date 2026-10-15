@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-15T03:41:04.365Z",
+  "sourceRun": "38558938712",
+  "reviewedCommit": "e5e004e31e428d77d2242d3ab472e66d88bb0cc6",
+  "request": [
+    "/opt/homebrew/bin/gh",
+    "run",
+    "view",
+    "38558938712",
+    "--repo",
+    "Piore-Galore/Topsl",
+    "--log-failed"
+  ],
+  "status": "not-retrieved",
+  "exitCode": "ENOENT",
+  "error": "spawn /opt/homebrew/bin/gh ENOENT",
+  "stderr": "",
+  "httpAttempts": [
+    {
+      "url": "https://api.github.com/repos/Piore-Galore/Topsl/actions/runs/38558938712",
+      "observedAt": "2026-10-15T03:41:59.145Z",
+      "status": 200,
+      "authenticated": false,
+      "data": {
+        "id": 38558938712,
+        "head_sha": "e5e004e31e428d77d2242d3ab472e66d88bb0cc6",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "failure",
+        "run_attempt": 1,
+        "created_at": "2026-10-14T11:46:25Z",
+        "updated_at": "2026-10-14T11:54:29Z",
+        "html_url": "https://github.com/Piore-Galore/Topsl/actions/runs/38558938712"
+      }
+    },
+    {
+      "url": "https://api.github.com/repos/Piore-Galore/Topsl/actions/runs/38558938712/logs",
+      "observedAt": "2026-10-15T03:41:59.182Z",
+      "status": 403,
+      "body": "{\"message\":\"Must have admin rights to Repository.\",\"documentation_url\":\"https://docs.github.com/rest/actions/workflow-runs#download-workflow-run-logs\",\"status\":\"403\"}",
+      "authenticated": false
+    }
+  ]
+}

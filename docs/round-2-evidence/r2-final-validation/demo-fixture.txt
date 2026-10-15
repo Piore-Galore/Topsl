@@ -1,0 +1,9 @@
+✔ Round 2 demonstration inputs are reproducible, locally archived and Git tracked (143.765958ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 213.060792

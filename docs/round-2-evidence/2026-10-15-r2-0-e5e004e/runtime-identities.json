@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-15T03:41:03.878Z",
+  "evidenceClass": "isolated-local-version-and-file-identity-only",
+  "isolatedHomes": true,
+  "providerModelTurns": 0,
+  "selectedForLiveExecution": false,
+  "providers": {
+    "codex": {
+      "executable": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+      "realPath": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+      "bytes": 246046384,
+      "modifiedAt": "2026-10-09T03:55:47.936Z",
+      "sha256": "0d5ac7aae20c4eda6242428d5e218c55ba96d8763fda2a271088ff37104b9d28",
+      "command": [
+        "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+        "--version"
+      ],
+      "versionOutput": "codex-cli 0.162.0-alpha.17.2",
+      "diagnostics": "",
+      "executionAcceptance": "not-run"
+    },
+    "claude": {
+      "executable": "/opt/homebrew/bin/claude",
+      "realPath": "/opt/homebrew/Caskroom/claude-code@latest/2.1.183/claude",
+      "bytes": 215952608,
+      "modifiedAt": "2026-06-18T23:59:10.000Z",
+      "sha256": "6218efccd06194ea0bc381121bf03040a027a04d991eaed886da02a00449ad0f",
+      "command": [
+        "/opt/homebrew/bin/claude",
+        "--version"
+      ],
+      "versionOutput": "2.1.183 (Claude Code)",
+      "diagnostics": "",
+      "executionAcceptance": "not-run"
+    }
+  }
+}

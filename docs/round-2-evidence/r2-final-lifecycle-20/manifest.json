@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "seed": "r2-final-20261015",
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "26.0.0",
+  "requestedIterations": 20,
+  "results": [
+    {
+      "iteration": 1,
+      "seed": "b4817caf0bf82c6c",
+      "startedAt": "2026-10-15T04:19:58.721Z",
+      "completedAt": "2026-10-15T04:20:17.643Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-1.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-1.txt"
+    },
+    {
+      "iteration": 2,
+      "seed": "b3218868fd20babc",
+      "startedAt": "2026-10-15T04:20:17.644Z",
+      "completedAt": "2026-10-15T04:20:37.193Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-2.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-2.txt"
+    },
+    {
+      "iteration": 3,
+      "seed": "c66319eda69a0490",
+      "startedAt": "2026-10-15T04:20:37.194Z",
+      "completedAt": "2026-10-15T04:20:56.553Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-3.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-3.txt"
+    },
+    {
+      "iteration": 4,
+      "seed": "063ded86984aa5aa",
+      "startedAt": "2026-10-15T04:20:56.553Z",
+      "completedAt": "2026-10-15T04:21:16.046Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-4.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-4.txt"
+    },
+    {
+      "iteration": 5,
+      "seed": "577e10dbfc9317d5",
+      "startedAt": "2026-10-15T04:21:16.046Z",
+      "completedAt": "2026-10-15T04:21:34.930Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-5.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-5.txt"
+    },
+    {
+      "iteration": 6,
+      "seed": "82e71295dab69626",
+      "startedAt": "2026-10-15T04:21:34.930Z",
+      "completedAt": "2026-10-15T04:21:53.533Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-6.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-6.txt"
+    },
+    {
+      "iteration": 7,
+      "seed": "12261862fba48dfc",
+      "startedAt": "2026-10-15T04:21:53.533Z",
+      "completedAt": "2026-10-15T04:22:12.211Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-7.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-7.txt"
+    },
+    {
+      "iteration": 8,
+      "seed": "bb3895d58004a365",
+      "startedAt": "2026-10-15T04:22:12.211Z",
+      "completedAt": "2026-10-15T04:22:30.825Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-8.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-8.txt"
+    },
+    {
+      "iteration": 9,
+      "seed": "0875a1dd96ce7bf0",
+      "startedAt": "2026-10-15T04:22:30.826Z",
+      "completedAt": "2026-10-15T04:22:49.566Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-9.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-9.txt"
+    },
+    {
+      "iteration": 10,
+      "seed": "028ac3d85c8c9b69",
+      "startedAt": "2026-10-15T04:22:49.566Z",
+      "completedAt": "2026-10-15T04:23:08.386Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-10.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-10.txt"
+    },
+    {
+      "iteration": 11,
+      "seed": "4624eaa4677e34f6",
+      "startedAt": "2026-10-15T04:23:08.386Z",
+      "completedAt": "2026-10-15T04:23:27.336Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-11.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-11.txt"
+    },
+    {
+      "iteration": 12,
+      "seed": "39185f354d4e5085",
+      "startedAt": "2026-10-15T04:23:27.337Z",
+      "completedAt": "2026-10-15T04:23:46.161Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-12.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-12.txt"
+    },
+    {
+      "iteration": 13,
+      "seed": "f9944e9ad5c78fd6",
+      "startedAt": "2026-10-15T04:23:46.162Z",
+      "completedAt": "2026-10-15T04:24:05.844Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-13.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-13.txt"
+    },
+    {
+      "iteration": 14,
+      "seed": "23ec5293c2be2c0e",
+      "startedAt": "2026-10-15T04:24:05.845Z",
+      "completedAt": "2026-10-15T04:24:24.782Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-14.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-14.txt"
+    },
+    {
+      "iteration": 15,
+      "seed": "df24dbf55610d040",
+      "startedAt": "2026-10-15T04:24:24.783Z",
+      "completedAt": "2026-10-15T04:24:43.616Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-15.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-15.txt"
+    },
+    {
+      "iteration": 16,
+      "seed": "4edb6e8f6cd882bd",
+      "startedAt": "2026-10-15T04:24:43.616Z",
+      "completedAt": "2026-10-15T04:25:03.275Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-16.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-16.txt"
+    },
+    {
+      "iteration": 17,
+      "seed": "b1b779967154b28b",
+      "startedAt": "2026-10-15T04:25:03.275Z",
+      "completedAt": "2026-10-15T04:25:22.502Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-17.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-17.txt"
+    },
+    {
+      "iteration": 18,
+      "seed": "6ecd940c5bb12632",
+      "startedAt": "2026-10-15T04:25:22.502Z",
+      "completedAt": "2026-10-15T04:25:41.556Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-18.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-18.txt"
+    },
+    {
+      "iteration": 19,
+      "seed": "71a26eaa198a5624",
+      "startedAt": "2026-10-15T04:25:41.556Z",
+      "completedAt": "2026-10-15T04:26:00.597Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-19.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-19.txt"
+    },
+    {
+      "iteration": 20,
+      "seed": "722070855cff5d03",
+      "startedAt": "2026-10-15T04:26:00.597Z",
+      "completedAt": "2026-10-15T04:26:19.562Z",
+      "exitCode": 0,
+      "report": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-20.json",
+      "log": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-final-lifecycle-20/iteration-20.txt"
+    }
+  ],
+  "passed": true
+}

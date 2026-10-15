@@ -1,0 +1,45 @@
+
+> topsl@0.1.1 test:desktop
+> node scripts/desktop-test-runner.mjs
+
+2026-10-15T04:39:52.345Z pw:browser <launching> /Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -r /Users/piore/repos/Topsl/node_modules/playwright-core/lib/server/electron/loader.js --inspect=0 --remote-debugging-port=0 .
+2026-10-15T04:39:52.347Z pw:browser <launched> pid=53565
+2026-10-15T04:39:52.423Z pw:browser [pid=53565][err] Debugger listening on ws://127.0.0.1:49371/ea8a8e38-3678-4e82-b6d5-4bb549758d53
+2026-10-15T04:39:52.424Z pw:browser [pid=53565][err] For help, see: https://nodejs.org/learn/getting-started/debugging
+2026-10-15T04:39:52.424Z pw:browser <ws connecting> ws://127.0.0.1:49371/ea8a8e38-3678-4e82-b6d5-4bb549758d53
+2026-10-15T04:39:52.426Z pw:browser [pid=53565][err] Debugger attached.
+2026-10-15T04:39:52.427Z pw:browser <ws connected> ws://127.0.0.1:49371/ea8a8e38-3678-4e82-b6d5-4bb549758d53
+2026-10-15T04:39:52.456Z pw:browser [pid=53565][err] 
+2026-10-15T04:39:52.456Z pw:browser [pid=53565][err] DevTools listening on ws://127.0.0.1:49373/devtools/browser/12f3c9f3-1407-4d21-b936-25660bf3819f
+2026-10-15T04:39:52.456Z pw:browser <ws connecting> ws://127.0.0.1:49373/devtools/browser/12f3c9f3-1407-4d21-b936-25660bf3819f
+2026-10-15T04:39:52.485Z pw:browser <ws connected> ws://127.0.0.1:49373/devtools/browser/12f3c9f3-1407-4d21-b936-25660bf3819f
+Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette.
+Isolated test profile: /var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-test-desktop-JE5uvI
+2026-10-15T04:40:16.269Z pw:browser <ws disconnecting> ws://127.0.0.1:49371/ea8a8e38-3678-4e82-b6d5-4bb549758d53
+2026-10-15T04:40:16.270Z pw:browser [pid=53565][err] Debugger ending on ws://127.0.0.1:49371/ea8a8e38-3678-4e82-b6d5-4bb549758d53
+2026-10-15T04:40:16.270Z pw:browser [pid=53565][err] For help, see: https://nodejs.org/learn/getting-started/debugging
+2026-10-15T04:40:16.270Z pw:browser <ws disconnected> ws://127.0.0.1:49371/ea8a8e38-3678-4e82-b6d5-4bb549758d53 code=1005 reason=
+2026-10-15T04:40:16.306Z pw:browser <ws disconnected> ws://127.0.0.1:49373/devtools/browser/12f3c9f3-1407-4d21-b936-25660bf3819f code=1006 reason=
+2026-10-15T04:40:16.307Z pw:browser [pid=53565] <process did exit: exitCode=0, signal=null>
+2026-10-15T04:40:16.307Z pw:browser [pid=53565] starting temporary directories cleanup
+2026-10-15T04:40:16.308Z pw:browser [pid=53565] finished temporary directories cleanup
+2026-10-15T04:40:16.308Z pw:browser <launching> /Users/piore/repos/Topsl/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -r /Users/piore/repos/Topsl/node_modules/playwright-core/lib/server/electron/loader.js --inspect=0 --remote-debugging-port=0 .
+2026-10-15T04:40:16.309Z pw:browser <launched> pid=53601
+2026-10-15T04:40:16.406Z pw:browser [pid=53601][err] Debugger listening on ws://127.0.0.1:49464/aaf7af29-b990-4b44-a633-ef5c26564d02
+2026-10-15T04:40:16.406Z pw:browser [pid=53601][err] For help, see: https://nodejs.org/learn/getting-started/debugging
+2026-10-15T04:40:16.406Z pw:browser <ws connecting> ws://127.0.0.1:49464/aaf7af29-b990-4b44-a633-ef5c26564d02
+2026-10-15T04:40:16.408Z pw:browser [pid=53601][err] Debugger attached.
+2026-10-15T04:40:16.409Z pw:browser <ws connected> ws://127.0.0.1:49464/aaf7af29-b990-4b44-a633-ef5c26564d02
+2026-10-15T04:40:16.439Z pw:browser [pid=53601][err] 
+2026-10-15T04:40:16.439Z pw:browser [pid=53601][err] DevTools listening on ws://127.0.0.1:49467/devtools/browser/f48ccc55-7b4b-4dbe-a99f-2baaabbf228d
+2026-10-15T04:40:16.439Z pw:browser <ws connecting> ws://127.0.0.1:49467/devtools/browser/f48ccc55-7b4b-4dbe-a99f-2baaabbf228d
+2026-10-15T04:40:16.495Z pw:browser <ws connected> ws://127.0.0.1:49467/devtools/browser/f48ccc55-7b4b-4dbe-a99f-2baaabbf228d
+Encrypted restart persistence passed.
+2026-10-15T04:40:17.476Z pw:browser <ws disconnecting> ws://127.0.0.1:49464/aaf7af29-b990-4b44-a633-ef5c26564d02
+2026-10-15T04:40:17.478Z pw:browser [pid=53601][err] Debugger ending on ws://127.0.0.1:49464/aaf7af29-b990-4b44-a633-ef5c26564d02
+2026-10-15T04:40:17.478Z pw:browser [pid=53601][err] For help, see: https://nodejs.org/learn/getting-started/debugging
+2026-10-15T04:40:17.478Z pw:browser <ws disconnected> ws://127.0.0.1:49464/aaf7af29-b990-4b44-a633-ef5c26564d02 code=1005 reason=
+2026-10-15T04:40:17.609Z pw:browser [pid=53601] <process did exit: exitCode=0, signal=null>
+2026-10-15T04:40:17.609Z pw:browser [pid=53601] starting temporary directories cleanup
+2026-10-15T04:40:17.609Z pw:browser <ws disconnected> ws://127.0.0.1:49467/devtools/browser/f48ccc55-7b4b-4dbe-a99f-2baaabbf228d code=1006 reason=
+2026-10-15T04:40:17.612Z pw:browser [pid=53601] finished temporary directories cleanup

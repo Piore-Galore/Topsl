@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-15T04:17:59.492Z",
+  "providerRequests": 0,
+  "billedUsage": 0,
+  "status": "passed-synthetic-capture",
+  "evidenceClass": "synthetic-local-performance",
+  "seed": "topsl-round2-v1",
+  "fixtureSourceIdentity": "e9e1a254b4b0842b93fcc0e7ac47bcedab14a4b4605b70566389889957823a5e",
+  "files": 10018,
+  "logicalBytes": 109411000,
+  "protectedUniqueBytes": 8035000,
+  "dedupRatio": 0.07343868532414474,
+  "candidateRevision": "7b01d99d706413807451815ce8b5bb5732f2c1b20576147cf19ce1489a5eedde",
+  "recaptureRevision": "7b01d99d706413807451815ce8b5bb5732f2c1b20576147cf19ce1489a5eedde",
+  "contextBytes": 32743,
+  "contextBudget": 32768,
+  "receiptLimit": 262144,
+  "receipts": [
+    {
+      "id": "17807cf6-23af-4a88-a354-623f0b32f684",
+      "projectId": "other",
+      "workflowId": "1a623924-fc90-4ec1-aecd-9ca3ed860ca5",
+      "attemptId": "cdc802c5-810e-4c64-9a67-be044aa0036d",
+      "candidateId": "ce0cc31c-f652-46df-a4a0-06faf86369dd",
+      "candidateRevision": "7b01d99d706413807451815ce8b5bb5732f2c1b20576147cf19ce1489a5eedde",
+      "grantId": null,
+      "method": "candidate-list",
+      "path": null,
+      "offset": null,
+      "bytes": 0,
+      "outcome": "denied",
+      "createdAt": "2026-10-15T04:17:59.434Z"
+    },
+    {
+      "id": "939084c4-8a8c-4e23-81fd-e0acd9128740",
+      "projectId": "stress",
+      "workflowId": "1a623924-fc90-4ec1-aecd-9ca3ed860ca5",
+      "attemptId": "cdc802c5-810e-4c64-9a67-be044aa0036d",
+      "candidateId": "ce0cc31c-f652-46df-a4a0-06faf86369dd",
+      "candidateRevision": "7b01d99d706413807451815ce8b5bb5732f2c1b20576147cf19ce1489a5eedde",
+      "grantId": null,
+      "method": "candidate-read-range",
+      "path": "synthetic/source-09999.ts",
+      "offset": 100,
+      "bytes": 256,
+      "outcome": "returned",
+      "createdAt": "2026-10-15T04:17:59.415Z",
+      "ranges": [
+        {
+          "path": "synthetic/source-09999.ts",
+          "hash": "f41d31029be09cfe77785cf7e1329cc047691558d92d0abce454e86541553bf7",
+          "offset": 100,
+          "bytes": 256
+        }
+      ]
+    },
+    {
+      "id": "08787e1f-f206-4a79-a375-4f5f1bbe45c7",
+      "projectId": "stress",
+      "workflowId": "1a623924-fc90-4ec1-aecd-9ca3ed860ca5",
+      "attemptId": "cdc802c5-810e-4c64-9a67-be044aa0036d",
+      "candidateId": "ce0cc31c-f652-46df-a4a0-06faf86369dd",
+      "candidateRevision": "7b01d99d706413807451815ce8b5bb5732f2c1b20576147cf19ce1489a5eedde",
+      "grantId": null,
+      "method": "candidate-list",
+      "path": null,
+      "offset": null,
+      "bytes": 0,
+      "outcome": "returned",
+      "createdAt": "2026-10-15T04:17:59.405Z"
+    }
+  ],
+  "measurements": {
+    "generationMs": 3798.095208,
+    "captureMs": 12703.225792000001,
+    "recaptureMs": 10973.025665999998,
+    "totalMs": 27542.939583,
+    "sampledPeakRssBytes": 268648448,
+    "initialRssBytes": 98844672,
+    "finalRssBytes": 263929856,
+    "processMaxRssKiB": 313344,
+    "sqliteBytes": 23310336
+  },
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.21.0",
+    "electron": "44.4.5",
+    "cpu": "Apple M5"
+  },
+  "limitations": [
+    "Synthetic duplicate-heavy workload; capacity is not a guarantee for arbitrary assets",
+    "RSS is process-wide, sampled every 20 ms; brief peaks may be missed",
+    "No model inference, UI render timing, remote CI or packaged OS execution"
+  ]
+}

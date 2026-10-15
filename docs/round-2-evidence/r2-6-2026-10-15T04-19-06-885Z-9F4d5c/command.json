@@ -1,0 +1,18 @@
+{
+  "executable": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+  "args": [
+    "scripts/test.mjs",
+    "tests/round2-acceptance.test.ts",
+    "--reporter=json",
+    "--outputFile",
+    "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-6-2026-10-15T04-19-06-885Z-9F4d5c/vitest.json"
+  ],
+  "cwd": "/Users/piore/repos/Topsl",
+  "environment": {
+    "ELECTRON_RUN_AS_NODE": "set by scripts/test.mjs",
+    "npm_node_execpath": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
+    "npm_execpath": "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+    "TOPSL_R2_EVIDENCE": "/Users/piore/repos/Topsl/docs/round-2-evidence/r2-6-2026-10-15T04-19-06-885Z-9F4d5c",
+    "TOPSL_R2_STRESS": "1"
+  }
+}

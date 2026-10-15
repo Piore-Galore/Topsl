@@ -1,0 +1,11 @@
+{
+  "unchangedAtEnd": false,
+  "changes": [
+    {
+      "path": "docs/Round_2_Execution.md",
+      "beforeSha256": "3801a85c89c2fa4647164a1f40ec31354b88e76d484bf44d7d40e5a42518832f",
+      "afterSha256": "d4db90791f5429473528d9f01002bac15b3380c84565b5c949c883611bf52da3"
+    }
+  ],
+  "scope": "Before/after comparison of working-tree source. It cannot prove a process never changed and restored a file or establish an immutable delivery export."
+}

@@ -62,6 +62,8 @@ Official behavior references checked on 29 September 2026:
 
 ## Validation boundary
 
+The [15 October lifecycle update](Round_2_Phase_1.md) makes native project peer pause/close asynchronous and awaited. Pausing still does not undo an already dispatched native change; shutdown waits for outstanding peer operations before closing Topsl storage. Registry observation and visible native presentation retain the boundaries above.
+
 The [14 October coordination baseline](Coordination_Baseline.md) adds independent expiring/revocable context grants and indexed scoped history pages. Visibility is enforced by the context server for every history/search route, while status explicitly identifies that filesystem/tool isolation is not supplied by that service. Native-registry observation, visible sidebar behavior, context delivery, history coverage, configuration reload and code integration retain separate evidence boundaries. The updated provider inventory is read-only: it does not establish authenticated execution or change billing routes.
 
 Unit and service fixtures cover source parsing, multi-root metadata, aliases, idempotent replay and lost replies, opt-in/trust, invalid/partial/missing sources, native additions/removals, pause/resume, concurrent refresh cancellation, moved/retargeted directories, history preservation, executable/profile changes, stale rename/order checks, Topsl sidebar order, and desktop route/trust checks. Claude link tests include spaces, Unicode, reserved characters, and rejected prompt/route injection. The real Electron smoke exercises discovery, duplicate merging, per-folder trust, native registry creation/rename/order/pause/resume, filtering, compact layout, and encrypted restart using synthetic provider homes.

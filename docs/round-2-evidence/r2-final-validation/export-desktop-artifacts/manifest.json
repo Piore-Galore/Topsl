@@ -1,0 +1,60 @@
+{
+  "scope": "Independent exported-source original Electron desktop/restart smoke; shared installed engineering toolchain, synthetic provider profiles",
+  "records": [
+    {
+      "path": "applications.png",
+      "bytes": 274893,
+      "sha256": "7919e04571c11696e9465763c1af70104f259279cf37e4769cbcd61b20b0850b"
+    },
+    {
+      "path": "codex-projects.png",
+      "bytes": 487914,
+      "sha256": "4baa837a843b6efe4487ac12e00a67a76e846adf59897a17d00cecf371ec87cf"
+    },
+    {
+      "path": "compact.png",
+      "bytes": 166128,
+      "sha256": "3e392e2c183802f2a4eb5839ab6a1bcb456c8c6f87d6e04bf742b3c5d651643b"
+    },
+    {
+      "path": "coordination-compact.png",
+      "bytes": 107615,
+      "sha256": "1e4a68ee527e90447c3e3eb772dfd02b0d8ffc853730bf282e1666092e0611e5"
+    },
+    {
+      "path": "coordination-night.png",
+      "bytes": 194597,
+      "sha256": "e2197513c909ebdbca62a95116349bd304426607ee2f8b8c05dac6a4e9c509a2"
+    },
+    {
+      "path": "coordination-scale.png",
+      "bytes": 348879,
+      "sha256": "171583acdf2d35b8831a7a3ead2dfb3baca7d7f4fab8c7b43be785e19e5e4cf3"
+    },
+    {
+      "path": "coordination-standard.png",
+      "bytes": 192084,
+      "sha256": "08e292cad4072f64262e4357bb27227db0cc1550c044125235eb77ce2749ce78"
+    },
+    {
+      "path": "coordination-system-dark.png",
+      "bytes": 193691,
+      "sha256": "2bba8ba1d3ec25d245f66ccddfdf67347ccd9618cc6773766ffb92166641c959"
+    },
+    {
+      "path": "desktop-coordination-benchmark.json",
+      "bytes": 3071,
+      "sha256": "af71e6176a6c660c2f7ee0f0abe0889b5d352efe085c7f87a3bd09f38fd6cc4d"
+    },
+    {
+      "path": "projects-compact.png",
+      "bytes": 187407,
+      "sha256": "78eb54ca488141a500eedb944be7903cfb0743314006fbc955ed7fe72517a472"
+    },
+    {
+      "path": "projects.png",
+      "bytes": 309570,
+      "sha256": "b493d064f02c94e16081cb7e325bb9e3e23cbe248e58b37d1c9d7de510ffd666"
+    }
+  ]
+}

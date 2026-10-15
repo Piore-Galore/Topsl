@@ -1,0 +1,23 @@
+{
+  "reason": "Dated links required by newly present documentation working agreement; pre-existing bytes retained as exact prefix",
+  "records": [
+    {
+      "path": "README.md",
+      "priorSha256": "e7d7f9063c1ace67aab840eea2de4d3c422ace1079a146b4e98d7c25cda8b0e7",
+      "preservedPrefix": true,
+      "appendedSha256": "449a93ff968b8884f75e3890d81f6a5a356179a12fd27590b0d7d92f806ee45b",
+      "combinedSha256": "ce5fef9a9e0482e5b92b2d65f3985540a39a1b7e013c6619dd5e39afc5b9a19e",
+      "priorBytes": 14784,
+      "appendedBytes": 943
+    },
+    {
+      "path": "docs/Implementation_Status.md",
+      "priorSha256": "fe8983ed3f7b94d76425e25509b5e876349916447e87851e03341e374c1f77b7",
+      "preservedPrefix": true,
+      "appendedSha256": "6c1a09689836fc256ee3a6496b98eb8302f2bc16e9632e8e9dbe4d8304ea825c",
+      "combinedSha256": "c8bbdf73591c40ace0519020acb8f38d8607f478e49fc1c2c90c23a2fb5bba5f",
+      "priorBytes": 17552,
+      "appendedBytes": 1256
+    }
+  ]
+}

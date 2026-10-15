@@ -1,0 +1,60 @@
+{
+  "records": [
+    {
+      "path": ".github/workflows/build.yml",
+      "initialSha256": "20e47f6420104b5b69a112676780111033709145a46cfff654322b8aa01cfcae",
+      "currentSha256": "20e47f6420104b5b69a112676780111033709145a46cfff654322b8aa01cfcae",
+      "preserved": true,
+      "mode": "byte-identical"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "initialSha256": "8222f0e8b40b4635ca5c1eed8272ad1c2b89d4bfab1d2da6ff46f61899039b2e",
+      "currentSha256": "8222f0e8b40b4635ca5c1eed8272ad1c2b89d4bfab1d2da6ff46f61899039b2e",
+      "preserved": true,
+      "mode": "byte-identical"
+    },
+    {
+      "path": "README.md",
+      "initialSha256": "e7d7f9063c1ace67aab840eea2de4d3c422ace1079a146b4e98d7c25cda8b0e7",
+      "currentSha256": "ce5fef9a9e0482e5b92b2d65f3985540a39a1b7e013c6619dd5e39afc5b9a19e",
+      "preserved": true,
+      "mode": "original bytes retained as exact prefix; dated Round 2 appendix"
+    },
+    {
+      "path": "docs/Implementation_Status.md",
+      "initialSha256": "fe8983ed3f7b94d76425e25509b5e876349916447e87851e03341e374c1f77b7",
+      "currentSha256": "c8bbdf73591c40ace0519020acb8f38d8607f478e49fc1c2c90c23a2fb5bba5f",
+      "preserved": true,
+      "mode": "original bytes retained as exact prefix; dated Round 2 appendix"
+    },
+    {
+      "path": "package.json",
+      "initialSha256": "941a3b5638fee3f732ce6f809cf626cfbd129a7dcffac87ff3ac5eff1cfd51ec",
+      "currentSha256": "941a3b5638fee3f732ce6f809cf626cfbd129a7dcffac87ff3ac5eff1cfd51ec",
+      "preserved": true,
+      "mode": "byte-identical"
+    },
+    {
+      "path": "scripts/package-summary.mjs",
+      "initialSha256": "cf272e796616014d69298662f96c94d0e355b24aefbb71ea74779c986d0cc4b9",
+      "currentSha256": "cf272e796616014d69298662f96c94d0e355b24aefbb71ea74779c986d0cc4b9",
+      "preserved": true,
+      "mode": "byte-identical"
+    },
+    {
+      "path": "scripts/verify-mac-package.mjs",
+      "initialSha256": "c2d52035350e5ddd80c20aef5c3ace91e991b990815bab15343d4f16a22689fe",
+      "currentSha256": "c2d52035350e5ddd80c20aef5c3ace91e991b990815bab15343d4f16a22689fe",
+      "preserved": true,
+      "mode": "byte-identical"
+    },
+    {
+      "path": "tests/mac-package.test.mjs",
+      "initialSha256": "2b67c0ea5e2aec71494cda82b204a3a960e1a1ae4f3d9664d4fad7a42cac1fc8",
+      "currentSha256": "2b67c0ea5e2aec71494cda82b204a3a960e1a1ae4f3d9664d4fad7a42cac1fc8",
+      "preserved": true,
+      "mode": "byte-identical"
+    }
+  ]
+}

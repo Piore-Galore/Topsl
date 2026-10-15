@@ -1,0 +1,11 @@
+{
+  "unchangedAtEnd": false,
+  "changes": [
+    {
+      "path": "scripts/round2-source-export.mjs",
+      "beforeSha256": "be547b889de51ccdcb255c17eab919ccc8e1b01ee8a17db676c4d924c82c4cc6",
+      "afterSha256": "2a2c390c6552dce4057e7f63dd81e636e1ccde962e32bc4b7d9fe89b151ad433"
+    }
+  ],
+  "scope": "Before/after comparison of working-tree source. It cannot prove a process never changed and restored a file or establish an immutable delivery export."
+}

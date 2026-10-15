@@ -1,0 +1,68 @@
+
+ RUN  v5.0.2 /Users/piore/repos/Topsl
+
+ ✓ tests/runtime.test.ts (12 tests) 4773ms
+   ✓ native process adapter (12)
+     ✓ protocol probe loads native models without submitting a turn 402ms
+     ✓ streaming preserves exact run revision, native IDs, and deduplicated usage 459ms
+     ✓ review mode cannot grant escalation requests 509ms
+     ✓ editing approval is bound to the exact native request and consumed once 507ms
+     ✓ requests for other native threads are never approved 458ms
+     ✓ a project has one writer; interruption uses its native turn ID 406ms
+     ✓ uncertain crash is recorded, never replayed, and blocks another writer 411ms
+     ✓ uncertain malformed is recorded, never replayed, and blocks another writer 405ms
+     ✓ API billing mode cannot silently replace subscription execution 408ms
+     ✓ changing the native account cannot silently resume private history 405ms
+     ✓ untrusted executable never starts 355ms
+ ✓ tests/durable-executions.test.ts (8 tests) 3188ms
+   ✓ R2 durable process executions (8)
+     ✓ durable-check rollout switch prevents dispatch and keeps historical inspection available 387ms
+     ✓ R2-AT-05: cleanup failure preserves committed success and retries without dispatch 433ms
+     ✓ R2-AT-06/08: final storage failure leaves original intent unresolved and recovery never duplicates effects 447ms
+     ✓ R2-AT-07: concurrent approval and pre-dispatch cancellation produce one intent and no command 387ms
+     ✓ R2-AT-07: incremental bounded logs survive active cancellation and redact split credentials 440ms
+     ✓ R2-AT-04: awaited idempotent shutdown drains active checks before closing storage and reopening does not replay 614ms
+     ✓ R2-AT-04: finalized execution callbacks never access persistence after shutdown 434ms
+ ❯ tests/parallel-workspaces.test.ts (11 tests | 8 failed) 12639ms
+   ❯ managed parallel workspace safety (11)
+     × two actual fixture writers share one logical project but separate roots; aliases collide 1056ms
+     ✓ dirty inputs require reviewed capture; digest change and late source edit block creation 1101ms
+     × worker checks pass but combined checks fail and block acceptance 958ms
+     × overlapping candidates record conflict and preserve all bases until explicit resolution 957ms
+     × staged deletion cannot bypass specialist file ownership 960ms
+     × accepted combined evidence is invalidated on external edit; stable review bytes and visibility gate 954ms
+     × fanout capability gate and third task wait without dispatch or orphan attempt 2082ms
+     × completed inference keeps capacity until observed exit and queued dispatch resumes afterward 1095ms
+     × late cancellation evidence stays historical; active cleanup blocked and explicit inactive cleanup retains content 912ms
+     ✓ mutable resources use distinct reserved ports, databases and temp paths outside candidate 896ms
+     ✓ shared service commands require reviewed workspace/integration actions and report external acceptance drift 1667ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > two actual fixture writers share one logical project but separate roots; aliases collide
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > worker checks pass but combined checks fail and block acceptance
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > overlapping candidates record conflict and preserve all bases until explicit resolution
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > staged deletion cannot bypass specialist file ownership
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > accepted combined evidence is invalidated on external edit; stable review bytes and visibility gate
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > fanout capability gate and third task wait without dispatch or orphan attempt
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > completed inference keeps capacity until observed exit and queued dispatch resumes afterward
+ FAIL  tests/parallel-workspaces.test.ts > managed parallel workspace safety > late cancellation evidence stays historical; active cleanup blocked and explicit inactive cleanup retains content
+Error: authentication-required: native-subscription is not qualified for this runtime, account, policy and host. process-lifecycle-unverified: process-lifecycle is not qualified for this runtime, account, policy and host. unsupported-model-setting: Select a model and effort observed in this runtime catalog; unknown settings cannot be substituted.
+ ❯ RuntimeManager.assertReady packages/runtime/manager.ts:128:33
+    126|   assertReady(installation: Installation, selection: RuntimeSelection,…
+    127|     const readiness = this.readiness(installation, selection, role, ad…
+    128|     if (!readiness.ready) throw new Error(readiness.blockers.map(b => …
+       |                                 ^
+    129|     return readiness;
+    130|   }
+ ❯ RuntimeManager.startOwned packages/runtime/manager.ts:246:35
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  8 failed | 23 passed (31)
+   Start at  11:52:40
+   Duration  12.88s (tests 99%, transform 1%, import 1%)
+
+JSON report written to /Users/piore/repos/Topsl/docs/round-2-evidence/r2-1-lifecycle-stress/iteration-1.json

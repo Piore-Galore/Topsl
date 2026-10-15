@@ -1,0 +1,60 @@
+
+> topsl@0.1.1 check
+> npm run typecheck && npm test && npm run test:release && npm run build
+
+
+> topsl@0.1.1 typecheck
+> tsc --noEmit
+
+
+> topsl@0.1.1 test
+> node scripts/test.mjs
+
+
+ RUN  v5.0.2 /Users/piore/repos/Topsl
+
+
+ Test Files  33 passed | 2 skipped (35)
+      Tests  309 passed | 3 skipped (312)
+   Start at  12:30:16
+   Duration  91.50s (tests 99%, import 1%)
+
+
+> topsl@0.1.1 test:release
+> node --test tests/release.test.mjs tests/release-packaging.test.mjs tests/mac-package.test.mjs
+
+✔ Mac package gate accepts sealed bundles and rejects changed resources (78.958208ms)
+✔ release filenames match the installed electron-builder for every target (1.168125ms)
+✔ only a matching version tag, repository, and exact commit are accepted (0.750959ms)
+✔ prepare creates a commit-bound draft prerelease and safely resumes it (4.210958ms)
+✔ draft lookup includes later pages and does not depend on target_commitish (1.242584ms)
+✔ a mismatched checkout or moved remote tag prevents all writes (1.677584ms)
+✔ authentication failures never create a replacement draft (0.934375ms)
+✔ published releases cannot be overwritten by any release phase (1.193583ms)
+✔ a draft from another commit or a stable release cannot be reused (1.125708ms)
+✔ upload verifies the platform and rejects absent or empty packages (1.57775ms)
+✔ upload verifies GitHub's digests against the actual package and checksum bytes (2.984958ms)
+✔ the Linux x64 runner uploads electron-builder's x86_64 AppImage (2.11625ms)
+✔ publication requires packages and checksum files for all four platforms (1.104208ms)
+✔ publication rejects incomplete uploads even when all asset names are present (1.291417ms)
+✔ corrupt downloaded checksums prevent publication (2.084583ms)
+✔ asset replacement during verification prevents publication (2.101417ms)
+✔ a complete, verified draft is published as a prerelease without becoming latest (2.292291ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 331.239917
+
+> topsl@0.1.1 build
+> node scripts/build.mjs
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+Built desktop, isolated service, companion CLI, and renderer.

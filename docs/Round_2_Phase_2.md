@@ -1,0 +1,33 @@
+# R2-2 — Provider readiness and assisted native operation
+
+Implemented on the local working tree on 2026-10-15. This is engineering evidence, not live provider or release qualification.
+
+## Delivered behavior
+
+- A service-owned runtime acceptance registry retains immutable observations and invalidations, authenticated with a vault-local HMAC authority. Bindings include executable identity, runtime revision/version, adapter protocol, native profile/account fingerprints, authentication route, managed policy/sandbox hashes, host, architecture, platform and schema. Fixture/import/model-statement observations cannot be promoted. Enforcement observations require an attempted negative control plus trusted resulting-state inspection. Invalidation names existing acceptance records, so a new successful validation can supersede it without deleting history. No renderer promotion command exists; portable replication has a fixed content allowlist and cannot export this authority.
+- Canonical role readiness drives the guided UI, builder/reviewer preflight, parallel and advanced drivers, generic task capability checks, and the runtime's final dispatch gate. Reviewer requirements include fresh session, candidate reader, denied writes and lifecycle evidence; they do not require workspace writing. Observed dispatch/account/lifecycle evidence is distinct from enforced permission boundaries. The service rollout switch can disable a route, never qualify it. Unsupported or unknown model/effort requests block, and reported changes are retained without a silent downgrade.
+- Codex model discovery follows bounded pagination and preserves supported/default efforts, modalities, runtime source and observation time. Thread identity and provider session identity remain separate in immutable runtime metadata. Existing `nativeSessionId` routing records retain their legacy interpretation as the App Server thread ID. Loaded instruction paths are runtime-reported observations with no invented content hash. Requested settings, startup reports and turn reports remain separate records. Review output schema is submitted only when the selected route qualifies schema support; the existing review validator still checks format, candidate revision, paths and line references.
+- Claude's compatibility reader requests partial messages, deduplicates repeated final messages and results, retains stable message identities, and accepts a bounded allowlist of additive informational events. Unknown authority-bearing events, mixed sessions, identity collisions, malformed results and uncontrolled subagent output fail safely. Fixture transport remains constructor-injected only.
+- Assisted native workflows prepare a bounded, attributed handoff pinned to the immutable candidate and specification. The user explicitly opens the native surface and supplies the report. A durable opening intent and external-writer gate precede native opening; a lost reply leaves external control uncertain and never triggers automatic replay. Import requires explicit confirmation that external writing stopped, retains invalid/stale reports, decodes candidate bytes before checking finding lines, and records `user-supplied` or `native-import` provenance. File/specification drift cannot satisfy current acceptance. Imports do not close native terminals or release managed leases and never create a provider acknowledgement, managed verification, or acceptance.
+
+## Commands and scope
+
+`workflow-readiness-query` returns an observed project envelope with `roles.builder`, `roles.reviewer`, `runnable`, mode and observation time. Each role contains blockers/actions, warnings, capabilities used, binding freshness and observed model metadata.
+
+`assisted-handoff-prepare`, `assisted-handoff-open`, `assisted-handoff-import` and `assisted-handoff-query` expose separate export, opening and attributed import steps. Preparing requires an already captured builder/reviewer workflow and an approved export scope. Reports remain protected project data. Current bounded handoffs are suitable for small explicit scopes; the candidate-manifest phase extends byte access and makes binary/large-input coverage explicit.
+
+The registry writer is an internal trusted validation boundary. This change does not expose a production validation/consent runner or activate a qualified live route. A future authorized validation suite must execute the actual provider operations and inspect negative controls before calling it. Unit tests use synthetic trusted-suite contract observations and do not qualify this host or account.
+
+## Official source checks
+
+The [OpenAI App Server documentation](https://learn.chatgpt.com/docs/app-server), checked 2026-10-15, documents paginated model metadata, effort fields, instruction sources, distinct thread/session identifiers and schema-constrained turn output. Documentation does not qualify the installed binary.
+
+The [Claude programmatic guide](https://code.claude.com/docs/en/headless), checked 2026-10-15, documents partial streaming and structured output. [Anthropic's authentication and product-integration rules](https://code.claude.com/docs/en/legal-and-compliance), checked the same day, distinguish end-user sign-in through the unmodified binary from third-party credential intermediation. No credential extraction or API-billing fallback was added. The actual Topsl structured Claude route remains unapproved/unqualified; assisted native opening is the implemented alternative.
+
+## Validation and outstanding acceptance
+
+`npm run typecheck` passed. `npm test -- tests/provider-readiness.test.ts tests/claude-provider.test.ts tests/runtime.test.ts` passed 27 tests across three files; the earlier builder/Claude/runtime targeted run passed 30 tests. The nine new tests exercise AT09–16 contract cases: read-only reviewer readiness, fixture/import rejection, tamper rejection, binding changes and revalidation, rollout/model blockers, partial/final duplication, paginated metadata, lost native-open replies, invalid reviews and stale assisted imports.
+
+No provider inference, account access, native-store mutation, API subscription, package installation, publication or live acceptance was performed. Actual supported structured execution, selected-runtime schema/flag acceptance, filesystem restrictions, cancellation, account binding and usage remain pending authorized live tests. The full automated two-provider milestone and cross-platform release qualification remain R2-6 gates.
+
+Follow-up, 15 October 2026: the runtime's final readiness gate now applies to coordinated attempts only. Direct structured chats are outside role readiness. See the [review follow-up](Round_2_Execution.md#review-follow-up--15-october-2026).
