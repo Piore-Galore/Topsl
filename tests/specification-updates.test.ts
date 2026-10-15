@@ -119,7 +119,7 @@ async function setup(
           label: "fixture",
           executable: process.execPath,
           args: ["-e", "process.exit(0)"],
-          timeoutMs: 1000,
+          timeoutMs: 30_000,
         },
       ],
     });

@@ -18,7 +18,9 @@ jobs:
     # Standard public-repository runners are free. Do not silently consume private-repo minutes.
     if: github.event.repository.private == false
     name: ${{ matrix.name }}
-    timeout-minutes: 35
+    # A slower Windows runner took 20 minutes for setup and tests alone,
+    # before the desktop smoke and packaging steps.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +40,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # Pull request builds skip signing by default. The Mac bundle is only
+      # ad-hoc signed ("identity": "-", no certificate or secret), so sign and
+      # verify it on pull requests exactly as on pushes and releases.
+      CSC_FOR_PULL_REQUEST: "true"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

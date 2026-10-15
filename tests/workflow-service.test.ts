@@ -110,7 +110,7 @@ async function setup(inject = true) {
             "-e",
             'if(!require("fs").readFileSync("file.ts","utf8").includes("value = 2"))process.exit(1)',
           ],
-          timeoutMs: 10000,
+          timeoutMs: 30_000,
         },
       ],
     });

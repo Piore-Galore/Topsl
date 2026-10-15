@@ -184,6 +184,13 @@ export async function readBounded(
     throw new Error("File is not a supported size or type.");
   return readFile(file, "utf8");
 }
+/** Start of every Windows PowerShell process query. With module auto-loading,
+ * PowerShell found Get-CimInstance and ConvertTo-Json by searching every module
+ * on PSModulePath, which took about 20 s per query on a hosted Windows runner
+ * with large modules installed. Loading just the two modules the queries use,
+ * from Windows PowerShell's own folder, took 0.3 s. */
+export const WINDOWS_PROCESS_QUERY_MODULES =
+  "$PSModuleAutoLoadingPreference = 'None'; Import-Module -Name ($PSHOME + '\\Modules\\Microsoft.PowerShell.Utility'), ($PSHOME + '\\Modules\\CimCmdlets') -ErrorAction Stop; ";
 export async function affectedProcesses(
   paths: string[],
 ): Promise<number[] | null> {
@@ -202,7 +209,8 @@ export async function affectedProcesses(
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          "Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress",
+          WINDOWS_PROCESS_QUERY_MODULES +
+            "Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress",
         ],
       );
       const decoded = JSON.parse(raw);

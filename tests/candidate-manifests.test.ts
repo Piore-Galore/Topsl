@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { linkSync, renameSync, symlinkSync } from "node:fs";
-import { fixture } from "./helpers";
+import { fixture, gitExecutable } from "./helpers";
 import { hash, now, stable } from "../packages/domain/invariants";
 import { runFile } from "../packages/platform/system";
 import { Store } from "../packages/persistence/store";
@@ -159,7 +159,7 @@ test("R2-AT-17/18 large source and unchanged binary remain complete while initia
 });
 test("R2-AT-19/23 tracked build/release source, rename and staged deletion remain visible; new output review is explicit", async () => {
   const f = await setup(),
-    git = process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git";
+    git = gitExecutable;
   const run = (args: string[]) => runFile(git, args, { cwd: f.root });
   await run(["init", "-q"]);
   await run(["config", "user.email", "fixture@example.invalid"]);
@@ -528,7 +528,8 @@ test("R2-AT-24 legacy candidate IDs/hash/bytes retain their original semantics a
         path: "legacy.txt",
         hash: hash("legacy bytes"),
         bytes: 12,
-        mode: 0o644,
+        // The platform's own mode for this file (Windows reports 0o666).
+        mode: v2.files.find((file) => file.path === "legacy.txt")!.mode,
         content: Buffer.from("legacy bytes").toString("base64"),
       },
     ],
@@ -636,7 +637,11 @@ test("capture rejects a parent replaced by an outside hardlink directory before 
   });
   await expect(
     captureCandidate(f.store, select(f.root, ["parent/source.txt"])),
-  ).rejects.toThrow("outside");
+  ).rejects.toThrow(
+    // Windows refuses to move a directory while capture holds a file in it
+    // open, so the swap itself fails there. Either way nothing is published.
+    process.platform === "win32" ? /EPERM|outside/ : /outside/,
+  );
   expect([...f.store.iterate("candidate")]).toEqual([]);
   expect(
     f.store.db.prepare("SELECT COUNT(*) AS n FROM protected_blob_staging").get()
@@ -655,7 +660,7 @@ test("submodule entries are blocked and executable bits affect content identity"
   );
   if (process.platform !== "win32")
     expect(executable.revision).not.toBe(plain.revision);
-  const git = process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git";
+  const git = gitExecutable;
   await runFile(git, ["init", "-q"], { cwd: f.root });
   await runFile(
     git,

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, writeFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,12 @@ import { Store } from "../packages/persistence/store";
 import { hash, now, uid } from "../packages/domain/invariants";
 import { identity } from "../packages/platform/system";
 import type { Installation, LifecyclePlan } from "../packages/domain/types";
+// Mirrors the product lookup: Apple silicon Homebrew git when installed, else git on PATH
+// (Intel Macs, such as hosted macOS Intel runners, have no /opt/homebrew).
+export const gitExecutable =
+  process.platform === "darwin" && existsSync("/opt/homebrew/bin/git")
+    ? "/opt/homebrew/bin/git"
+    : "git";
 export async function fixture() {
   const directory = await realpath(
     await mkdtemp(path.join(os.tmpdir(), "topsl-test-unit-")),

@@ -186,7 +186,9 @@ async function setup(
     profile: "user-approved-local",
     nodeExecutable: runtime.node,
     ...(options.locked ? { npmCli: runtime.npm } : {}),
-    preparationTimeoutMs: options.preparationTimeoutMs ?? 10000,
+    // Generous budgets for slow hosted runners: under load, npm ci on Windows ran
+    // past 10 seconds. Tests that need a timeout set their own.
+    preparationTimeoutMs: options.preparationTimeoutMs ?? 60_000,
     writablePaths: options.writablePaths ?? [],
     hooks: options.hooks ?? [],
     values: {},
@@ -202,7 +204,7 @@ async function setup(
     label: "Ordinary project check",
     executable: runtime.node,
     args: options.locked ? [runtime.npm, "run", "check"] : ["tests/check.cjs"],
-    timeoutMs: 5000,
+    timeoutMs: 30_000,
     environmentRecipeId: selection.id,
     ...(options.policy ? { executionPolicy: options.policy } : {}),
   };
@@ -302,7 +304,7 @@ test("R2-AT-26: exact reviewed package hook can prepare generated dependencies; 
       "-e",
       "require('fs').writeFileSync('generated.cjs','module.exports=42')",
     ],
-    timeoutMs: 5000,
+    timeoutMs: 30_000,
   };
   const f = await setup({
       locked: true,
@@ -632,7 +634,7 @@ test("R2-AT-26/29: cancelled preparation stops before checks and retains bounded
             "-e",
             "process.stdout.write('Bearer ');process.stdout.write('fixture-preparation-secret\\nready-for-cancel\\n');setInterval(()=>{},10000)",
           ],
-          timeoutMs: 10000,
+          timeoutMs: 30_000,
         },
       ],
     }),
@@ -722,7 +724,7 @@ test("R2-AT-29: restart in a later preparation dispatch gap cannot reconcile a p
           packagePath: "node_modules/fixture-value",
           executable: runtime.node,
           args: ["-e", "console.log('reviewed-hook')"],
-          timeoutMs: 5000,
+          timeoutMs: 30_000,
         },
       ],
     }),

@@ -415,7 +415,7 @@ describe("advanced collaboration templates", () => {
         label: "Frozen independent regression",
         executable: process.execPath,
         args: ["check.cjs"],
-        timeoutMs: 5000,
+        timeoutMs: 30_000,
       },
       text =
         'const f=require("node:fs");if(f.readFileSync("result.txt","utf8")!=="fixed")process.exit(3);console.log("declared regression passed");',
@@ -531,7 +531,7 @@ describe("advanced collaboration templates", () => {
           label: "Fixture regression",
           executable: process.execPath,
           args: ["check.cjs"],
-          timeoutMs: 5000,
+          timeoutMs: 30_000,
         },
       ],
     });
@@ -628,7 +628,7 @@ describe("advanced collaboration templates", () => {
           label: "Fixture regression",
           executable: process.execPath,
           args: ["check.cjs"],
-          timeoutMs: 5000,
+          timeoutMs: 30_000,
         },
       ],
       baselineCandidateId: baseline.id,
@@ -900,7 +900,7 @@ describe("advanced collaboration templates", () => {
         label: "Declared comparison regression",
         executable: process.execPath,
         args: ["check.cjs"],
-        timeoutMs: 5000,
+        timeoutMs: 30_000,
       };
     let s = await command({
       type: "advanced-create",

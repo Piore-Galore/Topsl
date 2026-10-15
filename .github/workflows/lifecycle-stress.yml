@@ -17,7 +17,9 @@ jobs:
   lifecycle:
     if: github.event.repository.private == false
     name: Lifecycle / ${{ matrix.name }}
-    timeout-minutes: 60
+    # A slower Windows runner took up to 199 s per iteration, so twenty
+    # iterations need more than an hour there.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

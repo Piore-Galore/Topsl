@@ -217,7 +217,8 @@ async function setup(
     label: "Combined behavior",
     executable: process.execPath,
     args: ["check.cjs"],
-    timeoutMs: 3000,
+    // Generous for slow hosted runners; no test here relies on a timeout.
+    timeoutMs: 30_000,
   };
   const state = await parallel.create({
     workflowId: workflow.id,
