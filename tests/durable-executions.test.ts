@@ -295,7 +295,10 @@ describe("R2 durable process executions", () => {
   });
   test("R2-AT-03: parent exit with an owned surviving descendant is not quiescence", async () => {
     const ready = barrier<number>();
-    const childProgram = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},10000)'],{stdio:'ignore',env:process.env});console.log(c.pid);c.unref();`;
+    // On Windows, Node ends a process's non-detached children when it exits
+    // (libuv puts them in a kill-on-close job), so only a detached descendant
+    // outlives its parent there. On POSIX the descendant stays in the group.
+    const childProgram = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},10000)'],{stdio:'ignore',env:process.env,detached:${process.platform === "win32"}});console.log(c.pid);c.unref();`;
     const parent = spawn(process.execPath, ["-e", childProgram], {
       env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
       stdio: "pipe",
