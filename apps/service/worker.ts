@@ -7,6 +7,8 @@ if (!port)
     "The control service must be started by the Topsl desktop broker.",
   );
 let service: Service | undefined;
+let initializing: Promise<void> | undefined;
+let closing = false;
 port.on("message", async ({ data }: any) => {
   try {
     let value: any;
@@ -18,12 +20,18 @@ port.on("message", async ({ data }: any) => {
         (event) => port.postMessage({ event }),
         data.isolatedTest === true,
       );
-      await service.start();
+      initializing = service.start();
+      await initializing;
       value = service.state();
     } else if (data.kind === "close") {
-      service?.close();
-      process.exit(0);
-    } else if (!service) throw new Error("Control service is locked.");
+      closing = true;
+      await initializing?.catch(() => {});
+      await service?.close();
+      port.postMessage({ id: data.id, value: { closed: true } });
+      setImmediate(() => process.exit(0));
+      return;
+    } else if (closing) throw new Error("Control service is shutting down.");
+    else if (!service) throw new Error("Control service is locked.");
     else if (data.kind === "review")
       value = service.review(data.recordKind, data.recordId);
     else

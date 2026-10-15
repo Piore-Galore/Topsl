@@ -15,6 +15,12 @@ import type {
 } from "../packages/domain/workflow";
 import type { Installation } from "../packages/domain/types";
 import { now, uid } from "../packages/domain/invariants";
+import {
+  previewCheck,
+  reuseCheckAuthorization,
+  type CheckDefinition,
+} from "../packages/workflows/verification";
+import { findingDecisions } from "../packages/workflows/finding-decisions";
 import { fixture } from "./helpers";
 const fixtures: Awaited<ReturnType<typeof fixture>>[] = [];
 afterEach(async () => {
@@ -30,6 +36,8 @@ async function setup(
     mutateReview?: boolean;
     missingProof?: boolean;
     oversized?: boolean;
+    checkPolicy?: CheckDefinition["executionPolicy"];
+    changedRepair?: boolean;
   } = {},
 ) {
   const f = await fixture();
@@ -88,7 +96,9 @@ async function setup(
           path.join(f.directory, "file.ts"),
           options.oversized
             ? "x".repeat(1_000_001)
-            : "export const value = 2;\n",
+            : options.changedRepair && calls > 2
+              ? "export const value = 2; // repaired bytes\n"
+              : "export const value = 2;\n",
         );
       else {
         const findings =
@@ -174,6 +184,9 @@ async function setup(
           executable: process.execPath,
           args: ["-e", checksCode],
           timeoutMs: 10000,
+          ...(options.checkPolicy
+            ? { executionPolicy: options.checkPolicy }
+            : {}),
         },
       ],
     });
@@ -258,14 +271,28 @@ describe("provider-neutral builder reviewer lifecycle", () => {
     },
   );
   test("one repair produces new evidence while superseded task lineage remains attributable", async () => {
-    const f = await setup({ findings: 1 }),
+    const f = await setup({ findings: 1, changedRepair: true }),
       state = await f.create();
     await f.advance(state.id);
     await f.advance(state.id);
+    expect((await f.advance(state.id)).stage).toBe("ready-repair");
     expect((await f.advance(state.id)).stage).toBe("repairing");
     await f.advance(state.id);
     expect((await f.advance(state.id)).stage).toBe("checking");
     await f.check(state.id);
+    const link = f.store.iterate<any>("task-supersession").next().value!;
+    f.store.put("task-supersession", {
+      ...link,
+      candidateId: state.baselineId,
+    });
+    await expect(
+      f.engine.accept(
+        state.id,
+        f.repository.require<Workflow>("workflow", state.id).revision,
+        f.engine.acceptanceDigest(state.id),
+      ),
+    ).rejects.toThrow("verified replacement");
+    f.store.put("task-supersession", link);
     expect(
       (
         await f.engine.accept(
@@ -281,12 +308,129 @@ describe("provider-neutral builder reviewer lifecycle", () => {
         .filter((t) => t.state === "cancelled"),
     ).toHaveLength(2);
     expect(f.store.iterate("task-supersession").next().value).toBeDefined();
+    const predecessors = f.repository
+      .all<Task>("task", { projectId: "p" })
+      .filter((t) => t.state === "cancelled");
+    const acceptedCandidate = f.store.get<any>(
+      "candidate",
+      f.store.get<BuilderReviewerState>("builder-reviewer", state.id)!
+        .candidateId,
+    )!;
+    for (const task of predecessors) {
+      const historical = f.store.get<any>("candidate", task.candidateId!)!;
+      expect(historical.revision).not.toBe(acceptedCandidate.revision);
+      expect(f.store.get<any>("task-supersession", task.id).candidateId).toBe(
+        historical.id,
+      );
+    }
+    expect(
+      findingDecisions(f.store, "p", state.id).some(
+        (decision) => decision.decision === "resolved",
+      ),
+    ).toBe(true);
+    expect(
+      f.repository.all<{ disposition: string }>("workflow-finding", {
+        projectId: "p",
+      })[0].disposition,
+    ).toBe("open");
+  });
+  test("R2-AT-30: a bounded definition approved before repair binds the current tester and completes repaired workflow checks", async () => {
+    const f = await setup({
+        findings: 1,
+        checkPolicy: { maximumUses: 2, allowCandidateChanges: true },
+      }),
+      initial = await f.create();
+    const priorTester = f.repository.createTask({
+      projectId: "p",
+      workflowId: initial.id,
+      workspaceId: initial.workspaceId,
+      title: "Reviewed bounded test definition",
+      role: "tester",
+    });
+    const baseline = f.store.get<any>("candidate", initial.baselineId)!,
+      approved = await previewCheck(
+        f.repository,
+        initial.id,
+        priorTester.id,
+        baseline,
+        initial.checks[0],
+      );
+    await f.advance(initial.id);
+    await f.advance(initial.id);
+    expect((await f.advance(initial.id)).stage).toBe("ready-repair");
+    expect((await f.advance(initial.id)).stage).toBe("repairing");
+    await f.advance(initial.id);
+    const current = await f.advance(initial.id);
+    expect(current.stage).toBe("checking");
+    expect(current.checkTaskId).not.toBe(priorTester.id);
+    const plan = await reuseCheckAuthorization(
+      f.store,
+      approved.authorizationId!,
+      current.candidateId,
+    );
+    expect(plan.taskId).toBe(current.checkTaskId);
+    expect(plan.candidateId).toBe(current.candidateId);
+    expect((await f.engine.runCheck(plan.id, plan.digest)).stage).toBe(
+      "awaiting-acceptance",
+    );
+    expect(
+      f.repository
+        .all<any>("verification", { projectId: "p" })
+        .filter((v) => v.candidateId === current.candidateId)
+        .every((v) => v.taskId === current.checkTaskId),
+    ).toBe(true);
+  });
+  test("R2-AT-34/39: a user can reject an unsupported finding with a durable rationale before a repair", async () => {
+    const f = await setup({ findings: 1 });
+    const initial = await f.create();
+    await f.advance(initial.id);
+    await f.advance(initial.id);
+    const reviewed = await f.advance(initial.id);
+    expect(reviewed.stage).toBe("ready-repair");
+    expect(f.calls()).toBe(2);
+    const findingId = reviewed.findings[0];
+    const original = f.store.get("workflow-finding", findingId);
+    const input = {
+      id: initial.id,
+      expectedRevision: f.repository.require<Workflow>("workflow", initial.id)
+        .revision,
+      candidateId: reviewed.candidateId,
+      findingId,
+      decision: "rejected" as const,
+      expectedDecisionId: null,
+      rationale:
+        "The protected check demonstrates that value two is the required behavior.",
+    };
+    expect(() => f.engine.decideFinding({ ...input, rationale: " " })).toThrow(
+      "rationale",
+    );
+    expect(() =>
+      f.engine.decideFinding({ ...input, candidateId: "other-candidate" }),
+    ).toThrow("current");
+    const checking = f.engine.decideFinding(input);
+    expect(checking.stage).toBe("checking");
+    expect(f.store.get("workflow-finding", findingId)).toEqual(original);
+    expect(findingDecisions(f.store, "p", initial.id)[0]).toMatchObject({
+      decision: "rejected",
+      actor: "local-user",
+      candidateId: reviewed.candidateId,
+    });
+    expect(f.calls()).toBe(2);
+    expect(() => f.engine.decideFinding(input)).toThrow();
+    await f.check(initial.id);
+    const accepted = await f.engine.accept(
+      initial.id,
+      f.repository.require<Workflow>("workflow", initial.id).revision,
+      f.engine.acceptanceDigest(initial.id),
+    );
+    expect(accepted.stage).toBe("accepted");
+    expect(f.calls()).toBe(2);
   });
   test("repair loop is bounded at two and does not automatically dispatch a third", async () => {
     const f = await setup({ findings: 100 }),
       state = await f.create();
     let latest: BuilderReviewerState = state;
-    for (let i = 0; i < 8 && latest.stage !== "blocked"; i++)
+    for (let i = 0; i < 12 && latest.stage !== "blocked"; i++)
       latest = await f.advance(state.id);
     expect(latest.stage).toBe("blocked");
     expect(latest.repairRound).toBe(2);
@@ -361,14 +505,14 @@ describe("provider-neutral builder reviewer lifecycle", () => {
       g.engine.accept(successful.id, revision, digest),
     ).rejects.toThrow("stale");
   });
-  test("mandatory context overflow blocks before a reviewer task/copy/turn is created", async () => {
+  test("large candidate without an installed reader blocks before a reviewer task/copy/turn is created", async () => {
     const f = await setup({ oversized: true }),
       state = await f.create();
     await f.advance(state.id);
     expect((await f.advance(state.id)).stage).toBe("blocked");
     expect(f.repository.all<Task>("task", { projectId: "p" })).toHaveLength(1);
     expect(f.calls()).toBe(1);
-    await expect(f.advance(state.id)).rejects.toThrow("budget");
+    await expect(f.advance(state.id)).rejects.toThrow("reader");
   });
   test("check runs on snapshot bytes and does not see extra live workspace files", async () => {
     const f = await setup(),

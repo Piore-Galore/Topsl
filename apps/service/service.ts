@@ -1,6 +1,12 @@
 import path from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
 import { Store } from "../../packages/persistence/store";
+import { AssistedWorkflows } from "../../packages/workflows/assisted";
+import {
+  capabilitySatisfies,
+  type RuntimeSelection,
+} from "../../packages/providers/readiness";
+import { WorkflowDrafts } from "../../packages/workflows/drafts";
 import { SyncRepository } from "../../packages/sync/reconciler";
 import { RevisionRepository } from "../../packages/context/revisions";
 import { HistoryReconciler } from "../../packages/history/reconcile";
@@ -25,6 +31,8 @@ import type {
   ServiceEvent,
 } from "../../packages/domain/types";
 import type { Command } from "../../packages/domain/commands";
+import type { Observed } from "../../packages/domain/read-model";
+import { round2Features } from "../../packages/domain/round2-features";
 import { catalog, capabilities } from "../../packages/domain/catalog";
 import {
   hash,
@@ -49,7 +57,23 @@ import type {
   WorkflowFinding,
 } from "../../packages/workflows/builder-reviewer";
 import type { CandidateSnapshot } from "../../packages/workflows/candidates";
-import type { CheckPlan } from "../../packages/workflows/verification";
+import {
+  reuseCheckAuthorization,
+  type CheckPlan,
+} from "../../packages/workflows/verification";
+import { CheckExecutions } from "../../packages/workflows/check-executions";
+import {
+  detectEnvironments,
+  environmentSelection,
+  PreparedEnvironments,
+} from "../../packages/workflows/environments";
+import { findingDecisions } from "../../packages/workflows/finding-decisions";
+import { candidateDiff } from "../../packages/workflows/candidate-diff";
+import {
+  applyCandidateReview,
+  candidateBinaryPreview,
+  previewCandidateReview,
+} from "../../packages/workflows/candidate-reviews";
 import {
   ManagedWorkspaces,
   type WorkspacePlan,
@@ -95,7 +119,9 @@ export class Service {
   readonly nativeHistory: HistoryReconciler;
   readonly lifecycle: Lifecycle;
   readonly runtime: RuntimeManager;
+  readonly assisted: AssistedWorkflows;
   readonly coordinator: Coordinator;
+  readonly checks: CheckExecutions;
   readonly workflows: BuilderReviewerWorkflow;
   readonly managedWorkspaces: ManagedWorkspaces;
   readonly parallel: ParallelSpecialists;
@@ -111,6 +137,8 @@ export class Service {
   private notificationTimer?: ReturnType<typeof setTimeout>;
   private discovery?: Promise<Installation[]>;
   private closing = false;
+  private closePromise?: Promise<void>;
+  private operations = new Set<Promise<unknown>>();
   private lastDiscoveryAt = 0;
   private publishedSequence = 0;
   private publishedActivity: boolean | undefined;
@@ -123,6 +151,7 @@ export class Service {
     fixtureProviders?: Partial<Record<"codex" | "claude", ProviderAdapter>>,
   ) {
     this.store = new Store(path.join(directory, "history.sqlite"), key);
+    this.assisted = new AssistedWorkflows(this.store);
     this.synchronization = new SyncRepository(this.store);
     this.revisions = new RevisionRepository(this.store);
     this.nativeHistory = new HistoryReconciler(this.store);
@@ -139,6 +168,8 @@ export class Service {
         "Fixture provider injection is available only to the isolated local test constructor.",
       );
     }
+    this.checks = CheckExecutions.for(this.store);
+    this.checks.recover();
     this.runtime = new RuntimeManager(
       this.store,
       emit,
@@ -146,6 +177,7 @@ export class Service {
       undefined,
       this.coordinator,
       { claude: new ClaudeAdapter(), ...fixtureProviders },
+      !!(isolatedTest && fixtureProviders),
     );
     this.configuration = new Configuration(this.store, () =>
       this.runtime.hasActive(),
@@ -166,20 +198,17 @@ export class Service {
             assignment.provider,
             workflowId,
           ),
-        capabilities: (_assignment, installation) => {
-          const capabilities = this.runtime.capabilities(installation),
-            required = ["structured-turn", "read-only", "workspace-write"];
-          const unsupported = required.filter(
-            (name) =>
-              !capabilities.some(
-                (c) => c.name === name && c.support === "enforceable",
-              ),
+        capabilities: (assignment, installation, role = "implementer") => {
+          const readiness = this.runtime.readiness(
+            installation,
+            assignment,
+            role,
           );
           return {
-            supported: !unsupported.length,
-            detail: unsupported.length
-              ? `Selected ${installation.appId} runtime ${installation.version ?? "unknown"} is gated for ${unsupported.join(", ")}. ${capabilities[0]?.restrictions.join(" ") ?? "Use its native terminal; live capability acceptance is pending."}`
-              : "Required selected-runtime capabilities are supported by recorded evidence.",
+            supported: readiness.ready,
+            detail: readiness.ready
+              ? "Selected role is ready under the current qualified runtime binding."
+              : `Selected role is gated. ${readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" ")}`,
           };
         },
         dispatch: async ({
@@ -223,6 +252,8 @@ export class Service {
       this.managedWorkspaces,
       {
         capabilities: (installation) => this.runtime.capabilities(installation),
+        readiness: (installation, selection, role, required) =>
+          this.runtime.readiness(installation, selection, role, required),
         dispatch: async ({ attempt, task, installation, project, context }) => {
           this.replication.assertLocalOwner(project.id);
           const conversation: Conversation = {
@@ -254,6 +285,8 @@ export class Service {
       this.coordinator,
       {
         capabilities: (installation) => this.runtime.capabilities(installation),
+        readiness: (installation, selection, role, required) =>
+          this.runtime.readiness(installation, selection, role, required),
         dispatch: async ({ attempt, task, installation, project, context }) => {
           if (task.role === "implementer")
             this.replication.assertLocalOwner(project.id);
@@ -318,7 +351,7 @@ export class Service {
   }
   async start(): Promise<void> {
     this.workflowTimer = setInterval(() => {
-      void this.parallel.tick().catch(() => {});
+      this.background(this.parallel.tick());
       for (const state of this.store.iterate<BuilderReviewerState>(
         "builder-reviewer",
       )) {
@@ -333,9 +366,9 @@ export class Service {
             state.id,
           );
           if (workflow)
-            void this.workflows
-              .advance(state.id, workflow.revision)
-              .catch(() => {});
+            this.background(
+              this.workflows.advance(state.id, workflow.revision),
+            );
           continue;
         }
         if (
@@ -364,9 +397,7 @@ export class Service {
           state.id,
         );
         if (workflow)
-          void this.workflows
-            .advance(state.id, workflow.revision)
-            .catch(() => {});
+          this.background(this.workflows.advance(state.id, workflow.revision));
       }
     }, 500);
     this.ownershipTimer = setInterval(() => {
@@ -383,17 +414,17 @@ export class Service {
     await this.context.start();
     await this.refreshProjects();
     this.timer = setInterval(() => {
-      void this.refreshProjects().catch(() => {});
+      this.background(this.refreshProjects());
       if (!this.isolatedTest) {
-        void this.lifecycle.tick().catch(() => {});
-        void this.lifecycle.scheduledChecks().catch(() => {});
+        this.background(this.lifecycle.tick());
+        this.background(this.lifecycle.scheduledChecks());
         if (Date.now() - this.lastDiscoveryAt >= 5 * 60_000)
-          void this.discover().catch(() => {});
+          this.background(this.discover());
       }
     }, 60_000);
     if (!this.isolatedTest) {
       await this.discover();
-      void this.lifecycle.scheduledChecks();
+      this.background(this.lifecycle.scheduledChecks());
     }
     this.changed();
   }
@@ -429,6 +460,101 @@ export class Service {
       terminals: includeMessages ? this.runtime.terminalState() : [],
       configurationWrites: this.store.list("configuration-write"),
     };
+  }
+  providerReadiness(input: {
+    projectId: string;
+    builder?: RuntimeSelection;
+    reviewer?: RuntimeSelection;
+  }) {
+    this.require<Project>("project", input.projectId);
+    const roles = {
+      builder: input.builder
+        ? this.runtime.readiness(
+            this.installation(input.builder.installationId),
+            input.builder,
+            "implementer",
+          )
+        : null,
+      reviewer: input.reviewer
+        ? this.runtime.readiness(
+            this.installation(input.reviewer.installationId),
+            input.reviewer,
+            "reviewer",
+          )
+        : null,
+    };
+    return this.observed(input.projectId, () => ({
+      mode: "coordinated" as const,
+      roles,
+      runnable: !!(roles.builder?.ready && roles.reviewer?.ready),
+      observedAt: now(),
+    }));
+  }
+  async prepareAssistedHandoff(input: {
+    projectId: string;
+    workflowId: string;
+    installationId: string;
+    role: "builder" | "reviewer";
+    exportApproved: true;
+  }) {
+    this.replication.assertLocalOwner(input.projectId);
+    this.installation(input.installationId);
+    const result = await this.assisted.prepare(input);
+    this.changed();
+    return result;
+  }
+  async openAssistedHandoff(input: { projectId: string; id: string }) {
+    this.replication.assertLocalOwner(input.projectId);
+    const handoff = this.assisted.get(input.projectId, input.id),
+      project = await this.project(input.projectId),
+      installation = this.installation(handoff.installationId);
+    if (
+      this.runtime.isProjectBusy(project.id) ||
+      [
+        ...this.store.iterate<any>("assisted-handoff-state", {
+          projectId: project.id,
+        }),
+      ].some(
+        (h) => h.state === "externally-controlled" && !h.externalWritingStopped,
+      )
+    )
+      throw new Error(
+        "Stop and reconcile the current managed/native writer before opening an assisted surface.",
+      );
+    this.assisted.beginOpen(input.projectId, input.id);
+    this.changed();
+    try {
+      const result: ProjectOpenResult = installation.appId.endsWith("cli")
+        ? {
+            terminalId: await this.runtime.terminal(installation, project),
+            projectPath: project.realPath,
+            route: "terminal",
+            detail:
+              "Native surface opened. Paste the reviewed pinned handoff explicitly; progress and stopping are externally controlled.",
+          }
+        : await desktopProjectRoute(installation, project);
+      this.assisted.opened(input.projectId, input.id, result.route);
+      this.changed();
+      return result;
+    } catch (error) {
+      this.assisted.openUncertain(input.projectId, input.id);
+      this.changed();
+      throw error;
+    }
+  }
+  async importAssistedHandoff(input: {
+    projectId: string;
+    id: string;
+    candidateRevision: string;
+    specificationId: string;
+    report: string;
+    source: "user-supplied" | "native-import";
+    externalWritingStopped: true;
+  }) {
+    this.replication.assertLocalOwner(input.projectId);
+    const result = await this.assisted.import(input);
+    this.changed();
+    return result;
   }
   private changed(catalog = false): void {
     if (catalog) this.catalogDirty = true;
@@ -480,6 +606,86 @@ export class Service {
     const value = this.store.get<T>(kind, id);
     if (!value) throw new Error(`The selected ${kind} no longer exists.`);
     return value;
+  }
+  /** Build mutually dependent slices and their watermark in one vault read snapshot. */
+  private observed<T extends object>(
+    projectId: string,
+    read: () => T,
+  ): Observed<T> {
+    return this.store.transaction(() => ({
+      ...read(),
+      observation: {
+        projectId,
+        epoch: this.coordinator.ownership.instanceId,
+        sequence: this.store.controlHead(),
+        generatedAt: now(),
+      },
+    }));
+  }
+  private synchronizationSnapshot(projectId: string) {
+    const inputs = [...this.store.iterate<Task>("task", { projectId })].map(
+      (task) => ({
+        taskId: task.id,
+        ...this.revisions.inspectTaskInputs(task.id),
+      }),
+    );
+    return {
+      projectId,
+      observations: this.synchronization.observations(projectId),
+      fields: this.synchronization.fields(projectId),
+      links: this.synchronization.links(projectId),
+      sharedHeads: this.revisions.heads(projectId),
+      sharedRevisions: this.revisions.revisions(projectId),
+      historySources: this.nativeHistory.sources(projectId),
+      configuration: this.synchronization.configuration(projectId),
+      inputs,
+    };
+  }
+  private candidateRetrievalSummary(projectId: string, workflowId: string) {
+    const items: Array<Record<string, any>> = [];
+    let total = 0;
+    for (const receipt of this.store.iterate<Record<string, any>>(
+      "candidate-retrieval",
+      { projectId },
+    )) {
+      if (receipt.workflowId !== workflowId) continue;
+      total++;
+      // Keep bounded metadata only; grant identifiers and returned content do
+      // not belong in renderer evidence. A receipt never proves comprehension.
+      const {
+        id,
+        attemptId,
+        candidateId,
+        candidateRevision,
+        method,
+        path,
+        offset,
+        bytes,
+        outcome,
+        ranges,
+        createdAt,
+      } = receipt;
+      items.push({
+        id,
+        attemptId,
+        candidateId,
+        candidateRevision,
+        method,
+        path,
+        offset,
+        bytes,
+        outcome,
+        ranges,
+        createdAt,
+      });
+      items.sort(
+        (a, b) =>
+          String(b.createdAt).localeCompare(String(a.createdAt)) ||
+          String(b.id).localeCompare(String(a.id)),
+      );
+      if (items.length > 200) items.pop();
+    }
+    return { items, total, truncated: total > items.length };
   }
   private installation(id: string): Installation {
     return this.require("installation", id);
@@ -552,6 +758,7 @@ export class Service {
       | "replication-plan"
       | "replication-conflict"
       | "workflow-dispatch-inputs"
+      | "candidate-review-plan"
       | "advanced-review-plan",
     id: string,
   ): LifecyclePlan | ConfigurationPlan | Approval | CheckPlan | unknown {
@@ -629,7 +836,30 @@ export class Service {
     }
     return this.require(kind, id);
   }
-  async command(command: Command, trusted: TrustedInput = {}): Promise<any> {
+  command(command: Command, trusted: TrustedInput = {}): Promise<any> {
+    if (this.closing)
+      return Promise.reject(
+        new Error("The service is shutting down; new commands are stopped."),
+      );
+    const operation = this.commandOwned(command, trusted);
+    this.operations.add(operation);
+    void operation.then(
+      () => this.operations.delete(operation),
+      () => this.operations.delete(operation),
+    );
+    return operation;
+  }
+  private background(operation: Promise<unknown>): void {
+    this.operations.add(operation);
+    void operation.then(
+      () => this.operations.delete(operation),
+      () => this.operations.delete(operation),
+    );
+  }
+  private async commandOwned(
+    command: Command,
+    trusted: TrustedInput = {},
+  ): Promise<any> {
     this.coordinator.ownership.assertOwner();
     if (!("requestId" in command)) {
       const result = await this.dispatchCommand(command, trusted);
@@ -750,13 +980,117 @@ export class Service {
     this.coordinator.ownership.assertOwner();
     this.assertCommandOwner(command);
     switch (command.type) {
+      case "environment-selection-create": {
+        const project = this.require<Project>("project", command.projectId);
+        if (!project.trusted)
+          throw new Error(
+            "Trust this project before defining an execution recipe.",
+          );
+        const { type: _, requestId: __, ...selection } = command;
+        return environmentSelection(this.store, selection);
+      }
+      case "check-authorization-reuse-preview": {
+        const authorization = this.require<any>(
+          "check-authorization-definition",
+          command.id,
+        );
+        if (authorization.projectId !== command.projectId)
+          throw new Error("Execution authorization is outside this project.");
+        return reuseCheckAuthorization(
+          this.store,
+          command.id,
+          command.candidateId,
+          command.taskId,
+        );
+      }
+      case "environment-detect": {
+        const project = this.require<Project>("project", command.projectId);
+        if (!project.trusted)
+          throw new Error(
+            "Trust this project before detecting executable recipes.",
+          );
+        return detectEnvironments(this.store, project);
+      }
+      case "environment-instances-query":
+        this.require<Project>("project", command.projectId);
+        return this.observed(command.projectId, () =>
+          new PreparedEnvironments(this.store).list(command.projectId),
+        );
+      case "environment-instance-inspect":
+        this.require<Project>("project", command.projectId);
+        return this.observed(command.projectId, () =>
+          new PreparedEnvironments(this.store).inspect(
+            command.projectId,
+            command.id,
+          ),
+        );
+      case "check-authorization-revoke": {
+        const authorization = this.require<any>(
+          "check-authorization-definition",
+          command.id,
+        );
+        if (authorization.projectId !== command.projectId)
+          throw new Error("Execution authorization is outside this project.");
+        this.store.put("check-authorization-revoked", {
+          id: command.id,
+          projectId: command.projectId,
+          revokedAt: now(),
+        });
+        this.changed();
+        return null;
+      }
+      case "round-2-features-query":
+        this.require<Project>("project", command.projectId);
+        return this.observed(command.projectId, () => ({
+          features: round2Features(this.store),
+        }));
+      case "workflow-readiness-query":
+        return this.providerReadiness(command);
+      case "assisted-handoff-prepare":
+        return this.prepareAssistedHandoff(command);
+      case "assisted-handoff-open":
+        return this.openAssistedHandoff(command);
+      case "assisted-handoff-import":
+        return this.importAssistedHandoff(command);
+      case "assisted-handoff-query":
+        return this.assisted.query(command.projectId, command.workflowId);
+      case "workflow-draft-query":
+        return this.observed(command.projectId, () => ({
+          draft: new WorkflowDrafts(this.store).query(
+            command.projectId,
+            command.workflowId,
+          ),
+        }));
+      case "workflow-draft-save": {
+        const draft = new WorkflowDrafts(this.store).save(
+          command.projectId,
+          command.workflowId,
+          command.expectedRevision,
+          command.draft,
+        );
+        this.changed();
+        return this.observed(command.projectId, () => ({ draft }));
+      }
+      case "workflow-draft-delete":
+        new WorkflowDrafts(this.store).delete(
+          command.projectId,
+          command.workflowId,
+          command.expectedRevision,
+        );
+        this.changed();
+        return null;
       case "usage-budget-query":
         this.require<Project>("project", command.projectId);
-        return (
-          this.store.get("preference", `usage-budget:${command.projectId}`) ?? {
-            tokens: null,
-            wallMs: null,
-          }
+        return this.observed(
+          command.projectId,
+          () =>
+            this.store.get(
+              "preference",
+              `usage-budget:${command.projectId}`,
+            ) ?? {
+              tokens: null,
+              wallMs: null,
+            },
         );
       case "usage-budget-save":
         this.require<Project>("project", command.projectId);
@@ -769,7 +1103,9 @@ export class Service {
         this.changed();
         return { tokens: command.tokens, wallMs: command.wallMs };
       case "advanced-query":
-        return this.advanced.status(command.projectId);
+        return this.observed(command.projectId, () =>
+          this.advanced.status(command.projectId),
+        );
       case "advanced-check-preview":
         return this.advanced.previewCheck(
           command.id,
@@ -888,7 +1224,11 @@ export class Service {
           command.escapedDefects,
         );
       case "replication-query":
-        return this.replication.status(command.projectId);
+        return command.projectId
+          ? this.observed(command.projectId, () =>
+              this.replication.status(command.projectId),
+            )
+          : this.replication.status();
       case "replication-device-preview":
         return this.replication.previewDevice(
           command.identity,
@@ -1032,25 +1372,29 @@ export class Service {
                 projectId: command.projectId,
               })
             : this.store.searchPage(command.projectId, command.query, options);
-        return {
+        return this.observed(command.projectId, () => ({
           ...page,
           items: page.items.map((message) => this.messagePreview(message)),
-        };
+        }));
       }
       case "history-conversations":
         this.require<Project>("project", command.projectId);
-        return this.store.page("conversation", {
-          projectId: command.projectId,
-          cursor: command.cursor,
-          limit: command.limit,
-        });
+        return this.observed(command.projectId, () =>
+          this.store.page("conversation", {
+            projectId: command.projectId,
+            cursor: command.cursor,
+            limit: command.limit,
+          }),
+        );
       case "scope-snapshot":
         this.require<Project>("project", command.projectId);
-        return this.store.transaction(() => ({
+        return this.observed(command.projectId, () => ({
           sequence: this.store.controlHead(),
           epoch: this.coordinator.ownership.instanceId,
           projectId: command.projectId,
+          generatedAt: now(),
           coordination: this.coordinator.snapshot(command.projectId),
+          synchronization: this.synchronizationSnapshot(command.projectId),
           conversations: this.store.page("conversation", {
             projectId: command.projectId,
             limit: 200,
@@ -1091,10 +1435,10 @@ export class Service {
         }));
       case "managed-workspaces-query":
         this.require<Project>("project", command.projectId);
-        return {
+        return this.observed(command.projectId, () => ({
           workspaces: this.managedWorkspaces.list(command.projectId),
           concurrency: this.coordinator.concurrency.snapshot(),
-        };
+        }));
       case "workspace-create-preview":
         return this.managedWorkspaces.previewCreate(command);
       case "workspace-remove-preview":
@@ -1111,13 +1455,13 @@ export class Service {
         this.require<Project>("project", command.projectId);
         for (const state of this.parallel.list(command.projectId))
           await this.parallel.observe(state.id);
-        return {
+        return this.observed(command.projectId, () => ({
           workflows: this.parallel.list(command.projectId),
           queue: this.coordinator.repository.all("integration-submission", {
             projectId: command.projectId,
           }),
           concurrency: this.coordinator.concurrency.snapshot(),
-        };
+        }));
       case "parallel-dispatch":
         return this.parallel.dispatch(
           command.id,
@@ -1164,8 +1508,14 @@ export class Service {
           command.expectedRevision,
           trusted.digest,
         );
-      case "parallel-cancel":
-        return this.parallel.cancel(command.id, command.expectedRevision);
+      case "parallel-cancel": {
+        const result = await this.parallel.cancel(
+          command.id,
+          command.expectedRevision,
+        );
+        this.checks.cancelWorkflow(command.id);
+        return result;
+      }
       case "sync-field-push": {
         if (!trusted.approved)
           throw new Error(
@@ -1211,23 +1561,9 @@ export class Service {
       }
       case "synchronization-query": {
         this.require<Project>("project", command.projectId);
-        const inputs = [
-          ...this.store.iterate<Task>("task", { projectId: command.projectId }),
-        ].map((task) => ({
-          taskId: task.id,
-          ...this.revisions.inspectTaskInputs(task.id),
-        }));
-        return {
-          projectId: command.projectId,
-          observations: this.synchronization.observations(command.projectId),
-          fields: this.synchronization.fields(command.projectId),
-          links: this.synchronization.links(command.projectId),
-          sharedHeads: this.revisions.heads(command.projectId),
-          sharedRevisions: this.revisions.revisions(command.projectId),
-          historySources: this.nativeHistory.sources(command.projectId),
-          configuration: this.synchronization.configuration(command.projectId),
-          inputs,
-        };
+        return this.observed(command.projectId, () =>
+          this.synchronizationSnapshot(command.projectId),
+        );
       }
       case "sync-field-intent": {
         const field = this.require<SyncField>("sync-field", command.id);
@@ -1316,7 +1652,9 @@ export class Service {
         if (task.projectId !== command.projectId)
           throw new Error("Task belongs to another project.");
         if (command.type === "task-inputs-inspect")
-          return this.revisions.inspectTaskInputs(task.id);
+          return this.observed(command.projectId, () =>
+            this.revisions.inspectTaskInputs(task.id),
+          );
         if (
           task.revision !== command.expectedRevision ||
           !["draft", "ready", "blocked"].includes(task.state)
@@ -1397,21 +1735,19 @@ export class Service {
           { projectId: command.projectId },
         ))
           await this.workflows.observe(state.id);
-        return {
-          workflows: this.workflows
-            .list(command.projectId)
-            .map((workflow) => ({
-              ...workflow,
-              objective: this.require<{ objective: string }>(
-                "workflow",
-                workflow.id,
-              ).objective,
-              latestSpecificationId:
-                this.revisions.head(
-                  command.projectId,
-                  `workflow-specification:${workflow.id}`,
-                )?.revisionId ?? workflow.specificationId,
-            })),
+        return this.observed(command.projectId, () => ({
+          workflows: this.workflows.list(command.projectId).map((workflow) => ({
+            ...workflow,
+            objective: this.require<{ objective: string }>(
+              "workflow",
+              workflow.id,
+            ).objective,
+            latestSpecificationId:
+              this.revisions.head(
+                command.projectId,
+                `workflow-specification:${workflow.id}`,
+              )?.revisionId ?? workflow.specificationId,
+          })),
           runtimes: this.store
             .list<Installation>("installation")
             .filter((i) =>
@@ -1424,17 +1760,78 @@ export class Service {
               capabilities: this.runtime.capabilities(i),
             })),
           checkRuntime: process.execPath,
-        };
+        }));
       case "builder-reviewer-inspect": {
         const state = this.require<BuilderReviewerState>(
           "builder-reviewer",
           command.id,
         );
-        return {
+        return this.observed(state.projectId, () => ({
           state,
           candidate: this.require("candidate", state.candidateId),
+          diff: candidateDiff(
+            this.store,
+            this.require<CandidateSnapshot>("candidate", state.baselineId),
+            this.require<CandidateSnapshot>("candidate", state.candidateId),
+          ),
+          candidateArtifactReviews: {
+            outputs: [
+              ...this.store.iterate<{ candidateId: string }>(
+                "candidate-output-review",
+                { projectId: state.projectId },
+              ),
+            ].filter((receipt) => receipt.candidateId === state.candidateId),
+            binaries: [
+              ...this.store.iterate<{ candidateId: string }>(
+                "candidate-binary-review",
+                { projectId: state.projectId },
+              ),
+            ].filter((receipt) => receipt.candidateId === state.candidateId),
+          },
+          candidateRetrievals: this.candidateRetrievalSummary(
+            state.projectId,
+            state.id,
+          ),
           findings: state.findings.map((id) =>
             this.require("workflow-finding", id),
+          ),
+          findingDecisions: findingDecisions(
+            this.store,
+            state.projectId,
+            state.id,
+          ),
+          checkExecutions: this.checks
+            .list(state.projectId)
+            .executions.filter(
+              (execution) => execution.workflowId === state.id,
+            ),
+          runtimeMetadata: [
+            ...this.store.iterate<{ attemptId: string }>(
+              "runtime-turn-metadata",
+              { projectId: state.projectId },
+            ),
+          ].filter(
+            (metadata) =>
+              this.store.get<Task>(
+                "task",
+                this.store.get<ExecutionAttempt>("attempt", metadata.attemptId)
+                  ?.taskId ?? "",
+              )?.workflowId === state.id,
+          ),
+          runtimeResultMetadata: [
+            ...this.store.iterate<{ id: string; attemptId?: string }>(
+              "runtime-turn-result-metadata",
+              { projectId: state.projectId },
+            ),
+          ].filter(
+            (metadata) =>
+              this.store.get<Task>(
+                "task",
+                this.store.get<ExecutionAttempt>(
+                  "attempt",
+                  metadata.attemptId ?? metadata.id,
+                )?.taskId ?? "",
+              )?.workflowId === state.id,
           ),
           contexts: this.coordinator.repository
             .all("task-context-package", { projectId: state.projectId })
@@ -1449,7 +1846,113 @@ export class Service {
                   this.store.get<any>("attempt", d.attemptId).taskId,
                 )?.workflowId === state.id,
             ),
-        };
+        }));
+      }
+      case "workflow-finding-decide": {
+        const state = this.require<BuilderReviewerState>(
+          "builder-reviewer",
+          command.id,
+        );
+        if (state.projectId !== command.projectId)
+          throw new Error("Finding belongs to another project.");
+        this.replication.assertLocalOwner(command.projectId);
+        const result = this.workflows.decideFinding(command);
+        this.changed();
+        return result;
+      }
+      case "candidate-diff-query": {
+        this.require<Project>("project", command.projectId);
+        const candidate = this.require<CandidateSnapshot>(
+          "candidate",
+          command.candidateId,
+        );
+        const baseline = this.require<CandidateSnapshot>(
+          "candidate",
+          command.baseCandidateId,
+        );
+        if (
+          candidate.projectId !== command.projectId ||
+          candidate.workflowId !== command.workflowId ||
+          baseline.projectId !== command.projectId ||
+          baseline.workflowId !== command.workflowId
+        )
+          throw new Error(
+            "Candidate diff belongs to another project or workflow.",
+          );
+        return this.observed(command.projectId, () =>
+          candidateDiff(this.store, baseline, candidate, command),
+        );
+      }
+      case "candidate-review-preview":
+        this.require<Project>("project", command.projectId);
+        return previewCandidateReview(this.store, command);
+      case "candidate-review-apply": {
+        this.require<Project>("project", command.projectId);
+        this.replication.assertLocalOwner(command.projectId);
+        if (!trusted.digest)
+          throw new Error(
+            "Native approval of the exact hashed output/manual-verification plan is required.",
+          );
+        const plan = this.require<
+          import("../../packages/workflows/candidate-reviews").CandidateReviewPlan
+        >("candidate-review-plan", command.id);
+        if (plan.projectId !== command.projectId)
+          throw new Error("Candidate review belongs to another project.");
+        const result = plan.capturePaths?.length
+          ? await this.workflows.captureReviewedOutputs(
+              plan.workflowId,
+              plan.workflowRevision!,
+              plan.id,
+              trusted.digest,
+            )
+          : await applyCandidateReview(
+              this.store,
+              command.projectId,
+              command.id,
+              trusted.digest,
+            );
+        this.changed();
+        return result;
+      }
+      case "candidate-binary-preview":
+        this.require<Project>("project", command.projectId);
+        return this.observed(command.projectId, () =>
+          candidateBinaryPreview(
+            this.store,
+            command.projectId,
+            command.candidateId,
+            command.path,
+          ),
+        );
+      case "check-executions-query":
+        this.require<Project>("project", command.projectId);
+        return this.observed(command.projectId, () => ({
+          executions: this.checks.list(command.projectId),
+        }));
+      case "check-execution-inspect":
+        this.require<Project>("project", command.projectId);
+        return this.observed(command.projectId, () =>
+          this.checks.inspect(command.projectId, command.id),
+        );
+      case "check-execution-reconcile": {
+        this.require<Project>("project", command.projectId);
+        this.replication.assertLocalOwner(command.projectId);
+        const result = await this.checks.reconcileStopped(
+          command.projectId,
+          command.id,
+        );
+        this.changed();
+        return result;
+      }
+      case "check-cleanup-retry": {
+        this.require<Project>("project", command.projectId);
+        this.replication.assertLocalOwner(command.projectId);
+        const result = await this.checks.retryCleanup(
+          command.projectId,
+          command.id,
+        );
+        this.changed();
+        return result;
       }
       case "builder-reviewer-create":
         return this.workflows.create(
@@ -1503,43 +2006,72 @@ export class Service {
           command.expectedRevision,
           trusted.digest,
         );
-      case "builder-reviewer-cancel":
-        return this.workflows.cancel(command.id, command.expectedRevision);
+      case "builder-reviewer-cancel": {
+        const result = await this.workflows.cancel(
+          command.id,
+          command.expectedRevision,
+        );
+        this.checks.cancelWorkflow(command.id);
+        return result;
+      }
       case "coordination-query":
         this.require<Project>("project", command.projectId);
-        return this.coordinator.snapshot(command.projectId);
+        return this.observed(command.projectId, () =>
+          this.coordinator.snapshot(command.projectId),
+        );
       case "coordination-page":
         this.require<Project>("project", command.projectId);
-        return this.store.page(command.kind, {
-          projectId: command.projectId,
-          cursor: command.cursor,
-          limit: command.limit,
-        });
+        return this.observed(command.projectId, () =>
+          this.store.page(command.kind, {
+            projectId: command.projectId,
+            cursor: command.cursor,
+            limit: command.limit,
+          }),
+        );
       case "task-inspect": {
         const task = this.require<Task>("task", command.id);
         if (task.projectId !== command.projectId)
           throw new Error("Task belongs to another project.");
-        const snapshot = this.coordinator.snapshot(command.projectId);
-        return {
-          task,
-          inputStatus: this.revisions.inspectTaskInputs(task.id),
-          configuration: this.synchronization.configuration(task.projectId),
-          workspace: snapshot.workspaces.find(
-            (workspace) => workspace.id === task.workspaceId,
-          ),
-          attempts: snapshot.attempts.filter(
-            (attempt) => attempt.taskId === task.id,
-          ),
-          sessions: snapshot.sessions.filter((session) =>
-            snapshot.attempts.some(
-              (attempt) =>
-                attempt.taskId === task.id && attempt.sessionId === session.id,
+        return this.observed(command.projectId, () => {
+          const snapshot = this.coordinator.snapshot(command.projectId);
+          return {
+            task,
+            inputStatus: this.revisions.inspectTaskInputs(task.id),
+            configuration: this.synchronization.configuration(task.projectId),
+            workspace: snapshot.workspaces.find(
+              (workspace) => workspace.id === task.workspaceId,
             ),
-          ),
-          leases: snapshot.leases.filter((lease) =>
-            task.attemptIds.includes(lease.attemptId),
-          ),
-        };
+            attempts: snapshot.attempts.filter(
+              (attempt) => attempt.taskId === task.id,
+            ),
+            runtimeMetadata: [
+              ...this.store.iterate<{ attemptId: string }>(
+                "runtime-turn-metadata",
+                { projectId: task.projectId },
+              ),
+            ].filter((metadata) =>
+              task.attemptIds.includes(metadata.attemptId),
+            ),
+            runtimeResultMetadata: [
+              ...this.store.iterate<{ id: string; attemptId?: string }>(
+                "runtime-turn-result-metadata",
+                { projectId: task.projectId },
+              ),
+            ].filter((metadata) =>
+              task.attemptIds.includes(metadata.attemptId ?? metadata.id),
+            ),
+            sessions: snapshot.sessions.filter((session) =>
+              snapshot.attempts.some(
+                (attempt) =>
+                  attempt.taskId === task.id &&
+                  attempt.sessionId === session.id,
+              ),
+            ),
+            leases: snapshot.leases.filter((lease) =>
+              task.attemptIds.includes(lease.attemptId),
+            ),
+          };
+        });
       }
       case "workflow-create": {
         const result = this.coordinator.repository.createWorkflow(command);
@@ -1585,9 +2117,7 @@ export class Service {
         if (
           task.requiredCapabilities.some(
             (name) =>
-              !capabilityReport.some(
-                (c) => c.name === name && c.support === "enforceable",
-              ),
+              !capabilityReport.some((c) => capabilitySatisfies(c, name)),
           )
         )
           throw new Error(
@@ -1788,7 +2318,7 @@ export class Service {
         await this.codexProjects.enable(command.installationId);
         return this.codexProjects.state();
       case "codex-project-sync-pause":
-        this.codexProjects.pause();
+        await this.codexProjects.pause();
         return this.codexProjects.state();
       case "codex-project-sync-refresh":
         if (!this.codexProjects.state().enabled)
@@ -2165,18 +2695,45 @@ export class Service {
         throw new Error("Vault unlock belongs to the desktop broker.");
     }
   }
-  close(): void {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
     this.workflows.close();
     clearInterval(this.workflowTimer);
-    this.closing = true;
     if (this.timer) clearInterval(this.timer);
     if (this.ownershipTimer) clearInterval(this.ownershipTimer);
     if (this.notificationTimer) clearTimeout(this.notificationTimer);
-    this.context.close();
-    this.projects.close();
-    this.codexProjects.close();
-    this.runtime.close();
-    this.coordinator.close();
-    this.store.close();
+    this.closePromise = (async () => {
+      this.context.close();
+      await Promise.all([
+        this.checks.shutdown(),
+        this.runtime.close(),
+        this.projects.close(),
+        this.codexProjects.close(),
+      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settled = await Promise.race([
+        Promise.allSettled([
+          ...this.operations,
+          ...(this.discovery ? [this.discovery] : []),
+        ]).then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), 30_000);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!settled)
+        throw new Error(
+          "Shutdown has unresolved service operations. Protected storage remains open; reopen only after reconciliation.",
+        );
+      this.coordinator.close();
+      this.store.close();
+    })().catch((error) => {
+      // A bounded shutdown can leave storage intentionally open. Once the
+      // outstanding operation settles, another close request may finish it.
+      this.closePromise = undefined;
+      throw error;
+    });
+    return this.closePromise;
   }
 }

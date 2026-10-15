@@ -84,9 +84,9 @@ test.skipIf(!executable)(
         "Native acceptance: create, readback, rename, order, independent connection, deletion retention; isolated homes; zero model turns.",
       );
     } finally {
-      sync.close();
-      catalog.close();
-      peers.forEach((p) => p.close());
+      await sync.close();
+      await catalog.close();
+      await Promise.all(peers.map((p) => p.close()));
       await Promise.all(
         peers.map((p) =>
           p.process.exitCode !== null || p.process.signalCode !== null

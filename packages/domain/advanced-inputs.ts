@@ -6,6 +6,7 @@ const assignmentSchema = z
     installationId: z.string().min(1),
     provider: z.enum(["codex", "claude"]),
     model: z.string().trim().min(1).max(300),
+    effort: z.string().min(1).max(100).optional(),
     permittedOutputs: z.array(z.string().min(1)).max(100),
   })
   .strict();
@@ -25,6 +26,14 @@ const checkSchema = z
     executable: z.string().min(1),
     args: z.array(z.string().max(20000)).max(100),
     timeoutMs: z.number().int().min(100).max(300000),
+    environmentRecipeId: z.string().min(1).max(256).optional(),
+    executionPolicy: z
+      .object({
+        maximumUses: z.number().int().min(1).max(10),
+        allowCandidateChanges: z.boolean().optional(),
+        expiresAfterMs: z.number().int().min(100).max(3600000).optional(),
+      })
+      .optional(),
   })
   .strict();
 export const advancedCreateSchema = z

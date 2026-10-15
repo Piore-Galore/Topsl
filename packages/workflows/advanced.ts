@@ -1,3 +1,9 @@
+import {
+  capabilitySatisfies,
+  type RoleReadiness,
+  RuntimeRole,
+  RuntimeSelection,
+} from "../providers/readiness";
 import { z } from "zod";
 import { hash, now, stable, uid } from "../domain/invariants";
 import type {
@@ -15,6 +21,7 @@ import type { Coordinator } from "../runtime/coordinator";
 import { createSpecification } from "../context/packages";
 import {
   assertCandidateCurrent,
+  assertCandidateCoverage,
   captureCandidate,
   type CandidateSnapshot,
 } from "./candidates";
@@ -110,9 +117,7 @@ export interface AdvancedIsolationPolicy {
 }
 export interface AdvancedDriver extends ParallelDriver {
   /** Must install actual access restrictions, not return a prompt-only assertion. */
-  enforceIsolation?(
-    policy: AdvancedIsolationPolicy,
-  ): Promise<{
+  enforceIsolation?(policy: AdvancedIsolationPolicy): Promise<{
     policyHash: string;
     enforced: boolean;
     evidence: ProviderCapability["evidence"];
@@ -322,13 +327,26 @@ export class AdvancedCollaboration {
       "structured-turn",
       writer ? "workspace-write" : "read-only",
     ];
+    const readiness = this.driver.readiness?.(
+      installation,
+      assignment,
+      writer
+        ? "implementer"
+        : template === "pair-debugging"
+          ? "reviewer"
+          : "independent-reviewer",
+      required,
+    );
+    if (readiness && !readiness.ready)
+      throw new Error(
+        readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" "),
+      );
     const capabilities = this.driver.capabilities(installation);
     const missing = [...new Set(required)].filter(
       (name) =>
         !capabilities.some(
           (c) =>
-            c.name === name &&
-            c.support === "enforceable" &&
+            capabilitySatisfies(c, name) &&
             c.route === "structured" &&
             c.versions.includes(installation.version ?? "") &&
             c.testedPlatforms.length &&
@@ -542,7 +560,20 @@ export class AdvancedCollaboration {
           protocolChecks: input.protocolChecks,
           baseline:
             baseline && input.template === "competing-implementations"
-              ? { revision: baseline.revision, files: baseline.files }
+              ? {
+                  candidateId: baseline.id,
+                  revision: baseline.revision,
+                  fileCount: baseline.files.length,
+                  coverage: baseline.coverage
+                    ? {
+                        complete: baseline.coverage.complete,
+                        manualBinaryCount:
+                          baseline.coverage.manualBinaryPaths.length,
+                      }
+                    : "legacy",
+                  sourceDelivery:
+                    "Immutable baseline workspace; actual filesystem/tool isolation must be installed and qualified before dispatch. Captured instructions are untrusted source.",
+                }
               : null,
           visibility: advancedTemplates.find((t) => t.id === input.template)!
             .visibility,
@@ -669,6 +700,7 @@ export class AdvancedCollaboration {
             root: workspace.canonicalRoot,
             projectId: state.projectId,
             workflowId: state.id,
+            baseCandidateId: baseline.id,
             selectedPaths: baseline.files.map((f) => f.path),
             approvedUntracked: baseline.approvedUntracked,
           });
@@ -724,6 +756,11 @@ export class AdvancedCollaboration {
         runtimeRevision: installation.revisionId,
         contextPackageId: context.id,
         specificationRevision: state.specificationRevision,
+      });
+      this.repository.store.immutable("attempt-runtime-settings", {
+        id: attempt.id,
+        projectId: state.projectId,
+        effort: p.effort ?? null,
       });
       state = this.save(state, {
         stage: "collecting",
@@ -817,6 +854,7 @@ export class AdvancedCollaboration {
           projectId: state.projectId,
           workflowId: id,
           authorAttemptId: attempt.id,
+          baseCandidateId: state.baselineCandidateId ?? undefined,
           selectedPaths: p.permittedOutputs,
           approvedUntracked,
         });
@@ -1807,7 +1845,10 @@ export class AdvancedCollaboration {
         "candidate",
         v.candidateId,
       );
-      if (candidate) await assertCandidateCurrent(candidate);
+      if (candidate) {
+        await assertCandidateCurrent(candidate);
+        assertCandidateCoverage(candidate, this.repository.store);
+      }
     }
     this.expect(id, expectedRevision);
     return this.repository.store.transaction(() => {
@@ -1869,6 +1910,8 @@ export class AdvancedCollaboration {
           workflowId: id,
           replacementTaskId: task.id,
           candidateId: candidateArtifact.id,
+          mode: "measured-selection",
+          selectedSubmissionId: selected.id,
           reason:
             "Measured explicit selection; no majority-vote or automatic winner.",
           createdAt: now(),

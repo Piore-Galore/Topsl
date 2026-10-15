@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
-import { rm } from "node:fs/promises";
+import { chmod, rm, writeFile } from "node:fs/promises";
 import { spawn as spawnPty } from "node-pty";
 import { RuntimeManager } from "../packages/runtime/manager";
 import { RpcPeer } from "../packages/runtime/rpc";
-import { nativeEnvironment } from "../packages/platform/system";
+import { identity, nativeEnvironment } from "../packages/platform/system";
 import { now } from "../packages/domain/invariants";
 import type { Approval, Run } from "../packages/domain/types";
 import { fixture } from "./helpers";
@@ -51,12 +51,76 @@ async function setup(account = "chatgpt") {
 }
 afterEach(async () => {
   for (const f of fixtures.splice(0)) {
-    f.runtime.close();
+    await f.runtime.close();
     f.store.close();
     await rm(f.directory, { recursive: true, force: true });
   }
 });
 describe("native process adapter", () => {
+  test.skipIf(process.platform === "win32")(
+    "a direct structured chat through the native broker is not gated by coordinated role readiness",
+    async () => {
+      const f = await fixture();
+      // A real launched executable (not an injected peer), so the manager uses
+      // its production route rather than isolated fixture mode.
+      await writeFile(
+        f.installation.path,
+        `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve("tests/fixtures/codex.cjs"))}\n`,
+      );
+      await chmod(f.installation.path, 0o700);
+      const installation = {
+        ...f.installation,
+        ...(await identity(f.installation.path)),
+      };
+      f.store.put("installation", installation);
+      const runtime = new RuntimeManager(
+        f.store,
+        () => {},
+        () => {},
+      );
+      fixtures.push({ ...f, runtime });
+      const project = {
+        id: "p",
+        name: "fixture",
+        path: f.directory,
+        realPath: f.directory,
+        trusted: true,
+        createdAt: now(),
+      };
+      const conversation = {
+        id: "c",
+        projectId: "p",
+        title: "Fixture chat",
+        nativeSessions: {},
+        createdAt: now(),
+      };
+      f.store.put("project", project);
+      f.store.put("conversation", conversation);
+      // No runtime qualification has been recorded for this binding.
+      expect(
+        runtime.readiness(
+          installation,
+          {
+            installationId: installation.id,
+            provider: "codex",
+            model: "fixture-model",
+          },
+          "implementer",
+        ).ready,
+      ).toBe(false);
+      const run = await runtime.start(
+        installation,
+        conversation,
+        project,
+        "hello",
+        "fixture-model",
+        "review",
+      );
+      await vi.waitFor(() =>
+        expect(f.store.get<Run>("run", run.id)?.status).toBe("completed"),
+      );
+    },
+  );
   test("protocol probe loads native models without submitting a turn", async () => {
     const f = await setup();
     const info = await f.runtime.inspect(f.installation);

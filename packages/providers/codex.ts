@@ -13,6 +13,7 @@ import type {
   ProviderCapability,
   ProviderConnection,
   ProviderEvent,
+  ProviderModel,
 } from "./contract";
 const string = z.string();
 const accountSchema = z.object({
@@ -26,10 +27,16 @@ const accountSchema = z.object({
     .nullable(),
 });
 const sessionSchema = z.object({
-  thread: z.object({ id: string.min(1) }),
+  thread: z.object({
+    id: string.min(1),
+    sessionId: string.nullable().optional(),
+  }),
   model: string.optional(),
+  reasoningEffort: string.nullable().optional(),
+  instructionSources: z.array(string).optional(),
 });
 const turnSchema = z.object({
+  reasoningEffort: string.nullable().optional(),
   turn: z.object({ id: string.optional() }).optional(),
   model: string.optional(),
 });
@@ -84,21 +91,60 @@ export class CodexAdapter implements ProviderAdapter {
         platformOs: string.optional(),
       })
       .parse(init);
-    const raw = z
-      .object({
-        data: z
-          .array(
-            z.object({
-              id: string,
-              model: string,
-              displayName: string.optional(),
-              description: string.optional(),
-              isDefault: z.boolean().optional(),
-            }),
-          )
-          .default([]),
-      })
-      .parse(await connection.request("model/list", { limit: 100 }));
+    const models: ProviderModel[] = [];
+    let cursor: string | null = null;
+    const cursors = new Set<string>();
+    do {
+      const raw = z
+        .object({
+          data: z
+            .array(
+              z.object({
+                id: string,
+                model: string,
+                displayName: string.optional(),
+                description: string.optional(),
+                isDefault: z.boolean().optional(),
+                supportedReasoningEfforts: z
+                  .array(
+                    z.object({
+                      reasoningEffort: string,
+                      description: string.optional(),
+                    }),
+                  )
+                  .optional(),
+                defaultReasoningEffort: string.nullable().optional(),
+                inputModalities: z.array(string).optional(),
+              }),
+            )
+            .default([]),
+          nextCursor: string.nullable().optional(),
+        })
+        .parse(
+          await connection.request("model/list", {
+            limit: 100,
+            ...(cursor ? { cursor } : {}),
+          }),
+        );
+      for (const m of raw.data)
+        models.push({
+          id: m.id,
+          model: m.model,
+          name: m.displayName ?? m.model,
+          description: m.description ?? "",
+          isDefault: m.isDefault ?? false,
+          supportedReasoningEfforts:
+            m.supportedReasoningEfforts?.map((e) => e.reasoningEffort) ?? [],
+          defaultReasoningEffort: m.defaultReasoningEffort ?? null,
+          inputModalities: m.inputModalities ?? ["text", "image"],
+          metadataSource: "runtime",
+          observedAt: new Date().toISOString(),
+        });
+      cursor = raw.nextCursor ?? null;
+      if (cursor && (cursors.has(cursor) || models.length > 5000))
+        throw new Error("Invalid or unbounded runtime model pagination.");
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
     const account = accountSchema.parse(
       await connection.request("account/read", { refreshToken: false }),
     ).account;
@@ -107,13 +153,7 @@ export class CodexAdapter implements ProviderAdapter {
         platformFamily: info.platformFamily ?? null,
         platformOs: info.platformOs ?? null,
       },
-      models: raw.data.map((m) => ({
-        id: m.id,
-        model: m.model,
-        name: m.displayName ?? m.model,
-        description: m.description ?? "",
-        isDefault: m.isDefault ?? false,
-      })),
+      models,
       account: account
         ? {
             type: account.type,
@@ -177,6 +217,15 @@ export class CodexAdapter implements ProviderAdapter {
     );
     return {
       nativeSessionId: result.thread.id,
+      nativeThreadId: result.thread.id,
+      providerSessionId: result.thread.sessionId ?? null,
+      reportedEffort: result.reasoningEffort ?? null,
+      instructionSources: (result.instructionSources ?? []).map((path) => ({
+        path,
+        source: "runtime-reported" as const,
+        observedAt: new Date().toISOString(),
+        contentHash: null,
+      })),
       reportedModel: result.model ?? null,
       evidence: {
         level: "provider-ack" as const,
@@ -199,6 +248,8 @@ export class CodexAdapter implements ProviderAdapter {
         input: [{ type: "text", text: turn.prompt }],
         cwd: turn.cwd,
         model: turn.requestedModel,
+        ...(turn.requestedEffort ? { effort: turn.requestedEffort } : {}),
+        ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
         approvalPolicy: "untrusted",
         sandboxPolicy:
           turn.mode === "review"
@@ -212,6 +263,7 @@ export class CodexAdapter implements ProviderAdapter {
     );
     return {
       nativeTurnId: result.turn?.id ?? null,
+      reportedEffort: result.reasoningEffort ?? null,
       reportedModel: result.model ?? null,
     };
   }

@@ -3,6 +3,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  open,
   readdir,
   realpath,
   rm,
@@ -22,9 +23,13 @@ import {
 import {
   assertCandidateCurrent,
   captureCandidate,
+  candidateFileBytes,
+  candidateFileRange,
   type CandidateSnapshot,
 } from "../workflows/candidates";
 import { canonicalWorkspaceIdentity } from "./ownership";
+import type { Store } from "../persistence/store";
+import { createHash } from "node:crypto";
 
 export interface ManagedWorkspace {
   id: string;
@@ -87,7 +92,9 @@ async function parentIdentity(directory: string) {
 export async function writeManagedSnapshot(
   snapshot: CandidateSnapshot,
   root: string,
+  store?: Store,
 ) {
+  const origins = new Map<string, CandidateSnapshot>();
   for (const file of snapshot.files) {
     const target = path.resolve(root, file.path);
     if (!isWithin(root, target))
@@ -98,17 +105,56 @@ export async function writeManagedSnapshot(
       if ((await exists(current)) && !(await lstat(current)).isDirectory())
         throw new Error("Snapshot parent is not a directory.");
     }
-    if (file.content === null) {
+    if (file.hash === null) {
       if (await exists(target)) await unlink(target);
       continue;
     }
-    const bytes = Buffer.from(file.content, "base64");
-    if (hash(bytes) !== file.hash || bytes.length !== file.bytes)
-      throw new Error("Snapshot content integrity failed.");
+    let origin = snapshot;
+    if (file.blobCandidateId && store) {
+      const cached = origins.get(file.blobCandidateId);
+      const saved =
+        cached ??
+        store.get<CandidateSnapshot>("candidate", file.blobCandidateId);
+      if (!saved)
+        throw new Error("Integrated file source candidate is missing.");
+      origin = saved;
+      origins.set(file.blobCandidateId, saved);
+    }
+    if (
+      !origin ||
+      origin.projectId !== snapshot.projectId ||
+      origin.workflowId !== snapshot.workflowId
+    )
+      throw new Error(
+        "Integrated file has no protected source candidate in this workflow.",
+      );
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
     if ((await exists(target)) && (await lstat(target)).isSymbolicLink())
       throw new Error("Managed destination symlink is unsupported.");
-    await writeFile(target, bytes, { mode: file.mode ?? 0o600 });
+    const handle = await open(target, "w", file.mode ?? 0o600),
+      digest = createHash("sha256");
+    try {
+      if (origin.formatVersion === 2) {
+        for (let offset = 0; offset < file.bytes; offset += 64 * 1024) {
+          const bytes = candidateFileRange(
+            origin,
+            file.path,
+            { offset, length: Math.min(64 * 1024, file.bytes - offset) },
+            store,
+          )!;
+          digest.update(bytes);
+          await handle.write(bytes);
+        }
+      } else {
+        const bytes = candidateFileBytes(origin, file, store)!;
+        digest.update(bytes);
+        await handle.write(bytes);
+      }
+    } finally {
+      await handle.close();
+    }
+    if (digest.digest("hex") !== file.hash)
+      throw new Error("Snapshot content integrity failed.");
     await chmod(target, file.mode ?? 0o600);
   }
 }
@@ -357,7 +403,7 @@ export class ManagedWorkspaces {
             { cwd: plan.root },
           );
         } else await mkdir(plan.root, { mode: 0o700 });
-        await writeManagedSnapshot(snapshot, plan.root);
+        await writeManagedSnapshot(snapshot, plan.root, this.coordinator.store);
         const identity = canonicalWorkspaceIdentity(plan.root),
           at = now();
         const workspace: Workspace = {

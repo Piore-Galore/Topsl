@@ -1,7 +1,11 @@
 import path from "node:path";
 import { hash, now, stable } from "../domain/invariants";
 import type { Store } from "../persistence/store";
-import type { CandidateFile, CandidateSnapshot } from "./candidates";
+import {
+  candidateFileBytes,
+  type CandidateFile,
+  type CandidateSnapshot,
+} from "./candidates";
 import type { CheckDefinition } from "./verification";
 
 interface CheckInputBinding {
@@ -32,10 +36,32 @@ const checkConfiguration =
 function referencedInputs(
   baseline: CandidateSnapshot,
   definition: CheckDefinition,
+  store: Store,
 ): Set<string> {
   const referenced = new Set<string>();
   for (let index = 0; index < definition.args.length; index++) {
     const argument = definition.args[index];
+    // npm CLI is a separately identity-bound toolchain, not project harness.
+    if (
+      index === 0 &&
+      definition.environmentRecipeId &&
+      path.isAbsolute(argument) &&
+      /npm(?:-cli)?\.[cm]?js$/i.test(argument)
+    ) {
+      const selection = store.get<{ projectId: string; npmCli?: string }>(
+        "environment-selection",
+        definition.environmentRecipeId!,
+      );
+      if (
+        !selection ||
+        selection.projectId !== baseline.projectId ||
+        selection.npmCli !== argument
+      )
+        throw new Error(
+          "Check npm CLI differs from its exact reviewed environment toolchain.",
+        );
+      continue;
+    }
     // Inline programs are already frozen as part of the exact command. They
     // are not filenames even when the source string contains a file suffix.
     if (
@@ -79,11 +105,13 @@ function referencedInputs(
 function bindingId(workflowId: string, definitionId: string): string {
   return hash(stable([workflowId, definitionId]));
 }
-function jsonFile(file: CandidateFile): Record<string, unknown> {
-  if (!file.content)
-    throw new Error("A required check configuration is missing.");
+function jsonFile(
+  candidate: CandidateSnapshot,
+  file: CandidateFile,
+  store: Store,
+): Record<string, unknown> {
   const value: unknown = JSON.parse(
-    Buffer.from(file.content, "base64").toString("utf8"),
+    candidateFileBytes(candidate, file, store)!.toString("utf8"),
   );
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("A required check configuration must be a JSON object.");
@@ -92,12 +120,17 @@ function jsonFile(file: CandidateFile): Record<string, unknown> {
 function packageScript(
   candidate: CandidateSnapshot,
   definition: CheckDefinition,
+  store: Store,
 ): CheckInputBinding["packageScript"] {
   const executable = path
     .basename(definition.executable)
     .replace(/\.(?:exe|cmd|bat)$/i, "");
-  if (!["npm", "pnpm", "yarn"].includes(executable)) return null;
-  const args = definition.args;
+  const nodeNpm =
+    definition.environmentRecipeId &&
+    path.isAbsolute(definition.args[0] ?? "") &&
+    /npm(?:-cli)?\.[cm]?js$/i.test(definition.args[0]);
+  if (!["npm", "pnpm", "yarn"].includes(executable) && !nodeNpm) return null;
+  const args = nodeNpm ? definition.args.slice(1) : definition.args;
   const command =
     args[0] === "run" || args[0] === "run-script"
       ? args[1]
@@ -112,7 +145,7 @@ function packageScript(
     throw new Error(
       "The selected package-script check requires a captured package.json.",
     );
-  const scripts = jsonFile(file).scripts;
+  const scripts = jsonFile(candidate, file, store).scripts;
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts))
     throw new Error(
       "The selected check has no captured package-script definition.",
@@ -145,7 +178,7 @@ export function bindCheckInputs(
     throw new Error("Check protocol baseline belongs to another workflow.");
   store.transaction(() => {
     for (const definition of definitions) {
-      const referencedScripts = referencedInputs(baseline, definition);
+      const referencedScripts = referencedInputs(baseline, definition, store);
       const protectedFiles = baseline.files
         .filter(
           (file) =>
@@ -169,7 +202,7 @@ export function bindCheckInputs(
         definitionId: definition.id,
         definitionHash: hash(stable(definition)),
         protectedFiles,
-        packageScript: packageScript(baseline, definition),
+        packageScript: packageScript(baseline, definition, store),
         createdAt: previous?.createdAt ?? now(),
       };
       store.immutable("workflow-check-input", binding);
@@ -214,7 +247,7 @@ export function assertCheckInputs(
         )}. Review a new workflow to revise the test protocol; this candidate cannot silently replace it.`,
     );
   if (binding.packageScript) {
-    const current = packageScript(candidate, definition);
+    const current = packageScript(candidate, definition, store);
     if (
       !current ||
       current.hash !== binding.packageScript.hash ||

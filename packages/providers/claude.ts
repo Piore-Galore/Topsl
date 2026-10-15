@@ -3,6 +3,10 @@ import { z } from "zod";
 import { EventEmitter } from "node:events";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import { nativeEnvironment } from "../platform/system";
+import {
+  ProcessLifecycle,
+  type ProcessEvidence,
+} from "../runtime/process-lifecycle";
 import type { Installation } from "../domain/types";
 import type {
   PreparedTurn,
@@ -68,6 +72,8 @@ export class ClaudeStreamParser {
   private model: string | null = null;
   private messageId: string | null = null;
   private result = false;
+  private finalFingerprint: string | null = null;
+  private messages = new Map<string, string>();
   constructor(
     private emit: (event: ClaudeStreamEvent) => void,
     private maxLineBytes = 2_000_000,
@@ -121,8 +127,28 @@ export class ClaudeStreamParser {
         throw new Error("Claude stream exceeds the bounded event limit.");
       this.seen.set(sourceId, bodyHash);
     }
-    if (this.result)
-      throw new Error("Claude emitted a new event after the final result.");
+    const resultFingerprint = () =>
+      hash(
+        stable({
+          session_id: base.session_id,
+          subtype: body.subtype,
+          is_error: body.is_error,
+          result: body.result,
+          structured_output: body.structured_output,
+          usage: body.usage,
+          errors: body.errors,
+        }),
+      );
+    if (this.result) {
+      if (
+        base.type === "result" &&
+        resultFingerprint() === this.finalFingerprint
+      )
+        return;
+      throw new Error(
+        "Claude emitted a new or inconsistent event after the final result.",
+      );
+    }
     switch (base.type) {
       case "system": {
         const value = z
@@ -185,6 +211,12 @@ export class ClaudeStreamParser {
           .filter((b) => b.type === "text")
           .map((b) => b.text ?? "")
           .join("\n");
+        const messageKey = value.message.id ?? sourceId,
+          previousText = this.messages.get(messageKey);
+        if (previousText !== undefined && previousText !== text)
+          throw new Error("Claude final message identity changed its text.");
+        if (previousText !== undefined) break;
+        this.messages.set(messageKey, text);
         if (text)
           this.emit({
             type: "message",
@@ -241,6 +273,7 @@ export class ClaudeStreamParser {
             scope: "session-cumulative",
           });
         this.result = true;
+        this.finalFingerprint = resultFingerprint();
         this.emit({
           type: "completed",
           sourceId,
@@ -253,6 +286,17 @@ export class ClaudeStreamParser {
         });
         break;
       }
+      case "rate_limit_event":
+      case "tool_progress":
+      case "tool_use_summary":
+      case "auth_status":
+      case "prompt_suggestion":
+        this.emit({
+          type: "notice",
+          sourceId,
+          detail: `Native informational event: ${base.type}`,
+        });
+        break;
       case "user":
         // Native tool results/user echoes contain untrusted arbitrary payloads. The canonical submitted context is recorded separately.
         break;
@@ -292,6 +336,7 @@ export function claudeArguments(
     "--input-format",
     "text",
     "--verbose",
+    "--include-partial-messages",
     "--model",
     model,
     "--session-id",
@@ -432,6 +477,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       (event) => client.receive(event),
     );
     client.execution.process.once("exit", () => client.process.emit("exit"));
+    client.lifecycle = new ProcessLifecycle(client.execution.process);
     client.execution.done.then(
       () => {},
       (error) => client.onExit(safeError(error)),
@@ -608,6 +654,7 @@ export function claudeFixtureTransport(
       cwd,
       shell: false,
       env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+      detached: process.platform !== "win32",
     });
 }
 
@@ -619,6 +666,8 @@ class ClaudeConnection implements ProviderConnection {
   sessionId: string | null = null;
   turnId: string | null = null;
   execution?: ReturnType<ClaudeAdapter["start"]>;
+  lifecycle?: ProcessLifecycle;
+  private closing?: Promise<ProcessEvidence>;
   private texts: string[] = [];
   constructor(
     readonly adapter: ClaudeAdapter,
@@ -639,8 +688,26 @@ class ClaudeConnection implements ProviderConnection {
     );
   }
   reject(): void {}
-  close(): void {
-    this.execution?.process.kill("SIGTERM");
+  close(): Promise<ProcessEvidence> {
+    if (this.closing) return this.closing;
+    if (this.lifecycle) return (this.closing = this.lifecycle.stop());
+    const at = now();
+    return (this.closing = Promise.resolve({
+      version: 1,
+      pid: null,
+      groupId: null,
+      scope: "child-and-stdio",
+      state: "quiescent",
+      startedAt: at,
+      stopRequestedAt: at,
+      exitedAt: null,
+      closedAt: null,
+      observedAt: at,
+      exitCode: null,
+      signal: null,
+      remainingGroup: "absent",
+      detail: "No task process was created.",
+    }));
   }
   receive(event: ClaudeStreamEvent): void {
     if (!this.sessionId || !this.turnId)

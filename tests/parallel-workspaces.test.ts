@@ -66,7 +66,8 @@ async function setup(
     delay?: number;
     count?: number;
     unknown?: boolean;
-    delayedExit?: number;
+    holdTurns?: boolean;
+    holdExit?: boolean;
   } = {},
 ) {
   const f = await fixture(),
@@ -120,18 +121,26 @@ async function setup(
     });
     workspaces.push(await managed.apply(plan.id, plan.digest));
   }
+  const peers: RpcPeer[] = [];
+  let releaseExit!: () => void;
+  const exitBarrier = new Promise<void>((resolve) => {
+    releaseExit = resolve;
+  });
   const adapter = new FixtureAdapter((_exe, cwd) => {
     const peer = new RpcPeer(
       process.execPath,
       [path.resolve("tests/fixtures/parallel-worker.cjs")],
       cwd,
-      nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+      nativeEnvironment({
+        ELECTRON_RUN_AS_NODE: "1",
+        TOPSL_LIFECYCLE_SEED: process.env.TOPSL_LIFECYCLE_SEED ?? "",
+      }),
     );
-    if (options.delayedExit) {
+    peers.push(peer);
+    if (options.holdExit) {
       const close = peer.close.bind(peer);
-      peer.close = () => {
-        setTimeout(close, options.delayedExit);
-      };
+      let closing: ReturnType<RpcPeer["close"]> | undefined;
+      peer.close = () => (closing ??= exitBarrier.then(close));
     }
     return peer;
   });
@@ -142,6 +151,7 @@ async function setup(
     undefined,
     coordinator,
     { codex: adapter },
+    true, // Explicit isolated fixture constructor; never live runtime qualification.
   );
   const parallel = new ParallelSpecialists(coordinator, managed, {
     capabilities: (installation) =>
@@ -166,7 +176,7 @@ async function setup(
       const input = {
         file: options.overlap || key === "a" ? "a.txt" : "b.txt",
         content: options.overlap && key === "b" ? "2" : "1",
-        delay: options.delay ?? 120,
+        hold: options.holdTurns === true,
       };
       await runtime.start(
         installation,
@@ -183,7 +193,11 @@ async function setup(
     },
   });
   cleanup.push(async () => {
-    runtime.close();
+    releaseExit();
+    await Promise.allSettled(
+      peers.map((peer) => peer.request("fixture/release-turn", {})),
+    );
+    await runtime.close();
     coordinator.close();
     f.store.close();
     await rm(f.directory, { recursive: true, force: true });
@@ -225,6 +239,13 @@ async function setup(
     git,
     project,
     original,
+    releaseExit,
+    ready: () =>
+      Promise.all(peers.map((peer) => peer.request("fixture/ready", {}))),
+    releaseTurns: () =>
+      Promise.all(
+        peers.map((peer) => peer.request("fixture/release-turn", {})),
+      ),
   };
 }
 async function dispatchBoth(f: Awaited<ReturnType<typeof setup>>) {
@@ -238,9 +259,10 @@ async function dispatchBoth(f: Awaited<ReturnType<typeof setup>>) {
 }
 describe("managed parallel workspace safety", () => {
   test("two actual fixture writers share one logical project but separate roots; aliases collide", async () => {
-    const f = await setup({ delay: 400 });
+    const f = await setup({ holdTurns: true });
     let state = await f.parallel.dispatch(f.state.id, f.state.revision, "a");
     state = await f.parallel.dispatch(state.id, state.revision, "b");
+    expect(await f.ready()).toHaveLength(2);
     expect(
       f.store.list<Run>("run").filter((r) => r.status === "running"),
     ).toHaveLength(2);
@@ -462,12 +484,13 @@ describe("managed parallel workspace safety", () => {
       unknown.parallel.dispatch(unknown.state.id, unknown.state.revision, "a"),
     ).rejects.toThrow("fan-out");
     expect(unknown.store.list("attempt")).toHaveLength(0);
-    const f = await setup({ count: 3, delay: 500 });
+    const f = await setup({ count: 3, holdTurns: true });
     let state = await f.parallel.dispatch(f.state.id, f.state.revision, "a");
     state = await f.parallel.dispatch(state.id, state.revision, "b");
     state = await f.parallel.dispatch(state.id, state.revision, "c");
     expect(state.detail).toContain("Waiting for capacity");
     expect(f.store.list("attempt")).toHaveLength(2);
+    await f.releaseTurns();
     await vi.waitFor(() =>
       expect(f.coordinator.concurrency.snapshot().visibleAttempts).toBe(0),
     );
@@ -475,7 +498,7 @@ describe("managed parallel workspace safety", () => {
     expect(state.tasks.find((t) => t.key === "c")?.attemptId).toBeTruthy();
   });
   test("completed inference keeps capacity until observed exit and queued dispatch resumes afterward", async () => {
-    const f = await setup({ count: 3, delay: 10, delayedExit: 500 });
+    const f = await setup({ count: 3, holdExit: true });
     let state = await f.parallel.dispatch(f.state.id, f.state.revision, "a");
     state = await f.parallel.dispatch(state.id, state.revision, "b");
     await vi.waitFor(() =>
@@ -487,6 +510,7 @@ describe("managed parallel workspace safety", () => {
     state = await f.parallel.dispatch(state.id, state.revision, "c");
     expect(state.detail).toContain("Waiting for capacity");
     expect(f.store.list("attempt")).toHaveLength(2);
+    f.releaseExit();
     await vi.waitFor(() =>
       expect(f.coordinator.concurrency.snapshot().visibleAttempts).toBe(0),
     );
@@ -500,7 +524,7 @@ describe("managed parallel workspace safety", () => {
     );
   });
   test("late cancellation evidence stays historical; active cleanup blocked and explicit inactive cleanup retains content", async () => {
-    const f = await setup({ delay: 250 });
+    const f = await setup({ holdTurns: true });
     let state = await f.parallel.dispatch(f.state.id, f.state.revision, "a");
     await expect(f.managed.previewRemove(f.workspaces[1].id)).rejects.toThrow(
       "Active",
@@ -547,7 +571,7 @@ describe("managed parallel workspace safety", () => {
     const f = await setup();
     // Reopen the same protected profile after the original coordinator relinquishes it.
     // No provider attempt was prepared before this boundary.
-    f.runtime.close();
+    await f.runtime.close();
     f.coordinator.close();
     class ServiceFixtureAdapter extends FixtureAdapter {
       startTurn(
@@ -683,7 +707,7 @@ describe("managed parallel workspace safety", () => {
       });
       expect(observed.workflows[0].stage).toBe("blocked");
     } finally {
-      service.close();
+      await service.close();
     }
   });
 });

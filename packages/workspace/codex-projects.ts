@@ -96,7 +96,7 @@ interface Link {
 export interface ProjectPeer {
   request(method: string, params: unknown, timeout?: number): Promise<any>;
   notify(method: string, params?: unknown): void;
-  close(): void;
+  close(): Promise<unknown> | void;
 }
 type PeerFactory = (
   installation: Installation,
@@ -205,11 +205,11 @@ export class CodexProjectSync {
     this.changed();
     await this.refresh();
   }
-  pause(): void {
+  async pause(): Promise<void> {
     this.generation++;
     const pref = this.preference();
     if (pref) this.store.put("preference", { ...pref, enabled: false });
-    this.activePeer?.close();
+    await this.activePeer?.close();
     this.changed();
   }
   private current(generation: number): boolean {
@@ -507,7 +507,7 @@ export class CodexProjectSync {
         }
         throw error;
       } finally {
-        peer?.close();
+        await peer?.close();
         if (this.activePeer === peer) this.activePeer = undefined;
       }
     })().finally(() => {
@@ -596,9 +596,10 @@ export class CodexProjectSync {
       await this.publish(pref, generation, verified);
     });
   }
-  close(): void {
+  async close(): Promise<void> {
     this.closed = true;
     this.generation++;
-    this.activePeer?.close();
+    await this.activePeer?.close();
+    await this.inFlight?.catch(() => {});
   }
 }

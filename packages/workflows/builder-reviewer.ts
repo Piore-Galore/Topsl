@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { bindCheckInputs } from "./check-inputs";
+import {
+  consumeCandidateCapturePlan,
+  type CandidateReviewPlan,
+} from "./candidate-reviews";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type { Installation, Message, Project, Provider } from "../domain/types";
 import type {
@@ -11,7 +15,7 @@ import type {
 } from "../domain/workflow";
 import { CoordinationRepository } from "../persistence/repositories/coordination";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
-import type { ContextServer } from "../workspace/context";
+import type { ContextServer, ContextGrant } from "../workspace/context";
 import {
   createSpecification,
   createTaskContext,
@@ -23,11 +27,20 @@ import {
   assertCandidateCurrent,
   assertMaterializedCandidate,
   captureCandidate,
+  assertCandidateCoverage,
+  assertCandidateOutputCoverage,
+  candidateHasTextLine,
   materializeCandidate,
   type CandidateSelection,
   type CandidateSnapshot,
 } from "./candidates";
 import { RevisionRepository } from "../context/revisions";
+import {
+  findingBlocks,
+  findingDecisions,
+  latestFindingDecision,
+  recordFindingDecision,
+} from "./finding-decisions";
 import {
   executeCheck,
   previewCheck,
@@ -39,6 +52,7 @@ export interface RoleAssignment {
   provider: Provider;
   installationId: string;
   model: string;
+  effort?: string;
 }
 export interface WorkflowFinding {
   id: string;
@@ -109,12 +123,20 @@ export interface WorkflowDriver {
   capabilities(
     assignment: RoleAssignment,
     installation: Installation,
+    role?: "implementer" | "reviewer",
   ): { supported: boolean; detail: string };
   dispatch(input: WorkflowDispatch): Promise<void>;
+  /** Runtime adapter installs the scoped reader over its tool channel before
+   * inference. A prompt reference or capability declaration is insufficient. */
+  installCandidateReader?(input: {
+    attempt: ExecutionAttempt;
+    grant: ContextGrant;
+    candidate: CandidateSnapshot;
+  }): Promise<void>;
   result?(attempt: ExecutionAttempt): string;
   interrupt?(attempt: ExecutionAttempt): Promise<void>;
 }
-const reviewSchema = z.object({
+export const reviewSchema = z.object({
   candidateRevision: z.string(),
   summary: z.string().max(20000),
   findings: z
@@ -130,6 +152,8 @@ const reviewSchema = z.object({
     )
     .max(100),
 });
+
+export const reviewOutputSchema = z.toJSONSchema(reviewSchema);
 
 /** One request, immutable evidence, deterministic scheduling. Provider completion alone never accepts work. */
 export class BuilderReviewerWorkflow {
@@ -423,9 +447,12 @@ export class BuilderReviewerWorkflow {
           return state.detail === detail ? state : this.save(state, { detail });
         }
         this.contextServer?.revokeAttempt(attempt.id);
-        if (state.stage === "reviewing")
+        if (state.stage === "reviewing") {
           state = await this.completeReview(state, attempt);
-        else state = await this.completeBuild(state, attempt);
+          // A finding is a proposal. Leave time for explicit adjudication before
+          // the next bounded repair dispatch (including the background observer).
+          if (state.stage === "ready-repair") return state;
+        } else state = await this.completeBuild(state, attempt);
       }
       if (["ready-build", "ready-review", "ready-repair"].includes(state.stage))
         return await this.dispatch(state);
@@ -474,13 +501,27 @@ export class BuilderReviewerWorkflow {
   private async dispatchPrepared(
     state: BuilderReviewerState,
   ): Promise<BuilderReviewerState> {
+    try {
+      assertCandidateOutputCoverage(
+        this.candidate(state.candidateId),
+        this.repository.store,
+      );
+    } catch (error) {
+      return this.save(state, {
+        detail: `Awaiting output manifest review: ${safeError(error)} No provider turn was dispatched; approve the exact captured output and explicitly advance again.`,
+      });
+    }
     // Both selected routes must be usable before spending a builder turn.
     for (const assignment of [state.builder, state.reviewer]) {
       const installation = this.repository.require<Installation>(
           "installation",
           assignment.installationId,
         ),
-        capability = this.driver.capabilities(assignment, installation);
+        capability = this.driver.capabilities(
+          assignment,
+          installation,
+          assignment === state.reviewer ? "reviewer" : "implementer",
+        );
       if (!capability.supported)
         return this.save(
           state,
@@ -516,15 +557,22 @@ export class BuilderReviewerWorkflow {
       "workflow-specification",
       state.specificationId,
     );
-    const findings = state.findings.map((id) => {
-      const f = this.repository.require<WorkflowFinding>(
-        "workflow-finding",
-        id,
-      );
-      return { id, revision: f.candidateRevision, text: stable(f) };
-    });
+    const findings = state.findings
+      .filter((id) =>
+        findingBlocks(
+          this.repository.store,
+          this.repository.require<WorkflowFinding>("workflow-finding", id),
+        ),
+      )
+      .map((id) => {
+        const f = this.repository.require<WorkflowFinding>(
+          "workflow-finding",
+          id,
+        );
+        return { id, revision: f.candidateRevision, text: stable(f) };
+      });
     // Validate the entire mandatory package before creating a task or snapshot directory.
-    createTaskContext(this.repository.store, {
+    const previewContext = createTaskContext(this.repository.store, {
       specification,
       candidate,
       taskId: state.builderTaskId,
@@ -532,6 +580,13 @@ export class BuilderReviewerWorkflow {
       findings,
       persist: false,
     });
+    if (
+      previewContext.retrievalRequired &&
+      (!this.contextServer || !this.driver.installCandidateReader)
+    )
+      throw new Error(
+        "Immutable candidate reader installation is unavailable; dispatch is blocked before a task/copy/paid turn is created.",
+      );
     let task: Task,
       workspace = this.repository.require<Workspace>(
         "workspace",
@@ -654,6 +709,11 @@ export class BuilderReviewerWorkflow {
         })),
       },
     });
+    this.repository.store.immutable("attempt-runtime-settings", {
+      id: attempt.id,
+      projectId: state.projectId,
+      effort: assignment.effort ?? null,
+    });
     revisions.bindPackage(task.id, context.id, attempt.id);
     if (review)
       this.repository.store.immutable("review-snapshot-proof", {
@@ -671,24 +731,70 @@ export class BuilderReviewerWorkflow {
       "project",
       state.projectId,
     );
-    if (this.contextServer) {
-      const grant = this.contextServer.grant(project, {
-        visibility: { messageIds: [] },
-        subject: {
-          attemptId: attempt.id,
-          agentSessionId: attempt.sessionId,
-          workflowId: state.id,
-          taskId: task.id,
-        },
-      });
-      this.repository.store.immutable("attempt-context-grant", {
-        id: attempt.id,
-        projectId: state.projectId,
-        grantId: grant.grant,
-        expiresAt: grant.expiresAt,
-        visibility: "no-project-history",
-        delivery: "not-enabled-as-provider-tool",
-      });
+    try {
+      if (this.contextServer) {
+        const grant = this.contextServer.grant(project, {
+          visibility: { messageIds: [] },
+          candidates: [
+            { candidateId: candidate.id, revision: candidate.revision },
+          ],
+          candidateVisibility: "task-inputs",
+          subject: {
+            attemptId: attempt.id,
+            agentSessionId: attempt.sessionId,
+            workflowId: state.id,
+            taskId: task.id,
+          },
+        });
+        if (context.retrievalRequired) {
+          if (!this.driver.installCandidateReader) {
+            this.contextServer.revoke(grant.grant);
+            throw new Error(
+              "This candidate requires immutable retrieval, but the selected runtime has no qualified candidate reader installer. No provider turn was dispatched.",
+            );
+          }
+          try {
+            await this.driver.installCandidateReader({
+              attempt,
+              grant,
+              candidate,
+            });
+          } catch (error) {
+            this.contextServer.revoke(grant.grant);
+            throw new Error(
+              `Candidate reader installation failed before provider dispatch: ${safeError(error)}`,
+            );
+          }
+        }
+        this.repository.store.immutable("attempt-context-grant", {
+          id: attempt.id,
+          projectId: state.projectId,
+          grantId: grant.grant,
+          expiresAt: grant.expiresAt,
+          visibility: "no-project-history",
+          delivery: context.retrievalRequired
+            ? "installed-before-dispatch"
+            : "initial-input-complete; retrieval-not-required",
+        });
+      } else if (context.retrievalRequired)
+        throw new Error(
+          "This candidate requires an installed scoped reader before provider dispatch; the context service is unavailable.",
+        );
+    } catch (error) {
+      this.contextServer?.revokeAttempt(attempt.id);
+      this.repository.transitionAttempt(
+        attempt.id,
+        attempt.revision,
+        "failed",
+        { error: safeError(error) },
+      );
+      recordContextDelivery(
+        this.repository.store,
+        context,
+        attempt.id,
+        "failed",
+      );
+      throw error;
     }
     recordContextDelivery(
       this.repository.store,
@@ -785,6 +891,249 @@ export class BuilderReviewerWorkflow {
       );
     }
   }
+  /** Native approved capture of stopped output. No model attempt is created or
+   * replayed; the resulting manifest still requires new review/check evidence. */
+  async captureReviewedOutputs(
+    id: string,
+    expectedRevision: number,
+    planId: string,
+    digest: string,
+  ): Promise<BuilderReviewerState> {
+    if (this.locks.has(id))
+      throw new Error("A workflow operation is already pending.");
+    this.locks.add(id);
+    let consumed = false;
+    try {
+      this.expect(id, expectedRevision);
+      const state = this.state(id),
+        candidate = this.candidate(state.candidateId),
+        plan = this.repository.require<CandidateReviewPlan>(
+          "candidate-review-plan",
+          planId,
+        ),
+        project = this.repository.require<Project>("project", state.projectId),
+        workspace = this.repository.require<Workspace>(
+          "workspace",
+          state.workspaceId,
+        );
+      if (
+        !project.trusted ||
+        !workspace.trustRevision ||
+        workspace.availability !== "available" ||
+        workspace.canonicalRoot !== candidate.sourceRoot
+      )
+        throw new Error(
+          "Output capture requires the same trusted available workspace.",
+        );
+      if (
+        plan.projectId !== state.projectId ||
+        plan.workflowId !== id ||
+        plan.candidateId !== candidate.id ||
+        plan.candidateRevision !== candidate.revision ||
+        plan.workflowRevision !== expectedRevision ||
+        !plan.capturePaths?.length
+      )
+        throw new Error(
+          "Capture plan does not match the current workflow/candidate revision.",
+        );
+      if (
+        ![
+          "ready-review",
+          "blocked",
+          "checking",
+          "awaiting-acceptance",
+        ].includes(state.stage) ||
+        state.activeAttemptId
+      )
+        throw new Error(
+          "Stop and reconcile the current attempt before recapturing proposed outputs.",
+        );
+      const assertInactive = () => {
+        if (
+          this.repository.store.db
+            .prepare(
+              "SELECT 1 FROM workspace_leases WHERE filesystem_identity=? AND state!='released'",
+            )
+            .get(workspace.filesystemIdentity)
+        )
+          throw new Error(
+            "Active or uncertain ownership blocks output recapture.",
+          );
+        if (
+          [
+            ...this.repository.store.iterate<{
+              workflowId: string;
+              state: string;
+            }>("check-execution", { projectId: state.projectId }),
+          ].some(
+            (run) =>
+              run.workflowId === id &&
+              [
+                "prepared",
+                "dispatching",
+                "running",
+                "stopping",
+                "uncertain",
+              ].includes(run.state),
+          )
+        )
+          throw new Error("Active or uncertain checks block output recapture.");
+      };
+      assertInactive();
+      const builderTask = this.repository.require<Task>(
+        "task",
+        state.builderTaskId,
+      );
+      if (!["submitted", "reviewing", "verifying"].includes(builderTask.state))
+        throw new Error(
+          "Recapture requires a stopped submitted builder task; restart the workflow explicitly for other task states.",
+        );
+      await assertCandidateCurrent(candidate);
+      this.expect(id, expectedRevision);
+      assertInactive();
+      this.repository.store.transaction(() =>
+        consumeCandidateCapturePlan(
+          this.repository.store,
+          state.projectId,
+          planId,
+          digest,
+        ),
+      );
+      consumed = true;
+      const captures = plan.capturePaths.map((entry) => entry.path),
+        selection = {
+          selectedPaths: candidate.git
+            ? state.selection.selectedPaths
+            : [
+                ...new Set([
+                  ...(state.selection.selectedPaths ??
+                    candidate.files.map((file) => file.path)),
+                  ...captures,
+                ]),
+              ],
+          approvedUntracked: [
+            ...new Set([
+              ...(state.selection.approvedUntracked ?? []),
+              ...captures,
+            ]),
+          ],
+        };
+      const replacement = await captureCandidate(this.repository.store, {
+        root: workspace.canonicalRoot,
+        projectId: state.projectId,
+        workflowId: id,
+        authorAttemptId: candidate.authorAttemptId,
+        ...selection,
+        baseCandidateId: state.baselineId,
+        expectedOutputHashes: Object.fromEntries(
+          plan.capturePaths.map((entry) => [entry.path, entry.hash]),
+        ),
+      });
+      this.expect(id, expectedRevision);
+      assertInactive();
+      return this.repository.store.transaction(() => {
+        this.artifact(replacement, state.builderTaskId);
+        for (const verification of this.repository
+          .all<import("../domain/workflow").Verification>("verification", {
+            projectId: state.projectId,
+          })
+          .filter(
+            (record) =>
+              record.candidateId === candidate.id && !record.invalidatedAt,
+          ))
+          this.repository.store.put("verification", {
+            ...verification,
+            invalidatedAt: now(),
+            revision: verification.revision + 1,
+            updatedAt: now(),
+          });
+        const superseded = [state.reviewerTaskId, state.checkTaskId].filter(
+          (value): value is string => !!value,
+        );
+        for (const taskId of superseded) {
+          const task = this.repository.require<Task>("task", taskId);
+          if (task.state !== "cancelled")
+            this.repository.transitionTask(
+              task.id,
+              task.revision,
+              "cancelled",
+              "Superseded by explicit output scope capture; prior evidence remains historical.",
+              task.candidateId ?? candidate.id,
+            );
+          this.repository.store.immutable("task-supersession", {
+            id: task.id,
+            projectId: state.projectId,
+            workflowId: id,
+            replacementTaskId: builderTask.id,
+            candidateId: task.candidateId ?? candidate.id,
+            reason: "Explicit native-approved scope amendment",
+            createdAt: now(),
+          });
+        }
+        this.repository.store.put("task", {
+          ...builderTask,
+          inputRefs: [...new Set([...builderTask.inputRefs, candidate.id])],
+        });
+        this.repository.transitionTask(
+          builderTask.id,
+          builderTask.revision,
+          builderTask.state,
+          "Explicit native-approved output scope amendment; the stopped builder's new manifest requires fresh review/checks.",
+          replacement.id,
+        );
+        this.repository.store.immutable("candidate-scope-amendment", {
+          id: planId,
+          projectId: state.projectId,
+          workflowId: id,
+          priorCandidateId: candidate.id,
+          candidateId: replacement.id,
+          paths: plan.capturePaths,
+          priorTaskRevision: builderTask.revision,
+          priorInputRefs: builderTask.inputRefs,
+          createdAt: now(),
+          source: "native-approved-capture",
+        });
+        this.repository.store.immutable("candidate-capture-result", {
+          id: planId,
+          projectId: state.projectId,
+          state: "complete",
+          candidateId: replacement.id,
+          createdAt: now(),
+        });
+        return this.save(
+          state,
+          {
+            selection,
+            candidateId: replacement.id,
+            reviewerTaskId: null,
+            checkTaskId: null,
+            reviewedCandidateId: null,
+            reviewArtifactId: null,
+            findings: [],
+            supersededTaskIds: [
+              ...new Set([...state.supersededTaskIds, ...superseded]),
+            ],
+            stage: "ready-review",
+            detail:
+              "Approved output paths captured with exact reviewed hashes. Review the new resulting manifest, then explicitly advance; prior review/check/acceptance evidence does not apply.",
+          },
+          "running",
+        );
+      });
+    } catch (error) {
+      if (consumed)
+        this.repository.store.immutable("candidate-capture-result", {
+          id: planId,
+          projectId: this.state(id).projectId,
+          state: "failed",
+          detail: safeError(error),
+          createdAt: now(),
+        });
+      throw error;
+    } finally {
+      this.locks.delete(id);
+    }
+  }
   private async completeBuild(
     state: BuilderReviewerState,
     attempt: ExecutionAttempt,
@@ -798,6 +1147,7 @@ export class BuilderReviewerWorkflow {
       projectId: state.projectId,
       workflowId: state.id,
       authorAttemptId: attempt.id,
+      baseCandidateId: state.baselineId,
       ...state.selection,
     });
     this.artifact(candidate, state.builderTaskId);
@@ -906,7 +1256,12 @@ export class BuilderReviewerWorkflow {
       result.candidateRevision !== candidate.revision ||
       result.findings.some(
         (f) =>
-          !candidate.files.some((file) => file.path === f.file && file.hash),
+          !candidateHasTextLine(
+            candidate,
+            f.file,
+            f.line,
+            this.repository.store,
+          ),
       )
     )
       return this.save(
@@ -915,7 +1270,7 @@ export class BuilderReviewerWorkflow {
           stage: "blocked",
           activeAttemptId: null,
           detail:
-            "Review referenced a different candidate or unknown file; no findings were promoted to acceptance evidence.",
+            "Review referenced a different candidate, unknown/binary file or nonexistent text line; no findings were promoted to acceptance evidence.",
         },
         "blocked",
       );
@@ -980,10 +1335,13 @@ export class BuilderReviewerWorkflow {
           "workflow-finding",
           id,
         );
-        this.repository.store.put("workflow-finding", {
-          ...finding,
-          disposition: "resolved",
-          resolvedByCandidateId: candidate.id,
+        recordFindingDecision(this.repository.store, finding, {
+          candidateId: candidate.id,
+          decision: "resolved",
+          rationale: `Subsequent review ${reviewId} reported no substantiated findings on candidate ${candidate.id}.`,
+          actor: "subsequent-review",
+          expectedDecisionId:
+            latestFindingDecision(this.repository.store, finding)?.id ?? null,
         });
       }
     state = this.save(state, {
@@ -993,30 +1351,118 @@ export class BuilderReviewerWorkflow {
       reviewArtifactId: reviewId,
       stage: findingIds.length ? "ready-repair" : "checking",
       detail: findingIds.length
-        ? `${findingIds.length} findings require repair; ${state.maxRepairs - state.repairRound} repair rounds remain.`
+        ? `${findingIds.length} findings await a decision. Accept a substantiated finding, reject it with a rationale, or explicitly start a bounded repair.`
         : "No substantiated findings. Required checks have not yet run.",
     });
-    if (!findingIds.length) {
-      let check = this.repository.createTask({
-        projectId: state.projectId,
-        workflowId: state.id,
-        workspaceId: state.workspaceId,
-        title: "Verify pinned candidate",
-        role: "tester",
-        dependencies: [task.id],
-        inputRefs: [candidate.id],
-        acceptanceCriteria: state.checks.map((c) => c.label),
-        requiredCapabilities: [],
-      });
-      check = this.repository.transitionTask(check.id, check.revision, "ready");
-      check = this.repository.transitionTask(
-        check.id,
-        check.revision,
-        "active",
-      );
-      state = this.save(state, { checkTaskId: check.id });
-    }
+    if (!findingIds.length) state = this.beginChecks(state, task.id);
     return state;
+  }
+  private beginChecks(
+    state: BuilderReviewerState,
+    reviewerTaskId: string,
+  ): BuilderReviewerState {
+    let check = this.repository.createTask({
+      projectId: state.projectId,
+      workflowId: state.id,
+      workspaceId: state.workspaceId,
+      title: "Verify pinned candidate",
+      role: "tester",
+      dependencies: [reviewerTaskId],
+      inputRefs: [state.candidateId],
+      acceptanceCriteria: state.checks.map((c) => c.label),
+      requiredCapabilities: [],
+    });
+    check = this.repository.transitionTask(check.id, check.revision, "ready");
+    check = this.repository.transitionTask(check.id, check.revision, "active");
+    return this.save(
+      state,
+      { checkTaskId: check.id, stage: "checking" },
+      "running",
+    );
+  }
+  decideFinding(input: {
+    id: string;
+    expectedRevision: number;
+    findingId: string;
+    candidateId: string;
+    decision: "accepted" | "rejected";
+    rationale: string;
+    expectedDecisionId: string | null;
+  }): BuilderReviewerState {
+    return this.repository.store.transaction(() => {
+      this.expect(input.id, input.expectedRevision);
+      let state = this.state(input.id);
+      if (
+        state.activeAttemptId ||
+        !["ready-repair", "blocked"].includes(state.stage) ||
+        state.candidateId !== input.candidateId ||
+        state.reviewedCandidateId !== state.candidateId ||
+        !state.reviewArtifactId ||
+        !state.reviewerTaskId ||
+        !state.findings.includes(input.findingId)
+      )
+        throw new Error(
+          "A current, completed candidate review is required to decide a finding.",
+        );
+      const finding = this.repository.require<WorkflowFinding>(
+        "workflow-finding",
+        input.findingId,
+      );
+      if (
+        finding.projectId !== state.projectId ||
+        finding.workflowId !== state.id ||
+        finding.candidateId !== state.candidateId
+      )
+        throw new Error(
+          "Finding belongs to a different workflow or candidate.",
+        );
+      recordFindingDecision(this.repository.store, finding, {
+        ...input,
+        actor: "local-user",
+      });
+      const unresolved = state.findings.some((id) =>
+        findingBlocks(
+          this.repository.store,
+          this.repository.require<WorkflowFinding>("workflow-finding", id),
+        ),
+      );
+      state = this.save(
+        state,
+        {
+          stage: unresolved ? "ready-repair" : "checking",
+          detail: unresolved
+            ? "Finding decision recorded; unresolved findings remain. A bounded repair requires the next explicit action."
+            : "All findings were adjudicated with recorded rationales. Required checks remain outstanding.",
+        },
+        "running",
+      );
+      if (!unresolved) {
+        let task = this.repository.require<Task>("task", state.reviewerTaskId!);
+        if (task.state === "changes-requested") {
+          task = this.repository.transitionTask(
+            task.id,
+            task.revision,
+            "ready",
+            "User adjudication of the recorded review.",
+          );
+          task = this.repository.transitionTask(
+            task.id,
+            task.revision,
+            "active",
+            "Local user reviewed the findings; no provider was dispatched.",
+          );
+          this.repository.transitionTask(
+            task.id,
+            task.revision,
+            "submitted",
+            "User rejected the findings with recorded rationales.",
+            state.candidateId,
+          );
+        }
+        state = this.beginChecks(state, task.id);
+      }
+      return state;
+    });
   }
   async previewChecks(
     id: string,
@@ -1105,6 +1551,11 @@ export class BuilderReviewerWorkflow {
       stable({
         workflowRevision: workflow.revision,
         state,
+        findingDecisions: findingDecisions(
+          this.repository.store,
+          state.projectId,
+          state.id,
+        ),
         checks: [...this.currentChecks(state)].map(([id, check]) => [
           id,
           check.id,
@@ -1131,6 +1582,7 @@ export class BuilderReviewerWorkflow {
         "Acceptance is stale or required checks have not passed.",
       );
     await assertCandidateCurrent(candidate);
+    assertCandidateCoverage(candidate, this.repository.store);
     const latestSpecification = new RevisionRepository(
       this.repository.store,
     ).head(state.projectId, `workflow-specification:${id}`);
@@ -1146,10 +1598,11 @@ export class BuilderReviewerWorkflow {
       workflow.specificationRevision !== specification.revision ||
       state.reviewedCandidateId !== candidate.id ||
       !state.reviewArtifactId ||
-      state.findings.some(
-        (id) =>
-          this.repository.require<WorkflowFinding>("workflow-finding", id)
-            .disposition === "open",
+      state.findings.some((id) =>
+        findingBlocks(
+          this.repository.store,
+          this.repository.require<WorkflowFinding>("workflow-finding", id),
+        ),
       )
     )
       throw new Error(

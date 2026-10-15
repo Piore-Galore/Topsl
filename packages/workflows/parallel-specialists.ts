@@ -1,3 +1,9 @@
+import {
+  capabilitySatisfies,
+  type RoleReadiness,
+  RuntimeRole,
+  RuntimeSelection,
+} from "../providers/readiness";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type {
   ContextPackage,
@@ -12,6 +18,7 @@ import type { Coordinator } from "../runtime/coordinator";
 import { RevisionRepository } from "../context/revisions";
 import {
   assertCandidateCurrent,
+  assertCandidateCoverage,
   captureCandidate,
   materializeCandidate,
   type CandidateFile,
@@ -38,6 +45,7 @@ export interface Specialist {
   provider: "codex" | "claude";
   installationId: string;
   model: string;
+  effort?: string;
   permittedOutputs: string[];
   interfaceRevisionIds: string[];
 }
@@ -92,6 +100,12 @@ export interface IntegrationPlan {
   expiresAt: string;
 }
 export interface ParallelDriver {
+  readiness?(
+    installation: Installation,
+    selection: RuntimeSelection,
+    role: RuntimeRole,
+    required: string[],
+  ): RoleReadiness;
   capabilities(installation: Installation): ProviderCapability[];
   dispatch(input: {
     attempt: ExecutionAttempt;
@@ -443,14 +457,27 @@ export class ParallelSpecialists {
           specialist.installationId,
         ),
         capabilities = this.driver.capabilities(installation);
+      const readiness = this.driver.readiness?.(
+        installation,
+        {
+          installationId: installation.id,
+          provider: specialist.provider,
+          model: specialist.model,
+          ...(specialist.effort ? { effort: specialist.effort } : {}),
+        },
+        "implementer",
+        task.requiredCapabilities,
+      );
+      if (readiness && !readiness.ready)
+        throw new Error(
+          readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" "),
+        );
       if (
         task.requiredCapabilities.some(
           (name) =>
             !capabilities.some(
               (c) =>
-                c.name === name &&
-                c.support === "enforceable" &&
-                c.evidence.level !== "none",
+                capabilitySatisfies(c, name) && c.evidence.level !== "none",
             ),
         )
       )
@@ -489,6 +516,14 @@ export class ParallelSpecialists {
         allowedOutputs: specialist.permittedOutputs,
         baseRevision: baseline.baseRevision,
         candidateRevision: baseline.revision,
+        candidateId: baseline.id,
+        candidateFileCount: baseline.files.length,
+        candidateCoverage: baseline.coverage
+          ? {
+              complete: baseline.coverage.complete,
+              manualBinaryCount: baseline.coverage.manualBinaryPaths.length,
+            }
+          : "legacy",
         interfaces: interfaces.map((r) => ({ id: r.id, content: r.content })),
         output:
           "Submit an immutable candidate. Individual checks do not establish integrated acceptance.",
@@ -530,6 +565,11 @@ export class ParallelSpecialists {
             delivery: "present",
           })),
         },
+      });
+      this.repository.store.immutable("attempt-runtime-settings", {
+        id: attempt.id,
+        projectId: state.projectId,
+        effort: specialist.effort ?? null,
       });
       this.revisions.bindPackage(task.id, context.id, attempt.id);
       const policyEvidence = capabilities.find(
@@ -636,6 +676,7 @@ export class ParallelSpecialists {
       projectId: state.projectId,
       workflowId: id,
       authorAttemptId: attempt.id,
+      baseCandidateId: baseline.id,
       selectedPaths: baseline.git
         ? undefined
         : [
@@ -855,11 +896,13 @@ export class ParallelSpecialists {
       await writeManagedSnapshot(
         { ...base, files: plan.files },
         base.sourceRoot,
+        this.coordinator.store,
       );
       const combined = await captureCandidate(this.coordinator.store, {
         root: base.sourceRoot,
         projectId: state.projectId,
         workflowId: state.id,
+        baseCandidateId: base.id,
         selectedPaths: base.git ? undefined : plan.files.map((f) => f.path),
         approvedUntracked: base.git
           ? plan.files
@@ -1048,6 +1091,7 @@ export class ParallelSpecialists {
     const current = this.expect(id, expectedRevision),
       candidate = this.snapshot(current.combinedCandidateId!),
       checks = this.currentChecks(current);
+    assertCandidateCoverage(candidate, this.coordinator.store);
     if (
       !current.checks.every(
         (c) =>

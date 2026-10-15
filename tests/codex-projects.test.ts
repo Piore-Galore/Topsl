@@ -148,8 +148,8 @@ async function setup(realProcess = false) {
   };
   const sync = connect();
   cleanups.push(async () => {
-    connections.forEach((c) => c.close());
-    catalog.close();
+    await Promise.all(connections.map((c) => c.close()));
+    await catalog.close();
     f.store.close();
     await rm(f.directory, { recursive: true, force: true });
   });
@@ -286,7 +286,7 @@ describe("Codex native project synchronization", () => {
     await f.sync.enable(f.installation.id);
     f.native.projects = [];
     await f.sync.refresh();
-    f.sync.close();
+    await f.sync.close();
     const restarted = f.connect();
     await restarted.refresh();
     expect(restarted.state().projects).toHaveLength(0);
@@ -306,7 +306,7 @@ describe("Codex native project synchronization", () => {
     expect(f.store.list<any>("codex-project-link")[0]).toMatchObject({
       nativeId: null,
     });
-    f.sync.close();
+    await f.sync.close();
     await f.connect().refresh();
     expect(f.native.projects).toHaveLength(1);
     expect(f.store.list<any>("codex-project-link")[0].nativeId).toBe(
@@ -324,7 +324,7 @@ describe("Codex native project synchronization", () => {
       "did not confirm",
     );
     f.store.put("project", { ...local, name: "Changed while disconnected" });
-    f.sync.close();
+    await f.sync.close();
     await f.connect().refresh();
     const calls = f.native.calls.filter((c) => c.method === "project/create");
     expect(calls).toHaveLength(2);
@@ -415,7 +415,7 @@ describe("Codex native project synchronization", () => {
     );
     expect(differentHome.state().enabled).toBe(false);
     await differentHome.refresh();
-    differentHome.close();
+    await differentHome.close();
     expect(f.native.calls).toHaveLength(count);
   });
   test("retargeted folder symlinks lose trust and never get exported", async () => {
@@ -470,7 +470,7 @@ describe("Codex native project synchronization", () => {
     const [first, second] = f.sync.state().projects;
     await f.sync.rename(first.id, first.revision, "Renamed");
     await f.sync.move(second.id, first.id, f.sync.state().orderRevision);
-    f.sync.close();
+    await f.sync.close();
     const restarted = f.connect();
     await restarted.refresh();
     expect(restarted.state().projects.map((p) => [p.id, p.name])).toEqual([
@@ -510,7 +510,7 @@ describe("Codex native project synchronization", () => {
         service.command({ type: "codex-project-sync-refresh" }),
       ).rejects.toThrow("Enable");
     } finally {
-      service.close();
+      await service.close();
     }
   });
 });

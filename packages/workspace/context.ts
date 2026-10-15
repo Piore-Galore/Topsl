@@ -5,9 +5,17 @@ import { randomBytes } from "node:crypto";
 import { Store, type MessageVisibility } from "../persistence/store";
 import { hash, safeEqual } from "../domain/invariants";
 import type { Message, Project } from "../domain/types";
+import {
+  candidateRequest,
+  validateCandidateAccess,
+  type CandidateAccess,
+} from "../context/candidate-reader";
 
 export interface ContextScope {
   projectId: string;
+  candidates?: CandidateAccess[];
+  candidateVisibility?: "task-inputs" | "independent";
+  grantId?: string;
   visibility?: MessageVisibility;
   subject?: {
     agentSessionId?: string;
@@ -20,6 +28,8 @@ export interface ContextGrantOptions {
   ttlMs?: number;
   visibility?: MessageVisibility;
   subject?: ContextScope["subject"];
+  candidates?: CandidateAccess[];
+  candidateVisibility?: ContextScope["candidateVisibility"];
 }
 export interface ContextGrant {
   endpoint: string;
@@ -37,6 +47,15 @@ export function contextRequest(
     typeof scope === "string" ? { projectId: scope } : scope;
   if (!request || typeof request !== "object")
     throw new Error("Invalid context request.");
+  if (
+    typeof request.method === "string" &&
+    request.method.startsWith("candidate-")
+  )
+    return candidateRequest(
+      store,
+      typeof scope === "string" ? { projectId: scope } : scope,
+      request,
+    );
   if (request.method === "status")
     return {
       projectId,
@@ -203,6 +222,17 @@ export class ContextServer {
         : structuredClone(options.visibility);
     if (visibility !== undefined)
       this.store.messagesPage({ projectId: project.id, visibility, limit: 1 });
+    const candidates =
+      options.candidates === undefined
+        ? undefined
+        : structuredClone(options.candidates);
+    if (candidates !== undefined)
+      validateCandidateAccess(this.store, {
+        projectId: project.id,
+        subject: options.subject,
+        candidates,
+        candidateVisibility: options.candidateVisibility,
+      });
     for (const [id, entry] of this.grants)
       if (entry.expiresAt <= this.clock()) this.grants.delete(id);
     const grant = randomBytes(24).toString("hex");
@@ -211,6 +241,9 @@ export class ContextServer {
     this.grants.set(grant, {
       scope: {
         projectId: project.id,
+        candidates,
+        candidateVisibility: options.candidateVisibility,
+        grantId: grant,
         visibility,
         subject: options.subject ? structuredClone(options.subject) : undefined,
       },

@@ -21,7 +21,7 @@ const fixtures: Array<
 > = [];
 afterEach(async () => {
   for (const f of fixtures.splice(0)) {
-    f.service?.close();
+    await f.service?.close();
     try {
       f.store.close();
     } catch {}
@@ -463,5 +463,5 @@ test("project relink and default workspace mapping roll back together if a write
   ).rejects.toThrow("prior project attempts");
   expect(f.store.get<any>("project", "p").realPath).toBe(f.directory);
   expect(f.repository.all("project-default-workspace")).toEqual([]);
-  catalog.close();
+  await catalog.close();
 });

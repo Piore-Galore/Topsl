@@ -54,8 +54,8 @@ async function saveDesktop(file: string, roots: string[]) {
   );
 }
 afterEach(async () => {
-  for (const sync of synchronizers.splice(0)) sync.close();
-  for (const service of services.splice(0)) service.close();
+  for (const sync of synchronizers.splice(0)) await sync.close();
+  for (const service of services.splice(0)) await service.close();
   for (const f of fixtures.splice(0)) {
     f.store.close();
     await rm(f.directory, { recursive: true, force: true });

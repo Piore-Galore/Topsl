@@ -477,6 +477,25 @@ async function dispatch(command: Command): Promise<any> {
       return null;
     trusted.digest = plan.digest;
   }
+  if (command.type === "candidate-review-apply") {
+    const plan: any = await request({
+      kind: "review",
+      recordKind: "candidate-review-plan",
+      recordId: command.id,
+    });
+    const recapture = !!plan.capturePaths?.length;
+    if (
+      !(await confirm(
+        recapture
+          ? "Capture these exact proposed output files?"
+          : "Record this candidate artifact review?",
+        `Candidate: ${plan.candidateId}\nRevision: ${plan.candidateRevision}\n\n${recapture ? `New capture paths and hashes:\n${JSON.stringify(plan.capturePaths, null, 2)}\n\nThis creates a new candidate and requires a fresh review and checks. Approval is single-use; failed capture needs a new plan.` : `Output decisions:\n${JSON.stringify(plan.outputs, null, 2)}\n\nBinaries confirmed to have PASSED your manual verification:\n${JSON.stringify(plan.binaries, null, 2)}\n\nOnly confirm binary entries whose exact listed bytes passed your actual manual check. A failed or unperformed check must not be confirmed.`}\n\nThis does not execute new scripts, waive required checks, or accept the candidate.\nApproval expires: ${plan.expiresAt}`,
+        recapture ? "Capture exact output files" : "Record reviewed artifacts",
+      ))
+    )
+      return null;
+    trusted.digest = plan.digest;
+  }
   if (
     command.type === "builder-reviewer-check-apply" ||
     command.type === "parallel-check-apply" ||
@@ -490,7 +509,7 @@ async function dispatch(command: Command): Promise<any> {
     if (
       !(await confirm(
         "Run this required check?",
-        `${plan.definition.label}\n\nExecutable: ${plan.definition.executable}\nArguments: ${JSON.stringify(plan.definition.args)}\nCandidate: ${plan.targetRevision}\nTimeout: ${plan.definition.timeoutMs} ms\n\nThe check runs against a temporary copy of the exact captured files. Dependencies are not installed or copied. This process has the user's OS permissions; network and access outside the temporary directory are not sandboxed.\n\n${plan.environment}\nApproval expires: ${plan.expiresAt}`,
+        `${plan.definition.label}\n\nExecutable: ${plan.definition.executable}\nArguments: ${JSON.stringify(plan.definition.args)}\nCandidate: ${plan.targetRevision}\nTimeout: ${plan.definition.timeoutMs} ms\nPreparation network: ${plan.environmentRecipe?.network?.preparation ?? "legacy unknown"}\n\nThe check runs against a disposable copy of the exact captured files. Preparation and checks have separate protected records. This process has the user's OS permissions; network, CPU/memory limits and access outside the temporary directory are not sandboxed. It receives a disposable home with no inherited model-provider credentials. Review exact dependency commands, lifecycle hook exceptions and writable output paths below.\n\n${JSON.stringify(plan.environmentRecipe ?? { legacyEnvironment: plan.environment }, null, 2)}\nExecution authorization: ${JSON.stringify(plan.definition.executionPolicy ?? { maximumUses: 1 })}\nApproval expires: ${plan.expiresAt}`,
         "Run check",
       ))
     )
@@ -588,7 +607,7 @@ async function dispatch(command: Command): Promise<any> {
   if (command.type === "history-delete") {
     trusted.approved = await confirm(
       "Delete this Topsl conversation?",
-      "Messages, search entries, snapshots, run records, and local usage facts will be deleted from Topsl. The original provider transcript and any exported files remain with their owners.",
+      "Conversation messages, search entries, conversation snapshots, run records, and local usage facts will be deleted from Topsl. Independently retained project candidates, verification evidence, and their protected artifacts remain with the project. Original provider transcripts and exported files remain with their owners.",
       "Delete locally",
     );
     if (!trusted.approved) return null;
@@ -787,7 +806,20 @@ app.on("before-quit", (event) => {
   if (worker) {
     event.preventDefault();
     quitting = true;
-    worker.postMessage({ kind: "close", id: ++sequence });
-    setTimeout(() => app.quit(), 300);
+    const closingWorker = worker;
+    const exited = new Promise<void>((resolve) =>
+      closingWorker.once("exit", () => resolve()),
+    );
+    void (async () => {
+      try {
+        await request({ kind: "close" }, 45_000);
+        await exited;
+        app.quit();
+      } catch (error) {
+        quitting = false;
+        closeApproved = false;
+        dialog.showErrorBox("Topsl shutdown needs attention", safeError(error));
+      }
+    })();
   }
 });

@@ -28,7 +28,7 @@ class FixtureCodex extends CodexAdapter {
 const fixtures: Array<{ service: Service; directory: string }> = [];
 afterEach(async () => {
   for (const f of fixtures.splice(0)) {
-    f.service.close();
+    await f.service?.close();
     await rm(f.directory, { recursive: true, force: true });
   }
 });
@@ -141,11 +141,14 @@ test.each([false, true])(
     );
     expect(
       f.service.store.get<any>("builder-reviewer", state.id)?.stage,
-      JSON.stringify(
-        [...f.service.store.iterate<any>("message", { projectId: "p" })]
+      JSON.stringify({
+        state: f.service.store.get<any>("builder-reviewer", state.id),
+        messages: [
+          ...f.service.store.iterate<any>("message", { projectId: "p" }),
+        ]
           .filter((m) => m.role === "assistant")
           .map((m) => ({ nativeId: m.nativeId, text: m.text })),
-      ),
+      }),
     ).toBe("checking");
     const attempts = [
       ...f.service.store.iterate<any>("attempt", { projectId: "p" }),

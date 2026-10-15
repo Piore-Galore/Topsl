@@ -14,7 +14,7 @@ import { runFile, nativeEnvironment } from ${JSON.stringify(path.resolve("packag
 const env = nativeEnvironment({ CODEX_HOME: ${JSON.stringify(directory)}, HOME: ${JSON.stringify(directory)}, USERPROFILE: ${JSON.stringify(directory)} });
 const version = await runFile(${JSON.stringify(executable)}, ['--version'], {cwd:${JSON.stringify(directory)},env});
 const peer = new RpcPeer(${JSON.stringify(executable)}, ['app-server'], ${JSON.stringify(directory)}, env);
-try { const info = await peer.initialize(); const models = await peer.request('model/list', {limit:100}); console.log(JSON.stringify({version:version.trim(), initialized:!!info, modelCount:models.data?.length ?? 0, isolatedNativeHome:true, submittedTurns:0})); } finally { peer.close(); }
+try { const info = await peer.initialize(); const models = await peer.request('model/list', {limit:100}); console.log(JSON.stringify({version:version.trim(), initialized:!!info, modelCount:models.data?.length ?? 0, isolatedNativeHome:true, submittedTurns:0})); } finally { await peer.close(); }
 `;
 await build({
   stdin: {

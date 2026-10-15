@@ -671,8 +671,9 @@ export class ProjectSync {
       }
     });
   }
-  close(): void {
+  async close(): Promise<void> {
     this.closed = true;
     this.generation++;
+    await this.inFlight?.catch(() => {});
   }
 }

@@ -74,7 +74,7 @@ describe("dimension-specific synchronization", () => {
     );
     expect(f.store.get<any>("project", "p").name).toBe("Local");
     expect(sync.fields("p")[0].state).toBe("conflict");
-    catalog.close();
+    await catalog.close();
   });
   test("state and evidence stay separate; unsuccessful observations preserve freshness history", async () => {
     const { store } = await setup(),

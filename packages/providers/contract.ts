@@ -1,5 +1,6 @@
 import type { Provider, Installation } from "../domain/types";
 import type { Evidence } from "../domain/workflow";
+import type { ProcessEvidence } from "../runtime/process-lifecycle";
 export interface ProviderConnection {
   process: { pid?: number; once(event: "exit", callback: () => void): unknown };
   onNotification: (method: string, params: unknown) => void;
@@ -9,7 +10,7 @@ export interface ProviderConnection {
   request(method: string, params: unknown, timeout?: number): Promise<unknown>;
   reply(id: string | number, value: unknown): void;
   reject(id: string | number, message: string): void;
-  close(): void;
+  close(): Promise<ProcessEvidence>;
 }
 export interface ProviderCapability {
   name: string;
@@ -25,7 +26,27 @@ export interface ProviderCapability {
   restrictions: string[];
   evidence: Evidence;
 }
+export interface ProviderModel {
+  id: string;
+  model: string;
+  name: string;
+  description: string;
+  isDefault: boolean;
+  supportedReasoningEfforts?: string[];
+  defaultReasoningEffort?: string | null;
+  inputModalities?: string[];
+  metadataSource?: "runtime" | "unknown";
+  observedAt?: string;
+}
+export interface InstructionSourceObservation {
+  path: string;
+  source: "runtime-reported";
+  observedAt: string;
+  contentHash: null;
+}
 export interface PreparedTurn {
+  requestedEffort?: string;
+  outputSchema?: Record<string, unknown>;
   prompt: string;
   cwd: string;
   requestedModel: string;
@@ -37,10 +58,14 @@ export interface PreparedTurn {
 export interface ProviderAccount {
   accountKey: string;
   profileId: string;
-  billingRoute: "native-subscription";
+  billingRoute: "native-subscription" | "api-key" | "cloud-provider";
   sanitized: { type: string; email: string | null; planType: string | null };
 }
 export interface SessionResult {
+  nativeThreadId?: string;
+  providerSessionId?: string | null;
+  instructionSources?: InstructionSourceObservation[];
+  reportedEffort?: string | null;
   nativeSessionId: string;
   reportedModel: string | null;
   evidence: Evidence;
@@ -94,13 +119,7 @@ export interface ProviderAdapter {
   capabilities(installation: Installation): ProviderCapability[];
   connect(executable: string, cwd: string): ProviderConnection;
   inspect(connection: ProviderConnection): Promise<{
-    models: Array<{
-      id: string;
-      model: string;
-      name: string;
-      description: string;
-      isDefault: boolean;
-    }>;
+    models: ProviderModel[];
     account: ProviderAccount["sanitized"] | null;
     info: { platformFamily: string | null; platformOs: string | null };
   }>;
@@ -117,7 +136,11 @@ export interface ProviderAdapter {
     connection: ProviderConnection,
     turn: PreparedTurn,
     nativeSessionId: string,
-  ): Promise<{ nativeTurnId: string | null; reportedModel: string | null }>;
+  ): Promise<{
+    nativeTurnId: string | null;
+    reportedModel: string | null;
+    reportedEffort?: string | null;
+  }>;
   interrupt(
     connection: ProviderConnection,
     sessionId: string,

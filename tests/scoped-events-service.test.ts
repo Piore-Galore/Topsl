@@ -5,7 +5,7 @@ import { fixture } from "./helpers";
 const opened: Array<{ service: Service; directory: string }> = [];
 afterEach(async () => {
   for (const item of opened.splice(0)) {
-    item.service.close();
+    await item.service.close();
     await rm(item.directory, { recursive: true, force: true });
   }
 });

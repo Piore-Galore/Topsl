@@ -31,6 +31,7 @@ import type { Project } from "../../domain/types";
 import { canonicalWorkspaceIdentity } from "../../workspace/ownership";
 import { RevisionRepository } from "../../context/revisions";
 import { SyncRepository } from "../../sync/reconciler";
+import type { AdvancedState, FrozenSubmission } from "../../workflows/advanced";
 
 export interface PrepareAttempt {
   taskId: string;
@@ -732,17 +733,94 @@ export class CoordinationRepository {
         workflowId: string;
         replacementTaskId: string;
         candidateId: string;
+        mode?: "measured-selection";
+        selectedSubmissionId?: string;
       }>("task-supersession", id);
+      const predecessor = link
+        ? this.store.get<Artifact>("artifact", link.candidateId)
+        : undefined;
+      const historicalCandidate = link
+        ? this.store.get<{
+            projectId: string;
+            workflowId: string;
+            revision: string;
+          }>("candidate", link.candidateId)
+        : undefined;
+      const replacement = link
+        ? this.store.get<Task>("task", link.replacementTaskId)
+        : undefined;
+      const selection =
+        link?.mode === "measured-selection"
+          ? this.store.get<AdvancedState>("advanced-workflow", workflow.id)
+          : undefined;
+      const selected = selection?.selectedSubmissionId
+        ? this.store.get<FrozenSubmission>(
+            "advanced-submission",
+            selection.selectedSubmissionId,
+          )
+        : undefined;
+      const measuredSelection = !!(
+        selection &&
+        selected &&
+        predecessor &&
+        replacement &&
+        selection.projectId === workflow.projectId &&
+        selection.template === workflow.template &&
+        ["awaiting-acceptance", "accepted"].includes(selection.stage) &&
+        link?.selectedSubmissionId === selected.id &&
+        selected.projectId === workflow.projectId &&
+        selected.workflowId === workflow.id &&
+        selection.participants.some(
+          (participant) =>
+            participant.submissionId === selected.id &&
+            participant.taskId === replacement.id,
+        ) &&
+        replacement.candidateId === predecessor.id &&
+        predecessor.targetRevision === targetRevision &&
+        selection.verificationIds.length > 0 &&
+        selection.verificationIds.every((verificationId) => {
+          const verification = this.store.get<Verification>(
+            "verification",
+            verificationId,
+          );
+          return (
+            verification?.projectId === workflow.projectId &&
+            verification.candidateId === predecessor.id &&
+            verification.targetRevision === targetRevision &&
+            verification.result === "passed" &&
+            !verification.invalidatedAt
+          );
+        })
+      );
+      const historicalInput = !!(
+        link &&
+        predecessor &&
+        historicalCandidate &&
+        replacement &&
+        link.mode === undefined &&
+        link.candidateId === task.candidateId &&
+        historicalCandidate.projectId === workflow.projectId &&
+        historicalCandidate.workflowId === workflow.id &&
+        historicalCandidate.revision === predecessor.targetRevision &&
+        replacement.inputRefs.includes(predecessor.id)
+      );
       if (
         task.state !== "cancelled" ||
         !link ||
         link.workflowId !== workflow.id ||
-        this.require<Artifact>("artifact", link.candidateId).targetRevision !==
-          targetRevision
+        !predecessor ||
+        predecessor.projectId !== workflow.projectId ||
+        !replacement ||
+        replacement.projectId !== workflow.projectId ||
+        replacement.workflowId !== workflow.id ||
+        !workflow.taskIds.includes(replacement.id) ||
+        (!historicalInput && !measuredSelection)
       )
         throw new Error(
           "Every required task needs current acceptance or an explicit verified replacement.",
         );
+      // Repairs preserve historical input. A measured selection instead binds
+      // the explicit selected submission and its current separate verification.
       id = link.replacementTaskId;
     }
   }

@@ -17,7 +17,10 @@ import type {
   Workflow,
   Workspace,
 } from "../packages/domain/workflow";
-import { captureCandidate } from "../packages/workflows/candidates";
+import {
+  candidateFileBytes,
+  captureCandidate,
+} from "../packages/workflows/candidates";
 import { Service } from "../apps/service/service";
 import { commandSchema, type Command } from "../packages/domain/commands";
 import { canonicalWorkspaceIdentity } from "../packages/workspace/ownership";
@@ -324,6 +327,14 @@ describe("advanced collaboration templates", () => {
     const p = s.participants[0],
       t = f.repository.require<Task>("task", p.taskId);
     expect(t.state).toBe("accepted");
+    expect(
+      f.store.get<any>("task-supersession", s.participants[1].taskId),
+    ).toMatchObject({
+      mode: "measured-selection",
+      selectedSubmissionId: submissions[0].id,
+      replacementTaskId: t.id,
+      candidateId: t.candidateId,
+    });
     expect(
       f.repository.require<Task>("task", s.participants[1].taskId).state,
     ).toBe("cancelled");
@@ -642,9 +653,12 @@ describe("advanced collaboration templates", () => {
       { criterionId: "score", value: 2, evidenceArtifactId: e.evidence.id },
     ]);
     expect(
-      f.store.get<any>("candidate", submissions[0].candidateId!).files[0]
-        .content,
-    ).toBe(Buffer.from("candidate A").toString("base64"));
+      candidateFileBytes(
+        f.store.get<any>("candidate", submissions[0].candidateId!),
+        "result.txt",
+        f.store,
+      )?.toString("utf8"),
+    ).toBe("candidate A");
     await writeFile(
       path.join(w[0].canonicalRoot, "result.txt"),
       "late outside edit",

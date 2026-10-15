@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { nativeEnvironment } from "../platform/system";
 import { safeError } from "../domain/invariants";
+import { ProcessLifecycle, type ProcessEvidence } from "./process-lifecycle";
 
 export class RpcPeer {
   readonly process: ChildProcessWithoutNullStreams;
@@ -15,6 +16,8 @@ export class RpcPeer {
     }
   >();
   private closed = false;
+  private lifecycle: ProcessLifecycle;
+  private closing?: Promise<ProcessEvidence>;
   onNotification: (method: string, params: any) => void = () => {};
   onRequest: (id: string | number, method: string, params: any) => void = (
     id,
@@ -32,13 +35,15 @@ export class RpcPeer {
       stdio: "pipe",
       shell: false,
       windowsHide: true,
+      detached: process.platform !== "win32",
     });
+    this.lifecycle = new ProcessLifecycle(this.process);
     this.process.stdout.setEncoding("utf8");
     this.process.stdout.on("data", (data: string) => {
       this.buffer += data;
       if (this.buffer.length > 8_000_000) {
         this.fail("Runtime protocol frame exceeded its limit.");
-        this.close();
+        void this.close();
         return;
       }
       let newline: number;
@@ -50,7 +55,7 @@ export class RpcPeer {
           this.receive(JSON.parse(line));
         } catch {
           this.fail("Runtime emitted invalid protocol data.");
-          this.close();
+          void this.close();
           return;
         }
       }
@@ -139,9 +144,10 @@ export class RpcPeer {
     this.pending.clear();
     this.onExit(message);
   }
-  close(): void {
+  close(): Promise<ProcessEvidence> {
+    if (this.closing) return this.closing;
     this.fail("Runtime connection closed.");
-    this.process.stdin.end();
-    this.process.kill();
+    this.closing = this.lifecycle.stop();
+    return this.closing;
   }
 }

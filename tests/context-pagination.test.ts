@@ -327,7 +327,7 @@ describe("scoped cursor history", () => {
     const f = await setup();
     f.store.message(message("legacy"));
     f.store.db.exec(
-      "DROP TRIGGER control_document_insert; DROP TRIGGER control_document_update; DROP TRIGGER control_document_delete; DROP TABLE control_changes; DROP TRIGGER document_insert; DROP TRIGGER document_update; DROP TRIGGER document_delete; DROP TABLE document_index; DROP TABLE coordinator_owners; DROP TABLE workspace_leases;",
+      "DROP TRIGGER control_document_insert; DROP TRIGGER control_document_update; DROP TRIGGER control_document_delete; DROP TABLE control_changes; DROP TRIGGER document_insert; DROP TRIGGER document_update; DROP TRIGGER document_delete; DROP TABLE document_index; DROP TABLE coordinator_owners; DROP TABLE workspace_leases; DROP INDEX protected_execution_state; DROP TABLE protected_blob_refs; DROP TABLE protected_blob_chunks; DROP TABLE protected_blob_staging; DROP TABLE protected_blobs; DELETE FROM documents WHERE kind='migration';",
     );
     for (const row of f.store.db
       .prepare(

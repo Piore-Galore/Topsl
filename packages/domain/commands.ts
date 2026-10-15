@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { workflowDraftCommands } from "./workflow-drafts";
+import { candidateReviewCommands } from "./candidate-reviews";
 import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
@@ -14,6 +16,7 @@ const roleAssignment = z.object({
   provider: z.enum(["codex", "claude"]),
   installationId: id,
   model: z.string().min(1).max(200),
+  effort: z.string().min(1).max(100).optional(),
 });
 const requiredCheck = z.object({
   id,
@@ -21,6 +24,14 @@ const requiredCheck = z.object({
   executable: z.string().min(1).max(4096),
   args: z.array(z.string().max(20000)).max(100),
   timeoutMs: z.number().int().min(100).max(300000),
+  environmentRecipeId: id.optional(),
+  executionPolicy: z
+    .object({
+      maximumUses: z.number().int().min(1).max(10),
+      allowCandidateChanges: z.boolean().optional(),
+      expiresAfterMs: z.number().int().min(100).max(3600000).optional(),
+    })
+    .optional(),
 });
 const specialist = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
@@ -29,10 +40,134 @@ const specialist = z.object({
   provider: z.enum(["codex", "claude"]),
   installationId: id,
   model: z.string().min(1).max(200),
+  effort: z.string().min(1).max(100).optional(),
   permittedOutputs: z.array(z.string().min(1).max(4096)).min(1).max(10000),
   interfaceRevisionIds: z.array(id).max(100).default([]),
 });
 export const commandSchema = z.discriminatedUnion("type", [
+  ...workflowDraftCommands,
+  ...candidateReviewCommands,
+  z.object({ type: z.literal("environment-detect"), projectId: id }),
+  z.object({
+    type: z.literal("environment-selection-create"),
+    requestId: id,
+    projectId: id,
+    label: z.string().min(1).max(1000),
+    kind: z.enum(["self-contained", "locked-node"]),
+    profile: z.enum(["user-approved-local", "isolated-required"]),
+    nodeExecutable: z.string().min(1).max(4096),
+    npmCli: z.string().min(1).max(4096).optional(),
+    preparationTimeoutMs: z.number().int().min(100).max(300000),
+    preparationNetwork: z
+      .enum([
+        "offline",
+        "package-manager-network",
+        "enforced-allowlist-required",
+      ])
+      .default("offline"),
+    writablePaths: z.array(z.string().min(1).max(4096)).max(100),
+    hooks: z
+      .array(
+        z.object({
+          packagePath: z.string().min(1).max(4096),
+          executable: z.string().min(1).max(4096),
+          args: z.array(z.string().max(20000)).max(100),
+          timeoutMs: z.number().int().min(100).max(300000),
+        }),
+      )
+      .max(100),
+    values: z.record(z.string(), z.string().max(2000)),
+  }),
+  z.object({
+    type: z.literal("check-authorization-reuse-preview"),
+    projectId: id,
+    id,
+    candidateId: id,
+    taskId: id.optional(),
+  }),
+  z.object({ type: z.literal("environment-instances-query"), projectId: id }),
+  z.object({
+    type: z.literal("environment-instance-inspect"),
+    projectId: id,
+    id,
+  }),
+  z.object({
+    type: z.literal("check-authorization-revoke"),
+    requestId: id,
+    projectId: id,
+    id,
+  }),
+  z.object({ type: z.literal("round-2-features-query"), projectId: id }),
+  z.object({
+    type: z.literal("candidate-diff-query"),
+    projectId: id,
+    workflowId: id,
+    candidateId: id,
+    baseCandidateId: id,
+    path: z.string().min(1).max(4096).optional(),
+    offset: z.number().int().nonnegative().default(0),
+    limit: z.number().int().min(1).max(50).default(20),
+  }),
+  z.object({
+    type: z.literal("workflow-readiness-query"),
+    projectId: id,
+    builder: roleAssignment
+      .extend({ effort: z.string().max(100).optional() })
+      .optional(),
+    reviewer: roleAssignment
+      .extend({ effort: z.string().max(100).optional() })
+      .optional(),
+  }),
+  z.object({
+    type: z.literal("assisted-handoff-prepare"),
+    projectId: id,
+    workflowId: id,
+    installationId: id,
+    role: z.enum(["builder", "reviewer"]),
+    exportApproved: z.literal(true),
+  }),
+  z.object({ type: z.literal("assisted-handoff-open"), projectId: id, id }),
+  z.object({
+    type: z.literal("assisted-handoff-import"),
+    projectId: id,
+    id,
+    candidateRevision: id,
+    specificationId: id,
+    report: z.string().min(1).max(1000000),
+    source: z.enum(["user-supplied", "native-import"]),
+    externalWritingStopped: z.literal(true),
+  }),
+  z.object({
+    type: z.literal("assisted-handoff-query"),
+    projectId: id,
+    workflowId: id,
+  }),
+  z.object({
+    type: z.literal("workflow-finding-decide"),
+    requestId: id,
+    projectId: id,
+    id,
+    expectedRevision: z.number().int().positive(),
+    findingId: id,
+    candidateId: id,
+    decision: z.enum(["accepted", "rejected"]),
+    rationale: z.string().trim().min(1).max(20000),
+    expectedDecisionId: id.nullable(),
+  }),
+  z.object({ type: z.literal("check-execution-inspect"), projectId: id, id }),
+  z.object({ type: z.literal("check-executions-query"), projectId: id }),
+  z.object({
+    type: z.literal("check-execution-reconcile"),
+    requestId: id,
+    projectId: id,
+    id,
+  }),
+  z.object({
+    type: z.literal("check-cleanup-retry"),
+    requestId: id,
+    projectId: id,
+    id,
+  }),
   z.object({ type: z.literal("usage-budget-query"), projectId: id }),
   z.object({
     type: z.literal("usage-budget-save"),

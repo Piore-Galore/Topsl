@@ -1,12 +1,29 @@
+import { round2Features } from "../domain/round2-features";
+import { reviewOutputSchema } from "../workflows/builder-reviewer";
 import os from "node:os";
+import {
+  RuntimeAcceptanceRegistry,
+  runtimeBindingId,
+} from "../providers/acceptance";
+import { runtimeBinding } from "../providers/runtime-binding";
+import {
+  capabilitySatisfies,
+  roleRequirements,
+  evaluateRoleReadiness,
+  type RuntimeRole,
+  type RuntimeSelection,
+} from "../providers/readiness";
 import { spawn as spawnPty, type IPty } from "node-pty";
 import { RpcPeer } from "./rpc";
+import { processGroupPresent, type ProcessEvidence } from "./process-lifecycle";
 import { Coordinator, type RuntimeExecution } from "./coordinator";
 import { CodexAdapter } from "../providers/codex";
 import type {
   PreparedTurn,
   ProviderAdapter,
   ProviderConnection,
+  ProviderAccount,
+  ProviderModel,
 } from "../providers/contract";
 import type { Workspace } from "../domain/workflow";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
@@ -35,6 +52,8 @@ import {
   nativeEnvironment,
 } from "../platform/system";
 
+const nativePeer = (executable: string, cwd: string) =>
+  new RpcPeer(executable, ["app-server"], cwd);
 type Active = {
   run: Run;
   client: ProviderConnection;
@@ -57,18 +76,26 @@ export class RuntimeManager {
   >();
   private openingWorkspaces = new Map<string, string>();
   private closing = false;
+  private closePromise?: Promise<void>;
+  private settling = new Set<Promise<void>>();
+  private operations = new Set<Promise<unknown>>();
+  private probes = new Set<ProviderConnection>();
   readonly coordinator: Coordinator;
   private ownsCoordinator: boolean;
+  readonly acceptance: RuntimeAcceptanceRegistry;
+  private fixtureMode: boolean;
   private adapters: Partial<Record<"codex" | "claude", ProviderAdapter>>;
   constructor(
     private store: Store,
     private emit: (event: ServiceEvent) => void,
     private changed: () => void,
-    private peer = (executable: string, cwd: string) =>
-      new RpcPeer(executable, ["app-server"], cwd),
+    private peer = nativePeer,
     coordinator?: Coordinator,
     adapters: Partial<Record<"codex" | "claude", ProviderAdapter>> = {},
+    isolatedFixture = false,
   ) {
+    this.acceptance = new RuntimeAcceptanceRegistry(store);
+    this.fixtureMode = isolatedFixture || peer !== nativePeer;
     this.ownsCoordinator = !coordinator;
     this.coordinator = coordinator ?? new Coordinator(store);
     this.adapters = { codex: new CodexAdapter(this.peer), ...adapters };
@@ -83,9 +110,142 @@ export class RuntimeManager {
     for (const approval of store.iterate<Approval>("approval"))
       store.remove("approval", approval.id);
   }
+  private binding(installation: Installation) {
+    const account = this.store.get<{ id: string; account: ProviderAccount }>(
+      "runtime-account-observation",
+      installation.id,
+    )?.account;
+    return account ? runtimeBinding(installation, account) : null;
+  }
+  private observeAccount(installation: Installation, account: ProviderAccount) {
+    const previous = this.binding(installation),
+      next = runtimeBinding(installation, account);
+    if (previous && runtimeBindingId(previous) !== runtimeBindingId(next))
+      this.acceptance.invalidate(
+        runtimeBindingId(previous),
+        "Account/profile or managed runtime policy changed; validate the new binding.",
+      );
+    this.store.put("runtime-account-observation", {
+      id: installation.id,
+      account: {
+        ...account,
+        sanitized: {
+          type: account.sanitized.type,
+          email: null,
+          planType: account.sanitized.planType,
+        },
+      },
+      observedAt: now(),
+    });
+  }
   capabilities(installation: Installation) {
-    const provider = installation.appId.includes("claude") ? "claude" : "codex";
-    return this.adapters[provider]?.capabilities(installation) ?? [];
+    const provider = installation.appId.includes("claude") ? "claude" : "codex",
+      declared = this.adapters[provider]?.capabilities(installation) ?? [];
+    if (this.fixtureMode) return declared;
+    const qualified = this.acceptance.resolve(
+      this.binding(installation),
+      installation,
+    ).capabilities;
+    // Adapter declarations can describe a route but never promote permission enforcement.
+    return [
+      ...qualified,
+      ...declared.filter((c) => !qualified.some((q) => q.name === c.name)),
+    ];
+  }
+  readiness(
+    installation: Installation,
+    selection: RuntimeSelection,
+    role: RuntimeRole,
+    additionalRequirements: string[] = [],
+  ) {
+    const catalog = this.store.get<{
+        models: ProviderModel[];
+        runtimeRevision: string;
+        executableIdentity: string;
+      }>("runtime-model-catalog", installation.id),
+      current =
+        catalog?.runtimeRevision === installation.revisionId &&
+        catalog.executableIdentity === installation.identity;
+    const models = current
+      ? catalog.models
+      : this.fixtureMode
+        ? [
+            {
+              id: selection.model,
+              model: selection.model,
+              name: selection.model,
+              description: "isolated fixture",
+              isDefault: false,
+            },
+          ]
+        : [];
+    const result = evaluateRoleReadiness({
+      installation,
+      selection,
+      role,
+      additionalRequirements,
+      capabilities: this.fixtureMode
+        ? [
+            ...this.capabilities(installation),
+            ...roleRequirements(role).map((name) => ({
+              name,
+              route: "structured" as const,
+              support: "enforceable" as const,
+              versions: [installation.version ?? "fixture"],
+              testedPlatforms: ["fixture"],
+              restrictions: ["Isolated dependency injected fixture only."],
+              evidence: {
+                level: "source-observation" as const,
+                source: "isolated-fixture",
+                observedAt: now(),
+                detail: "No live capability is inferred.",
+              },
+            })),
+          ]
+        : this.capabilities(installation),
+      models,
+      freshness: this.acceptance.resolve(
+        this.binding(installation),
+        installation,
+      ).freshness,
+    });
+    if (
+      !round2Features(this.store).find(
+        (f) => f.id === "qualified-structured-routes",
+      )?.enabled
+    )
+      result.blockers.push({
+        code: "route-disabled",
+        detail: "Structured execution is disabled by service rollout policy.",
+        action: "prepare-assisted-handoff",
+      });
+    if (!this.fixtureMode && selection.provider === "claude")
+      result.blockers.push({
+        code: "authentication-route-unapproved",
+        detail:
+          "The Claude product authentication route and actual runtime enforcement remain unqualified; use the explicit assisted native workflow.",
+        action: "prepare-assisted-handoff",
+      });
+    result.ready = result.blockers.length === 0;
+    return result;
+  }
+  assertReady(
+    installation: Installation,
+    selection: RuntimeSelection,
+    role: RuntimeRole,
+    additionalRequirements: string[] = [],
+  ) {
+    const readiness = this.readiness(
+      installation,
+      selection,
+      role,
+      additionalRequirements,
+    );
+    if (!readiness.ready)
+      throw new Error(
+        readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" "),
+      );
+    return readiness;
   }
   isProjectBusy(id: string): boolean {
     return (
@@ -123,6 +283,8 @@ export class RuntimeManager {
     );
   }
   private async preflight(installation: Installation): Promise<void> {
+    if (this.closing)
+      throw new Error("Runtime dispatch is stopped for shutdown.");
     if (!installation.trusted)
       throw new Error(
         "Review and trust this executable in Applications first.",
@@ -131,6 +293,8 @@ export class RuntimeManager {
       throw new Error(
         "The installed executable changed. Rediscover and reconnect before running.",
       );
+    if (this.closing)
+      throw new Error("Runtime dispatch is stopped for shutdown.");
     if (billingConflicts().length)
       throw new Error(
         `API or third-party billing environment is present (${billingConflicts().join(", ")}). This subscription-only pilot requires a clean launch environment.`,
@@ -150,13 +314,61 @@ export class RuntimeManager {
       );
     const adapter = this.adapters.codex!;
     const client = adapter.connect(installation.path, os.homedir());
+    this.probes.add(client);
     try {
-      return await adapter.inspect(client);
+      const result = await adapter.inspect(client);
+      this.store.put("runtime-model-catalog", {
+        id: installation.id,
+        runtimeRevision: installation.revisionId,
+        executableIdentity: installation.identity,
+        models: result.models,
+        observedAt: now(),
+      });
+      // Binding observation is advisory here: an unsupported account route is
+      // reported by the run preflight, while inspection still returns metadata.
+      if (result.account)
+        try {
+          this.observeAccount(
+            installation,
+            await adapter.account(client, installation),
+          );
+        } catch {}
+      return result;
     } finally {
-      client.close();
+      await client.close();
+      this.probes.delete(client);
     }
   }
-  async start(
+  start(
+    installation: Installation,
+    conversation: Conversation,
+    project: Project,
+    prompt: string,
+    model: string,
+    mode: "review" | "edit",
+    execution?: RuntimeExecution,
+  ): Promise<Run> {
+    if (this.closing)
+      return Promise.reject(
+        new Error("Runtime dispatch is stopped for shutdown."),
+      );
+    const operation = this.startOwned(
+      installation,
+      conversation,
+      project,
+      prompt,
+      model,
+      mode,
+      execution,
+    );
+    this.operations.add(operation);
+    void operation.then(
+      () => this.operations.delete(operation),
+      () => this.operations.delete(operation),
+    );
+    return operation;
+  }
+  private async startOwned(
     installation: Installation,
     conversation: Conversation,
     project: Project,
@@ -179,6 +391,44 @@ export class RuntimeManager {
       )
         throw new Error(
           "Connect a compatible Codex runtime first. Claude runs through its native terminal.",
+        );
+      const requestedSettings = execution
+        ? this.store.get<{ effort: string | null }>(
+            "attempt-runtime-settings",
+            execution.attemptId,
+          )
+        : null;
+      // Role readiness qualifies coordinated workflow roles. A direct structured
+      // chat keeps the pilot's trusted-executable/compatibility preflight and the
+      // runtime's own sandbox selection; it is not a coordinated role dispatch.
+      const coordinated = !!execution && !this.fixtureMode;
+      if (
+        mode === "edit" &&
+        [
+          ...this.store.iterate<{
+            state: string;
+            externalWritingStopped: boolean;
+          }>("assisted-handoff-state", { projectId: project.id }),
+        ].some(
+          (h) =>
+            h.state === "externally-controlled" && !h.externalWritingStopped,
+        )
+      )
+        throw new Error(
+          "An assisted native step still controls this workspace. Confirm external writing stopped before starting a managed writer.",
+        );
+      if (coordinated)
+        this.assertReady(
+          installation,
+          {
+            installationId: installation.id,
+            provider,
+            model,
+            ...(requestedSettings?.effort
+              ? { effort: requestedSettings.effort }
+              : {}),
+          },
+          mode === "review" ? "reviewer" : "implementer",
         );
       const run: Run = {
         id: uid(),
@@ -222,14 +472,12 @@ export class RuntimeManager {
           "task",
           preparedAttempt.taskId,
         );
-        const capabilities = adapter.capabilities(installation);
+        const capabilities = this.capabilities(installation);
         if (
           task.requiredCapabilities.some(
             (name: string) =>
-              !capabilities.some(
-                (capability) =>
-                  capability.name === name &&
-                  capability.support === "enforceable",
+              !capabilities.some((capability) =>
+                capabilitySatisfies(capability, name),
               ),
           )
         )
@@ -281,9 +529,6 @@ export class RuntimeManager {
       run.nativePid = client.process.pid;
       if (run.nativePid)
         this.coordinator.attachExecution(run.id, run.nativePid);
-      client.process.once("exit", () => {
-        if (!this.closing) this.coordinator.confirmStopped(run.id);
-      });
       this.store.save("run", run);
       const active: Active = {
         run,
@@ -310,6 +555,21 @@ export class RuntimeManager {
       try {
         await client.initialize();
         const account = await adapter.account(client, installation);
+        if (!this.fixtureMode) this.observeAccount(installation, account);
+        if (coordinated) {
+          this.assertReady(
+            installation,
+            {
+              installationId: installation.id,
+              provider,
+              model,
+              ...(requestedSettings?.effort
+                ? { effort: requestedSettings.effort }
+                : {}),
+            },
+            mode === "review" ? "reviewer" : "implementer",
+          );
+        }
         const priorSession = this.coordinator.repository.require<any>(
           "agent-session",
           attempt.sessionId,
@@ -345,6 +605,15 @@ export class RuntimeManager {
           prompt,
           cwd: project.realPath,
           requestedModel: model,
+          ...(requestedSettings?.effort
+            ? { requestedEffort: requestedSettings.effort }
+            : {}),
+          ...(mode === "review" &&
+          this.capabilities(installation).some((c) =>
+            capabilitySatisfies(c, "review-output-schema"),
+          )
+            ? { outputSchema: reviewOutputSchema }
+            : {}),
           mode,
           contextPackageId: attempt.contextPackageId,
           attemptId: attempt.id,
@@ -356,6 +625,38 @@ export class RuntimeManager {
           run.nativeSessionId,
         );
         run.nativeSessionId = thread.nativeSessionId;
+        this.store.immutable("runtime-turn-metadata", {
+          id: attempt.id,
+          projectId: project.id,
+          attemptId: attempt.id,
+          requested: { model, effort: prepared.requestedEffort ?? null },
+          reported: {
+            model: thread.reportedModel,
+            effort: thread.reportedEffort ?? null,
+          },
+          nativeThreadId: thread.nativeThreadId ?? thread.nativeSessionId,
+          providerSessionId: thread.providerSessionId ?? null,
+          instructionSources: thread.instructionSources ?? [],
+          observedAt: now(),
+          source: "runtime-reported",
+        });
+        if (
+          coordinated &&
+          thread.reportedModel &&
+          thread.reportedModel !== model
+        )
+          throw new Error(
+            "The runtime reported a different model. The requested/effective observation was retained; explicitly select a supported setting before a new attempt.",
+          );
+        if (
+          coordinated &&
+          prepared.requestedEffort &&
+          thread.reportedEffort &&
+          thread.reportedEffort !== prepared.requestedEffort
+        )
+          throw new Error(
+            "The runtime reported a different reasoning effort; no silent downgrade is permitted.",
+          );
         conversation.nativeSessions[provider] = thread.nativeSessionId;
         this.coordinator.bindRunSession(
           run,
@@ -373,6 +674,28 @@ export class RuntimeManager {
           prepared,
           run.nativeSessionId,
         );
+        this.store.immutable("runtime-turn-result-metadata", {
+          id: attempt.id,
+          attemptId: attempt.id,
+          projectId: project.id,
+          requested: { model, effort: prepared.requestedEffort ?? null },
+          reported: {
+            model: turn.reportedModel,
+            effort: turn.reportedEffort ?? null,
+          },
+          observedAt: now(),
+          source: "runtime-reported",
+        });
+        if (
+          coordinated &&
+          ((turn.reportedModel && turn.reportedModel !== model) ||
+            (prepared.requestedEffort &&
+              turn.reportedEffort &&
+              turn.reportedEffort !== prepared.requestedEffort))
+        )
+          throw new Error(
+            "Runtime effective settings differ from the explicit request. Reconcile this attempt before any further dispatch.",
+          );
         run.nativeTurnId = turn.nativeTurnId ?? run.nativeTurnId;
         this.coordinator.acknowledge(
           run,
@@ -560,9 +883,53 @@ export class RuntimeManager {
       this.store.remove("approval", approval.id);
     this.store.save("run", active.run);
     this.coordinator.syncRun(active.run);
-    this.active.delete(active.run.id);
-    active.client.close();
+    const settling = this.settle(active);
+    this.settling.add(settling);
+    void settling.then(
+      () => this.settling.delete(settling),
+      () => this.settling.delete(settling),
+    );
     this.changed();
+  }
+  private async settle(active: Active): Promise<void> {
+    try {
+      const lifecycle = await active.client.close();
+      const attempt = this.coordinator.attemptForRun(active.run.id);
+      // The evidence describes the owned route, never a claim that arbitrary
+      // detached/native background execution is contained by a process group.
+      this.store.put("task-process-lifecycle", {
+        id: active.run.id,
+        projectId: active.run.projectId,
+        attemptId: attempt?.id ?? null,
+        nativeSessionId: active.run.nativeSessionId,
+        nativeTurnId: active.run.nativeTurnId,
+        ...lifecycle,
+      });
+      if (lifecycle.state === "quiescent")
+        this.coordinator.confirmStopped(active.run.id, lifecycle.detail);
+      else {
+        active.run.status = "uncertain";
+        active.run.error = lifecycle.detail;
+        this.store.save("run", active.run);
+        this.coordinator.syncRun(active.run);
+        if (attempt)
+          this.coordinator.ownership.markUncertain(
+            attempt.id,
+            lifecycle.detail,
+          );
+      }
+    } catch (error) {
+      active.run.status = "uncertain";
+      active.run.error = safeError(error);
+      this.store.save("run", active.run);
+      this.coordinator.syncRun(active.run);
+      const attempt = this.coordinator.attemptForRun(active.run.id);
+      if (attempt)
+        this.coordinator.ownership.markUncertain(attempt.id, safeError(error));
+    } finally {
+      this.active.delete(active.run.id);
+      this.changed();
+    }
   }
   async interrupt(id: string): Promise<void> {
     const active = this.active.get(id);
@@ -709,6 +1076,8 @@ export class RuntimeManager {
     t.process.write(data);
   }
   private reserveWorkspace(project: Project): string {
+    if (this.closing)
+      throw new Error("Runtime dispatch is stopped for shutdown.");
     const identity = canonicalWorkspaceIdentity(project.realPath),
       key = identity.filesystemIdentity;
     const lease = this.coordinator.ownership.get(key);
@@ -746,6 +1115,14 @@ export class RuntimeManager {
     const run = this.store.get<Run>("run", id);
     if (!run || run.status !== "uncertain")
       throw new Error("No uncertain run is selected.");
+    const lifecycle = this.store.get<ProcessEvidence>(
+      "task-process-lifecycle",
+      id,
+    );
+    if (lifecycle?.groupId && processGroupPresent(lifecycle.groupId) !== false)
+      throw new Error(
+        "Owned descendant group is still present or unknown. Reconciliation cannot release this workspace.",
+      );
     if (run.nativePid) {
       try {
         process.kill(run.nativePid, 0);
@@ -781,7 +1158,8 @@ export class RuntimeManager {
     if (!t) return;
     t.process.kill();
   }
-  close(): void {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closing = true;
     for (const active of [...this.active.values()])
       this.finish(
@@ -789,6 +1167,7 @@ export class RuntimeManager {
         "uncertain",
         "Topsl closed while the native run was active. Inspect before continuing.",
       );
+    const terminalStops: Promise<void>[] = [];
     for (const t of this.terminals.values()) {
       this.store.save("run", {
         ...t.run,
@@ -801,8 +1180,30 @@ export class RuntimeManager {
         status: "uncertain",
         error: "Topsl closed during a native session.",
       });
-      t.process.kill();
+      terminalStops.push(
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 6_000);
+          t.process.onExit(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+          t.process.kill();
+        }),
+      );
     }
-    if (this.ownsCoordinator) this.coordinator.close();
+    this.closePromise = (async () => {
+      await Promise.allSettled(
+        [...this.probes].map((client) => client.close()),
+      );
+      await Promise.allSettled([...this.settling]);
+      await Promise.allSettled([...this.operations]);
+      // An opening operation may have acquired its child just before shutdown.
+      await Promise.allSettled([...this.settling]);
+      await Promise.allSettled(terminalStops);
+      // Native PTY has no validated descendant containment. Its uncertainty and
+      // lease persist across shutdown even after the immediate PTY exits.
+      if (this.ownsCoordinator) this.coordinator.close();
+    })();
+    return this.closePromise;
   }
 }
