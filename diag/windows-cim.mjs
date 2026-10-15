@@ -17,13 +17,19 @@ const nullSafe =
 const nullDates =
   "Get-CimInstance Win32_Process | Where-Object { -not $_.CreationDate } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.Name }";
 
-function run(label, script, timeout) {
+// Same keys and PATH handling as nativeEnvironment() in packages/platform/system.ts.
+const nativeKeys = ["PATH","HOME","USERPROFILE","USER","LOGNAME","SHELL","TMPDIR","TEMP","TMP","SystemRoot","SYSTEMROOT","WINDIR","COMSPEC","PATHEXT","APPDATA","LOCALAPPDATA","XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_RUNTIME_DIR","LANG","LC_ALL","TERM","DISPLAY","WAYLAND_DISPLAY","SSH_AUTH_SOCK","CODEX_HOME","CLAUDE_CONFIG_DIR","HTTPS_PROXY","HTTP_PROXY","NO_PROXY"];
+const native = {};
+for (const key of nativeKeys) if (process.env[key]) native[key] = process.env[key];
+console.log("native env keys:", Object.keys(native).join(","));
+
+function run(label, script, timeout, env) {
   return new Promise((resolve) => {
     const started = Date.now();
     execFile(
       executable,
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-      { windowsHide: true, shell: false, timeout, maxBuffer: 20_000_000 },
+      { windowsHide: true, shell: false, timeout, maxBuffer: 20_000_000, ...(env ? { env } : {}) },
       (error, stdout, stderr) => {
         const ms = Date.now() - started;
         let rows = "unparsed";
@@ -51,7 +57,8 @@ function run(label, script, timeout) {
   });
 }
 
-for (let i = 1; i <= 3; i++) await run(`original#${i}`, original, 60_000);
-await run("original-4s", original, 4_000);
-for (let i = 1; i <= 2; i++) await run(`null-safe#${i}`, nullSafe, 60_000);
-await run("null-creation-dates", nullDates, 60_000);
+for (let i = 1; i <= 3; i++) await run(`native-env#${i}`, original, 60_000, native);
+for (let i = 1; i <= 3; i++) await run(`full-env#${i}`, original, 60_000);
+await Promise.all([1, 2, 3, 4].map((i) => run(`native-env-parallel#${i}`, original, 60_000, native)));
+await Promise.all([1, 2, 3, 4].map((i) => run(`full-env-parallel#${i}`, original, 60_000)));
+for (let i = 1; i <= 2; i++) await run(`native-env-after#${i}`, original, 60_000, native);
