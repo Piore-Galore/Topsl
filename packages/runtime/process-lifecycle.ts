@@ -89,6 +89,30 @@ export async function windowsDescendants(
   });
 }
 
+/** Windows has no process-group signal. taskkill /T follows the live parent
+ * chain, so it must run while the root is still alive; like Node's own
+ * ChildProcess.kill on Windows it is forceful. Failure is reported, not thrown. */
+export function windowsTreeKill(pid: number): Promise<boolean> {
+  const executable = path.join(
+    process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows",
+    "System32",
+    "taskkill.exe",
+  );
+  return new Promise((resolve) => {
+    execFile(
+      executable,
+      ["/PID", String(pid), "/T", "/F"],
+      {
+        windowsHide: true,
+        shell: false,
+        timeout: 4_000,
+        env: nativeEnvironment(),
+      },
+      (error) => resolve(!error),
+    );
+  });
+}
+
 /** Observation only: a POSIX process group is not a sandbox. Processes which
  * deliberately escape it require a separately qualified containment route. */
 export function processGroupPresent(groupId: number): boolean | null {
@@ -154,10 +178,14 @@ export class ProcessLifecycle {
     this.evidence = { ...this.evidence, ...patch, observedAt: now() };
     this.observe(this.snapshot());
   }
-  private signal(signal: NodeJS.Signals): void {
+  private async signal(signal: NodeJS.Signals): Promise<void> {
     try {
       if (this.grouped && this.child.pid) process.kill(-this.child.pid, signal);
-      else this.child.kill(signal);
+      else {
+        if (process.platform === "win32" && this.child.pid && !this.exited)
+          await windowsTreeKill(this.child.pid);
+        this.child.kill(signal);
+      }
     } catch (error: any) {
       if (error.code !== "ESRCH")
         this.update({
@@ -184,7 +212,7 @@ export class ProcessLifecycle {
     const settleStarted = Date.now();
     if (stop) {
       this.update({ state: "stopping", stopRequestedAt: now() });
-      this.signal("SIGTERM");
+      await this.signal("SIGTERM");
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const complete = await Promise.race([
@@ -195,7 +223,7 @@ export class ProcessLifecycle {
     ]);
     clearTimeout(timer);
     if (!complete && stop) {
-      this.signal("SIGKILL");
+      await this.signal("SIGKILL");
       await Promise.race([
         this.closed,
         new Promise<void>((resolve) => {
@@ -219,14 +247,23 @@ export class ProcessLifecycle {
       };
       await settled(graceUntil);
       if (stop && processGroupPresent(pid) === true) {
-        this.signal("SIGKILL");
+        await this.signal("SIGKILL");
         await settled(Date.now() + 1_000);
       }
     }
-    const descendants =
+    let descendants =
       !this.grouped && process.platform === "win32" && this.child.pid
         ? await windowsDescendants(this.child.pid, this.evidence.startedAt)
         : null;
+    // Descendants re-parented before the tree kill (or started after it) are
+    // still matched by CIM ancestry; terminate them explicitly on stop.
+    if (stop && descendants?.length && this.child.pid) {
+      for (const pid of descendants) await windowsTreeKill(pid);
+      descendants = await windowsDescendants(
+        this.child.pid,
+        this.evidence.startedAt,
+      );
+    }
     const group =
       this.grouped && this.child.pid
         ? processGroupPresent(this.child.pid)

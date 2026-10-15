@@ -165,9 +165,16 @@ const supported = (selection: EnvironmentSelection) => {
       "Required OS filesystem/network isolation is unavailable on this host. Select disclosed user-approved local verification or use an externally validated isolated route.",
     );
 };
+const selectionContent = ({
+  version: _,
+  id: __,
+  createdAt: ___,
+  ...content
+}: EnvironmentSelection) => stable(content);
 export function environmentSelection(
   store: Store,
   value: Omit<EnvironmentSelection, "version" | "id" | "createdAt">,
+  options: { reuseIdentical?: boolean } = {},
 ): EnvironmentSelection {
   assertRound2Feature(store, "prepared-verification");
   if (
@@ -254,6 +261,16 @@ export function environmentSelection(
     id: uid(),
     createdAt: now(),
   };
+  // Repeated detection must not grow the store: reuse an identical immutable
+  // selection (same project, toolchain, network and policy) when asked to.
+  if (options.reuseIdentical) {
+    const content = selectionContent(selection);
+    for (const existing of store.iterate<EnvironmentSelection>(
+      "environment-selection",
+      { projectId: selection.projectId },
+    ))
+      if (selectionContent(existing) === content) return existing;
+  }
   store.immutable("environment-selection", selection);
   return selection;
 }
@@ -328,11 +345,15 @@ export async function detectEnvironments(store: Store, project: Project) {
     }
   > = [];
   suggestions.push({
-    ...environmentSelection(store, {
-      ...base,
-      kind: "self-contained",
-      label: "Self-contained command",
-    }),
+    ...environmentSelection(
+      store,
+      {
+        ...base,
+        kind: "self-contained",
+        label: "Self-contained command",
+      },
+      { reuseIdentical: true },
+    ),
     scripts,
     detail:
       "No dependency preparation. Exact native command runs in a disposable copy with local OS privileges.",
@@ -346,16 +367,20 @@ export async function detectEnvironments(store: Store, project: Project) {
         "package-manager-network",
       ] as const)
         suggestions.push({
-          ...environmentSelection(store, {
-            ...base,
-            kind: "locked-node",
-            label:
-              preparationNetwork === "offline"
-                ? "Locked JavaScript / TypeScript · offline"
-                : "Locked JavaScript / TypeScript · registry preparation",
-            npmCli,
-            preparationNetwork,
-          }),
+          ...environmentSelection(
+            store,
+            {
+              ...base,
+              kind: "locked-node",
+              label:
+                preparationNetwork === "offline"
+                  ? "Locked JavaScript / TypeScript · offline"
+                  : "Locked JavaScript / TypeScript · registry preparation",
+              npmCli,
+              preparationNetwork,
+            },
+            { reuseIdentical: true },
+          ),
           scripts,
           detail:
             preparationNetwork === "offline"

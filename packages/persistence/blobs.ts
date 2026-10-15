@@ -161,21 +161,31 @@ export class ProtectedBlobs {
 export function recoverAbandonedCaptures(store: Store, limit = 100): number {
   if (!Number.isInteger(limit) || limit < 1 || limit > 500)
     throw new Error("Invalid capture recovery batch.");
-  let recovered = 0;
-  const captures = store.db
-    .prepare(
-      "SELECT body FROM documents WHERE kind='candidate-capture' AND json_extract(body,'$.state') IN ('capturing','failed') ORDER BY rowid LIMIT ?",
-    )
-    .all(limit)
-    .map(
-      (row) =>
-        JSON.parse(row.body) as {
+  let recovered = 0,
+    scanned = 0,
+    afterRowid = 0;
+  // Page by rowid so live or foreign-host captures at the head of the table
+  // cannot starve dead ones behind them. The scan itself stays bounded.
+  const page = store.db.prepare(
+    "SELECT rowid,body FROM documents WHERE kind='candidate-capture' AND json_extract(body,'$.state') IN ('capturing','failed') AND rowid>? ORDER BY rowid LIMIT ?",
+  );
+  const captures = function* () {
+    while (scanned < limit * 50) {
+      const rows = page.all(afterRowid, limit);
+      if (!rows.length) return;
+      for (const row of rows) {
+        afterRowid = row.rowid;
+        scanned++;
+        yield JSON.parse(row.body) as {
           id: string;
           state: string;
           owner?: typeof captureOwner;
-        },
-    );
-  for (const capture of captures) {
+        };
+      }
+    }
+  };
+  for (const capture of captures()) {
+    if (recovered >= limit) break;
     if (capture.state === "complete" || store.get("candidate", capture.id))
       continue;
     let dead = capture.state === "failed";
@@ -193,9 +203,9 @@ export function recoverAbandonedCaptures(store: Store, limit = 100): number {
     store.transaction(() => {
       store.db
         .prepare(
-          "DELETE FROM protected_blob_staging WHERE rowid IN (SELECT rowid FROM protected_blob_staging WHERE capture_id LIKE ? LIMIT 500)",
+          "DELETE FROM protected_blob_staging WHERE rowid IN (SELECT rowid FROM protected_blob_staging WHERE substr(capture_id,1,?)=? LIMIT 500)",
         )
-        .run(capture.id + ":%");
+        .run(capture.id.length + 1, capture.id + ":");
       store.db
         .prepare(
           "DELETE FROM protected_blob_refs WHERE rowid IN (SELECT rowid FROM protected_blob_refs WHERE candidate_id=? LIMIT 500)",
@@ -203,9 +213,9 @@ export function recoverAbandonedCaptures(store: Store, limit = 100): number {
         .run(capture.id);
       const remaining = store.db
         .prepare(
-          "SELECT (SELECT COUNT(*) FROM protected_blob_staging WHERE capture_id LIKE ?)+(SELECT COUNT(*) FROM protected_blob_refs WHERE candidate_id=?) AS count",
+          "SELECT (SELECT COUNT(*) FROM protected_blob_staging WHERE substr(capture_id,1,?)=?)+(SELECT COUNT(*) FROM protected_blob_refs WHERE candidate_id=?) AS count",
         )
-        .get(capture.id + ":%", capture.id).count;
+        .get(capture.id.length + 1, capture.id + ":", capture.id).count;
       store.put("candidate-capture", {
         ...capture,
         state: remaining ? "failed" : "recovered",

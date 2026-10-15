@@ -22,6 +22,7 @@ import {
   type CheckDefinition,
 } from "../packages/workflows/verification";
 import {
+  detectEnvironments,
   environmentSelection,
   PreparedEnvironments,
   type EnvironmentHook,
@@ -855,4 +856,42 @@ test("R2-AT-30: equal candidate content in a different workspace does not share 
   await expect(
     reuseCheckAuthorization(f.store, f.plan.authorizationId!, candidate.id),
   ).rejects.toThrow("outside this execution authorization");
+});
+test("repeated environment detection reuses identical selections instead of growing the store", async () => {
+  const f = await fixture(),
+    source = path.join(f.directory, "detect");
+  await mkdir(source);
+  await writeFile(
+    path.join(source, "package.json"),
+    JSON.stringify({ name: "detect", scripts: { check: "node check.cjs" } }),
+  );
+  const project = {
+    id: "p",
+    name: "Detection fixture",
+    path: source,
+    realPath: source,
+    trusted: true,
+    createdAt: now(),
+  };
+  f.store.put("project", project);
+  const first = await detectEnvironments(f.store, project),
+    second = await detectEnvironments(f.store, project);
+  expect(second.suggestions.map((s) => s.id)).toEqual(
+    first.suggestions.map((s) => s.id),
+  );
+  expect(f.store.list("environment-selection")).toHaveLength(
+    first.suggestions.length,
+  );
+  const explicit = environmentSelection(f.store, {
+    projectId: "p",
+    label: "Self-contained command",
+    kind: "self-contained",
+    profile: "user-approved-local",
+    nodeExecutable: first.suggestions[0].nodeExecutable,
+    preparationTimeoutMs: 120000,
+    writablePaths: [],
+    hooks: [],
+    values: {},
+  });
+  expect(explicit.id).not.toBe(first.suggestions[0].id);
 });
