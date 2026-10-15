@@ -147,3 +147,16 @@ The Windows query change also affects users. `affectedProcesses` decides whether
 - **Second run** (`74ddbf0`): Compile Topsl passed on Linux x64, macOS Apple silicon and macOS Intel, and lifecycle stress passed all 20 iterations on the same three runners, which covers the `EPERM` change. R2-AT-03 passed on Windows. That Windows runner was slower, and five budget-bound tests failed there, as described in the table. Its lifecycle iterations took 164, 199 and 191 s; the third failed on the protected-log check.
 - **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `tsc --noEmit` passed, and `node scripts/test.mjs tests/durable-executions.test.ts tests/runtime.test.ts` passed 24 of 24. Limited to one CPU with `taskset -c 0`, the `advanced-workflows`, `builder-reviewer`, `durable-executions` and `parallel-workspaces` test files failed 8 of 44 tests with the old budgets, with the same timeouts as the hosted runners, and passed 44 of 44 with the new ones in 309 s. With the final budgets, the nine test files whose budgets changed passed 86 tests with 1 skipped: seven through `node scripts/test.mjs`, and `environments` and `round2-acceptance` through `npm test --`. Those two need npm to start them, because they find npm's CLI next to the Node that npm reports in `npm_node_execpath`; started directly under Electron they fail with `ENOENT` for `npm-cli.js`. `npm run test:release` passed 16 tests with 1 skipped after the workflow time-limit change.
 - **Remote evidence:** the pull request's Compile Topsl and Round 2 lifecycle stress checks on the four hosted runners. The container cannot run the Windows or macOS code paths.
+
+## Follow-up — v0.1.2 release run (15 October 2026)
+
+The tag-triggered [release run](https://github.com/Piore-Galore/Topsl/actions/runs/38780563793) for `0768a59` failed on Windows x64 in two tests on its first attempt, so its publish job was skipped. [Compile Topsl on `main`](https://github.com/Piore-Galore/Topsl/actions/runs/38780147207) ran the same commit on another Windows runner, and both tests passed there. The release runner's test step took 1039 s, against 903 s on `main`'s.
+
+| Test | Release runner | `main`'s Windows runner | Change |
+|---|---|---|---|
+| R2-AT-37/38, `reverse=true` | Exceeded the 120 s test limit at 170 s. Removing its folder afterwards failed with `EBUSY` because its check was still running | 65 s | The test allows 300 s |
+| R2-AT-26, reviewed package hook | The check ended `error` instead of `passed`; the whole test took 100 s. The assertion did not say why | 54 s | The assertion reports the execution's failure phase, environment failure kind and error. The cause on that runner is not known |
+
+### Validation
+
+- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed. `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` passed 1 test, and `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2. With the hook changed to exit with status 3, the hook test failed with `environment phase, environment preparation: Environment preparation command failed; candidate tests were not executed.`

@@ -529,7 +529,9 @@ test.each([false, true])(
       throw error;
     }
   },
-  120_000,
+  // The v0.1.2 release's Windows runner took 170 s for one direction, which
+  // took 65 s on another Windows runner for the same commit.
+  300_000,
 );
 
 test("R2-AT-39 local real check: cleanup fault preserves result; storage uncertainty and reopened vault never replay", async () => {
