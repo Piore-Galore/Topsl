@@ -158,6 +158,8 @@ The tag-triggered [release run](https://github.com/Piore-Galore/Topsl/actions/ru
 | Parallel workspaces: fanout capability gate and third task wait | Lifecycle stress for pull request #2: exceeded the 120 s test limit, then `EBUSY` while removing its workspace | 34–38 s (`main` and the release run) | The same 300 s limit |
 | R2-AT-26, reviewed package hook | Release: the check ended `error` instead of `passed`; the whole test took 100 s. The assertion did not say why | 54 s (`main`) | The assertion reports the execution's failure phase, environment failure kind and error. The cause on that runner is not known |
 
+Re-running only the failed Windows job on the same tag passed on the second attempt, with a test step of 794 s. The publish job then published the [v0.1.2 prerelease](https://github.com/Piore-Galore/Topsl/releases/tag/v0.1.2) with its four packages and their checksum files. The other jobs kept their first-attempt results, so the Linux and Mac packages come from the first attempt and the Windows package from the second, all built from `0768a59`.
+
 ### Validation
 
 - **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed. `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` passed 1 test, `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2, and `npm test -- tests/parallel-workspaces.test.ts -t "fanout capability gate"` passed 1. With the hook changed to exit with status 3, the hook test failed with `environment phase, environment preparation: Environment preparation command failed; candidate tests were not executed.`
