@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -245,7 +246,9 @@ export async function createDemoFixture(options = {}) {
   );
   const git =
     options.gitExecutable ??
-    (process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git");
+    (process.platform === "darwin" && existsSync("/opt/homebrew/bin/git")
+      ? "/opt/homebrew/bin/git"
+      : "git");
   await fixtureCommand(git, ["init", "--quiet"], canonical);
   await fixtureCommand(git, ["add", "--", ...files.keys()], canonical);
   await fixtureCommand(

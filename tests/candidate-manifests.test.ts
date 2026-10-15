@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { linkSync, renameSync, symlinkSync } from "node:fs";
-import { fixture } from "./helpers";
+import { fixture, gitExecutable } from "./helpers";
 import { hash, now, stable } from "../packages/domain/invariants";
 import { runFile } from "../packages/platform/system";
 import { Store } from "../packages/persistence/store";
@@ -159,7 +159,7 @@ test("R2-AT-17/18 large source and unchanged binary remain complete while initia
 });
 test("R2-AT-19/23 tracked build/release source, rename and staged deletion remain visible; new output review is explicit", async () => {
   const f = await setup(),
-    git = process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git";
+    git = gitExecutable;
   const run = (args: string[]) => runFile(git, args, { cwd: f.root });
   await run(["init", "-q"]);
   await run(["config", "user.email", "fixture@example.invalid"]);
@@ -655,7 +655,7 @@ test("submodule entries are blocked and executable bits affect content identity"
   );
   if (process.platform !== "win32")
     expect(executable.revision).not.toBe(plain.revision);
-  const git = process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git";
+  const git = gitExecutable;
   await runFile(git, ["init", "-q"], { cwd: f.root });
   await runFile(
     git,

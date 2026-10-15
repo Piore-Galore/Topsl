@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { afterEach, expect, test } from "vitest";
-import { fixture } from "./helpers";
+import { fixture, gitExecutable } from "./helpers";
 import { now } from "../packages/domain/invariants";
 import { runFile } from "../packages/platform/system";
 import { CoordinationRepository } from "../packages/persistence/repositories/coordination";
@@ -35,7 +35,7 @@ async function setup(initialUntracked = false) {
   await writeFile(path.join(root, "main.ts"), "export const value = 1;\n");
   if (initialUntracked)
     await writeFile(path.join(root, "output.txt"), "captured output bytes");
-  const git = process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git";
+  const git = gitExecutable;
   for (const args of [
     ["init", "-q"],
     ["config", "user.email", "fixture@example.invalid"],
