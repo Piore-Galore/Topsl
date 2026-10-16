@@ -23,6 +23,7 @@ import type {
 } from "../../packages/domain/types";
 import { isClaudeFolderUrl } from "../../packages/workspace/project-opening";
 import { safeError } from "../../packages/domain/invariants";
+import { approvalConfirmation } from "../../packages/domain/approval-text";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
@@ -564,7 +565,7 @@ async function dispatch(command: Command): Promise<any> {
       command.allow &&
       !(await confirm(
         "Allow this native action once?",
-        `${approval.description}\n\nRun: ${approval.runId}\nRequest: ${approval.requestId}\nDigest: ${approval.digest}`,
+        approvalConfirmation(approval),
         "Allow once",
       ))
     )

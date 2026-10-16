@@ -4,6 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type {
   AppState,
+  Approval,
   ConfigurationPlan,
   ContextSnapshot,
   Installation,
@@ -18,6 +19,7 @@ import { Projects } from "./projects";
 import { Coordination, type ProjectView } from "./coordination";
 import { ActionButton, ActionContext } from "./components/action-button";
 import { Transcript } from "./components/transcript";
+import { ApprovalCard } from "./components/approval-card";
 import { useScopedRefresh } from "./state/scoped";
 import { summarizeUsage } from "../../../packages/domain/usage";
 
@@ -1215,36 +1217,14 @@ function App() {
                       .filter((a: any) =>
                         runs.some((r: any) => r.id === a.runId),
                       )
-                      .map((a: any) => (
-                        <div key={a.id} className="approval">
-                          <strong>Native approval requested</strong>
-                          <pre>{a.description}</pre>
-                          <div className="actions">
-                            <ActionButton
-                              onClick={() =>
-                                void act({
-                                  type: "approval-decide",
-                                  id: a.id,
-                                  allow: false,
-                                })
-                              }
-                            >
-                              Deny
-                            </ActionButton>
-                            <ActionButton
-                              className="primary"
-                              onClick={() =>
-                                void act({
-                                  type: "approval-decide",
-                                  id: a.id,
-                                  allow: true,
-                                })
-                              }
-                            >
-                              Review & allow once
-                            </ActionButton>
-                          </div>
-                        </div>
+                      .map((a: Approval) => (
+                        <ApprovalCard
+                          key={a.id}
+                          approval={a}
+                          decide={(allow) =>
+                            act({ type: "approval-decide", id: a.id, allow })
+                          }
+                        />
                       ))}
                     <form
                       className="composer"

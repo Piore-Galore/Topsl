@@ -220,11 +220,24 @@ export interface UsageFact {
   cachedIncludedInInput?: boolean;
   sessionId?: string | null;
 }
+/** What allowing a native approval request does, in plain words. Topsl
+ * writes it from the request's fields, so the agent supplies no markup. */
+export interface ApprovalSummary {
+  /** The action, such as "Run a command". */
+  title: string;
+  /** Plain-text values, such as the command, its folder or the files. */
+  details: Array<{ label: string; value: string }>;
+  /** What allowing does, one sentence or two each. */
+  effects: string[];
+}
 export interface Approval {
   id: string;
   runId: string;
   method: string;
+  /** The request's fields as JSON. */
   description: string;
+  /** Absent on approvals recorded before Topsl described requests. */
+  summary?: ApprovalSummary;
   digest: string;
   requestId: number | string;
   createdAt: string;

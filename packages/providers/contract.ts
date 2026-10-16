@@ -1,4 +1,4 @@
-import type { Provider, Installation } from "../domain/types";
+import type { ApprovalSummary, Installation, Provider } from "../domain/types";
 import type { Evidence } from "../domain/workflow";
 import type { ProcessEvidence } from "../runtime/process-lifecycle";
 export interface ProviderConnection {
@@ -146,6 +146,17 @@ export interface ProviderApproval {
   method: string;
   params: unknown;
   description: string;
+  summary?: ApprovalSummary;
+  /** What the request is about that an earlier notification reported, such
+   * as the files of a change. Topsl binds it into the approval's digest. */
+  subject?: unknown;
+}
+/** An item a notification started, which a later approval request may name. */
+export interface StartedItem {
+  threadId: string;
+  turnId: string;
+  id: string;
+  item: unknown;
 }
 export interface ProviderAdapter {
   provider: Provider;
@@ -180,7 +191,16 @@ export interface ProviderAdapter {
     turnId: string,
   ): Promise<void>;
   event(method: string, payload: unknown): ProviderEvent | null;
-  approval(method: string, payload: unknown): ProviderApproval | null;
+  /** Reads a native approval request. `item` returns what an earlier
+   * notification reported about an item the request names. */
+  approval(
+    method: string,
+    payload: unknown,
+    item?: (id: string) => unknown,
+  ): ProviderApproval | null;
+  /** The item a notification starts, when an approval request may later name
+   * it. Absent when requests describe themselves. */
+  startedItem?(method: string, payload: unknown): StartedItem | null;
   /** Reads a runtime request as a call to a tool Topsl declared, or returns
    * null for any other request. Absent when the runtime cannot call tools. */
   toolCall?(method: string, payload: unknown): ProviderToolCall | null;

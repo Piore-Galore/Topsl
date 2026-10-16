@@ -18,6 +18,11 @@ const roots = [
   "DynamicToolCallParams",
   "DynamicToolCallResponse",
   "v2/ItemCompletedNotification",
+  "v2/ItemStartedNotification",
+  "CommandExecutionRequestApprovalParams",
+  "CommandExecutionRequestApprovalResponse",
+  "FileChangeRequestApprovalParams",
+  "FileChangeRequestApprovalResponse",
 ];
 const [input, version] = process.argv.slice(2);
 if (!input || !/^\d+\.\d+\.\d+$/.test(version ?? ""))

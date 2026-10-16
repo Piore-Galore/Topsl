@@ -1,5 +1,11 @@
 const readline = require("node:readline");
 const fs = require("node:fs");
+const path = require("node:path");
+// It answers --version, so the desktop test can register it as Codex.
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.163.0-fixture");
+  process.exit(0);
+}
 // FIXTURE_LOG records every frame in both directions, so tests can check them
 // against the schema Codex generates.
 const log = (from, frame) =>
@@ -149,6 +155,48 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             ...pendingTool,
           },
         });
+      } else if (prompt.includes("file approval")) {
+        // Codex names a change's files on its item, and the request to
+        // approve it names only the item. This one also asks to write
+        // outside the project for the rest of the session.
+        pendingApproval = true;
+        send({
+          method: "item/started",
+          params: {
+            threadId: "thread-fixture",
+            turnId: turn,
+            startedAtMs: Date.now(),
+            item: {
+              type: "fileChange",
+              id: "change-fixture",
+              status: "inProgress",
+              changes: [
+                {
+                  path: path.join(process.cwd(), "notes.md"),
+                  kind: { type: "update", move_path: null },
+                  diff: "@@ -1 +1 @@\n-old\n+new\n",
+                },
+                {
+                  path: path.join(process.cwd(), "src", "added.ts"),
+                  kind: { type: "add" },
+                  diff: "export {};\n",
+                },
+              ],
+            },
+          },
+        });
+        send({
+          id: "approval-fixture",
+          method: "item/fileChange/requestApproval",
+          params: {
+            threadId: "thread-fixture",
+            turnId: turn,
+            itemId: "change-fixture",
+            startedAtMs: Date.now(),
+            reason: "Fixture asks to write outside the project.",
+            grantRoot: path.dirname(process.cwd()),
+          },
+        });
       } else if (prompt.includes("approval")) {
         pendingApproval = true;
         send({
@@ -161,6 +209,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
                 : "thread-fixture",
             turnId: turn,
             itemId: "command-fixture",
+            startedAtMs: Date.now(),
             command: "fixture read command",
             cwd: process.cwd(),
           },
