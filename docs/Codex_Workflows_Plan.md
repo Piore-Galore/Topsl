@@ -186,3 +186,14 @@ Each step adds its changes and validation here when it lands.
 - `npm run build` passed.
 - `xvfb-run --auto-servernum npm run test:desktop` passed, including encrypted restart persistence.
 - No model requests were sent. These checks ran on Linux only: macOS and Windows depend on CI, and the live qualification is step 6.
+
+### Step 2: Codex tool channel (16 October 2026)
+
+**What changed**
+
+- Every Codex runtime connection sends `capabilities: { experimentalApi: true }` in `initialize` ([rpc.ts](../packages/runtime/rpc.ts)). The design records the decision under [Codex adapter](Topsl_Design.md#81-codex-adapter).
+- A coordinated run can carry a `ToolBinding`: a toolset and the handler that answers its calls ([contract.ts](../packages/providers/contract.ts)). The runtime manager refuses a binding before it starts a runtime unless the run is a fresh review session on a runtime that can call tools ([manager.ts](../packages/runtime/manager.ts)). The Codex adapter declares the toolset as one namespace in `dynamicTools` on `thread/start`, and refuses to declare it on a builder or resumed thread ([codex.ts](../packages/providers/codex.ts)).
+- The manager runs the bound handler for an `item/tool/call` request only when the call names the run's thread, its current turn, and a tool in the declared namespace. Otherwise it returns a failed result with the reason and does not run the handler. A session without tools refuses every call, and a handler's error comes back as a failed result. Each call is recorded as a `run.tool-call` event marked `answered`, `refused` or `failed`, without its arguments or output.
+- Tool calls that Codex reports as `dynamicToolCall` items appear in the run's transcript as tool messages.
+- No production code installs a toolset yet. The candidate reader is step 3.
+- [`tests/fixtures/codex-app-server-0.163.0.schema.json`](../tests/fixtures/codex-app-server-0.163.0.schema.json) holds the parts of the schema that Codex CLI 0.163.0 generates (`codex app-server generate-json-schema --experimental`) that the tests check against. [`scripts/codex-schema-subset.mjs`](../scripts/codex-schema-subset.mjs) reproduces it from a newly generated schema. The scripted stand-in ([codex.cjs](../tests/fixtures/codex.cjs)) can now call a tool, and it logs every frame when `FIXTURE_LOG` is set.

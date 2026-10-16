@@ -12,10 +12,14 @@ import { Store } from "../persistence/store";
 import { WorkspaceOwnership } from "../workspace/ownership";
 import { ConcurrencyBudget } from "./concurrency";
 import { RevisionRepository } from "../context/revisions";
+import type { ToolBinding } from "../providers/contract";
 
 export interface RuntimeExecution {
   attemptId: string;
   freshSession?: boolean;
+  /** Topsl's tools for this attempt's fresh review session. Calls are answered
+   * only from the session's own thread and turn. */
+  tools?: ToolBinding;
 }
 /** Profile authority and dispatch ownership; workflow scheduling remains deterministic
  * in the workflow service, while every native/legacy writer enters this same boundary. */

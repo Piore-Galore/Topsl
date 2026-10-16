@@ -14,6 +14,8 @@ import type {
   ProviderConnection,
   ProviderEvent,
   ProviderModel,
+  ProviderToolCall,
+  ProviderToolResult,
 } from "./contract";
 const string = z.string();
 const accountSchema = z.object({
@@ -43,6 +45,14 @@ const turnSchema = z.object({
 const frame = z
   .object({ threadId: string.optional(), turnId: string.optional() })
   .passthrough();
+const toolCallSchema = z.object({
+  threadId: string.min(1),
+  turnId: string.min(1),
+  callId: string.min(1),
+  namespace: string.nullable().optional(),
+  tool: string.min(1),
+  arguments: z.unknown(),
+});
 export class CodexAdapter implements ProviderAdapter {
   readonly provider = "codex" as const;
   constructor(
@@ -203,11 +213,35 @@ export class CodexAdapter implements ProviderAdapter {
     turn: PreparedTurn,
     nativeSessionId: string | null,
   ) {
+    // Codex accepts declared tools only on `thread/start`.
+    if (turn.toolset && (turn.mode !== "review" || nativeSessionId))
+      throw new Error(
+        "Topsl declares its tools only when a fresh review thread starts.",
+      );
     const params = {
       cwd: turn.cwd,
       model: turn.requestedModel,
       approvalPolicy: "untrusted",
       sandbox: turn.mode === "review" ? "read-only" : "workspace-write",
+      // Codex's experimental dynamic tools; the connection opts in when it
+      // initializes.
+      ...(turn.toolset
+        ? {
+            dynamicTools: [
+              {
+                type: "namespace",
+                name: turn.toolset.namespace,
+                description: turn.toolset.description,
+                tools: turn.toolset.tools.map((tool) => ({
+                  type: "function",
+                  name: tool.name,
+                  description: tool.description,
+                  inputSchema: tool.inputSchema,
+                })),
+              },
+            ],
+          }
+        : {}),
     };
     const result = sessionSchema.parse(
       await connection.request(
@@ -309,6 +343,7 @@ export class CodexAdapter implements ProviderAdapter {
               type: z.enum([
                 "agentMessage",
                 "commandExecution",
+                "dynamicToolCall",
                 "fileChange",
                 "mcpToolCall",
                 "plan",
@@ -404,5 +439,25 @@ export class CodexAdapter implements ProviderAdapter {
           description: JSON.stringify(params.data, null, 2).slice(0, 30000),
         }
       : null;
+  }
+  toolCall(method: string, payload: unknown): ProviderToolCall | null {
+    if (method !== "item/tool/call") return null;
+    const parsed = toolCallSchema.safeParse(payload);
+    return parsed.success
+      ? {
+          threadId: parsed.data.threadId,
+          turnId: parsed.data.turnId,
+          callId: parsed.data.callId,
+          namespace: parsed.data.namespace ?? null,
+          tool: parsed.data.tool,
+          arguments: parsed.data.arguments ?? null,
+        }
+      : null;
+  }
+  toolResult(result: ProviderToolResult) {
+    return {
+      contentItems: [{ type: "inputText", text: result.text }],
+      success: result.success,
+    };
   }
 }

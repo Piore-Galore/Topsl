@@ -1,6 +1,19 @@
 const readline = require("node:readline");
-const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+const fs = require("node:fs");
+// FIXTURE_LOG records every frame in both directions, so tests can check them
+// against the schema Codex generates.
+const log = (from, frame) =>
+  process.env.FIXTURE_LOG &&
+  fs.appendFileSync(
+    process.env.FIXTURE_LOG,
+    JSON.stringify({ from, frame }) + "\n",
+  );
+const send = (value) => {
+  log("fixture", value);
+  process.stdout.write(JSON.stringify(value) + "\n");
+};
 let pendingApproval = false;
+let pendingTool = null;
 let turn = "turn-fixture";
 const done = (text) => {
   send({
@@ -43,9 +56,36 @@ const done = (text) => {
 };
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
+  log("topsl", request);
   if (request.id === "approval-fixture" && pendingApproval) {
     pendingApproval = false;
     done(request.result?.decision ?? request.error?.message ?? "unknown");
+    return;
+  }
+  if (request.id === "tool-fixture" && pendingTool) {
+    const call = pendingTool,
+      result = request.result;
+    pendingTool = null;
+    send({
+      method: "item/completed",
+      params: {
+        threadId: "thread-fixture",
+        turnId: turn,
+        completedAtMs: Date.now(),
+        item: {
+          type: "dynamicToolCall",
+          id: "tool-item-fixture",
+          namespace: call.namespace,
+          tool: call.tool,
+          arguments: call.arguments,
+          status: result?.success ? "completed" : "failed",
+          contentItems: result?.contentItems ?? null,
+          success: result?.success ?? null,
+          durationMs: 1,
+        },
+      },
+    });
+    done(JSON.stringify(result ?? request.error));
     return;
   }
   if (request.id === undefined) return;
@@ -90,7 +130,26 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     });
     if (prompt === "hold") return;
     setTimeout(() => {
-      if (prompt.includes("approval")) {
+      // "tool {json}" calls a tool, as a model would through Codex's dynamic
+      // tools. The JSON names the tool and can override the thread or turn.
+      if (prompt.startsWith("tool ")) {
+        const ask = JSON.parse(prompt.slice("tool ".length));
+        pendingTool = {
+          namespace: ask.namespace ?? null,
+          tool: ask.tool,
+          arguments: ask.arguments ?? {},
+        };
+        send({
+          id: "tool-fixture",
+          method: "item/tool/call",
+          params: {
+            threadId: ask.threadId ?? "thread-fixture",
+            turnId: ask.turnId ?? turn,
+            callId: "call-fixture",
+            ...pendingTool,
+          },
+        });
+      } else if (prompt.includes("approval")) {
         pendingApproval = true;
         send({
           id: "approval-fixture",
