@@ -1,4 +1,11 @@
 import { ActionButton } from "./components/action-button";
+import {
+  rememberedTerminalMode,
+  terminalProvider,
+  TerminalModeNote,
+  TerminalModeSelect,
+} from "./components/terminal-mode";
+import type { TerminalModeId } from "../../../packages/domain/terminal-modes";
 import React, { useState } from "react";
 import type {
   AppState,
@@ -20,6 +27,8 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
   const { state, busy, act, selectProject, openTerminal } = props;
   const [installationId, setInstallationId] = useState("");
   const [opened, setOpened] = useState<ProjectOpenResult | null>(null);
+  /** A mode picked for the next terminal; otherwise the project's remembered one. */
+  const [modeChoice, setModeChoice] = useState<TerminalModeId | null>(null);
   const available =
     !project.availability || project.availability === "available";
   const sources = [
@@ -36,6 +45,13 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
   const selectedInstallation = state.installations.find(
     (installation) => installation.id === installationId,
   );
+  const terminal = selectedInstallation?.appId.endsWith("cli")
+    ? terminalProvider(selectedInstallation)
+    : null;
+  const mode: TerminalModeId = terminal
+    ? (modeChoice ??
+      rememberedTerminalMode(state.terminalModes, project.id, terminal))
+    : "provider-default";
   return (
     <article className="project-card" aria-label={project.name}>
       <div className="section-heading">
@@ -97,6 +113,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
             value={selectedInstallation?.id ?? ""}
             onChange={(event) => {
               setInstallationId(event.target.value);
+              setModeChoice(null);
               setOpened(null);
             }}
           >
@@ -122,6 +139,13 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
             })}
           </select>
         </label>
+        {terminal && (
+          <TerminalModeSelect
+            provider={terminal}
+            value={mode}
+            onChange={setModeChoice}
+          />
+        )}
         <ActionButton
           disabled={
             busy ||
@@ -134,7 +158,10 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
               type: "project-open",
               projectId: project.id,
               installationId,
+              permissionMode: mode,
             });
+            // The menu returns to the remembered mode, which is never a bypass mode.
+            setModeChoice(null);
             if (!result) return;
             setOpened(result);
             if (result.terminalId) openTerminal(project.id, result.terminalId);
@@ -143,6 +170,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
           Open folder
         </ActionButton>
       </div>
+      {terminal && <TerminalModeNote provider={terminal} value={mode} />}
       {selectedInstallation && !selectedInstallation.trusted && (
         <p className="tiny">
           Trust this executable in Applications before opening the folder.

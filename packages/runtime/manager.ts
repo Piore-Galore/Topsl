@@ -33,6 +33,7 @@ import type {
   ToolBinding,
 } from "../providers/contract";
 import { answerToolCall } from "../providers/tool-calls";
+import { terminalMode, type TerminalModeId } from "../domain/terminal-modes";
 import type { Workspace } from "../domain/workflow";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
 import { Store } from "../persistence/store";
@@ -417,12 +418,14 @@ export class RuntimeManager {
     projectId: string;
     installationId: string;
     login: boolean;
+    permissionMode: TerminalModeId | null;
   }> {
     return [...this.terminals.entries()].map(([id, t]) => ({
       id,
       projectId: t.projectId,
       installationId: t.installation.id,
       login: t.login,
+      permissionMode: t.run.permissionMode ?? null,
     }));
   }
   hasActive(): boolean {
@@ -1194,12 +1197,30 @@ export class RuntimeManager {
       active.run.nativeTurnId,
     );
   }
+  /**
+   * Opens a native terminal. Its permission mode comes only from the fixed
+   * table in terminal-modes.ts. A bypass mode also needs `confirmedMode`, which
+   * only the owner's answer to Topsl's own dialog supplies, for that mode.
+   */
   async terminal(
     installation: Installation,
     project: Project,
-    login = false,
+    options: {
+      login?: boolean;
+      mode?: TerminalModeId;
+      confirmedMode?: TerminalModeId;
+    } = {},
   ): Promise<string> {
     this.coordinator.ownership.assertOwner();
+    const login = options.login ?? false;
+    const provider = installation.appId.includes("claude") ? "claude" : "codex";
+    const mode = terminalMode(provider, options.mode ?? "provider-default");
+    if (login && mode.args.length)
+      throw new Error("A login terminal takes no permission mode.");
+    if (mode.warning && options.confirmedMode !== mode.id)
+      throw new Error(
+        `${mode.label} needs your confirmation in Topsl's own dialog each time.`,
+      );
     const workspaceReservation = this.reserveWorkspace(project);
     try {
       await this.preflight(installation);
@@ -1208,10 +1229,7 @@ export class RuntimeManager {
         ? installation.appId === "openai.codex-cli"
           ? ["login"]
           : ["auth", "login"]
-        : [];
-      const provider = installation.appId.includes("claude")
-        ? "claude"
-        : "codex";
+        : [...mode.args];
       const conversationId = `terminal:${id}`;
       const run: Run = {
         id,
@@ -1230,6 +1248,7 @@ export class RuntimeManager {
         nativeTurnId: null,
         error: null,
         createdAt: now(),
+        ...(login ? {} : { permissionMode: mode.id, permissionArgs: args }),
       };
       const conversation: Conversation = {
         id: conversationId,
@@ -1286,6 +1305,8 @@ export class RuntimeManager {
         projectId: project.id,
         installationRevisionId: installation.revisionId,
         login,
+        permissionMode: run.permissionMode ?? null,
+        args,
       });
       terminal.onData((data) =>
         this.emit({ type: "terminal", data: { id, data } }),

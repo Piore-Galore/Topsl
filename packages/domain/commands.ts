@@ -5,6 +5,7 @@ import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
 } from "./advanced-inputs";
+import { terminalModeIds } from "./terminal-modes";
 import {
   deviceIdentitySchema,
   portableContentSchema,
@@ -12,6 +13,8 @@ import {
   chunkSchema,
 } from "./replication-inputs";
 const id = z.string().min(1).max(256);
+/** A terminal's permission mode; the provider's own settings decide unless the owner picks another. */
+const permissionMode = z.enum(terminalModeIds).default("provider-default");
 const roleAssignment = z.object({
   provider: z.enum(["codex", "claude"]),
   installationId: id,
@@ -777,6 +780,7 @@ export const commandSchema = z.discriminatedUnion("type", [
     type: z.literal("project-open"),
     projectId: id,
     installationId: id,
+    permissionMode,
   }),
   z.object({ type: z.literal("project-copy-path"), id }),
   z.object({
@@ -830,6 +834,7 @@ export const commandSchema = z.discriminatedUnion("type", [
     projectId: id,
     installationId: id,
     login: z.boolean().default(false),
+    permissionMode,
   }),
   z.object({
     type: z.literal("terminal-input"),

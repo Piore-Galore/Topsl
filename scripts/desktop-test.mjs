@@ -1046,9 +1046,197 @@ try {
     );
     expect(confirmation.detail).toContain("Digest:");
   }
+  if (process.platform !== "win32") {
+    // A native terminal through Topsl's screens, with a stand-in for Claude
+    // Code that prints the arguments it received: Plan is passed and
+    // remembered, and Bypass starts only after Topsl's own confirmation, which
+    // is recorded here. Native shell wrapper is a test fixture only.
+    const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+    const terminalFixture = path.join(profile, "claude-terminal-fixture");
+    await writeFile(
+      terminalFixture,
+      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/terminal-stand-in.cjs"))} "$@"\n`,
+    );
+    await chmod(terminalFixture, 0o700);
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({
+        canceled: false,
+        filePaths: [selected],
+      });
+      globalThis.topslConfirmations = [];
+      globalThis.topslBypassAnswer = 0;
+      dialog.showMessageBox = async (...args) => {
+        const options = args.at(-1);
+        globalThis.topslConfirmations.push({
+          message: options.message,
+          detail: options.detail ?? "",
+          type: options.type,
+          buttons: options.buttons,
+        });
+        // The runtime picker's third button is Claude Code; Topsl's bypass
+        // confirmation is its only warning.
+        const response =
+          options.message === "Which runtime are you locating?"
+            ? 2
+            : options.type === "warning"
+              ? globalThis.topslBypassAnswer
+              : 1;
+        return { response, checkboxChecked: false };
+      };
+    }, terminalFixture);
+    const claude = await page.evaluate(() =>
+      window.topsl.command({ type: "select-runtime" }),
+    );
+    expect(claude.appId).toBe("anthropic.claude-code-cli");
+    await expect
+      .poll(async () =>
+        (
+          await page.evaluate(() => window.topsl.command({ type: "state" }))
+        ).installations.some((i) => i.id === claude.id),
+      )
+      .toBe(true);
+    await page.evaluate(
+      (id) => window.topsl.command({ type: "trust-installation", id }),
+      claude.id,
+    );
+    // As in the chat above, a terminal opens, closes and is remembered only
+    // after the service has committed its records, each synced to disk.
+    const committed = { timeout: 30000 };
+    const scope = () =>
+      page.evaluate(
+        (projectId) =>
+          window.topsl.command({ type: "scope-snapshot", projectId }),
+        projectIds[0],
+      );
+    const released = () =>
+      expect
+        .poll(async () => {
+          const { coordination, terminals } = await scope();
+          return (
+            !terminals.length &&
+            coordination.leases.every((lease) => lease.state === "released")
+          );
+        }, committed)
+        .toBe(true);
+    await released();
+    await page
+      .getByRole("combobox", { name: "Runtime", exact: true })
+      .selectOption(claude.id);
+    const modeSelect = page.getByRole("combobox", {
+      name: "Terminal mode",
+      exact: true,
+    });
+    const modeNote = page.locator(".terminal-mode-note");
+    await expect(modeSelect).toHaveValue("provider-default");
+    expect(await modeSelect.locator("option").allTextContents()).toEqual([
+      "Provider default",
+      "Manual",
+      "Plan",
+      "Accept edits",
+      "Auto",
+      "Don't ask",
+      "Bypass",
+    ]);
+    expect(
+      await modeSelect
+        .locator('optgroup[label="Advanced"] option')
+        .allTextContents(),
+    ).toEqual(["Bypass"]);
+    await modeSelect.selectOption("plan");
+    await expect(modeNote).toContainText("Passes --permission-mode plan.");
+    const terminal = page.getByRole("region", { name: "Native terminal" });
+    // xterm writes spaces as no-break spaces.
+    const screen = () =>
+      terminal
+        .locator(".xterm-rows")
+        .innerText()
+        .then((text) => text.replaceAll(String.fromCharCode(160), " "))
+        .catch(() => "");
+    await page
+      .getByRole("button", { name: "Native terminal", exact: true })
+      .click();
+    await expect.poll(screen, committed).toContain("Permission mode: plan");
+    await expect(page.locator(".terminal-heading")).toContainText(
+      "Plan (--permission-mode plan)",
+      committed,
+    );
+    await page.screenshot({
+      path: "test-results/terminal-mode.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Close session", exact: true })
+      .click();
+    await released();
+    await expect(modeSelect).toHaveValue("plan", committed);
+    await modeSelect.selectOption("bypass");
+    await expect(modeNote).toContainText(
+      "Passes --permission-mode bypassPermissions.",
+    );
+    await expect(modeNote).toContainText(
+      "Topsl asks you to confirm every time",
+    );
+    const confirmations = () =>
+      app.evaluate(() => globalThis.topslConfirmations.length);
+    const asked = await confirmations();
+    await page
+      .getByRole("button", { name: "Native terminal", exact: true })
+      .click();
+    await expect.poll(confirmations).toBe(asked + 1);
+    // Declined: no terminal starts, and the menu returns to the remembered mode.
+    await expect(modeSelect).toHaveValue("plan");
+    await expect(terminal).toHaveCount(0);
+    const declined = await app.evaluate(() =>
+      globalThis.topslConfirmations.at(-1),
+    );
+    expect(declined.message).toBe(
+      "Start Claude Code with permission checks bypassed?",
+    );
+    expect(declined.type).toBe("warning");
+    expect(declined.buttons).toEqual(["Cancel", "Start in Bypass"]);
+    expect(declined.detail).toContain(
+      `Executable: ${claude.realPath}\nFolder: ${canonicalProject}\nTopsl passes: --permission-mode bypassPermissions`,
+    );
+    expect(declined.detail).toContain(
+      "Only use this mode in isolated environments",
+    );
+    await modeSelect.selectOption("bypass");
+    await app.evaluate(() => {
+      globalThis.topslBypassAnswer = 1;
+    });
+    await page
+      .getByRole("button", { name: "Native terminal", exact: true })
+      .click();
+    await expect
+      .poll(screen, committed)
+      .toContain("Permission mode: bypassPermissions");
+    await expect(page.locator(".terminal-heading")).toContainText(
+      "Bypass (--permission-mode bypassPermissions)",
+      committed,
+    );
+    expect(await confirmations()).toBe(asked + 2);
+    await page
+      .getByRole("button", { name: "Close session", exact: true })
+      .click();
+    await released();
+    await expect(modeSelect).toHaveValue("plan", committed);
+    expect(
+      (await scope()).runs
+        .filter((run) => run.installationId === claude.id)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map((run) => [run.permissionMode, run.permissionArgs.join(" ")]),
+    ).toEqual([
+      ["plan", "--permission-mode plan"],
+      ["bypass", "--permission-mode bypassPermissions"],
+    ]);
+    expect(
+      (await page.evaluate(() => window.topsl.command({ type: "state" })))
+        .terminalModes,
+    ).toEqual([expect.objectContaining({ id: projectIds[0], claude: "plan" })]);
+  }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat approval cards for a denied command and an allowed file change against a stand-in (macOS/Linux).",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat approval cards for a denied command and an allowed file change against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {
@@ -1111,6 +1299,10 @@ try {
     expect(state.codexProjectSync.projects.map((p) => p.name)).toEqual([
       "Renamed shared project",
       "fixture-project",
+    ]);
+    // The project still remembers Plan, its last ordinary terminal mode.
+    expect(state.terminalModes).toEqual([
+      expect.objectContaining({ claude: "plan" }),
     ]);
   }
   const bytes = await readFile(path.join(profile, "history.sqlite"));
