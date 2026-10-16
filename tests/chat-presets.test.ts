@@ -133,14 +133,20 @@ async function injected(env: Record<string, string> = {}) {
       preset.approvalPolicy,
     );
   };
-  const finished = (id: string) =>
-    vi.waitFor(
+  const finished = async (id: string) => {
+    await vi.waitFor(
       () =>
         expect(["completed", "failed"]).toContain(
           f.store.get<Run>("run", id)?.status,
         ),
       settled,
     );
+    // The workspace stays leased until Topsl confirms the process exited,
+    // which can take seconds on Windows. The next run needs it free.
+    await vi.waitFor(() => expect(runtime.hasActive()).toBe(false), {
+      timeout: 30_000,
+    });
+  };
   return { ...f, runtime, start, finished, frames: () => readFrames(log) };
 }
 

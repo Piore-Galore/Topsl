@@ -227,9 +227,15 @@ Built from `main` at `791a618`, after steps 1 and 2 were merged.
 - `xvfb-run --auto-servernum npm run test:desktop` passed on `b5addf8`, including encrypted restart persistence. Through Topsl's screens, with the chat stand-in registered and not qualified, the **Permissions** menu lists the four presets, the last as **Workspace edits · no asking (unavailable)**. Choosing it shows `Not available for this runtime. Qualify this runtime first` and keeps **Send to Codex** off, and **Workspace edits · ask** says what commands can do and who decides. After the first turn, the run's line shows `fixture-model · Workspace edits · ask` and `Codex reported approval policy untrusted, sandbox workspace-write, approvals reviewer user.` The approval card steps passed as before.
 - No model requests were sent, and no real Codex was started. Not established: what a live Codex 0.163.0 reports at `thread/start` and `thread/resume` for these presets, and whether it adopts `on-request` and `never` as asked; step 4 covers **Ask when needed**. That an approved command can run outside the sandbox is still an inference. The tests that launch a stand-in through a shell wrapper do not run on Windows. macOS and Windows depend on CI.
 
+**Follow-up: Windows test** (16 October 2026)
+
+- On `616d648`, the [Windows x64 job failed](https://github.com/Piore-Galore/Topsl/actions/runs/38945662639/job/117132620534) in `a chat that continues in another preset asks for it when its thread resumes`: Topsl refused the second chat with `This workspace already has a native session or writer lease.` The job's first attempt had failed in `npm ci`, before any test ran.
+- Cause: Topsl records a run as `completed` before it has confirmed that Codex's process exited, and the workspace stays leased until then. On Windows, that check also looks up the process's descendants, which can take seconds, as [codex-tools.test.ts](../tests/codex-tools.test.ts) already notes. The test waited only for the first run's status, so it started the second chat too soon. With the stand-in changed locally to exit 3 seconds after Topsl stops it, the unchanged test failed in the Linux container with the same error.
+- Fix: the test's helper also waits until the runtime manager has no active run, as the tools tests do ([chat-presets.test.ts](../tests/chat-presets.test.ts)). With the same slow exit, the 20 tests passed, and they passed again without it. No product code changed.
+
 ### Step 4: live check (16 October 2026)
 
-Built on step 3's branch at `616d648`, because the chat check uses step 3's presets. It merges after step 3. This part adds what the live runs need; the runs themselves are started by the owner in Terminal on their Mac.
+Built on step 3's branch at `616d648`, because the chat check uses step 3's presets, and step 3's branch at `6731abe` was merged in later. It merges after step 3. This part adds what the live runs need; the runs themselves are started by the owner in Terminal on their Mac.
 
 **What changed**
 
