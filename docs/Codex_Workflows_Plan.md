@@ -235,3 +235,31 @@ Each step adds its changes and validation here when it lands.
 - `npm test`: 38 files and 337 tests passed. 3 files and 4 tests were skipped, all opt-in: the two native Codex probes, the Round 2 stress run and the coordination benchmark.
 - Step 3 was then rebased onto step 2 at `a51efe7`, which merges main into step 2. That adds only the failure message for R2-AT-37/38 from [pull request #5](https://github.com/Piore-Galore/Topsl/pull/5) and its note in [Round_2_Execution.md](Round_2_Execution.md). On the rebased tree, `npm run typecheck`, R2-AT-37/38 and `tests/runtime-qualification.test.ts` passed again, and so did `npm run build` and `xvfb-run --auto-servernum npm run test:desktop`, including encrypted restart persistence.
 - Not established: a live model calling the reader, which steps 4 and 6 cover, and whether Codex checks the tools' input schemas again when it sends a model request; `thread/start` accepted them. macOS and Windows depend on CI.
+
+### Step 4: reader probe in the qualification (16 October 2026)
+
+**What changed**
+
+- The suite is now `codex-runtime-qualification/v2` ([qualification.ts](../packages/providers/qualification.ts)). Its first review turn, which already asked for a marker reply, also asks the model to read one file with `read_range` and quote its line. Only that turn's thread declares the reader's tools. The suite still starts at most four turns.
+- Before the runtime starts, the qualification prepares the probe ([reader-probe.ts](../packages/context/reader-probe.ts)). It writes a one-line file holding a random marker to a new folder in the OS temporary directory, captures it into a new encrypted store inside the qualification folder, and deletes the folder. It then grants one probe attempt access to the captured build, as the workflow grants a review. A separate store keeps the probe's records out of the profile's history, and because it is encrypted, no file the model can read holds the marker. The file starts in the temporary directory because capture refuses a folder inside a Git checkout unless it is the checkout's root, and the qualification folder can sit inside one, as it does in the tests.
+- The probe uses the reviewer's own tools (`candidateTools`) under a context server grant, so its calls go through the same grant check and reader, and leave the same receipts, as a review's.
+- `candidate-reader` is recorded on its own. It passes only when the turn completed, a `read_range` answer under the probe's grant returned the whole marker, and the reply quotes it. A reply that quotes the marker without such an answer does not pass, and neither does a read that returned only part of the file. The probe's grant is revoked when the turn ends.
+- The runtime manager and the qualification answer tool calls through one function, `answerToolCall` ([tool-calls.ts](../packages/providers/tool-calls.ts)), which refuses a call from another thread or turn, or for an undeclared tool, before it runs the handler.
+- If the runtime refuses the tools when the first thread starts, the qualification starts that thread again without them; if Topsl cannot prepare the probe, it starts it without them. Either way `candidate-reader` is recorded as failed with the reason, and the other probes still run, so a Codex release that changes the tool API can still be qualified as a builder. Starting a thread is not a model turn.
+- Readiness needed no change: a passing `candidate-reader` observation meets the reviewer role's requirement, so a passing run now makes a Codex runtime ready to review as well as to build. The guided setup still pairs Codex with Claude until step 5.
+- The consent dialog lists the reader probe and no longer says the suite leaves the reader untested. README and Implementation status say the same.
+
+**Validation** (16 October 2026, Linux x64 container, on top of step 3)
+
+- `npm run typecheck` passed.
+- `npm test -- tests/runtime-qualification.test.ts`: 13 tests passed, 4 of them new.
+  - With the stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) reading the file through the tool and quoting it, every probe passed within four turns, nothing was left untested, and only the first thread declared the reader's tools.
+  - In seven stand-in runs of four turns each, only the run that read the file and quoted it passed `candidate-reader`. The others never called the tool, quoted the marker without calling it, read the file without quoting it, read only its first 4 bytes and quoted a marker they had anyway, read a path outside the build, or called the tool naming another turn. `structured-turn` passed in all seven.
+  - When the probe was prepared, no Codex process had started, the file's folder was gone, and no file in the qualification folder, the probe's store included, contained the marker.
+  - When the stand-in refused the tools on `thread/start`, with the error Codex 0.163.0 gives without the opt-in, or the probe could not be prepared, `candidate-reader` failed with the reason and the other probes passed.
+  - Through the runtime manager, a passing run made the reviewer ready as well as the implementer, and the independent reviewer stayed blocked. A stand-in that never called the reader left the reviewer blocked with `candidate-reader-unavailable`.
+- Each of these changes made a test fail: passing without an answered read, passing without the quote, checking the call against its own turn instead of the session's, and counting any returned range of the file.
+- `npm test -- tests/codex-tools.test.ts tests/runtime.test.ts tests/coordination.test.ts tests/workflow-service.test.ts tests/runtime-qualification.test.ts tests/candidate-tools.test.ts`: 6 files, 51 tests passed.
+- `npm test` on `a136cd9`: 38 files and 341 tests passed. 3 files and 4 tests were skipped, all opt-in: the two native Codex probes, the Round 2 stress run and the coordination benchmark.
+- `npm run build` and `xvfb-run --auto-servernum npm run test:desktop` passed on `a136cd9`, including encrypted restart persistence. The docs commit after it changes no code.
+- No model requests were sent. Not established: that a live Codex model calls the tool and quotes its answer, which step 6 covers, and the dialog's new wording in the running app. macOS and Windows depend on CI.

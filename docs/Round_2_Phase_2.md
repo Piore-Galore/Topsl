@@ -33,3 +33,5 @@ No provider inference, account access, native-store mutation, API subscription, 
 Follow-up, 15 October 2026: the runtime's final readiness gate now applies to coordinated attempts only. Direct structured chats are outside role readiness. See the [review follow-up](Round_2_Execution.md#review-follow-up--15-october-2026).
 
 Follow-up, 15 October 2026: a consented Codex qualification runner now calls the registry writer. It passes only operations it observed through its own filesystem checks; the candidate reader remains untested, so reviewer roles stay blocked. See the [qualification follow-up](Round_2_Execution.md#follow-up--runtime-qualification-and-check-caches-15-october-2026).
+
+Follow-up, 16 October 2026: the suite now tests the candidate reader on its first review turn, so a passing run also satisfies the reviewer role. See [step 4 of the Codex workflows plan](Codex_Workflows_Plan.md#step-4-reader-probe-in-the-qualification-16-october-2026).
