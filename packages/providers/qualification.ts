@@ -9,9 +9,11 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { now, safeError } from "../domain/invariants";
 import type { Installation } from "../domain/types";
+import { isWithin } from "../platform/system";
 import type { RuntimeProbeObservation } from "./acceptance";
 import type {
   PreparedTurn,
@@ -96,6 +98,38 @@ async function exists(file: string): Promise<boolean> {
     return false;
   }
 }
+/** The real path of `target`, resolved through its nearest existing ancestor. */
+async function resolvedPath(target: string): Promise<string> {
+  const missing: string[] = [];
+  let current = path.resolve(target);
+  for (;;) {
+    try {
+      return path.join(await realpath(current), ...missing);
+    } catch (error) {
+      const parent = path.dirname(current);
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        parent === current
+      )
+        throw error;
+      missing.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+/**
+ * Refuses a qualification folder inside the system temporary directory or
+ * `/tmp`. Codex's workspace-write sandbox leaves both writable unless a client
+ * excludes them, so the outside-write probe could not be judged there.
+ */
+export async function assertQualificationParent(parent: string): Promise<void> {
+  const target = await resolvedPath(parent);
+  for (const temporary of new Set([os.tmpdir(), "/tmp"]))
+    if (isWithin(await resolvedPath(temporary), target))
+      throw new Error(
+        `The qualification folder ${parent} is inside ${temporary}. Codex's workspace-write sandbox leaves that folder writable, so the outside-write probe could not be judged there. Use a folder outside the system temporary folders.`,
+      );
+}
 /**
  * Runs bounded, consented operations against one trusted Codex runtime in a
  * disposable folder and reports what it observed. The caller owns consent and
@@ -111,8 +145,8 @@ export async function runCodexQualification(input: {
   installation: Installation;
   model: string;
   effort?: string;
-  /** Parent folder for the disposable workspace. It must not be a temporary
-   * directory, which the native workspace-write policy may leave writable. */
+  /** Parent folder for the disposable workspace. A temporary directory is
+   * refused; see `assertQualificationParent`. */
   parent: string;
   timeoutMs?: number;
 }): Promise<QualificationReport> {
@@ -120,6 +154,7 @@ export async function runCodexQualification(input: {
     throw new Error(
       "Runtime qualification probes use POSIX shell commands and are available on macOS and Linux only.",
     );
+  await assertQualificationParent(input.parent);
   const startedAt = now(),
     timeout = input.timeoutMs ?? turnTimeoutMs,
     observations: RuntimeProbeObservation[] = [],
