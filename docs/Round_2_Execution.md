@@ -101,6 +101,8 @@ The suite works in a disposable folder under the Topsl profile, not the system t
 
 Approvals are accepted only for the exact sentinel command (optionally wrapped in `sh -c`, `bash -lc` or `zsh -lc`) or a single-file change to the sentinel path, once each; requests carrying `grantRoot` and everything else are declined. A refusal, a declined request or an altered command is therefore never counted as enforcement, and a write that lands is recorded as `unsupported`. `candidate-reader` is reported as not tested: no provider tool channel installs the immutable reader yet, so reviewer roles stay blocked with `candidate-reader-unavailable`. The probes use POSIX shell commands and are refused on Windows.
 
+**Follow-up, 16 October 2026.** The suite is now `codex-runtime-qualification/v2`, and its first review turn also tests `candidate-reader`. The probe passes only when a `read_range` answer under the probe's grant returned the marker of a one-file build that only Topsl holds, and the reply quotes it. A passing run now satisfies the reviewer role. Details: [Codex workflows plan, step 4](Codex_Workflows_Plan.md#step-4-reader-probe-in-the-qualification-16-october-2026).
+
 The UI adds **Qualify builder/reviewer runtime** beside **Validate** in the guided workflow team step, shows a one-line result, and re-reads readiness.
 
 ### Check caches

@@ -30,9 +30,9 @@ import type {
   ProviderAccount,
   ProviderModel,
   ProviderToolCall,
-  ProviderToolResult,
   ToolBinding,
 } from "../providers/contract";
+import { answerToolCall } from "../providers/tool-calls";
 import type { Workspace } from "../domain/workflow";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
 import { Store } from "../persistence/store";
@@ -977,33 +977,23 @@ export class RuntimeManager {
     requestId: string | number,
     call: ProviderToolCall,
   ): Promise<void> {
-    const { run, tools } = active;
-    const refusal = !tools
-      ? "No Topsl tools are installed for this session."
-      : active.finished
-        ? "This run has ended."
-        : call.threadId !== run.nativeSessionId ||
-            call.turnId !== run.nativeTurnId
-          ? "This tool call is outside the active turn."
-          : call.namespace !== tools.toolset.namespace ||
-              !tools.toolset.tools.some((tool) => tool.name === call.tool)
-            ? "Topsl has no such tool."
-            : null;
-    let result: ProviderToolResult = { text: refusal ?? "", success: false };
-    if (tools && !refusal)
-      try {
-        result = await tools.call(call);
-      } catch (error) {
-        result = { text: safeError(error), success: false };
-      }
+    const { run } = active;
+    const { result, outcome, detail } = await answerToolCall(
+      active.tools,
+      call,
+      {
+        threadId: run.nativeSessionId,
+        turnId: run.nativeTurnId,
+        ended: active.finished,
+      },
+    );
     this.store.event("run.tool-call", {
       runId: run.id,
       callId: call.callId,
       namespace: call.namespace,
       tool: call.tool,
-      outcome: refusal ? "refused" : result.success ? "answered" : "failed",
-      // Why a call was refused or failed; an answer's content is not kept.
-      detail: refusal ?? (result.success ? null : result.text.slice(0, 500)),
+      outcome,
+      detail,
     });
     try {
       active.client.reply(requestId, active.adapter.toolResult!(result));
