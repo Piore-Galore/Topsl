@@ -360,4 +360,41 @@ The owner approved this fix, and one more live run of up to four turns, after th
 - The suite from `ccdc307`, before this fix, run once against the updated stand-in: it failed the same three probes as the live run, with the same results. The suite accepted the read-only and both workspace-write approvals, and the read-only and outside files were created; the interrupt got `no active turn to interrupt`. The other five probes passed in 4 turns.
 - `npm run check` passed on `e906cfb`: typecheck, 343 tests passed and 4 skipped in 41 files (the skipped ones need a real Codex or the stress flag), the release tests and the build.
 - After the build, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed. Topsl recorded `codex-runtime-qualification/v3` with every probe passed in 4 turns, no approval requests and nothing untested, and both roles were ready. The read-only detail listed the sentinel command as `failed with exit code 1`, and the workspace-write detail listed the inside write `completed with exit code 0` and the outside write `failed with exit code 1`. The qualification folder and the profile were deleted.
+- `xvfb-run --auto-servernum npm run test:desktop` passed on `e906cfb`, including the Codex-only team qualified against the stand-in through Topsl's screens.
 - No model requests were sent. Not established: that Codex 0.163.0 keeps these writes in its sandbox with approvals off, and accepts an interrupt once the reply streams. The approved rerun tests both.
+
+### Live rerun (16 October 2026)
+
+**How it ran**
+
+- The owner ran the command from [PR #13](https://github.com/Piore-Galore/Topsl/pull/13) in Terminal at `aae71ea`, after `npm run build`, on the same Mac with the same Codex CLI 0.163.0 (npm package `@openai/codex`, signed in with ChatGPT). It was the one rerun the owner approved.
+- The stand-in check ran first and passed: Topsl recorded `codex-runtime-qualification/v3` with every probe passed in 4 turns and no approval requests, both roles were ready, and the folder and the profile were deleted.
+- The script then approved the live qualification dialog once. Topsl started 4 turns with `gpt-6.1-sol`, and the suite took 76.2 seconds.
+
+**Result: failed**, with `Not passed: candidate-reader, read-only, workspace-write.`
+
+| Probe | Result | What Topsl recorded |
+|---|---|---|
+| `native-subscription` | Passed | A ChatGPT account, billing route `native-subscription` |
+| `structured-turn` | Passed | The turn completed and returned the marker |
+| `candidate-reader` | Failed | One `read_range` answer under the probe's grant returned the file's marker and the reader refused nothing, but the reply did not quote the marker |
+| `fresh-session` | Passed | Two `thread/start` requests returned different threads |
+| `read-only` | Failed | With approvals off, Codex asked for nothing and reported no command or file change. No file was created |
+| `workspace-write` | Failed | With approvals off, Codex asked for nothing. It reported the inside write, which completed with exit code 0, and nothing for the outside write. The outside folder stayed empty |
+| `interrupt` | Passed | Topsl sent `turn/interrupt` after the reply's first streamed text, and the turn ended `interrupted` |
+| `process-lifecycle` | Passed | The child exited, its stdio closed, and its process group was gone |
+
+The qualification was recorded in the disposable profile until 15 November 2026. Topsl's readiness query blocked the builder with `permission-profile-unverified`, and the reviewer with `candidate-reader-unavailable` and `permission-profile-unverified`. The folder in `~/Library/Caches` was deleted, and the profile was kept, as for any failed run. The report and screenshots are in the owner's `test-results/live-session/qualify-2026-10-16T11-30-54-863Z`, and the stand-in check's in `qualify-2026-10-16T11-30-45-418Z`.
+
+**What it establishes**
+
+- The interrupt fix works with a live Codex. Sent after the reply's first streamed text, the interrupt ended the turn.
+- With approvals off, Codex 0.163.0 sent no approval request in either sandbox probe, and no file appeared where the policy forbids one.
+- It does not show whether Codex's sandbox blocks a write, because the model never attempted a write the sandbox should block.
+
+**What the failures show**
+
+- Both sandbox probes depend on the model attempting a write it expects to fail. With approvals off, `gpt-6.1-sol` skipped those writes, although the prompt asked it to run the command even if it expected the sandbox to block it. Why it skipped them is not recorded: the report keeps the commands Codex reported, not the model's reply. That Codex tells the model it cannot ask for approval, and the model then avoids commands it expects to fail, is an inference.
+- The reader probe passed with the same prompt in the first live run and failed here, so it also depends on how the model words its reply. The reader itself answered: Topsl recorded one read under the grant that returned the marker.
+
+**Next.** On 16 October 2026 the owner approved a rework of the sandbox and reader probes and one more live run of up to 3 turns. Topsl will run each sandbox write itself through Codex's `command/exec` request, which runs a given command in Codex's sandbox under a given sandbox policy without a thread or turn, according to the protocol schema Codex 0.163.0 generates. The reader probe gets its own turn. The rework is its own pull request.
