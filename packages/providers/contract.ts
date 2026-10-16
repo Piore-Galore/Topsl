@@ -80,6 +80,11 @@ export interface PreparedTurn {
   outputSchema?: Record<string, unknown>;
   /** Topsl's own tools, declared only when a fresh review session starts. */
   toolset?: ProviderToolset;
+  /** "never" turns the runtime's approval requests off, so a command runs
+   * inside the sandbox without asking and its sandbox has the last word.
+   * Only the runtime qualification's sandbox probes set it; Topsl's own runs
+   * ask, which is the default. Codex reads it. */
+  approvals?: "ask" | "never";
   prompt: string;
   cwd: string;
   requestedModel: string;

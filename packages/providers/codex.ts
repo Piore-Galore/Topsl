@@ -58,6 +58,10 @@ const toolCallSchema = z.object({
   tool: string.min(1),
   arguments: z.unknown(),
 });
+/** Topsl's runs ask before Codex runs a command outside its known-safe list.
+ * With approvals off, Codex never asks, so a command its sandbox blocks fails. */
+const approvalPolicy = (turn: PreparedTurn) =>
+  turn.approvals === "never" ? "never" : "untrusted";
 export class CodexAdapter implements ProviderAdapter {
   readonly provider = "codex" as const;
   constructor(
@@ -226,7 +230,7 @@ export class CodexAdapter implements ProviderAdapter {
     const params = {
       cwd: turn.cwd,
       model: turn.requestedModel,
-      approvalPolicy: "untrusted",
+      approvalPolicy: approvalPolicy(turn),
       sandbox: turn.mode === "review" ? "read-only" : "workspace-write",
       // Codex's experimental dynamic tools; the connection opts in when it
       // initializes.
@@ -289,7 +293,7 @@ export class CodexAdapter implements ProviderAdapter {
         model: turn.requestedModel,
         ...(turn.requestedEffort ? { effort: turn.requestedEffort } : {}),
         ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
-        approvalPolicy: "untrusted",
+        approvalPolicy: approvalPolicy(turn),
         sandboxPolicy:
           turn.mode === "review"
             ? { type: "readOnly" }

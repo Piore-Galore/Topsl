@@ -103,6 +103,8 @@ Approvals are accepted only for the exact sentinel command (optionally wrapped i
 
 **Follow-up, 16 October 2026.** The suite is now `codex-runtime-qualification/v2`, and its first review turn also tests `candidate-reader`. The probe passes only when a `read_range` answer under the probe's grant returned the marker of a one-file build that only Topsl holds, and the reply quotes it. A passing run now satisfies the reviewer role. Details: [Codex workflows plan, step 4](Codex_Workflows_Plan.md#step-4-reader-probe-in-the-qualification-16-october-2026).
 
+**Follow-up after the first live run, 16 October 2026.** The suite is now `codex-runtime-qualification/v3`. The `read-only` and `workspace-write` probes turn Codex's approvals off (approval policy `never`), so each sentinel write runs without asking and reaches the sandbox; the suite accepts no approval and declines every request. A write counts as attempted only when Codex reports the exact sentinel command, or a change to that one file, ending `completed` or `failed`. The `interrupt` probe sends `turn/interrupt` once the reply's first text streams in, because Codex 0.163.0 found no active turn when asked as soon as the turn's start was reported. Details: [Codex workflows plan, step 6 follow-up](Codex_Workflows_Plan.md#step-6-follow-up-sandbox-and-interrupt-probes-16-october-2026).
+
 The UI adds **Qualify builder/reviewer runtime** beside **Validate** in the guided workflow team step, shows a one-line result, and re-reads readiness.
 
 ### Check caches
