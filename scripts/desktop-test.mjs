@@ -951,10 +951,38 @@ try {
         ).installations.some((i) => i.id === runtime.id),
       )
       .toBe(true);
+    // The window shows a change only after the service has published every
+    // change record before it, 200 at a time, and the history benchmark above
+    // left tens of thousands. Wait for that backlog to clear, so each step
+    // below waits only for its own change.
+    await page.evaluate(() => {
+      globalThis.topslPublished = 0;
+      globalThis.topslStopWatching = window.topsl.subscribe((event) => {
+        if (event.type === "changes")
+          globalThis.topslPublished = event.data.throughSequence;
+      });
+    });
     await page.evaluate(
       (id) => window.topsl.command({ type: "trust-installation", id }),
       runtime.id,
     );
+    const head = (
+      await page.evaluate(
+        (projectId) =>
+          window.topsl.command({ type: "scope-snapshot", projectId }),
+        projectIds[0],
+      )
+    ).sequence;
+    await expect
+      .poll(() => page.evaluate(() => globalThis.topslPublished), {
+        timeout: 180000,
+      })
+      .toBeGreaterThanOrEqual(head);
+    await page.evaluate(() => globalThis.topslStopWatching());
+    // A conversation, a card, or a decision shows only after the service has
+    // committed its records, each synced to disk. A slow CI disk can stretch
+    // that past the default five seconds, so these waits allow 30.
+    const committed = { timeout: 30000 };
     await page.getByRole("button", { name: "Workspace", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "fixture-project", exact: true }),
@@ -965,8 +993,14 @@ try {
     });
     const earlierConversation = await conversationSelect.inputValue();
     await page.getByRole("button", { name: "+ New chat", exact: true }).click();
-    await expect(conversationSelect).not.toHaveValue(earlierConversation);
-    await expect(page.locator(".conversation-heading")).toContainText("Chat ");
+    await expect(conversationSelect).not.toHaveValue(
+      earlierConversation,
+      committed,
+    );
+    await expect(page.locator(".conversation-heading")).toContainText(
+      "Chat ",
+      committed,
+    );
     await page
       .getByRole("combobox", { name: "Runtime", exact: true })
       .selectOption(runtime.id);
@@ -984,10 +1018,6 @@ try {
     const message = page.getByRole("textbox", { name: "Message", exact: true });
     const send = page.getByRole("button", { name: /^Send to Codex/ });
     const chat = page.getByRole("region", { name: "Conversation transcript" });
-    // A card appears, and goes once decided, only after the service has
-    // committed the turn's records, each synced to disk. A slow CI disk can
-    // stretch that past the default five seconds, so these waits allow 30.
-    const committed = { timeout: 30000 };
     await message.fill("approval");
     await send.click();
     const command = page.getByRole("group", {
