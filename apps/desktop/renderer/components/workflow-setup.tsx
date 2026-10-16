@@ -5,6 +5,15 @@ import {
 } from "../../../../packages/domain/workflow-drafts";
 import { ScopedReadFence } from "../state/scoped";
 const steps = ["Goal", "Team", "Environment", "Scope", "Review and start"];
+const teams = [
+  ["codex", "codex"],
+  ["codex", "claude"],
+  ["claude", "codex"],
+] as const;
+const providerName = (provider: string) =>
+  provider === "codex" ? "Codex" : "Claude";
+export const codexPairingNote =
+  "Codex reviews Codex in a fresh, read-only session. This is not an independent second model.";
 const lines = (value: string) =>
   value
     .split("\n")
@@ -58,6 +67,7 @@ export function WorkflowSetup({
     selection = useRef("");
   selection.current = JSON.stringify([
     draft.builder,
+    draft.reviewer,
     draft.builderRuntime,
     draft.reviewerRuntime,
     draft.builderModel,
@@ -130,7 +140,8 @@ export function WorkflowSetup({
     };
   }, [projectId]);
   const builderProvider = draft.builder,
-    reviewerProvider = draft.builder === "codex" ? "claude" : "codex";
+    reviewerProvider = draft.reviewer,
+    codexPair = builderProvider === "codex" && reviewerProvider === "codex";
   const choices = (provider: string) =>
     runtimes.filter(
       (runtime) =>
@@ -186,7 +197,7 @@ export function WorkflowSetup({
       reviewer:
         draft.reviewerRuntime && draft.reviewerModel
           ? {
-              provider: reviewerProvider as "codex" | "claude",
+              provider: reviewerProvider,
               installationId: draft.reviewerRuntime,
               model: draft.reviewerModel,
               ...(draft.reviewerEffort ? { effort: draft.reviewerEffort } : {}),
@@ -216,6 +227,7 @@ export function WorkflowSetup({
   }, [
     projectId,
     draft.builder,
+    draft.reviewer,
     draft.builderRuntime,
     draft.reviewerRuntime,
     draft.builderModel,
@@ -293,7 +305,7 @@ export function WorkflowSetup({
         ...(draft.builderEffort ? { effort: draft.builderEffort } : {}),
       },
       reviewer: {
-        provider: reviewerProvider as "codex" | "claude",
+        provider: reviewerProvider,
         installationId: draft.reviewerRuntime,
         model: draft.reviewerModel,
         ...(draft.reviewerEffort ? { effort: draft.reviewerEffort } : {}),
@@ -657,15 +669,30 @@ export function WorkflowSetup({
             <label className="full-width">
               Team preset
               <select
-                value={draft.builder}
-                onChange={(event) =>
-                  update({ builder: event.target.value as any })
-                }
+                value={`${builderProvider}:${reviewerProvider}`}
+                onChange={(event) => {
+                  const [builder, reviewer] = event.target.value.split(
+                    ":",
+                  ) as WorkflowDraftInput["builder"][];
+                  update({ builder, reviewer });
+                }}
               >
-                <option value="codex">Codex builds · Claude reviews</option>
-                <option value="claude">Claude builds · Codex reviews</option>
+                {[
+                  ...teams,
+                  // A saved pairing the presets do not offer stays visible.
+                  ...(teams.some(
+                    ([b, r]) => b === builderProvider && r === reviewerProvider,
+                  )
+                    ? []
+                    : [[builderProvider, reviewerProvider] as const]),
+                ].map(([b, r]) => (
+                  <option key={`${b}:${r}`} value={`${b}:${r}`}>
+                    {providerName(b)} builds · {providerName(r)} reviews
+                  </option>
+                ))}
               </select>
             </label>
+            {codexPair && <p className="full-width">{codexPairingNote}</p>}
             {roleFields("builder", builderProvider, builder)}
             {roleFields("reviewer", reviewerProvider, reviewer)}
           </>
@@ -822,6 +849,7 @@ export function WorkflowSetup({
               {builderProvider} builder / {reviewerProvider} reviewer · at most
               two repair rounds.
             </p>
+            {codexPair && <p>{codexPairingNote}</p>}
             <dl>
               <dt>Builder requested model</dt>
               <dd>{draft.builderModel || "Unselected"}</dd>
