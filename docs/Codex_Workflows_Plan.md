@@ -432,3 +432,40 @@ The owner approved this rework, and one more live run of up to 3 turns, after th
 - After the build, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed on `5390a47`. Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns, no approval requests and nothing untested, and both roles were ready in the readiness query and in the guided setup. The read-only detail gave the write's exit code 1 with the stand-in's `Operation not permitted`, and the workspace-write detail gave exit code 0 for the inside write and 1 for the outside write. The qualification folder and the profile were deleted.
 - `xvfb-run --auto-servernum npm run test:desktop` passed on `5390a47`, including the Codex-only team qualified against the stand-in through Topsl's screens, which now expects 3 model turns.
 - No model requests were sent. Not established: v4 against a live Codex. The one live run the owner approved tests it, and its result will be recorded here and in [Live provider sessions](Live_Provider_Sessions.md#results).
+
+### Live run of the rework (16 October 2026)
+
+**How it ran**
+
+- The owner ran the command from [PR #14](https://github.com/Piore-Galore/Topsl/pull/14) in Terminal at `a756265`, after `npm run build`, on the same Mac with the same Codex CLI 0.163.0 (npm package `@openai/codex`, signed in with ChatGPT). It was the one live run the owner approved with the rework.
+- The stand-in check ran first and passed: Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns and no approval requests, both roles were ready, and the folder and the profile were deleted.
+- The script then approved the live qualification dialog once. Topsl started 3 turns with `gpt-6.1-sol`, and the suite took 52.7 seconds.
+
+**Result: failed**, with `Not passed: candidate-reader.`
+
+| Probe | Result | What Topsl recorded |
+|---|---|---|
+| `native-subscription` | Passed | A ChatGPT account, billing route `native-subscription` |
+| `structured-turn` | Passed | The turn completed and returned the marker |
+| `candidate-reader` | Failed | One `read_range` answer under the probe's grant returned the file's marker and the reader refused nothing, but the reply did not quote the marker. It began `I couldn’t recover the line from the tool result.` |
+| `fresh-session` | Passed | Two `thread/start` requests returned different threads |
+| `read-only` | Passed, policy-enforced | With no model turn, a command printing a word ran in Codex's sandbox under the read-only policy. The write into the workspace exited with code 1 (`topsl: <folder>/workspace/readonly-….txt: Operation not permitted`), and no file was created |
+| `workspace-write` | Passed, policy-enforced | Under the workspace-write policy, the write inside the workspace exited with code 0 and landed. The write to the outside folder exited with code 1 (`Operation not permitted`), and the folder stayed empty |
+| `interrupt` | Passed | Topsl sent `turn/interrupt` after the reply's first streamed text, and the turn ended `interrupted` |
+| `process-lifecycle` | Passed | The child exited, its stdio closed, and its process group was gone |
+
+The qualification was recorded in the disposable profile until 15 November 2026. Topsl's readiness query found the builder ready and blocked the reviewer with `candidate-reader-unavailable`, and the guided setup showed one role satisfied. The folder in `~/Library/Caches` was deleted, and the profile was kept, as for any failed run. The report and screenshots are in the owner's `test-results/live-session/qualify-2026-10-16T12-23-00-689Z`, and the stand-in check's in `qualify-2026-10-16T12-22-52-512Z`.
+
+**What it establishes**
+
+- With Codex CLI 0.163.0 on macOS, Codex's sandbox enforced both policies Topsl sends, for commands Topsl ran through `command/exec`. Under read-only, a write into the workspace failed while a command that only prints ran. Under workspace-write, a write inside the workspace landed and one outside it failed. This is the first live run that tested the sandbox.
+- It does not show how Codex treats a model's own command during a turn, as the [second follow-up](#step-6-second-follow-up-sandbox-checks-without-the-model-16-october-2026) explains.
+- The interrupt passed again, sent after the reply's first streamed text.
+
+**What the failure shows**
+
+- Codex called `read_range` once, for the probe's file, and Topsl answered with the file's line; the reader refused nothing. The reply did not quote the line.
+- The same tool path passed in the first live run, whose reply quoted the line, and failed in the rerun, so the outcome varies from run to run. Whether Codex passed Topsl's answer on to the model intact is not recorded: the report keeps Topsl's side of the call and the start of the reply, not what Codex reported about the call or what the model saw. That Codex does not always pass a tool's answer on in a form the model can read is one explanation, and that the model does not always use it is another. Neither is established.
+- A Codex reviewer reads the build only through this reader, so the reviewer role stays blocked until a qualification passes `candidate-reader`.
+
+**Next.** Telling those explanations apart needs the reader probe to record what Codex reports about the call when it completes, which includes the content Codex received, and more of the reply. Another live run needs the owner's approval.
