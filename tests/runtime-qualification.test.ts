@@ -333,7 +333,7 @@ describe("runtime qualification suite", () => {
   );
 
   test.skipIf(process.platform === "win32")(
-    "the reader passes only when Topsl answered read_range for the probe's file and the reply quotes its marker",
+    "the reader passes only when Topsl answered read_range for the probe's file and the reply quotes its marker, and says how Codex reported the call",
     async () => {
       const details: Record<string, { passed: boolean; detail: string }> = {};
       for (const mode of [
@@ -344,6 +344,7 @@ describe("runtime qualification suite", () => {
         "partial",
         "other",
         "stray",
+        "dropped",
       ]) {
         const f = await setup(mode === "read" ? {} : { FIXTURE_READER: mode }),
           report = await runCodexQualification({
@@ -353,50 +354,114 @@ describe("runtime qualification suite", () => {
             parent: f.parent,
             readerProbe: f.quotingProbe,
           }),
-          o = byName(report);
+          o = byName(report),
+          // The text of Topsl's one answer to the tool call, if it made one.
+          answered: string | undefined = f
+            .frames()
+            .find(
+              (line) =>
+                line.from === "topsl" && line.frame.result?.contentItems,
+            )?.frame.result.contentItems[0].text;
         expect(report.error, mode).toBeNull();
         expect(report.turnsStarted, mode).toBe(qualificationTurnBudget);
         expect(o["structured-turn"].passed, mode).toBe(true);
         details[mode] = {
           passed: o["candidate-reader"].passed,
-          detail: o["candidate-reader"].detail,
+          // Codex's report counts the characters of Topsl's answer.
+          detail: answered
+            ? o["candidate-reader"].detail.replace(
+                ` of ${answered.length} characters `,
+                " of N characters ",
+              )
+            : o["candidate-reader"].detail,
         };
       }
       const detail = (
-        reads: number,
-        refused: number,
-        quoted: boolean,
-        calls: string,
-      ) =>
-        `Turn completed. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.${quoted ? "" : ' The reply began: "I could not read the file."'}`;
+          reads: number,
+          refused: number,
+          quoted: boolean,
+          calls: string,
+          reported: string,
+        ) =>
+          `Turn completed. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}. ${reported}${quoted ? "" : ' The reply began: "I could not read the file."'}`,
+        // How the stand-in reports its one read_range call when it completes.
+        call = (status: string, success: boolean, content: string) =>
+          `Codex reported read_range as ${status} (success: ${success}) with ${content}. Items completed: dynamicToolCall, agentMessage.`,
+        holding = "1 content item of N characters that holds the marker",
+        lacking =
+          "1 content item of N characters that does not hold the marker",
+        noCall =
+          "Codex reported no completed tool call. Items completed: agentMessage.";
       expect(details).toEqual({
         read: {
           passed: true,
-          detail: detail(1, 0, true, "read_range answered"),
+          detail: detail(
+            1,
+            0,
+            true,
+            "read_range answered",
+            call("completed", true, holding),
+          ),
         },
         // The model never calls the tool.
-        skip: { passed: false, detail: detail(0, 0, false, "none") },
+        skip: { passed: false, detail: detail(0, 0, false, "none", noCall) },
         // It quotes the marker without calling the tool.
-        quote: { passed: false, detail: detail(0, 0, true, "none") },
+        quote: { passed: false, detail: detail(0, 0, true, "none", noCall) },
         // It reads the file but does not quote it.
         unquoted: {
           passed: false,
-          detail: detail(1, 0, false, "read_range answered"),
+          detail: detail(
+            1,
+            0,
+            false,
+            "read_range answered",
+            call("completed", true, holding),
+          ),
         },
         // It reads only part of the file, then quotes a marker it had anyway.
         partial: {
           passed: false,
-          detail: detail(0, 0, true, "read_range answered"),
+          detail: detail(
+            0,
+            0,
+            true,
+            "read_range answered",
+            call("completed", true, lacking),
+          ),
         },
         // It reads a path outside the probe's build.
         other: {
           passed: false,
-          detail: detail(0, 1, false, "read_range failed"),
+          detail: detail(
+            0,
+            1,
+            false,
+            "read_range failed",
+            call("failed", false, lacking),
+          ),
         },
         // Its call names another turn, so Topsl never runs the reader.
         stray: {
           passed: false,
-          detail: detail(0, 0, false, "read_range refused"),
+          detail: detail(
+            0,
+            0,
+            false,
+            "read_range refused",
+            call("failed", false, lacking),
+          ),
+        },
+        // Topsl answers with the marker, but the runtime reports the call
+        // without its content and the reply does not quote it.
+        dropped: {
+          passed: false,
+          detail: detail(
+            1,
+            0,
+            false,
+            "read_range answered",
+            call("completed", true, "no content items"),
+          ),
         },
       });
     },

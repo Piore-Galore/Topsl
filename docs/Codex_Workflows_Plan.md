@@ -469,3 +469,17 @@ The qualification was recorded in the disposable profile until 15 November 2026.
 - A Codex reviewer reads the build only through this reader, so the reviewer role stays blocked until a qualification passes `candidate-reader`.
 
 **Next.** Telling those explanations apart needs the reader probe to record what Codex reports about the call when it completes, which includes the content Codex received, and more of the reply. Another live run needs the owner's approval.
+
+### Reader diagnostics (16 October 2026)
+
+After the [live run of the rework](#live-run-of-the-rework-16-october-2026), the reader probe records what Codex reports about its call, so the next failure can show where the line was lost. It sends no model requests of its own. Whether to run the live qualification again is the owner's decision.
+
+**What changed**
+
+- When the reader's turn ends, the `candidate-reader` detail adds how Codex reported each tool call when the call completed, from the `dynamicToolCall` item in Codex's `item/completed` notification ([qualification.ts](../packages/providers/qualification.ts)). For each call it gives the tool, its status, its `success` flag, how many content items it held, how many characters of text they hold, and whether that text holds the probe's marker. The text itself stays in memory and is never recorded. A turn with no completed call says `Codex reported no completed tool call.`
+- The detail also lists the type of each item Codex completed in the turn, in order, so a reply that came after reasoning, a command or an earlier message shows up. It lists at most 5 calls and 20 items.
+- When a reply lacks what its probe asked for, the detail now quotes its first 400 characters, up from 160. This applies to `structured-turn` too.
+- The suite stays `codex-runtime-qualification/v4` with a budget of 3 turns. What passes or fails is unchanged, so a qualification recorded before this change stays valid.
+- `FIXTURE_READER=dropped` makes the stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) read the file, then report the call with no content items and reply without the line.
+
+**What it can tell apart.** If Codex reports the call with content that holds the marker, Codex received Topsl's answer intact, and a reply that still lacks the line points at what the model saw or did with it. If Codex reports the call without content, or with content that lacks the marker, the answer was lost or changed before Codex recorded it. Neither case shows the model's own input, which Codex does not report.

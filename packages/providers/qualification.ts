@@ -54,11 +54,56 @@ interface TurnWatch {
   /** The reader's tools, on the one turn whose thread declared them. */
   tools?: ToolBinding;
   toolCalls: Array<{ tool: string; outcome: string }>;
+  /** The type of each item the runtime reported complete in the turn. */
+  items: string[];
+  /** What the runtime reported about each tool call when it completed. The
+   * text stays in memory: a report says only whether it holds a marker. */
+  reportedCalls: ReportedCall[];
   text: Map<string, string>;
   /** Called for each piece of the reply the turn streams. */
   output: () => void;
   settle: (value: { status: string; error: string | null }) => void;
   fail: (error: Error) => void;
+}
+interface ReportedCall {
+  tool: string;
+  status: string;
+  success: boolean | null;
+  /** Content items, or null when the runtime reported none. */
+  items: number | null;
+  /** The content items' text, joined. */
+  text: string;
+}
+/** A completed `dynamicToolCall` item as Codex 0.163.0 reports it. */
+function reportedCall(item: any): ReportedCall {
+  const content = Array.isArray(item.contentItems) ? item.contentItems : null;
+  return {
+    tool: typeof item.tool === "string" ? item.tool : "an unnamed tool",
+    status: typeof item.status === "string" ? item.status : "unknown",
+    success: typeof item.success === "boolean" ? item.success : null,
+    items: content ? content.length : null,
+    text: (content ?? [])
+      .map((entry: any) => (typeof entry?.text === "string" ? entry.text : ""))
+      .join(""),
+  };
+}
+/** How the runtime reported a turn's tool calls and items, saying of each
+ * call only whether its content holds `marker`. */
+function reportedTurn(watch: TurnWatch, marker: string): string {
+  const all = watch.reportedCalls,
+    calls = all
+      .slice(0, 5)
+      .map(
+        (call) =>
+          `${call.tool} as ${call.status} (success: ${call.success ?? "not reported"}) with ${
+            call.items === null
+              ? "no content items"
+              : `${call.items} content item${call.items === 1 ? "" : "s"} of ${call.text.length} character${call.text.length === 1 ? "" : "s"} that ${call.text.includes(marker) ? "holds" : "does not hold"} the marker`
+          }`,
+      ),
+    more = (count: number) => (count > 0 ? `, and ${count} more` : ""),
+    items = watch.items.slice(0, 20).join(", ") || "none";
+  return `${calls.length ? `Codex reported ${calls.join("; ")}${more(all.length - 5)}.` : "Codex reported no completed tool call."} Items completed: ${items}${more(watch.items.length - 20)}.`;
 }
 async function exists(file: string): Promise<boolean> {
   try {
@@ -117,7 +162,10 @@ export async function assertQualificationParent(parent: string): Promise<void> {
  * A second review thread declares the reviewer's own tools, and its one turn
  * reads a one-file build through them. Only Topsl holds that file, so
  * `candidate-reader` passes only when Topsl answered the read and the reply
- * quotes the file's marker.
+ * quotes the file's marker. Its detail also says how Codex reported each tool
+ * call when it completed, including whether the call's content holds the
+ * marker but never the content, and which items the turn completed, so a
+ * failure shows where the line was lost.
  */
 export async function runCodexQualification(input: {
   adapter: ProviderAdapter;
@@ -219,6 +267,16 @@ export async function runCodexQualification(input: {
     const watch = current;
     if (!watch || !params || typeof params !== "object") return;
     if (params.threadId && params.threadId !== watch.threadId) return;
+    if (
+      method === "item/completed" &&
+      params.item &&
+      typeof params.item === "object" &&
+      !(watch.turnId && params.turnId && params.turnId !== watch.turnId)
+    ) {
+      watch.items.push(String(params.item.type).slice(0, 40));
+      if (params.item.type === "dynamicToolCall")
+        watch.reportedCalls.push(reportedCall(params.item));
+    }
     const event = input.adapter.event(method, params);
     if (!event) return;
     if (event.type === "turn-started") watch.turnId ??= event.turnId;
@@ -316,6 +374,8 @@ export async function runCodexQualification(input: {
       turnId: null,
       ...(tools ? { tools } : {}),
       toolCalls: [],
+      items: [],
+      reportedCalls: [],
       text: new Map(),
       output: () => onOutput?.(watch),
       settle,
@@ -358,7 +418,7 @@ export async function runCodexQualification(input: {
    * probe shows what the model said instead. */
   const replyStart = (text: string) =>
     text.trim()
-      ? ` The reply began: ${JSON.stringify(text.trim().split(root).join("<folder>").slice(0, 160))}`
+      ? ` The reply began: ${JSON.stringify(text.trim().split(root).join("<folder>").slice(0, 400))}`
       : " The reply was empty.";
   /** Writes `content` to `file` with the runtime's own sandbox in `mode`'s
    * policy. No model is involved. */
@@ -453,7 +513,7 @@ export async function runCodexQualification(input: {
           "candidate-reader",
           "behavior-observed",
           result.status === "completed" && reads > 0 && quoted,
-          `Turn ${result.status}. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.${quoted ? "" : replyStart(text)}`,
+          `Turn ${result.status}. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}. ${reportedTurn(result.watch, reader.marker)}${quoted ? "" : replyStart(text)}`,
         );
       } catch (e) {
         observe("candidate-reader", "unknown", false, safeError(e));
