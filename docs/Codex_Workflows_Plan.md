@@ -303,3 +303,37 @@ Each step adds its changes and validation here when it lands.
 - On the owner's Mac (macOS, Apple silicon), the qualification stand-in and the wrapper that skips the reader gave the same results on `8ad7667`. The first passed in 4 turns with both roles ready. The second failed with `Not passed: candidate-reader.`, with only the reviewer blocked. Both runs deleted their folder in `~/Library/Caches`.
 - The session checks with stand-ins passed again for Codex alone and for Claude Code handing off to Codex. Both use the **Models & account** step the qualification now shares.
 - No model requests were sent. Not established: the qualification against a live Codex. It runs once on the owner's Mac after steps 2 to 5 are merged, and its result will be recorded here and in [Live provider sessions](Live_Provider_Sessions.md#results).
+
+### Live run (16 October 2026)
+
+**How it ran**
+
+- The owner ran `node scripts/live-session.mjs --qualify --codex /opt/homebrew/bin/codex` in Terminal at `4647087`, after `npm run build`, on macOS, Apple silicon (`darwin/arm64 27.0.0`). Codex CLI 0.163.0 came from the npm package `@openai/codex` and was signed in with ChatGPT.
+- Claude Code on that Mac, in auto mode, had refused the same command four times with the reason `Create Unsafe Agents`, before anything ran. No Claude session started the run.
+- The script approved the qualification dialog once. Topsl started 4 turns with `gpt-6.1-sol`, and the suite took 40.7 seconds.
+
+**Result: failed**, with `Not passed: read-only, workspace-write, interrupt.`
+
+| Probe | Result | What Topsl recorded |
+|---|---|---|
+| `native-subscription` | Passed | A ChatGPT account, billing route `native-subscription` |
+| `structured-turn` | Passed | The turn completed and returned the marker |
+| `candidate-reader` | Passed | One `read_range` answer under the probe's grant returned the file's marker, the reader refused nothing, and the reply quoted the marker |
+| `fresh-session` | Passed | Two `thread/start` requests returned different threads |
+| `read-only` | Failed | The suite accepted Codex's approval request for the sentinel write, once, and the file was created |
+| `workspace-write` | Failed | The suite accepted the inside and the outside sentinel writes, once each. The inside file landed, and so did the outside file |
+| `interrupt` | Failed | Topsl sent `turn/interrupt` when the turn's start was reported, and Codex answered `no active turn to interrupt` |
+| `process-lifecycle` | Passed | The child exited, its stdio closed, and its process group was gone |
+
+The qualification was recorded in the disposable profile until 15 November 2026. Topsl's readiness query blocked both roles with `permission-profile-unverified`, and the guided setup said neither workspace-write nor read-only is qualified for this runtime, account, policy and host. The `~/Library/Caches/topsl-qualify-*` folder was deleted, and the profile was kept, as for any failed run. The report and screenshots are in the owner's `test-results/live-session/qualify-2026-10-16T10-47-32-807Z`.
+
+**What it establishes.** A live Codex model called Topsl's reader from a read-only review thread and quoted the answer, which steps 2 to 4 could only show with the stand-in. The suite stayed within four turns, recorded its result, and deleted its qualification folder.
+
+**What the failures show**
+
+- Every write that landed had first been approved by the suite. A real review run declines every approval ([manager.ts:1026-1030](https://github.com/Piore-Galore/Topsl/blob/4647087/packages/runtime/manager.ts#L1026-L1030)), so the read-only probe approved something Topsl never approves. Neither sandbox probe shows the sandbox letting a write through without an approval.
+- The stand-in assumed that an approved command still runs inside the sandbox. That Codex 0.163.0 instead runs an approved command outside the sandbox when the sandbox blocks it is an inference from this result: the report does not record how Codex ran each command.
+- The interrupt result fits a gap between Codex reporting a turn as started and accepting an interrupt for it. This is also an inference.
+- If the first inference holds, approving a command in a **Workspace edits · ask** chat can also let it run outside the workspace sandbox. That is not established either.
+
+**Next.** The two sandbox probes need to run with approvals off, so that each write reaches the sandbox without an approval and only the sandbox decides, and the interrupt needs to wait for the turn's first output. Proving that takes a second live run of up to four turns. On 16 October 2026 the owner approved both the fix and that one rerun.
