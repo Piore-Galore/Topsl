@@ -172,3 +172,16 @@ Each preparation command and each check started its time limit when it was spawn
 
 - **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed. `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` passed 1 test, `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2, and `npm test -- tests/parallel-workspaces.test.ts -t "fanout capability gate"` passed 1. With the hook changed to exit with status 3, the hook test failed with `environment phase, environment preparation: Environment preparation command failed; candidate tests were not executed.`
 - **Time-limit change** (same container): with a temporary 6 s delay inserted before the observation that follows a command's close (not committed), `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` failed in 20 s with the CI run's message, `environment phase, environment timeout: Environment preparation timed out.` With the change, it passed under the same delay. A temporary test running a check that exits at once with a 1 s limit ended `error` under the delay before the change and `passed` after it. Without the delay, `npm run typecheck` passed, and `npm test` passed 323 tests with 3 skipped in 37 files (2 of them skipped) in 533 s.
+
+## Follow-up — R2-AT-37/38 check ended `error` on Windows (16 October 2026)
+
+On [pull request #4](https://github.com/Piore-Galore/Topsl/pull/4) at `1b32e1c`, whose change no test runs, the Windows x64 compile job ([job log](https://github.com/Piore-Galore/Topsl/actions/runs/38844559579/job/116792344089)) failed R2-AT-37/38 `reverse=true`: its first dependency check ended `error`, where the test expects `failed`. The other 312 Windows tests passed, and the same test passed on that pull request's earlier commit `e76b445` and on `main` at `d8eda1e`. A re-run of the job on the same commit passed.
+
+The test failed after 21 s, while `reverse=false` took 59 s on the same runner, so neither the check's nor the preparation's 30 s limit can have run out. An `error` that early can come from one of the prepared environment's 5 s version probes (`node --version` and `npm --version` in [`environments.ts`](../packages/workflows/environments.ts)), a Windows process-tree observation that does not end `quiescent`, or a file error while the candidate is materialized. The assertion did not say which, and the job keeps no artifacts, so the cause is unknown.
+
+The assertion in [`round2-acceptance.test.ts`](../tests/round2-acceptance.test.ts) now reports the execution's failure phase, environment failure kind and error, as R2-AT-26's does.
+
+### Validation
+
+- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed, and `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2 tests. With both probe limits temporarily set to 1 ms (not committed), the `reverse=true` test failed as on the Windows runner, with `expected 'error' to be 'failed'`, and the assertion reported `environment phase, environment timeout: Environment preparation timed out.`
+- **Remote evidence:** this pull request's Compile Topsl and Round 2 lifecycle stress checks on the four hosted runners.
