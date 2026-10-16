@@ -867,7 +867,7 @@ try {
     await expect(summary).toContainText("candidate-reader");
     await expect(summary).not.toContainText("Not passed");
     await expect(summary).not.toContainText("Not tested");
-    await expect(summary).toContainText("Model turns started: 4.");
+    await expect(summary).toContainText("Model turns started: 3.");
     // The same qualification covers both roles on one installation.
     await expect(
       setup.getByText(/^Role requirements currently satisfied/),

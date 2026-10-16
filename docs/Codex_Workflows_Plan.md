@@ -397,4 +397,75 @@ The qualification was recorded in the disposable profile until 15 November 2026.
 - Both sandbox probes depend on the model attempting a write it expects to fail. With approvals off, `gpt-6.1-sol` skipped those writes, although the prompt asked it to run the command even if it expected the sandbox to block it. Why it skipped them is not recorded: the report keeps the commands Codex reported, not the model's reply. That Codex tells the model it cannot ask for approval, and the model then avoids commands it expects to fail, is an inference.
 - The reader probe passed with the same prompt in the first live run and failed here, so it also depends on how the model words its reply. The reader itself answered: Topsl recorded one read under the grant that returned the marker.
 
-**Next.** On 16 October 2026 the owner approved a rework of the sandbox and reader probes and one more live run of up to 3 turns. Topsl will run each sandbox write itself through Codex's `command/exec` request, which runs a given command in Codex's sandbox under a given sandbox policy without a thread or turn, according to the protocol schema Codex 0.163.0 generates. The reader probe gets its own turn. The rework is its own pull request.
+**Next.** On 16 October 2026 the owner approved a rework of the sandbox and reader probes and one more live run of up to 3 turns. Topsl will run each sandbox write itself through Codex's `command/exec` request, which runs a given command in Codex's sandbox under a given sandbox policy without a thread or turn, according to the protocol schema Codex 0.163.0 generates. The reader probe gets its own turn. The rework is recorded [below](#step-6-second-follow-up-sandbox-checks-without-the-model-16-october-2026).
+
+### Step 6 second follow-up: sandbox checks without the model (16 October 2026)
+
+The owner approved this rework, and one more live run of up to 3 turns, after the [live rerun](#live-rerun-16-october-2026) failed.
+
+**What changed**
+
+- The suite is now `codex-runtime-qualification/v4`, with a budget of 3 model turns ([qualification.ts](../packages/providers/qualification.ts)). The `read-only` and `workspace-write` probes start no turn. Topsl runs each sentinel write itself through the adapter's new `sandboxCommand` ([contract.ts](../packages/providers/contract.ts)), which for Codex sends `command/exec` ([codex.ts](../packages/providers/codex.ts)). According to the protocol schema that Codex 0.163.0 generates, `command/exec` runs an argv in Codex's sandbox without a thread or turn and answers with its exit code and output once the process exits. Topsl sends it the sandbox policy that a review turn (read-only) or an edit turn (the workspace alone, without network) gets, from the same function `turn/start` uses, with a 20-second timeout.
+- `read-only` first runs a control command that prints a word, so that a failed write cannot be a command that never ran. It passes only when the control printed the word, the write into the workspace exited non-zero, no file appeared, and neither the workspace nor the outside folder changed.
+- `workspace-write` passes only when the inside write exited 0 and its file holds what was written, and the outside write exited non-zero with the outside folder still empty.
+- Each sandbox probe's detail gives every write's exit code and the start of its error output, with the qualification folder written as `<folder>`.
+- `candidate-reader` has its own turn, on a second review thread that declares the reader's tools, and its prompt asks only for the read and the line it returns. `fresh-session` compares that thread with the first. When a reply lacks what its probe asked for, the detail now records how the reply began.
+- A runtime adapter without `sandboxCommand` fails both sandbox probes with `This runtime adapter cannot run a command in its sandbox.`, and the other probes still run.
+- The approvals-off option from the [first follow-up](#step-6-follow-up-sandbox-and-interrupt-probes-16-october-2026) is gone. Every thread and turn the suite starts uses `untrusted`, as Topsl's chats do, and the suite declines any approval request a turn makes.
+- Topsl's qualification dialog says up to 3 model turns and that the write checks send nothing to the model. The guided setup's qualify buttons and the live session script use the same budget.
+- The stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) answers `command/exec` in a pretend sandbox: under the read-only policy nothing may be written, and under workspace-write only inside the writable roots. `FIXTURE_SANDBOX=broken` lets every write land, `FIXTURE_NO_EXEC=1` does not know `command/exec`, and `FIXTURE_ASK=1` asks for approval to run a command during the marker turn. It no longer runs commands that a prompt names, so `FIXTURE_REFUSE` and `FIXTURE_ALTERED` are gone. It still refuses an interrupt sent before the reply streams.
+
+**What did not change.** Topsl's own chats and workflow runs still use `untrusted` with the same sandbox policies, and a review run still declines every approval. The runtime binding and its sandbox hash are unchanged. The interrupt probe still waits for the reply's first streamed text, and the reader, its grant and its encrypted store are unchanged. Whether an approved command in an edit chat runs outside the sandbox is still unverified.
+
+**What it does and does not show.** A pass would show that Codex, on that host, blocks a write that Topsl runs under the policy a review or an edit turn gets, and lets the inside write land. It would not show how Codex treats a model's own command during a turn. The schema gives `command/exec` the same sandbox policy shape as a thread or turn, but that Codex enforces both the same way is an inference. The two live runs so far are the only live record of a turn's commands, and neither tested the sandbox alone: in the first the suite approved each write before it ran, and in the rerun the model did not attempt the writes the sandbox should block.
+
+**Validation** (16 October 2026, Linux x64 container)
+
+- `node scripts/test.mjs tests/runtime-qualification.test.ts`: 14 tests passed. Against the stand-in, every probe passed in 3 turns with no approval requests and nothing untested, and both sandbox probes were recorded as policy-enforced with all three negative-control fields true. All 3 threads started read-only with `untrusted`, and only the reader's thread declared tools. The 4 `command/exec` requests carried the control command and the read-only write with the review policy, and the inside and outside writes with the edit policy, all in the workspace. The interrupt went out after the reply's first streamed text.
+- With a recording connection, `command/exec` and `turn/start` sent identical sandbox policies for a review and for an edit.
+- A stand-in sandbox that lets every write land failed both write probes as `unsupported`. The read-only detail ended `exited with code 0, and a file was created.`, and the workspace-write detail `exited with code 0 and created a file.`
+- A stand-in without `command/exec`, and an adapter without `sandboxCommand`, failed both write probes as unknown, and the structured-turn, candidate-reader, fresh-session and interrupt probes passed.
+- A stand-in that asks for approval during the marker turn got `decline`, and its command did not run.
+- When the stand-in's model skipped the read, quoted the marker without reading, read without quoting, read only part of the file, read another path or named another turn, `candidate-reader` failed. Each detail that lacked the marker recorded how the reply began.
+- The same 14 tests also passed against a copy of the stand-in that sends each burst of frames in one write. Batching that way reproduced the timeout of the stand-in test on [PR #13](https://github.com/Piore-Galore/Topsl/pull/13)'s Linux runner, where a turn's completion arrived in the same read as the response that started the turn, before the test listened for it. The suite itself watches a turn before starting it, and the stand-in tests now listen before starting a turn too.
+- `npm run check` passed on `5390a47`: typecheck, 343 tests passed and 4 skipped in 41 files (the skipped ones need a real Codex or the stress flag), the release tests and the build.
+- After the build, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed on `5390a47`. Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns, no approval requests and nothing untested, and both roles were ready in the readiness query and in the guided setup. The read-only detail gave the write's exit code 1 with the stand-in's `Operation not permitted`, and the workspace-write detail gave exit code 0 for the inside write and 1 for the outside write. The qualification folder and the profile were deleted.
+- `xvfb-run --auto-servernum npm run test:desktop` passed on `5390a47`, including the Codex-only team qualified against the stand-in through Topsl's screens, which now expects 3 model turns.
+- No model requests were sent. Not established: v4 against a live Codex. The one live run the owner approved tests it, and its result will be recorded here and in [Live provider sessions](Live_Provider_Sessions.md#results).
+
+### Live run of the rework (16 October 2026)
+
+**How it ran**
+
+- The owner ran the command from [PR #14](https://github.com/Piore-Galore/Topsl/pull/14) in Terminal at `a756265`, after `npm run build`, on the same Mac with the same Codex CLI 0.163.0 (npm package `@openai/codex`, signed in with ChatGPT). It was the one live run the owner approved with the rework.
+- The stand-in check ran first and passed: Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns and no approval requests, both roles were ready, and the folder and the profile were deleted.
+- The script then approved the live qualification dialog once. Topsl started 3 turns with `gpt-6.1-sol`, and the suite took 52.7 seconds.
+
+**Result: failed**, with `Not passed: candidate-reader.`
+
+| Probe | Result | What Topsl recorded |
+|---|---|---|
+| `native-subscription` | Passed | A ChatGPT account, billing route `native-subscription` |
+| `structured-turn` | Passed | The turn completed and returned the marker |
+| `candidate-reader` | Failed | One `read_range` answer under the probe's grant returned the file's marker and the reader refused nothing, but the reply did not quote the marker. It began `I couldn’t recover the line from the tool result.` |
+| `fresh-session` | Passed | Two `thread/start` requests returned different threads |
+| `read-only` | Passed, policy-enforced | With no model turn, a command printing a word ran in Codex's sandbox under the read-only policy. The write into the workspace exited with code 1 (`topsl: <folder>/workspace/readonly-….txt: Operation not permitted`), and no file was created |
+| `workspace-write` | Passed, policy-enforced | Under the workspace-write policy, the write inside the workspace exited with code 0 and landed. The write to the outside folder exited with code 1 (`Operation not permitted`), and the folder stayed empty |
+| `interrupt` | Passed | Topsl sent `turn/interrupt` after the reply's first streamed text, and the turn ended `interrupted` |
+| `process-lifecycle` | Passed | The child exited, its stdio closed, and its process group was gone |
+
+The qualification was recorded in the disposable profile until 15 November 2026. Topsl's readiness query found the builder ready and blocked the reviewer with `candidate-reader-unavailable`, and the guided setup showed one role satisfied. The folder in `~/Library/Caches` was deleted, and the profile was kept, as for any failed run. The report and screenshots are in the owner's `test-results/live-session/qualify-2026-10-16T12-23-00-689Z`, and the stand-in check's in `qualify-2026-10-16T12-22-52-512Z`.
+
+**What it establishes**
+
+- With Codex CLI 0.163.0 on macOS, Codex's sandbox enforced both policies Topsl sends, for commands Topsl ran through `command/exec`. Under read-only, a write into the workspace failed while a command that only prints ran. Under workspace-write, a write inside the workspace landed and one outside it failed. This is the first live run that tested the sandbox.
+- It does not show how Codex treats a model's own command during a turn, as the [second follow-up](#step-6-second-follow-up-sandbox-checks-without-the-model-16-october-2026) explains.
+- The interrupt passed again, sent after the reply's first streamed text.
+
+**What the failure shows**
+
+- Codex called `read_range` once, for the probe's file, and Topsl answered with the file's line; the reader refused nothing. The reply did not quote the line.
+- The same tool path passed in the first live run, whose reply quoted the line, and failed in the rerun, so the outcome varies from run to run. Whether Codex passed Topsl's answer on to the model intact is not recorded: the report keeps Topsl's side of the call and the start of the reply, not what Codex reported about the call or what the model saw. That Codex does not always pass a tool's answer on in a form the model can read is one explanation, and that the model does not always use it is another. Neither is established.
+- A Codex reviewer reads the build only through this reader, so the reviewer role stays blocked until a qualification passes `candidate-reader`.
+
+**Next.** Telling those explanations apart needs the reader probe to record what Codex reports about the call when it completes, which includes the content Codex received, and more of the reply. Another live run needs the owner's approval.

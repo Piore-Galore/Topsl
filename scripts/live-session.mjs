@@ -26,7 +26,7 @@ import path from "node:path";
 // expects are approved. The provider keeps the session in its own history, as
 // it does for any native session. With --qualify, Codex instead goes through
 // Topsl's runtime qualification from the guided setup, with Codex in both
-// roles: up to four model turns, approved once and never retried.
+// roles: up to three model turns, approved once and never retried.
 
 const usage =
   "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--qualify] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt.";
@@ -741,9 +741,9 @@ async function codexChat(projectId, step, handoff = null) {
     throw new Error("The conversation does not keep both providers' replies.");
 }
 
-// The owner approved up to four model turns for one qualification, which is
-// also the budget of Topsl's suite.
-const qualificationTurns = 4;
+// Topsl's suite starts at most three model turns, and the script approves
+// only a dialog that says so.
+const qualificationTurns = 3;
 const qualificationDialog = "Qualify this Codex runtime with live model turns?";
 /** Text with the home folder written as ~, wherever it appears. */
 const withoutHome = (text) =>
