@@ -282,3 +282,23 @@ Each step adds its changes and validation here when it lands.
 - `xvfb-run --auto-servernum node scripts/round2-ui-test.mjs` passed. This manual harness assumed the old default. It now checks the new default and the note, then picks Codex builds · Claude reviews for its run. Its old version failed against the new setup.
 - `npm test` on `fd522ad`: 38 files and 342 tests passed. 3 files and 4 tests were skipped, the same opt-in ones as in step 4.
 - No model requests were sent. Not established: a live Codex qualified for both roles, which step 6 covers, and a live builder-and-reviewer run, which waits for decision 5. macOS and Windows depend on CI.
+
+### Step 6: live qualification (16 October 2026)
+
+**What changed**
+
+- `node scripts/live-session.mjs --qualify --codex <path>` runs the runtime qualification through Topsl's own screens ([live-session.mjs](../scripts/live-session.mjs)). After it locates and trusts the executable and adds a disposable project, it connects Codex with **Models & account**. In the guided setup it then chooses Codex builds · Codex reviews, selects the runtime and the model for both roles, and presses **Qualify builder runtime**. The model is the one Codex reports as default unless `--model` names another.
+- The disposable profile gets `TOPSL_TEST_QUALIFICATION_DIR`, a new `topsl-qualify-*` folder in `~/Library/Caches` on macOS or `~/.cache` on Linux. The script deletes it after every run, as decision 3 says.
+- The script approves Topsl's qualification dialog once, and only when its text names the selected executable, the chosen model, up to 4 model turns and that folder. It never retries: the approval is used up, so a second dialog would be cancelled. A run also fails if Topsl reports more than four turns started.
+- The report keeps what Topsl recorded, including each probe's outcome and detail, with only the account type and plan and with the home folder written as `~`. It also keeps both roles' readiness from Topsl's readiness query and from the guided setup. A run passes only if every probe passed, none was left untested, the qualification was recorded and both roles are ready. A failed run keeps the same record.
+- `--model` must name a model Codex reports. The script now stops with `Codex did not report the model …` before using it, for a session check as well.
+- [`tests/fixtures/live-session/codex-qualify.cjs`](../tests/fixtures/live-session/codex-qualify.cjs) is the procedure's stand-in. It runs the suite's scripted app-server.
+- [Live provider sessions](Live_Provider_Sessions.md#codex-runtime-qualification) describes the mode, and README lists the command.
+
+**Validation** (16 October 2026, Linux x64 container, on top of step 5)
+
+- After `npm run build`, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed on `93328aa`. Every probe passed in 4 turns and the qualification was recorded for 30 days. Both roles were ready in the readiness query, and the guided setup showed both satisfied. The qualification folder and the profile were deleted.
+- With `FIXTURE_READER=skip` in the script's environment, the stand-in still called the reader and the run passed. Topsl passes a runtime only a fixed list of environment variables (`nativeEnvironment` in [system.ts](../packages/platform/system.ts)). A wrapper that sets the variable itself, as Live provider sessions shows, made the stand-in skip the reader. That run failed with `Not passed: candidate-reader.` The builder stayed ready and the reviewer was blocked by `candidate-reader-unavailable`, and the guided setup showed one role satisfied. The qualification folder was deleted, and the profile was kept for inspection.
+- `--model not-reported` stopped the run with `Codex did not report the model not-reported.` before the qualification dialog, with no turns started.
+- The session checks with stand-ins passed again for Codex alone and for Claude Code handing off to Codex. Both use the **Models & account** step the qualification now shares.
+- No model requests were sent. Not established: the qualification against a live Codex. It runs once on the owner's Mac after steps 2 to 5 are merged, and its result will be recorded here and in [Live provider sessions](Live_Provider_Sessions.md#results).
