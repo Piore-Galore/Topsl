@@ -9,6 +9,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { randomInt } from "node:crypto";
 import os from "node:os";
@@ -23,12 +24,15 @@ import path from "node:path";
 // `npm run build`) with a new disposable topsl-test-* profile, so the user's
 // own Topsl profile is not opened. Only the native dialogs this procedure
 // expects are approved. The provider keeps the session in its own history, as
-// it does for any native session.
+// it does for any native session. With --qualify, Codex instead goes through
+// Topsl's runtime qualification from the guided setup, with Codex in both
+// roles: up to four model turns, approved once and never retried.
 
 const usage =
-  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex.";
+  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--qualify] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt.";
 const options = {
   executables: {},
+  qualify: false,
   model: null,
   output: null,
   keepProfile: false,
@@ -40,6 +44,7 @@ for (let index = 2; index < process.argv.length; index++) {
     !options.executables[argument.slice(2)]
   )
     options.executables[argument.slice(2)] = process.argv[++index];
+  else if (argument === "--qualify") options.qualify = true;
   else if (argument === "--model") options.model = process.argv[++index];
   else if (argument === "--output") options.output = process.argv[++index];
   else if (argument === "--keep-profile") options.keepProfile = true;
@@ -51,9 +56,14 @@ const both = providers.length === 2;
 if (
   !providers.length ||
   providers.some((p) => !path.isAbsolute(options.executables[p])) ||
-  (options.model && !options.executables.codex)
+  (options.model && !options.executables.codex) ||
+  (options.qualify && providers.join() !== "codex")
 )
   throw new Error(usage);
+if (options.qualify && process.platform === "win32")
+  throw new Error(
+    "The runtime qualification uses POSIX shell probes and runs on macOS and Linux only.",
+  );
 try {
   await stat("dist/main.cjs");
 } catch {
@@ -106,12 +116,29 @@ const removedEnvironment = Object.keys(environment).filter((name) =>
   billing.test(name),
 );
 for (const name of removedEnvironment) delete environment[name];
+// Codex's workspace-write sandbox leaves the temporary folders writable, so a
+// qualification there could not judge its outside write. It runs in a new
+// topsl-qualify-* folder in the user's cache folder, which is always deleted
+// afterwards.
+let qualificationFolder = null;
+if (options.qualify) {
+  const caches =
+    process.platform === "darwin"
+      ? path.join(home, "Library", "Caches")
+      : path.join(home, ".cache");
+  await mkdir(caches, { recursive: true });
+  qualificationFolder = await mkdtemp(path.join(caches, "topsl-qualify-"));
+  process.on("exit", () =>
+    rmSync(qualificationFolder, { recursive: true, force: true }),
+  );
+  environment.TOPSL_TEST_QUALIFICATION_DIR = qualificationFolder;
+}
 const output = path.resolve(
   options.output ??
     path.join(
       "test-results",
       "live-session",
-      `${both ? "both" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+      `${options.qualify ? "qualify" : both ? "both" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
     ),
 );
 await mkdir(output, { recursive: true });
@@ -128,12 +155,17 @@ const newStep = (provider) => ({
 });
 // A single-provider report keeps its step at the top level. A run with both
 // keeps one step per provider, in the order they ran, and the conversation
-// they share.
+// they share. A qualification keeps what Topsl recorded and the readiness it
+// gives each role.
 const report = {
   schemaVersion: 1,
   kind: "topsl-live-session",
   provider: both ? "both" : providers[0],
-  route: both ? "handoff" : routes[providers[0]],
+  route: options.qualify
+    ? "runtime-qualification"
+    : both
+      ? "handoff"
+      : routes[providers[0]],
   observedAt: new Date().toISOString(),
   host: `${os.platform()}/${os.arch()} ${os.release()}`,
   topsl: {
@@ -145,10 +177,25 @@ const report = {
   removedEnvironment,
   dialogs: [],
   modelTurns: 0,
-  ...(both ? { steps: {}, conversation: null } : newStep(providers[0])),
+  ...(options.qualify
+    ? {
+        executable: { path: tilde(options.executables.codex) },
+        session: {},
+        qualification: null,
+        readiness: null,
+      }
+    : both
+      ? { steps: {}, conversation: null }
+      : newStep(providers[0])),
   screenshots: [],
   profile: tilde(profile),
   profileDeleted: false,
+  ...(options.qualify
+    ? {
+        qualificationFolder: tilde(qualificationFolder),
+        qualificationFolderDeleted: false,
+      }
+    : {}),
   result: "failed",
   failure: null,
 };
@@ -502,20 +549,10 @@ async function claudeTerminal(projectId, step) {
 }
 
 /**
- * Codex through the structured chat: one prompt in a new chat or, after a
- * handoff, in Claude Code's imported conversation with the reviewed context
- * attached.
+ * Codex's **Models & account**: connects the runtime and returns the model to
+ * use, the one chosen with --model or the one Codex reports as default.
  */
-async function codexChat(projectId, step, handoff = null) {
-  const session = (step.session = {
-    account: null,
-    model: null,
-    modelsReported: null,
-    ...(handoff ? { handoff: null } : {}),
-    run: null,
-    approvals: [],
-    usageRecords: null,
-  });
+async function codexConnection(session) {
   await page
     .getByRole("button", { name: "Models & account", exact: true })
     .click();
@@ -535,7 +572,28 @@ async function codexChat(projectId, step, handoff = null) {
     (models.find((m) => m.isDefault) ?? models[0])?.model ??
     null;
   if (!model) throw new Error("Codex reported no model to select.");
+  if (!models.some((m) => m.model === model))
+    throw new Error(`Codex did not report the model ${model}.`);
   session.model = model;
+  return model;
+}
+
+/**
+ * Codex through the structured chat: one prompt in a new chat or, after a
+ * handoff, in Claude Code's imported conversation with the reviewed context
+ * attached.
+ */
+async function codexChat(projectId, step, handoff = null) {
+  const session = (step.session = {
+    account: null,
+    model: null,
+    modelsReported: null,
+    ...(handoff ? { handoff: null } : {}),
+    run: null,
+    approvals: [],
+    usageRecords: null,
+  });
+  const model = await codexConnection(session);
 
   let conversationId = handoff?.conversationId;
   if (handoff) {
@@ -683,6 +741,209 @@ async function codexChat(projectId, step, handoff = null) {
     throw new Error("The conversation does not keep both providers' replies.");
 }
 
+// The owner approved up to four model turns for one qualification, which is
+// also the budget of Topsl's suite.
+const qualificationTurns = 4;
+const qualificationDialog = "Qualify this Codex runtime with live model turns?";
+/** Text with the home folder written as ~, wherever it appears. */
+const withoutHome = (text) =>
+  typeof text === "string"
+    ? text.split(home + path.sep).join(`~${path.sep}`)
+    : text;
+
+/**
+ * Topsl's runtime qualification from the guided setup, with Codex in both
+ * roles. It is approved once and not retried. Whatever Topsl recorded is
+ * kept, also when the qualification fails.
+ */
+async function codexQualification(projectId, runtime) {
+  const session = (report.session = {
+    account: null,
+    model: null,
+    modelsReported: null,
+    summary: null,
+    rolesShownReady: null,
+  });
+  const model = await codexConnection(session);
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  const setup = page.locator(".guided-workflow");
+  await appear("the guided setup", setup.locator("summary").first());
+  await setup.locator("summary").first().click();
+  await setup.getByRole("button", { name: "2. Team", exact: true }).click();
+  await setup.getByLabel("Team preset").selectOption("codex:codex");
+  for (const role of ["builder", "reviewer"])
+    await setup.getByLabel(`Selected ${role} runtime`).selectOption(runtime.id);
+  await setup
+    .getByRole("button", { name: "Discover builder models", exact: true })
+    .click();
+  const listed = setup
+    .getByLabel("Requested reviewer model")
+    .locator(`option[value=${JSON.stringify(model)}]`);
+  await until("the guided setup to list Codex's models", 60000, async () => {
+    await checkShownErrors();
+    return (await listed.count()) > 0;
+  });
+  for (const role of ["builder", "reviewer"])
+    await setup.getByLabel(`Requested ${role} model`).selectOption(model);
+  const qualify = setup.getByRole("button", {
+    name: "Qualify builder runtime",
+    exact: true,
+  });
+  await expect(qualify).toBeEnabled();
+  await screenshot("qualification-ready");
+  await app.evaluate(
+    (_electron, approval) => {
+      globalThis.__liveSession.policy.qualification = approval;
+    },
+    {
+      message: qualificationDialog,
+      model,
+      turns: qualificationTurns,
+      folder: qualificationFolder,
+    },
+  );
+  await qualify.click();
+  const clickedAt = Date.now();
+
+  const answer = () =>
+    app.evaluate(
+      (_electron, dialog) =>
+        globalThis.__liveSession.dialogs.find((d) => d.dialog === dialog)
+          ?.answer ?? null,
+      qualificationDialog,
+    );
+  const summary = setup
+    .getByText(/^(Qualification recorded until|Nothing was recorded\.)/)
+    .first();
+  let failure = null;
+  try {
+    // Topsl allows the qualification 20 minutes.
+    await until(
+      "Topsl's qualification",
+      21 * 60000,
+      async () => {
+        const answered = await answer();
+        if (answered && answered !== "Run qualification")
+          throw new Error(
+            "Topsl's qualification dialog did not name the executable, model, turn budget and folder this script expected, so it was cancelled.",
+          );
+        if (!answered && Date.now() - clickedAt > 60000)
+          throw new Error("Topsl did not ask to run the qualification.");
+        await checkShownErrors();
+        return summary.isVisible();
+      },
+      2000,
+    );
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    const recorded =
+      (await command({ type: "runtime-qualification-query", id: runtime.id }))
+        .reports[0] ?? null;
+    // Unknown when Topsl started the qualification but recorded nothing.
+    report.modelTurns = recorded
+      ? recorded.report.turnsStarted
+      : (await answer()) === "Run qualification"
+        ? null
+        : 0;
+    const result = recorded?.report;
+    report.qualification = result
+      ? {
+          suite: result.suite,
+          model: result.model,
+          effort: result.effort,
+          // Only the account kind and plan are kept, never the sign-in identity.
+          account: result.account && {
+            type: result.account.sanitized?.type ?? null,
+            planType: result.account.sanitized?.planType ?? null,
+          },
+          turnsStarted: result.turnsStarted,
+          seconds:
+            Math.round(
+              (Date.parse(result.finishedAt) - Date.parse(result.startedAt)) /
+                100,
+            ) / 10,
+          observations: result.observations.map((o) => ({
+            capability: o.capability,
+            passed: o.passed,
+            meaning: o.meaning,
+            detail: withoutHome(o.detail),
+          })),
+          notTested: result.notTested.map((n) => ({
+            capability: n.capability,
+            reason: withoutHome(n.reason),
+          })),
+          approvals: result.approvals,
+          error: withoutHome(result.error),
+          recorded: !!recorded.acceptanceId,
+          expiresAt: recorded.expiresAt,
+        }
+      : null;
+    const selection = { provider: "codex", installationId: runtime.id, model };
+    const readiness = await command({
+      type: "workflow-readiness-query",
+      projectId,
+      builder: selection,
+      reviewer: selection,
+    });
+    report.readiness = {};
+    for (const role of ["builder", "reviewer"]) {
+      const value = readiness.roles?.[role];
+      report.readiness[role] = {
+        ready: !!value?.ready,
+        freshness: value?.freshness?.state ?? null,
+        blockers: (value?.blockers ?? []).map((b) => b.code),
+      };
+    }
+    if (await summary.isVisible())
+      session.summary = withoutHome(await summary.innerText());
+    const shownReady = setup.getByText(
+      /^Role requirements currently satisfied/,
+    );
+    if (report.readiness.builder.ready && report.readiness.reviewer.ready)
+      await until(
+        "the guided setup to show both roles as satisfied",
+        15000,
+        async () => (await shownReady.count()) === 2,
+      ).catch(() => {});
+    session.rolesShownReady = await shownReady.count();
+    await screenshot("qualification");
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure) throw failure;
+
+  const qualification = report.qualification;
+  if (!qualification)
+    throw new Error("Topsl recorded no qualification report.");
+  if (qualification.turnsStarted > qualificationTurns)
+    throw new Error(
+      `The qualification started ${qualification.turnsStarted} model turns, more than the ${qualificationTurns} approved.`,
+    );
+  if (qualification.error)
+    throw new Error(`The qualification stopped: ${qualification.error}`);
+  const failed = qualification.observations
+    .filter((o) => !o.passed)
+    .map((o) => o.capability);
+  if (failed.length) throw new Error(`Not passed: ${failed.join(", ")}.`);
+  if (qualification.notTested.length)
+    throw new Error(
+      `Not tested: ${qualification.notTested.map((n) => n.capability).join(", ")}.`,
+    );
+  if (!qualification.recorded)
+    throw new Error("Topsl did not record the qualification.");
+  const blocked = ["builder", "reviewer"].filter(
+    (role) => !report.readiness[role].ready,
+  );
+  if (blocked.length)
+    throw new Error(
+      `The qualification left the ${blocked.join(" and ")} role blocked.`,
+    );
+  if (session.rolesShownReady !== 2)
+    throw new Error("The guided setup does not show both roles as satisfied.");
+}
+
 /** Locates and trusts the provider's executable, as a user would. */
 async function locate(provider, step) {
   const executable = options.executables[provider];
@@ -767,9 +1028,22 @@ try {
                   : message === "Send the reviewed context to Codex?" &&
                       policy.handoff
                     ? "Send context"
-                    : null;
-        // The handoff approval covers the one message the script sends.
+                    : message === policy.qualification?.message &&
+                        detail.includes(
+                          `\n${policy.executableRealPath}\nModel: ${policy.qualification.model}\n`,
+                        ) &&
+                        detail.includes(
+                          `Topsl will start up to ${policy.qualification.turns} model turns`,
+                        ) &&
+                        detail.includes(
+                          `In a disposable folder in ${policy.qualification.folder} it will:`,
+                        )
+                      ? "Run qualification"
+                      : null;
+        // The handoff approval covers the one message the script sends, and
+        // the qualification approval one qualification.
         if (expected === "Send context") policy.handoff = false;
+        if (expected === "Run qualification") policy.qualification = null;
         const response = Math.max(0, buttons.indexOf(expected));
         dialogs.push({ dialog: message, answer: buttons[response] ?? null });
         return { response, checkboxChecked: false };
@@ -782,6 +1056,7 @@ try {
       runtimeKind: null,
       transcript: null,
       handoff: false,
+      qualification: null,
     },
   );
 
@@ -812,6 +1087,7 @@ try {
     }
     await page.locator(".runtime-bar select").first().selectOption(trusted.id);
     if (provider === "claude") handoff = await claudeTerminal(projectId, step);
+    else if (options.qualify) await codexQualification(projectId, trusted);
     else await codexChat(projectId, step, both ? handoff : null);
   }
   report.result = "passed";
@@ -828,6 +1104,10 @@ try {
     .evaluate(() => globalThis.__liveSession?.dialogs ?? [])
     .catch(() => report.dialogs);
   await app.close().catch(() => {});
+  if (qualificationFolder) {
+    await rm(qualificationFolder, { recursive: true, force: true });
+    report.qualificationFolderDeleted = true;
+  }
   if (report.result === "passed" && !options.keepProfile) {
     await rm(profile, { recursive: true, force: true });
     report.profileDeleted = true;

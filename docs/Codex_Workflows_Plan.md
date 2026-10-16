@@ -282,3 +282,58 @@ Each step adds its changes and validation here when it lands.
 - `xvfb-run --auto-servernum node scripts/round2-ui-test.mjs` passed. This manual harness assumed the old default. It now checks the new default and the note, then picks Codex builds · Claude reviews for its run. Its old version failed against the new setup.
 - `npm test` on `fd522ad`: 38 files and 342 tests passed. 3 files and 4 tests were skipped, the same opt-in ones as in step 4.
 - No model requests were sent. Not established: a live Codex qualified for both roles, which step 6 covers, and a live builder-and-reviewer run, which waits for decision 5. macOS and Windows depend on CI.
+
+### Step 6: live qualification (16 October 2026)
+
+**What changed**
+
+- `node scripts/live-session.mjs --qualify --codex <path>` runs the runtime qualification through Topsl's own screens ([live-session.mjs](../scripts/live-session.mjs)). After it locates and trusts the executable and adds a disposable project, it connects Codex with **Models & account**. In the guided setup it then chooses Codex builds · Codex reviews, selects the runtime and the model for both roles, and presses **Qualify builder runtime**. The model is the one Codex reports as default unless `--model` names another.
+- The disposable profile gets `TOPSL_TEST_QUALIFICATION_DIR`, a new `topsl-qualify-*` folder in `~/Library/Caches` on macOS or `~/.cache` on Linux. The script deletes it after every run, as decision 3 says.
+- The script approves Topsl's qualification dialog once, and only when its text names the selected executable, the chosen model, up to 4 model turns and that folder. It never retries: the approval is used up, so a second dialog would be cancelled. A run also fails if Topsl reports more than four turns started.
+- The report keeps what Topsl recorded, including each probe's outcome and detail, with only the account type and plan and with the home folder written as `~`. It also keeps both roles' readiness from Topsl's readiness query and from the guided setup. A run passes only if every probe passed, none was left untested, the qualification was recorded and both roles are ready. A failed run keeps the same record.
+- `--model` must name a model Codex reports. The script now stops with `Codex did not report the model …` before using it, for a session check as well.
+- [`tests/fixtures/live-session/codex-qualify.cjs`](../tests/fixtures/live-session/codex-qualify.cjs) is the procedure's stand-in. It runs the suite's scripted app-server.
+- [Live provider sessions](Live_Provider_Sessions.md#codex-runtime-qualification) describes the mode, and README lists the command.
+
+**Validation** (16 October 2026, Linux x64 container, on top of step 5)
+
+- After `npm run build`, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed on `93328aa`. Every probe passed in 4 turns and the qualification was recorded for 30 days. Both roles were ready in the readiness query, and the guided setup showed both satisfied. The qualification folder and the profile were deleted.
+- With `FIXTURE_READER=skip` in the script's environment, the stand-in still called the reader and the run passed. Topsl passes a runtime only a fixed list of environment variables (`nativeEnvironment` in [system.ts](../packages/platform/system.ts)). A wrapper that sets the variable itself, as Live provider sessions shows, made the stand-in skip the reader. That run failed with `Not passed: candidate-reader.` The builder stayed ready and the reviewer was blocked by `candidate-reader-unavailable`, and the guided setup showed one role satisfied. The qualification folder was deleted, and the profile was kept for inspection.
+- `--model not-reported` stopped the run with `Codex did not report the model not-reported.` before the qualification dialog, with no turns started.
+- On the owner's Mac (macOS, Apple silicon), the qualification stand-in and the wrapper that skips the reader gave the same results on `8ad7667`. The first passed in 4 turns with both roles ready. The second failed with `Not passed: candidate-reader.`, with only the reviewer blocked. Both runs deleted their folder in `~/Library/Caches`.
+- The session checks with stand-ins passed again for Codex alone and for Claude Code handing off to Codex. Both use the **Models & account** step the qualification now shares.
+- No model requests were sent. Not established: the qualification against a live Codex. It runs once on the owner's Mac after steps 2 to 5 are merged, and its result will be recorded here and in [Live provider sessions](Live_Provider_Sessions.md#results).
+
+### Live run (16 October 2026)
+
+**How it ran**
+
+- The owner ran `node scripts/live-session.mjs --qualify --codex /opt/homebrew/bin/codex` in Terminal at `4647087`, after `npm run build`, on macOS, Apple silicon (`darwin/arm64 27.0.0`). Codex CLI 0.163.0 came from the npm package `@openai/codex` and was signed in with ChatGPT.
+- Claude Code on that Mac, in auto mode, had refused the same command four times with the reason `Create Unsafe Agents`, before anything ran. No Claude session started the run.
+- The script approved the qualification dialog once. Topsl started 4 turns with `gpt-6.1-sol`, and the suite took 40.7 seconds.
+
+**Result: failed**, with `Not passed: read-only, workspace-write, interrupt.`
+
+| Probe | Result | What Topsl recorded |
+|---|---|---|
+| `native-subscription` | Passed | A ChatGPT account, billing route `native-subscription` |
+| `structured-turn` | Passed | The turn completed and returned the marker |
+| `candidate-reader` | Passed | One `read_range` answer under the probe's grant returned the file's marker, the reader refused nothing, and the reply quoted the marker |
+| `fresh-session` | Passed | Two `thread/start` requests returned different threads |
+| `read-only` | Failed | The suite accepted Codex's approval request for the sentinel write, once, and the file was created |
+| `workspace-write` | Failed | The suite accepted the inside and the outside sentinel writes, once each. The inside file landed, and so did the outside file |
+| `interrupt` | Failed | Topsl sent `turn/interrupt` when the turn's start was reported, and Codex answered `no active turn to interrupt` |
+| `process-lifecycle` | Passed | The child exited, its stdio closed, and its process group was gone |
+
+The qualification was recorded in the disposable profile until 15 November 2026. Topsl's readiness query blocked both roles with `permission-profile-unverified`, and the guided setup said neither workspace-write nor read-only is qualified for this runtime, account, policy and host. The `~/Library/Caches/topsl-qualify-*` folder was deleted, and the profile was kept, as for any failed run. The report and screenshots are in the owner's `test-results/live-session/qualify-2026-10-16T10-47-32-807Z`.
+
+**What it establishes.** A live Codex model called Topsl's reader from a read-only review thread and quoted the answer, which steps 2 to 4 could only show with the stand-in. The suite stayed within four turns, recorded its result, and deleted its qualification folder.
+
+**What the failures show**
+
+- Every write that landed had first been approved by the suite. A real review run declines every approval ([manager.ts:1026-1030](https://github.com/Piore-Galore/Topsl/blob/4647087/packages/runtime/manager.ts#L1026-L1030)), so the read-only probe approved something Topsl never approves. Neither sandbox probe shows the sandbox letting a write through without an approval.
+- The stand-in assumed that an approved command still runs inside the sandbox. That Codex 0.163.0 instead runs an approved command outside the sandbox when the sandbox blocks it is an inference from this result: the report does not record how Codex ran each command.
+- The interrupt result fits a gap between Codex reporting a turn as started and accepting an interrupt for it. This is also an inference.
+- If the first inference holds, approving a command in a **Workspace edits · ask** chat can also let it run outside the workspace sandbox. That is not established either.
+
+**Next.** The two sandbox probes need to run with approvals off, so that each write reaches the sandbox without an approval and only the sandbox decides, and the interrupt needs to wait for the turn's first output. Proving that takes a second live run of up to four turns. On 16 October 2026 the owner approved both the fix and that one rerun.

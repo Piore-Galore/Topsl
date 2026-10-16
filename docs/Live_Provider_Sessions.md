@@ -1,6 +1,6 @@
 # Live provider sessions
 
-Topsl's automated suites use stand-in providers and never contact a model. [`scripts/live-session.mjs`](../scripts/live-session.mjs) checks real sessions through Topsl's own interface, using each provider's existing sign-in on the machine that runs it: one provider, or Claude Code followed by Codex continuing the same conversation through a context handoff. Each provider gets one short prompt, which counts toward that account's usage. This covers part of remaining gate 2 in [Implementation status](Implementation_Status.md#remaining-gates-and-deliberate-limits); it is not a runtime qualification.
+Topsl's automated suites use stand-in providers and never contact a model. [`scripts/live-session.mjs`](../scripts/live-session.mjs) checks real sessions through Topsl's own interface, using each provider's existing sign-in on the machine that runs it: one provider, or Claude Code followed by Codex continuing the same conversation through a context handoff. Each provider gets one short prompt, which counts toward that account's usage. This covers part of remaining gate 2 in [Implementation status](Implementation_Status.md#remaining-gates-and-deliberate-limits); a session check is not a runtime qualification. With `--qualify`, the script instead runs Topsl's Codex [runtime qualification](#codex-runtime-qualification) through the guided setup, which starts up to four model turns.
 
 ## Run it
 
@@ -9,9 +9,10 @@ npm run build
 node scripts/live-session.mjs --claude "$(command -v claude)"
 node scripts/live-session.mjs --codex "$(command -v codex)"
 node scripts/live-session.mjs --claude "$(command -v claude)" --codex "$(command -v codex)"
+node scripts/live-session.mjs --qualify --codex "$(command -v codex)"
 ```
 
-`--claude` or `--codex` alone checks that provider. Both together run Claude Code first and then hand its conversation to Codex, as described [below](#both-handoff-from-claude-code-to-codex). `--model <id>` chooses the Codex model instead of the one Codex reports as default, `--output <folder>` changes where the evidence goes, and `--keep-profile` keeps the disposable Topsl profile after a pass. Linux needs a display, for example `xvfb-run --auto-servernum`.
+`--claude` or `--codex` alone checks that provider. Both together run Claude Code first and then hand its conversation to Codex, as described [below](#both-handoff-from-claude-code-to-codex). `--qualify` with `--codex` alone runs the runtime qualification instead of a prompt. Like the qualification itself, it runs on macOS and Linux only. `--model <id>` chooses the Codex model instead of the one Codex reports as default, and must be one Codex reports. `--output <folder>` changes where the evidence goes, and `--keep-profile` keeps the disposable Topsl profile after a pass. Linux needs a display, for example `xvfb-run --auto-servernum`.
 
 ## What a run does
 
@@ -20,9 +21,10 @@ node scripts/live-session.mjs --claude "$(command -v claude)" --codex "$(command
 - Native dialogs are answered by the script. It approves only the dialogs listed below, for the exact executable and folder it selected, cancels any other, and records every dialog in the report.
 - Each executable is chosen with **Locate runtime** (`select-runtime`) and trusted, and a new empty `live-project` folder inside the profile is added and trusted as a project.
 - The prompt is `What is A + B? Reply with only the number.`, with random four-digit numbers whose sum is not already on screen. After a handoff, Codex is asked `Add C to the number Claude Code replied with in the handoff above. Reply with only the number.` A step passes only if the expected sum comes back as a whole number, not inside a longer one.
-- `report.json` and screenshots go to `test-results/live-session/<claude|codex|both>-<time>/`. A one-provider report keeps that provider's `executable`, `prompt`, `expectedReply`, `replyObserved`, `replySeconds` and `session` at the top level. A report for both keeps them per provider under `steps`, with `conversation` for the shared conversation. The profile is deleted after a pass and kept after a failure.
+- With `--qualify`, Topsl also gets `TOPSL_TEST_QUALIFICATION_DIR`: a new `topsl-qualify-*` folder in `~/Library/Caches` on macOS or `~/.cache` on Linux, because a qualification in the temporary folder could not be judged. The script deletes that folder after every run, passed or failed.
+- `report.json` and screenshots go to `test-results/live-session/<claude|codex|both|qualify>-<time>/`. A one-provider report keeps that provider's `executable`, `prompt`, `expectedReply`, `replyObserved`, `replySeconds` and `session` at the top level. A report for both keeps them per provider under `steps`, with `conversation` for the shared conversation. The profile is deleted after a pass and kept after a failure.
 
-Approved dialogs: **Which runtime are you locating?** (Claude Code or Codex CLI), **Choose the native executable**, **Allow this native executable?**, **Select a trusted project**, **Trust this project?**, **Connect the experimental Codex integration?** (Codex only), for Claude, the transcript chosen for **Import Claude JSONL**, and, after a handoff is attached, **Send the reviewed context to Codex?** for the one message the script sends.
+Approved dialogs: **Which runtime are you locating?** (Claude Code or Codex CLI), **Choose the native executable**, **Allow this native executable?**, **Select a trusted project**, **Trust this project?**, **Connect the experimental Codex integration?** (Codex only), for Claude, the transcript chosen for **Import Claude JSONL**, and, after a handoff is attached, **Send the reviewed context to Codex?** for the one message the script sends. With `--qualify`, **Qualify this Codex runtime with live model turns?** is approved once, and only when its text names the selected executable, the chosen model, up to 4 model turns and the script's qualification folder.
 
 ### Claude Code: native terminal
 
@@ -60,6 +62,21 @@ Claude Code runs as above, up to its history import. Codex then continues the im
 
 If the Claude Code step fails, Codex is not started.
 
+### Codex: runtime qualification
+
+`--qualify` runs the [runtime qualification](../README.md#qualify-a-codex-runtime) from the guided setup, with Codex in both roles. The script sends no prompt of its own; the qualification's probes are the model turns.
+
+| Step | Passes when |
+|---|---|
+| **Models & account** | As for Codex alone. The model is the one Codex reports as default, or the one `--model` names |
+| Guided setup | In **Activity → Create a workflow → 2. Team**, **Codex builds · Codex reviews** is chosen and the runtime is selected for both roles. **Discover builder models** lists the model, and it is chosen for both roles |
+| **Qualify builder runtime** | Topsl's dialog is approved as described above, and the script does not retry. Topsl records a qualification with every probe passed, none untested, no error, and at most 4 turns started |
+| Readiness | Topsl's readiness query and the guided setup both show the builder and reviewer roles satisfied with this qualification |
+
+The report keeps what Topsl recorded: the suite, the model, the turns started, each probe's capability, outcome and detail, any probe not tested, the approvals the suite accepted or declined, any error, and when the qualification expires. It keeps only the account type and plan, and writes the home folder as `~`. `modelTurns` is the number of turns Topsl reports it started, or `null` if Topsl started the qualification but recorded nothing. A failed run keeps the same record, so a failure shows which probe failed.
+
+A qualification counts only in the profile that ran it, and this one is disposable. A pass does not qualify the user's own Topsl; that takes **Qualify builder runtime** there, with up to four more turns.
+
 ## What a pass does not establish
 
 - Sandbox enforcement, tool approvals or edits. For Codex, [runtime qualification](../README.md#qualify-a-codex-runtime) covers those separately.
@@ -67,7 +84,8 @@ If the Claude Code step fails, Codex is not started.
 - Claude Code's billing mode. Its terminal owns its login and billing, and the report does not read them; the screenshots show whatever Claude Code displays.
 - Native sidebar or history refresh in the providers' own applications.
 - Moving a native session between providers. The handoff gives Codex the reviewed text in a new turn of its own session; neither provider's own history shows the other's messages.
-- The live builder and reviewer workflows of R2-AT-37/38 ([acceptance mapping](Round_2_Phase_6.md#acceptance-traceability)). The handoff check is one chat, not a reviewed candidate.
+- The live builder and reviewer workflows of R2-AT-37/38 ([acceptance mapping](Round_2_Phase_6.md#acceptance-traceability)). The handoff check is one chat, not a reviewed candidate, and a qualification builds and reviews nothing.
+- For a qualification, the user's own Topsl being qualified, as above, or any Codex release, account, managed policy or host other than the one that ran it.
 
 ## Check the procedure without a model
 
@@ -78,6 +96,20 @@ npm run build
 CLAUDE_CONFIG_DIR="$(mktemp -d)" node scripts/live-session.mjs --claude "$PWD/tests/fixtures/live-session/claude.cjs"
 node scripts/live-session.mjs --codex "$PWD/tests/fixtures/live-session/codex.cjs"
 CLAUDE_CONFIG_DIR="$(mktemp -d)" node scripts/live-session.mjs --claude "$PWD/tests/fixtures/live-session/claude.cjs" --codex "$PWD/tests/fixtures/live-session/codex.cjs"
+```
+
+For the qualification, the stand-in is the suite's own scripted app-server, [`codex-qualify.cjs`](../tests/fixtures/codex-qualify.cjs), which answers each probe as a Codex runtime with a working sandbox would:
+
+```sh
+node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"
+```
+
+Topsl gives a runtime only a fixed list of environment variables, so the stand-in's failure modes need a wrapper. This one never calls the reader, and its run fails with `Not passed: candidate-reader.` and the reviewer role blocked:
+
+```sh
+standin="$(mktemp -d)/codex-skips-reader"
+printf '#!/bin/sh\nFIXTURE_READER=skip exec node "%s" "$@"\n' "$PWD/tests/fixtures/codex-qualify.cjs" > "$standin" && chmod +x "$standin"
+node scripts/live-session.mjs --qualify --codex "$standin"
 ```
 
 After a handoff, the Codex stand-in adds the numbers in the current request to the last Claude reply in the handed-off context, so it answers correctly only if that context reaches it. The Claude stand-in refuses to start without `CLAUDE_CONFIG_DIR`, so it never writes into a real Claude Code profile. To check how a refused request is reported, give it an API error status in that folder; the run then fails with `Claude Code reported API error 403 instead of replying.`:
@@ -103,5 +135,10 @@ CLAUDE_CONFIG_DIR="$config" node scripts/live-session.mjs --claude "$PWD/tests/f
 | 16 October 2026 | Stand-ins, with the Claude Code stand-in asking for trust as 2.1.300 does | Linux x64 cloud container, `xvfb-run`, Node 22 | `73a9233` (trust fix) | The script from before the fix failed as on the Mac, and its report said `accepted`. With the fix, Claude alone passed with `folderTrustDefault` `No, exit`, and a stand-in in the 2.1.183 order passed with `Yes, I trust this folder`. Codex alone and both passed again, and the missing-handoff and API error checks failed as intended |
 | 16 October 2026 | Claude Code 2.1.300 (Homebrew) | macOS, Apple silicon (`darwin/arm64 27.0.0`) | `f7cab45` (trust fix) | **Passed.** Claude Code again selected **No, exit** first, as the report's `folderTrustDefault` shows; the script moved to **Yes, I trust this folder** and confirmed it. Claude Code answered the prompt with the sum after 3 seconds. `/exit` ended the session with code 0, Topsl recorded the run as `completed` with the process gone, and the imported transcript had Claude's reply |
 | 16 October 2026 | Claude Code 2.1.300 (Homebrew), handing off to Codex CLI 0.163.0 (npm) | macOS, Apple silicon (`darwin/arm64 27.0.0`) | `f7cab45` | **Passed.** The Claude Code step passed as in the run before, with the sum after 3.5 seconds. Topsl's reviewed handoff carried the two messages of Claude Code's conversation, including its reply (431 characters). With the handoff attached and **Send the reviewed context to Codex?** approved, `gpt-6.1-sol` in **Read-only review** answered with Claude Code's number plus the new one after 10.1 seconds. The run ended `completed`, no approval was requested, Topsl stored one usage record, and the imported conversation kept one reply from each provider |
+| 16 October 2026 | Stand-ins for the runtime qualification | Linux x64 cloud container, `xvfb-run`, Node 22 | `93328aa` (qualification mode) | The qualification stand-in passed: every probe passed in 4 turns, both roles were ready in the readiness query and in the guided setup, and the qualification folder was deleted. A stand-in that never calls the reader failed with `Not passed: candidate-reader.`, with the builder ready and the reviewer blocked by `candidate-reader-unavailable`. A `--model` the stand-in does not report stopped the run before the qualification dialog, with no turns started. Codex alone and both passed again |
+| 16 October 2026 | Stand-ins for the runtime qualification | macOS, Apple silicon (`darwin/arm64 27.0.0`) | `8ad7667` | As on Linux. The qualification stand-in passed in 4 turns with both roles ready. The stand-in that never calls the reader failed with `Not passed: candidate-reader.`, with only the reviewer blocked. Both runs deleted their `~/Library/Caches/topsl-qualify-*` folder |
+| 16 October 2026 | Codex CLI 0.163.0 (npm package `@openai/codex`), runtime qualification | macOS, Apple silicon (`darwin/arm64 27.0.0`) | `4647087` | **Failed** with `Not passed: read-only, workspace-write, interrupt.` Topsl started 4 turns with `gpt-6.1-sol` on the ChatGPT sign-in, and the suite took 40.7 seconds. `native-subscription`, `structured-turn`, `candidate-reader`, `fresh-session` and `process-lifecycle` passed; for `candidate-reader`, one `read_range` answer returned the marker and the reply quoted it. In the read-only probe the suite accepted Codex's approval request for the sentinel write, and the file was created. In the workspace-write probe it accepted both sentinel writes, and the outside file was created too. Topsl sent the interrupt when the turn's start was reported, and Codex answered `no active turn to interrupt`. The qualification was recorded until 15 November 2026 with both roles blocked by `permission-profile-unverified`. The folder in `~/Library/Caches` was deleted and the profile was kept |
 
 On 16 October 2026, on one Mac, Codex passed at `d8eda1e`, and Claude Code alone and the handoff from Claude Code to Codex passed at `f7cab45`. Claude Code's four earlier live runs failed: twice because of how the script handled its folder trust prompt (fixed in `c660a1b` and `73a9233`), and twice because the endpoint set in its own configuration refused the prompt with API error 403. Each pass covers that Mac, those provider versions and one prompt per provider; [What a pass does not establish](#what-a-pass-does-not-establish) lists what it leaves open.
+
+The runtime qualification's one live run, on the same Mac at `4647087`, failed. Every write that landed had first been approved by the suite. A real review run declines every approval ([manager.ts](https://github.com/Piore-Galore/Topsl/blob/4647087/packages/runtime/manager.ts#L1026-L1030)), and the stand-in assumed that an approved command still runs inside the sandbox, so the two sandbox probes measured the approval rather than the sandbox. That Codex runs an approved command outside its sandbox when the sandbox blocks it is inferred from this result, not observed: the report does not record how Codex ran each command. That Codex accepts an interrupt only some time after it reports the turn started is also an inference. The owner started this run in Terminal, because Claude Code's auto mode on that Mac refused the command (`Create Unsafe Agents`) each of the four times it was asked to run it. The [live run record](Codex_Workflows_Plan.md#live-run-16-october-2026) has the details.
