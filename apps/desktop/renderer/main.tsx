@@ -11,6 +11,7 @@ import type {
   LifecyclePlan,
   Message,
   Provider,
+  Run,
 } from "../../../packages/domain/types";
 import type { Command } from "../../../packages/domain/commands";
 import "@xterm/xterm/css/xterm.css";
@@ -20,6 +21,15 @@ import { Coordination, type ProjectView } from "./coordination";
 import { ActionButton, ActionContext } from "./components/action-button";
 import { Transcript } from "./components/transcript";
 import { ApprovalCard } from "./components/approval-card";
+import {
+  findTerminalMode,
+  rememberedTerminalMode,
+  terminalModeText,
+  terminalProvider,
+  TerminalModeNote,
+  TerminalModeSelect,
+} from "./components/terminal-mode";
+import type { TerminalModeId } from "../../../packages/domain/terminal-modes";
 import { useScopedRefresh } from "./state/scoped";
 import { summarizeUsage } from "../../../packages/domain/usage";
 
@@ -63,10 +73,13 @@ function Modal({
 function TerminalPanel({
   id,
   initial,
+  mode,
   close,
 }: {
   id: string;
   initial: string;
+  /** The permission mode Topsl asked for, if any. */
+  mode: string | null;
   close: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -120,8 +133,8 @@ function TerminalPanel({
     <section className="terminal-panel">
       <div className="terminal-heading">
         <span>
-          Native session · native permissions and billing · output stays in
-          memory
+          Native session{mode ? ` · ${mode}` : ""} · native permissions and
+          billing · output stays in memory
         </span>
         <ActionButton onClick={close}>Close session</ActionButton>
       </div>
@@ -207,6 +220,10 @@ function App() {
   );
   const [passphrase, setPassphrase] = useState("");
   const [terminalId, setTerminalId] = useState("");
+  /** A mode picked for the next terminal; otherwise the project's remembered one. */
+  const [terminalModeChoice, setTerminalModeChoice] =
+    useState<TerminalModeId | null>(null);
+  useEffect(() => setTerminalModeChoice(null), [projectId, installationId]);
   const terminalBuffers = useRef(new Map<string, string>());
   async function act(command: Command): Promise<any> {
     const scopeTicket = scopeGeneration.current;
@@ -316,6 +333,30 @@ function App() {
   const installation = state?.installations.find(
     (i) => i.id === installationId,
   );
+  const terminalModeValue: TerminalModeId =
+    terminalModeChoice ??
+    (installation && state
+      ? rememberedTerminalMode(
+          state.terminalModes,
+          projectId,
+          terminalProvider(installation),
+        )
+      : "provider-default");
+  /** The permission mode Topsl asked for when it opened a terminal, if any. */
+  const openedMode = (runtimeId: string, mode: string | null | undefined) => {
+    const runtime = state?.installations.find((i) => i.id === runtimeId);
+    return runtime && findTerminalMode(terminalProvider(runtime), mode);
+  };
+  /** A run's requested terminal mode, as it reads after the run's model. */
+  const requestedMode = (run: Run) => {
+    const mode = findTerminalMode(run.provider, run.permissionMode);
+    return mode ? ` · ${terminalModeText(mode)}` : "";
+  };
+  /** An open terminal's mode, as it reads on the button that shows it. */
+  const openedLabel = (terminal: AppState["terminals"][number]) => {
+    const mode = openedMode(terminal.installationId, terminal.permissionMode);
+    return mode ? ` · ${mode.label}` : "";
+  };
   const messages =
     state?.messages
       .filter((m) => m.conversationId === conversationId)
@@ -361,7 +402,10 @@ function App() {
       projectId,
       installationId,
       login,
+      permissionMode: login ? "provider-default" : terminalModeValue,
     });
+    // The menu returns to the project's remembered mode, which is never a bypass mode.
+    setTerminalModeChoice(null);
     if (id) setTerminalId(id);
   }
   async function connect(i: Installation) {
@@ -1058,6 +1102,13 @@ function App() {
                           ) && <option value="">No runtime found</option>}
                         </select>
                       </label>
+                      {installation && (
+                        <TerminalModeSelect
+                          provider={terminalProvider(installation)}
+                          value={terminalModeValue}
+                          onChange={setTerminalModeChoice}
+                        />
+                      )}
                       <div className="actions wrap">
                         <ActionButton
                           disabled={!installation}
@@ -1081,6 +1132,12 @@ function App() {
                         )}
                       </div>
                     </div>
+                    {installation && (
+                      <TerminalModeNote
+                        provider={terminalProvider(installation)}
+                        value={terminalModeValue}
+                      />
+                    )}
                     <div className="chat-tabs">
                       <select
                         aria-label="Conversation"
@@ -1149,6 +1206,18 @@ function App() {
                         key={terminalId}
                         id={terminalId}
                         initial={terminalBuffers.current.get(terminalId) ?? ""}
+                        mode={(() => {
+                          const open = (
+                            scopedData?.terminals ?? state.terminals
+                          ).find((t: any) => t.id === terminalId);
+                          const mode =
+                            open &&
+                            openedMode(
+                              open.installationId,
+                              open.permissionMode,
+                            );
+                          return mode ? terminalModeText(mode) : null;
+                        })()}
                         close={() => {
                           void act({ type: "terminal-close", id: terminalId });
                           setTerminalId("");
@@ -1164,6 +1233,7 @@ function App() {
                             onClick={() => setTerminalId(t.id)}
                           >
                             Show active native terminal
+                            {openedLabel(t)}
                           </ActionButton>
                         ))}
                     <div className="conversation">
@@ -1187,6 +1257,7 @@ function App() {
                           </Badge>{" "}
                           {r.provider} · {r.runtimeVersion ?? "unknown version"}{" "}
                           · {r.model}
+                          {requestedMode(r)}
                           <small>
                             Run {r.id.slice(0, 8)} · installation revision{" "}
                             {r.installationRevisionId.slice(0, 10)}

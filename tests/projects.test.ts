@@ -378,7 +378,21 @@ describe("project commands and native opening", () => {
         args: ["--unsafe"],
         path: "/tmp/other",
       }),
-    ).toEqual({ type: "project-open", projectId: "p", installationId: "i" });
+    ).toEqual({
+      type: "project-open",
+      projectId: "p",
+      installationId: "i",
+      permissionMode: "provider-default",
+    });
+    // A permission mode is one of Topsl's own ids, never an argument.
+    expect(() =>
+      commandSchema.parse({
+        type: "project-open",
+        projectId: "p",
+        installationId: "i",
+        permissionMode: "--permission-mode=bypassPermissions",
+      }),
+    ).toThrow();
   });
   test("service requires broker consent and blocks untrusted projects and active relinking", async () => {
     const f = await setup();

@@ -1039,7 +1039,7 @@ Running tests during review often writes caches, reports, or generated files. Us
 
 Exposing a native advanced option is not a recommendation to use it. It must not be chosen automatically to overcome an integration failure.
 
-The [provider permissions plan](Provider_Permissions_Plan.md), approved on 16 October 2026, applies this section to the terminals and Codex chats Topsl starts: each provider's own modes for terminals, with bypass modes only under **Advanced** and confirmed every time, and four Codex chat presets. Its first step, the approval card that says what allowing does (section 11.5), is built; the rest is planned.
+The [provider permissions plan](Provider_Permissions_Plan.md), approved on 16 October 2026, applies this section to the terminals and Codex chats Topsl starts: each provider's own modes for terminals, with bypass modes only under **Advanced** and confirmed every time, and four Codex chat presets. Its first two steps are built: the approval card that says what allowing does (section 11.5), and the terminal modes, with Plan for Claude Code review handoffs. The Codex chat presets and the live check are planned.
 
 ### 11.4 Cross-platform enforceability
 

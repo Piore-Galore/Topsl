@@ -29,8 +29,14 @@ import type {
   Project,
   ProjectOpenResult,
   ServiceEvent,
+  TerminalModePreference,
 } from "../../packages/domain/types";
 import type { Command } from "../../packages/domain/commands";
+import {
+  handoffTerminalMode,
+  isBypassMode,
+  type TerminalModeId,
+} from "../../packages/domain/terminal-modes";
 import type { Observed } from "../../packages/domain/read-model";
 import { round2Features } from "../../packages/domain/round2-features";
 import { catalog, capabilities } from "../../packages/domain/catalog";
@@ -115,6 +121,8 @@ export interface TrustedInput {
   selectedAppId?: AppId;
   digest?: string;
   approved?: boolean;
+  /** Set only after the owner confirms a bypass mode in Topsl's own dialog. */
+  confirmedTerminalMode?: TerminalModeId;
 }
 export class Service {
   readonly store: Store;
@@ -497,8 +505,32 @@ export class Service {
       usage: includeMessages ? this.store.list("usage") : [],
       approvals: includeMessages ? this.store.list("approval") : [],
       terminals: includeMessages ? this.runtime.terminalState() : [],
+      terminalModes: this.store.list<TerminalModePreference>(
+        "terminal-mode-preference",
+      ),
       configurationWrites: this.store.list("configuration-write"),
     };
+  }
+  /** Remembers the owner's last ordinary terminal mode for this project and provider, never a bypass mode. */
+  private rememberTerminalMode(
+    projectId: string,
+    installation: Installation,
+    mode: TerminalModeId,
+  ): void {
+    if (isBypassMode(mode)) return;
+    const provider = installation.appId.includes("claude") ? "claude" : "codex",
+      current = this.store.get<TerminalModePreference>(
+        "terminal-mode-preference",
+        projectId,
+      );
+    if (current?.[provider] === mode) return;
+    this.store.put<TerminalModePreference>("terminal-mode-preference", {
+      ...current,
+      id: projectId,
+      [provider]: mode,
+      updatedAt: now(),
+    });
+    this.changed(true);
   }
   providerReadiness(input: {
     projectId: string;
@@ -565,7 +597,12 @@ export class Service {
     try {
       const result: ProjectOpenResult = installation.appId.endsWith("cli")
         ? {
-            terminalId: await this.runtime.terminal(installation, project),
+            terminalId: await this.runtime.terminal(installation, project, {
+              mode: handoffTerminalMode(
+                installation.appId.includes("claude") ? "claude" : "codex",
+                handoff.role,
+              ),
+            }),
             projectPath: project.realPath,
             route: "terminal",
             detail:
@@ -2442,7 +2479,19 @@ export class Service {
         const project = await this.project(command.projectId);
         const installation = this.installation(command.installationId);
         if (installation.appId.endsWith("cli")) {
-          const terminalId = await this.runtime.terminal(installation, project);
+          const terminalId = await this.runtime.terminal(
+            installation,
+            project,
+            {
+              mode: command.permissionMode,
+              confirmedMode: trusted.confirmedTerminalMode,
+            },
+          );
+          this.rememberTerminalMode(
+            project.id,
+            installation,
+            command.permissionMode,
+          );
           return {
             terminalId,
             projectPath: project.realPath,
@@ -2450,6 +2499,10 @@ export class Service {
             detail: "The native terminal uses this shared project folder.",
           } satisfies ProjectOpenResult;
         }
+        if (command.permissionMode !== "provider-default")
+          throw new Error(
+            "Topsl sets a permission mode only for a native terminal. The desktop app keeps its own.",
+          );
         if (
           this.runtime.isProjectBusy(project.id) ||
           this.store
@@ -2640,12 +2693,22 @@ export class Service {
       }
       case "runtime-login":
         throw new Error("Choose a project and open the native login terminal.");
-      case "terminal-open":
-        return this.runtime.terminal(
-          this.installation(command.installationId),
-          await this.project(command.projectId),
-          command.login,
-        );
+      case "terminal-open": {
+        const installation = this.installation(command.installationId),
+          project = await this.project(command.projectId);
+        const terminalId = await this.runtime.terminal(installation, project, {
+          login: command.login,
+          mode: command.permissionMode,
+          confirmedMode: trusted.confirmedTerminalMode,
+        });
+        if (!command.login)
+          this.rememberTerminalMode(
+            project.id,
+            installation,
+            command.permissionMode,
+          );
+        return terminalId;
+      }
       case "terminal-input":
         return this.runtime.terminalInput(command.id, command.data);
       case "terminal-resize":

@@ -1,3 +1,4 @@
+import type { TerminalModeId } from "./terminal-modes";
 export type Provider = "codex" | "claude";
 export type Theme = "paper" | "night" | "system";
 export type AppId =
@@ -201,6 +202,16 @@ export interface Run {
   nativePid?: number;
   nativeAccountKey?: string;
   managementUnitId?: string;
+  /** A native terminal's permission mode, and exactly the arguments Topsl passed for it. */
+  permissionMode?: TerminalModeId;
+  permissionArgs?: string[];
+}
+/** The last ordinary terminal mode the owner chose in a project, per provider. Never a bypass mode. */
+export interface TerminalModePreference {
+  id: string;
+  claude?: TerminalModeId;
+  codex?: TerminalModeId;
+  updatedAt: string;
 }
 export interface UsageFact {
   id: string;
@@ -293,7 +304,9 @@ export interface AppState {
     projectId: string;
     installationId: string;
     login: boolean;
+    permissionMode: TerminalModeId | null;
   }>;
+  terminalModes: TerminalModePreference[];
 }
 export interface ServiceEvent {
   type:

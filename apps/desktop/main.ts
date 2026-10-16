@@ -24,6 +24,11 @@ import type {
 import { isClaudeFolderUrl } from "../../packages/workspace/project-opening";
 import { safeError } from "../../packages/domain/invariants";
 import { approvalConfirmation } from "../../packages/domain/approval-text";
+import {
+  bypassConfirmation,
+  isBypassMode,
+  terminalMode,
+} from "../../packages/domain/terminal-modes";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
@@ -70,6 +75,7 @@ let state: AppState = {
   usage: [],
   approvals: [],
   terminals: [],
+  terminalModes: [],
   serviceError: null,
   configurationWrites: [],
 };
@@ -210,9 +216,10 @@ async function confirm(
   title: string,
   detail: string,
   affirmative = "Approve",
+  type: "question" | "warning" = "question",
 ): Promise<boolean> {
   const options = {
-    type: "question" as const,
+    type,
     title: "Topsl",
     message: title,
     detail,
@@ -554,6 +561,36 @@ async function dispatch(command: Command): Promise<any> {
     )
       return null;
     trusted.digest = plan.digest;
+  }
+  if (
+    (command.type === "project-open" ||
+      (command.type === "terminal-open" && !command.login)) &&
+    isBypassMode(command.permissionMode)
+  ) {
+    // Asked every time, before the service sees the request; the renderer cannot answer it.
+    const installation = state.installations.find(
+        (i) => i.id === command.installationId,
+      ),
+      project = state.projects.find((p) => p.id === command.projectId);
+    if (!installation || !project)
+      throw new Error("Refresh Topsl, then choose the terminal again.");
+    // A desktop app gets no mode from Topsl; the service refuses one.
+    if (installation.appId.endsWith("cli")) {
+      const provider = installation.appId.includes("claude")
+          ? "claude"
+          : "codex",
+        text = bypassConfirmation(
+          provider,
+          terminalMode(provider, command.permissionMode),
+          installation.realPath,
+          project.realPath,
+        );
+      if (
+        !(await confirm(text.message, text.detail, text.affirmative, "warning"))
+      )
+        return null;
+      trusted.confirmedTerminalMode = command.permissionMode;
+    }
   }
   if (command.type === "approval-decide") {
     const approval: Approval = await request({

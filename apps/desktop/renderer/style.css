@@ -1125,6 +1125,10 @@ dialog::backdrop {
 .project-open select {
   width: 100%;
 }
+.terminal-mode-note {
+  margin: 0 0 12px;
+  max-width: 760px;
+}
 .project-sources {
   margin-top: 22px;
 }
