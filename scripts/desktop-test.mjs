@@ -984,32 +984,38 @@ try {
     const message = page.getByRole("textbox", { name: "Message", exact: true });
     const send = page.getByRole("button", { name: /^Send to Codex/ });
     const chat = page.getByRole("region", { name: "Conversation transcript" });
+    // A card appears, and goes once decided, only after the service has
+    // committed the turn's records, each synced to disk. A slow CI disk can
+    // stretch that past the default five seconds, so these waits allow 30.
+    const committed = { timeout: 30000 };
     await message.fill("approval");
     await send.click();
     const command = page.getByRole("group", {
       name: "Run a command",
       exact: true,
     });
-    await expect(command).toContainText("fixture read command");
+    await expect(command).toContainText("fixture read command", committed);
     await expect(command).toContainText("Folder");
     await expect(command).toContainText("may run with your own access");
     await expect(command.locator(".actions button").first()).toHaveText("Deny");
     await command.getByRole("button", { name: "Deny", exact: true }).click();
-    await expect(command).toHaveCount(0);
-    await expect(chat).toContainText("decline");
+    await expect(command).toHaveCount(0, committed);
+    await expect(chat).toContainText("decline", committed);
     // The next chat turn waits until the first has released the workspace.
     await expect
-      .poll(async () =>
-        page.evaluate(
-          async (projectId) =>
-            (
-              await window.topsl.command({
-                type: "coordination-query",
-                projectId,
-              })
-            ).leases.every((lease) => lease.state === "released"),
-          projectIds[0],
-        ),
+      .poll(
+        async () =>
+          page.evaluate(
+            async (projectId) =>
+              (
+                await window.topsl.command({
+                  type: "coordination-query",
+                  projectId,
+                })
+              ).leases.every((lease) => lease.state === "released"),
+            projectIds[0],
+          ),
+        committed,
       )
       .toBe(true);
     await message.fill("file approval");
@@ -1018,7 +1024,7 @@ try {
       name: "Change files",
       exact: true,
     });
-    await expect(change).toContainText("notes.md");
+    await expect(change).toContainText("notes.md", committed);
     await expect(change).toContainText("Write access requested");
     await expect(change).toContainText("for the rest of the session");
     await page.screenshot({
@@ -1028,8 +1034,8 @@ try {
     await change
       .getByRole("button", { name: "Review & allow once", exact: true })
       .click();
-    await expect(change).toHaveCount(0);
-    await expect(chat).toContainText("accept");
+    await expect(change).toHaveCount(0, committed);
+    await expect(chat).toContainText("accept", committed);
     const confirmation = await app.evaluate(() =>
       globalThis.topslConfirmations.at(-1),
     );
