@@ -3,10 +3,30 @@
 // FIXTURE_REFUSE=1 answers the write probes without running anything.
 // FIXTURE_ALTERED=1 proposes a compound command instead of the requested one.
 // FIXTURE_NO_APPROVAL=1 runs commands without asking (sandbox still applies).
+// On a thread that declares tools, the marker turn calls read_range for the
+// file it names and quotes the line it returns. FIXTURE_READER=skip replies
+// without calling it; FIXTURE_READER=quote quotes the marker in the file that
+// FIXTURE_READER_MARKER names, without calling it; FIXTURE_READER=other reads
+// another path instead; FIXTURE_READER=stray calls it naming another turn;
+// FIXTURE_READER=unquoted reads the file but does not quote it;
+// FIXTURE_READER=partial reads only its first bytes, then quotes the marker
+// from FIXTURE_READER_MARKER.
+// FIXTURE_REFUSE_TOOLS=1 refuses a thread/start that declares tools.
+// FIXTURE_LOG appends every frame, in both directions, to that file.
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
-const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+const log = (from, frame) => {
+  if (process.env.FIXTURE_LOG)
+    fs.appendFileSync(
+      process.env.FIXTURE_LOG,
+      JSON.stringify({ from, frame }) + "\n",
+    );
+};
+const send = (value) => {
+  log("fixture", value);
+  process.stdout.write(JSON.stringify(value) + "\n");
+};
 const threads = new Map();
 const pending = new Map();
 let threadCount = 0,
@@ -28,11 +48,70 @@ function execute(line, policy) {
   fs.writeFileSync(match[2], match[1]);
   return 0;
 }
-function ask(params) {
-  if (process.env.FIXTURE_NO_APPROVAL) return Promise.resolve("accept");
-  const id = `approval-${++requestCount}`;
-  send({ id, method: "item/commandExecution/requestApproval", params });
+/** Sends a request to Topsl and resolves with its response. */
+function call(method, params) {
+  const id = `request-${++requestCount}`;
+  send({ id, method, params });
   return new Promise((resolve) => pending.set(id, resolve));
+}
+async function ask(params) {
+  if (process.env.FIXTURE_NO_APPROVAL) return "accept";
+  const response = await call("item/commandExecution/requestApproval", params);
+  return response.result?.decision ?? "decline";
+}
+/** The marker turn on a thread with tools: read the named file through
+ * Topsl's read_range tool and quote its line after the reply marker. */
+async function readerTurn(threadId, turnId, marker, file) {
+  const mode = process.env.FIXTURE_READER,
+    known = () =>
+      fs.readFileSync(process.env.FIXTURE_READER_MARKER, "utf8").trim();
+  if (mode === "skip") return complete(threadId, turnId, marker);
+  if (mode === "quote")
+    return complete(threadId, turnId, `${marker}\n${known()}`);
+  const callId = `${turnId}-tool`,
+    args =
+      mode === "other"
+        ? { path: "outside.txt" }
+        : mode === "partial"
+          ? { path: file, length: 4 }
+          : { path: file },
+    response = await call("item/tool/call", {
+      threadId,
+      turnId: mode === "stray" ? "another-turn" : turnId,
+      callId,
+      namespace: "topsl_candidate",
+      tool: "read_range",
+      arguments: args,
+    });
+  const text = response.result?.contentItems?.[0]?.text ?? "";
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: {
+        id: callId,
+        type: "dynamicToolCall",
+        namespace: "topsl_candidate",
+        tool: "read_range",
+        arguments: args,
+        status: response.result?.success ? "completed" : "failed",
+        contentItems: response.result?.contentItems ?? null,
+        success: response.result?.success ?? null,
+        durationMs: 1,
+      },
+    },
+  });
+  let line = "";
+  try {
+    line = JSON.parse(text).content.trim();
+  } catch {
+    // A refusal is plain text.
+  }
+  if (mode === "unquoted") line = "";
+  if (mode === "partial") line = known();
+  complete(threadId, turnId, line ? `${marker}\n${line}` : marker);
 }
 async function runCommands(threadId, turnId, lines, policy) {
   for (const [index, requested] of lines.entries()) {
@@ -84,8 +163,9 @@ function complete(threadId, turnId, text, status = "completed") {
 }
 readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
   const request = JSON.parse(raw);
+  log("topsl", request);
   if (request.id !== undefined && !request.method) {
-    pending.get(request.id)?.(request.result?.decision ?? "decline");
+    pending.get(request.id)?.(request);
     pending.delete(request.id);
     return;
   }
@@ -103,6 +183,15 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       },
     });
   else if (request.method === "thread/start") {
+    if (process.env.FIXTURE_REFUSE_TOOLS && request.params.dynamicTools)
+      return send({
+        id: request.id,
+        error: {
+          code: -32600,
+          message:
+            "thread/start.dynamicTools requires experimentalApi capability",
+        },
+      });
     const id = `thread-${++threadCount}`;
     threads.set(id, request.params);
     reply({ thread: { id }, model: request.params.model });
@@ -115,8 +204,11 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       method: "turn/started",
       params: { threadId, turn: { id: turnId } },
     });
-    const marker = /nothing else: (\S+)/.exec(prompt);
-    if (marker) return complete(threadId, turnId, marker[1]);
+    const marker = /TOPSL-QUALIFY-[0-9a-f]+/.exec(prompt),
+      file = /with path "([^"]+)"/.exec(prompt);
+    if (marker && file && threads.get(threadId)?.dynamicTools)
+      return readerTurn(threadId, turnId, marker[0], file[1]);
+    if (marker) return complete(threadId, turnId, marker[0]);
     if (prompt.includes("Write the numbers")) {
       let n = 0;
       streaming = {

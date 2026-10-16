@@ -103,8 +103,8 @@ const routes = new Map([
 export function candidateTools(input: {
   context: ContextServer;
   grant: ContextGrant;
-  attempt: ExecutionAttempt;
-  candidate: CandidateSnapshot;
+  attempt: Pick<ExecutionAttempt, "id" | "projectId">;
+  candidate: Pick<CandidateSnapshot, "id" | "revision" | "workflowId">;
 }): ToolBinding {
   const { context, grant, attempt, candidate } = input;
   return {

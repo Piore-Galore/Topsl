@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, test } from "vitest";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { candidateToolset } from "../packages/context/candidate-tools";
+import { createReaderProbe } from "../packages/context/reader-probe";
 import { CodexAdapter } from "../packages/providers/codex";
 import {
   assertQualificationParent,
@@ -42,6 +46,8 @@ async function setup(env: Record<string, string> = {}) {
     f.store.close();
     await rm(f.directory, { recursive: true, force: true });
   });
+  const log = path.join(f.directory, "frames.jsonl"),
+    markerFile = path.join(f.directory, "reader-marker.txt");
   let connections = 0;
   const adapter = new CodexAdapter((_executable, cwd) => {
     connections++;
@@ -49,7 +55,13 @@ async function setup(env: Record<string, string> = {}) {
       process.execPath,
       [path.resolve("tests/fixtures/codex-qualify.cjs")],
       cwd,
-      { ...nativeEnvironment(), ELECTRON_RUN_AS_NODE: "1", ...env },
+      {
+        ...nativeEnvironment(),
+        ELECTRON_RUN_AS_NODE: "1",
+        FIXTURE_LOG: log,
+        FIXTURE_READER_MARKER: markerFile,
+        ...env,
+      },
     );
   });
   return {
@@ -57,7 +69,30 @@ async function setup(env: Record<string, string> = {}) {
     adapter,
     parent: await qualificationParent(),
     connections: () => connections,
+    frames: () =>
+      existsSync(log)
+        ? readFileSync(log, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as { from: string; frame: any })
+        : [],
+    /** The real reader probe, with its marker written where the stand-in can
+     * quote it without calling the tool. */
+    quotingProbe: async (directory: string) => {
+      const probe = await createReaderProbe(directory);
+      await writeFile(markerFile, probe.marker);
+      return probe;
+    },
   };
+}
+/** Every file under `root`. */
+async function files(root: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of await readdir(root, { recursive: true })) {
+    const file = path.join(root, name);
+    if ((await lstat(file)).isFile()) found.push(file);
+  }
+  return found;
 }
 const byName = (report: { observations: any[] }) =>
   Object.fromEntries(report.observations.map((o) => [o.capability, o]));
@@ -100,6 +135,7 @@ describe("runtime qualification suite", () => {
       for (const name of [
         "native-subscription",
         "structured-turn",
+        "candidate-reader",
         "fresh-session",
         "read-only",
         "workspace-write",
@@ -119,16 +155,191 @@ describe("runtime qualification suite", () => {
         },
       });
       expect(o["workspace-write"].meaning).toBe("policy-enforced");
-      expect(report.notTested.map((n) => n.capability)).toEqual([
-        "candidate-reader",
-      ]);
+      expect(o["candidate-reader"].meaning).toBe("behavior-observed");
+      expect(report.notTested).toEqual([]);
       // The read-only write and both workspace writes were let through once each.
       expect(report.approvals.map((a) => a.decision)).toEqual([
         "accept",
         "accept",
         "accept",
       ]);
+      // Only the first review thread declares the reader's tools.
+      const starts = f
+        .frames()
+        .filter(
+          (entry) =>
+            entry.from === "topsl" && entry.frame.method === "thread/start",
+        )
+        .map((entry) => entry.frame.params);
+      expect(starts.map((start) => start.sandbox)).toEqual([
+        "read-only",
+        "read-only",
+        "workspace-write",
+        "read-only",
+      ]);
+      expect(starts[0].dynamicTools).toEqual([
+        {
+          type: "namespace",
+          name: candidateToolset.namespace,
+          description: candidateToolset.description,
+          tools: candidateToolset.tools.map((tool) => ({
+            type: "function",
+            ...tool,
+          })),
+        },
+      ]);
+      for (const start of starts.slice(1))
+        expect(start).not.toHaveProperty("dynamicTools");
       expect(await readdir(f.parent)).toEqual([]);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "the reader probe's file is only in its encrypted store before the runtime starts",
+    async () => {
+      const f = await setup();
+      let checked = false;
+      const report = await runCodexQualification({
+        adapter: f.adapter,
+        installation: f.installation,
+        model: "fixture-model",
+        parent: f.parent,
+        readerProbe: async (directory) => {
+          const sourceParent = await mkdtemp(path.join(f.directory, "source-")),
+            probe = await createReaderProbe(directory, sourceParent);
+          expect(f.connections()).toBe(0);
+          // The file's own folder is gone once it is captured.
+          expect(await readdir(sourceParent)).toEqual([]);
+          const found = await files(path.dirname(directory));
+          expect(found.some((file) => file.endsWith("reader.sqlite"))).toBe(
+            true,
+          );
+          for (const file of found)
+            expect((await readFile(file)).includes(probe.marker), file).toBe(
+              false,
+            );
+          checked = true;
+          return probe;
+        },
+      });
+      expect(checked).toBe(true);
+      expect(byName(report)["candidate-reader"].passed).toBe(true);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "the reader passes only when Topsl answered read_range for the probe's file and the reply quotes its marker",
+    async () => {
+      const details: Record<string, { passed: boolean; detail: string }> = {};
+      for (const mode of [
+        "read",
+        "skip",
+        "quote",
+        "unquoted",
+        "partial",
+        "other",
+        "stray",
+      ]) {
+        const f = await setup(mode === "read" ? {} : { FIXTURE_READER: mode }),
+          report = await runCodexQualification({
+            adapter: f.adapter,
+            installation: f.installation,
+            model: "fixture-model",
+            parent: f.parent,
+            readerProbe: f.quotingProbe,
+          }),
+          o = byName(report);
+        expect(report.error, mode).toBeNull();
+        expect(report.turnsStarted, mode).toBe(qualificationTurnBudget);
+        expect(o["structured-turn"].passed, mode).toBe(true);
+        details[mode] = {
+          passed: o["candidate-reader"].passed,
+          detail: o["candidate-reader"].detail,
+        };
+      }
+      const detail = (
+        reads: number,
+        refused: number,
+        quoted: boolean,
+        calls: string,
+      ) =>
+        `Turn completed. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.`;
+      expect(details).toEqual({
+        read: {
+          passed: true,
+          detail: detail(1, 0, true, "read_range answered"),
+        },
+        // The model never calls the tool.
+        skip: { passed: false, detail: detail(0, 0, false, "none") },
+        // It quotes the marker without calling the tool.
+        quote: { passed: false, detail: detail(0, 0, true, "none") },
+        // It reads the file but does not quote it.
+        unquoted: {
+          passed: false,
+          detail: detail(1, 0, false, "read_range answered"),
+        },
+        // It reads only part of the file, then quotes a marker it had anyway.
+        partial: {
+          passed: false,
+          detail: detail(0, 0, true, "read_range answered"),
+        },
+        // It reads a path outside the probe's build.
+        other: {
+          passed: false,
+          detail: detail(0, 1, false, "read_range failed"),
+        },
+        // Its call names another turn, so Topsl never runs the reader.
+        stray: {
+          passed: false,
+          detail: detail(0, 0, false, "read_range refused"),
+        },
+      });
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "the other probes still run when the reader cannot be prepared or its tools are refused",
+    async () => {
+      for (const [env, readerProbe, detail] of [
+        [
+          { FIXTURE_REFUSE_TOOLS: "1" },
+          undefined,
+          "The runtime refused the reader's tools when the thread started: thread/start.dynamicTools requires experimentalApi capability",
+        ],
+        [
+          {},
+          async () => {
+            throw new Error("The fixture store is unavailable.");
+          },
+          "Topsl could not prepare the reader probe: The fixture store is unavailable.",
+        ],
+      ] as const) {
+        const f = await setup(env),
+          report = await runCodexQualification({
+            adapter: f.adapter,
+            installation: f.installation,
+            model: "fixture-model",
+            parent: f.parent,
+            ...(readerProbe ? { readerProbe } : {}),
+          }),
+          o = byName(report);
+        expect(report.error, detail).toBeNull();
+        expect(report.turnsStarted).toBe(qualificationTurnBudget);
+        expect(o["candidate-reader"]).toMatchObject({
+          passed: false,
+          meaning: "unknown",
+          detail,
+        });
+        for (const name of [
+          "structured-turn",
+          "fresh-session",
+          "read-only",
+          "workspace-write",
+          "interrupt",
+        ])
+          expect(o[name].passed, `${name}: ${detail}`).toBe(true);
+        expect(await readdir(f.parent)).toEqual([]);
+      }
     },
   );
 
@@ -280,7 +491,7 @@ describe("runtime manager qualification", () => {
   });
 
   test.skipIf(process.platform === "win32")(
-    "a recorded qualification makes the implementer ready; the reviewer still lacks a candidate reader",
+    "a recorded qualification makes the implementer and the reviewer ready",
     async () => {
       const f = await launched();
       expect(
@@ -310,11 +521,47 @@ describe("runtime manager qualification", () => {
         selection(f.installation.id),
         "reviewer",
       );
+      expect(reviewer.blockers).toEqual([]);
+      expect(reviewer.ready).toBe(true);
+      // Nothing qualifies an independent reviewer.
+      expect(
+        f.runtime
+          .readiness(
+            f.installation,
+            selection(f.installation.id),
+            "independent-reviewer",
+          )
+          .blockers.map((b) => b.code),
+      ).toEqual(["permission-profile-unverified"]);
+      expect(f.runtime.qualificationReports(f.installation.id)).toHaveLength(1);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a runtime that never calls the reader stays blocked for reviews",
+    async () => {
+      const f = await launched("FIXTURE_READER=skip ");
+      await f.runtime.qualify(
+        f.installation,
+        { model: "fixture-model" },
+        await qualificationParent(),
+      );
+      expect(
+        f.runtime.readiness(
+          f.installation,
+          selection(f.installation.id),
+          "implementer",
+        ).ready,
+      ).toBe(true);
+      const reviewer = f.runtime.readiness(
+        f.installation,
+        selection(f.installation.id),
+        "reviewer",
+      );
       expect(reviewer.ready).toBe(false);
       expect(reviewer.blockers.map((b) => b.code)).toEqual([
         "candidate-reader-unavailable",
       ]);
-      expect(f.runtime.qualificationReports(f.installation.id)).toHaveLength(1);
     },
   );
 

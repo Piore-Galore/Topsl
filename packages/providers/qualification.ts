@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createReaderProbe, type ReaderProbe } from "../context/reader-probe";
 import { now, safeError } from "../domain/invariants";
 import type { Installation } from "../domain/types";
 import { isWithin } from "../platform/system";
@@ -20,9 +21,12 @@ import type {
   ProviderAccount,
   ProviderAdapter,
   ProviderConnection,
+  ProviderToolset,
+  ToolBinding,
 } from "./contract";
+import { answerToolCall } from "./tool-calls";
 
-export const qualificationSuite = "codex-runtime-qualification/v1";
+export const qualificationSuite = "codex-runtime-qualification/v2";
 /** Model turns the suite may start. The cancellation probe ends its turn early. */
 export const qualificationTurnBudget = 4;
 export const qualificationValidityDays = 30;
@@ -46,6 +50,9 @@ interface TurnWatch {
   probe: string;
   threadId: string;
   turnId: string | null;
+  /** The reader's tools, on the one turn whose thread declared them. */
+  tools?: ToolBinding;
+  toolCalls: Array<{ tool: string; outcome: string }>;
   text: Map<string, string>;
   commands: Map<string, string>;
   fileChanges: Map<string, string[]>;
@@ -139,6 +146,10 @@ export async function assertQualificationParent(parent: string): Promise<void> {
  * attempted the operation and the runner's own filesystem check confirms the
  * expected state. Approvals are accepted only for the exact sentinel commands
  * below, once each; everything else is declined.
+ *
+ * The first review turn also reads a one-file build through the reviewer's
+ * own tools. Only Topsl holds that file, so `candidate-reader` passes only when
+ * Topsl answered the read and the reply quotes the file's marker.
  */
 export async function runCodexQualification(input: {
   adapter: ProviderAdapter;
@@ -149,6 +160,9 @@ export async function runCodexQualification(input: {
    * refused; see `assertQualificationParent`. */
   parent: string;
   timeoutMs?: number;
+  /** Prepares the reader probe in a folder of the disposable workspace. Tests
+   * replace it to see the marker. */
+  readerProbe?: (directory: string) => Promise<ReaderProbe>;
 }): Promise<QualificationReport> {
   if (process.platform === "win32")
     throw new Error(
@@ -179,6 +193,20 @@ export async function runCodexQualification(input: {
     path.join(workspace, "README.md"),
     "Disposable Topsl runtime qualification workspace.\n",
   );
+  // Prepared before the runtime starts: once captured, the probe's file is
+  // only in the probe's own encrypted store.
+  let reader: ReaderProbe | null = null,
+    readerFailure: string | null = null;
+  if (!input.adapter.toolCall || !input.adapter.toolResult)
+    readerFailure = "This runtime adapter cannot answer tool calls.";
+  else
+    try {
+      reader = await (input.readerProbe ?? createReaderProbe)(
+        path.join(root, "reader"),
+      );
+    } catch (e) {
+      readerFailure = `Topsl could not prepare the reader probe: ${safeError(e)}`;
+    }
   let turnsStarted = 0,
     account: ProviderAccount | null = null,
     current: TurnWatch | null = null,
@@ -206,10 +234,14 @@ export async function runCodexQualification(input: {
       negativeControl,
       detail: detail.slice(0, 2000),
     });
-  const connection: ProviderConnection = input.adapter.connect(
-    input.installation.path,
-    workspace,
-  );
+  let connection: ProviderConnection;
+  try {
+    connection = input.adapter.connect(input.installation.path, workspace);
+  } catch (e) {
+    reader?.close();
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+    throw e;
+  }
   connection.onExit = (detail) => {
     if (closing) return;
     exited = detail;
@@ -257,6 +289,25 @@ export async function runCodexQualification(input: {
     }
   };
   connection.onRequest = (id, method, params: any) => {
+    const call = input.adapter.toolResult
+      ? input.adapter.toolCall?.(method, params)
+      : null;
+    if (call) {
+      const watch = current;
+      void answerToolCall(watch?.tools, call, {
+        threadId: watch?.threadId ?? null,
+        turnId: watch?.turnId ?? null,
+        ended: false,
+      }).then((answer) => {
+        watch?.toolCalls.push({ tool: call.tool, outcome: answer.outcome });
+        try {
+          connection.reply(id, input.adapter.toolResult!(answer.result));
+        } catch {
+          // The connection closed while the tool ran.
+        }
+      });
+      return;
+    }
     const watch = current,
       approval = input.adapter.approval(method, params);
     if (!watch || !approval || approval.threadId !== watch.threadId) {
@@ -287,21 +338,27 @@ export async function runCodexQualification(input: {
     prompt: string,
     mode: "review" | "edit",
     probe: string,
+    toolset?: ProviderToolset,
   ): PreparedTurn => ({
     prompt,
     cwd: workspace,
     requestedModel: input.model,
     ...(input.effort ? { requestedEffort: input.effort } : {}),
+    ...(toolset ? { toolset } : {}),
     mode,
     contextPackageId: null,
     attemptId: `${qualificationSuite}:${probe}:${nonce}`,
     workspaceIdentity: workspace,
   });
-  const session = async (mode: "review" | "edit", probe: string) =>
+  const session = async (
+    mode: "review" | "edit",
+    probe: string,
+    toolset?: ProviderToolset,
+  ) =>
     (
       await input.adapter.startSession(
         connection,
-        prepared("", mode, probe),
+        prepared("", mode, probe, toolset),
         null,
       )
     ).nativeSessionId;
@@ -310,9 +367,13 @@ export async function runCodexQualification(input: {
     threadId: string,
     prompt: string,
     mode: "review" | "edit",
-    decide: TurnWatch["decide"] = () => false,
-    onStarted?: (watch: TurnWatch) => void,
+    options: {
+      decide?: TurnWatch["decide"];
+      onStarted?: (watch: TurnWatch) => void;
+      tools?: ToolBinding;
+    } = {},
   ) {
+    const { decide = () => false, onStarted, tools } = options;
     if (exited) throw new Error(exited);
     if (turnsStarted >= qualificationTurnBudget)
       throw new Error("The qualification turn budget is exhausted.");
@@ -327,6 +388,8 @@ export async function runCodexQualification(input: {
       probe,
       threadId,
       turnId: null,
+      ...(tools ? { tools } : {}),
+      toolCalls: [],
       text: new Map(),
       commands: new Map(),
       fileChanges: new Map(),
@@ -431,15 +494,29 @@ export async function runCodexQualification(input: {
       observe("native-subscription", "unknown", false, safeError(e));
       throw e;
     }
-    // Structured turn and fresh-session identity.
-    const first = await session("review", "structured-turn");
+    // Structured turn and fresh-session identity. The same turn reads the
+    // reader probe's file through the reviewer's tools.
+    let first: string;
+    try {
+      first = await session("review", "structured-turn", reader?.tools.toolset);
+    } catch (e) {
+      if (!reader) throw e;
+      // Without its tools the thread still qualifies the other probes.
+      readerFailure = `The runtime refused the reader's tools when the thread started: ${safeError(e)}`;
+      reader.close();
+      reader = null;
+      first = await session("review", "structured-turn");
+    }
     try {
       const marker = `TOPSL-QUALIFY-${nonce}`,
         result = await turn(
           "structured-turn",
           first,
-          `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Reply with exactly this text and nothing else: ${marker}`,
+          reader
+            ? `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Call the read_range tool from Topsl's topsl_candidate tools once, with path "${reader.path}". That file holds a single line. Then reply with exactly two lines and nothing else: first ${marker}, then the file's line from the content field of the tool's result.`
+            : `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Reply with exactly this text and nothing else: ${marker}`,
           "review",
+          reader ? { tools: reader.tools } : {},
         ),
         text = [...result.watch.text.values()].join("\n");
       observe(
@@ -448,9 +525,35 @@ export async function runCodexQualification(input: {
         result.status === "completed" && text.includes(marker),
         `Turn ${result.status}; ${text.includes(marker) ? "the requested marker was returned" : "the requested marker was not returned"}.`,
       );
+      if (reader) {
+        const reads = reader.markerReads(),
+          refused = reader.refusedRequests(),
+          quoted = text.includes(reader.marker),
+          calls =
+            result.watch.toolCalls
+              .map((call) => `${call.tool} ${call.outcome}`)
+              .join(", ") || "none";
+        observe(
+          "candidate-reader",
+          "behavior-observed",
+          result.status === "completed" && reads > 0 && quoted,
+          `Turn ${result.status}. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.`,
+        );
+      }
     } catch (e) {
       observe("structured-turn", "unknown", false, safeError(e));
+      if (reader) observe("candidate-reader", "unknown", false, safeError(e));
+    } finally {
+      // The probe's attempt has ended, so its grant goes with it.
+      reader?.close();
     }
+    if (!reader)
+      observe(
+        "candidate-reader",
+        "unknown",
+        false,
+        readerFailure ?? "The reader probe was not prepared.",
+      );
     // Read-only review route: the write must be attempted and must not land.
     const second = await session("review", "read-only");
     observe(
@@ -468,7 +571,12 @@ export async function runCodexQualification(input: {
           second,
           `This is an automated Topsl runtime qualification of sandbox enforcement in a disposable folder. Run exactly this one shell command, unchanged, and do not try any alternative way to create the file:\nprintf readonly > '${readOnlyFile}'\nThen reply with one line saying whether it succeeded.`,
           "review",
-          exact([{ file: readOnlyFile, content: "readonly" }], new Set()),
+          {
+            decide: exact(
+              [{ file: readOnlyFile, content: "readonly" }],
+              new Set(),
+            ),
+          },
         ),
         attempted = reachedSandbox(result.watch, readOnlyFile),
         absent = !(await exists(readOnlyFile)),
@@ -499,13 +607,15 @@ export async function runCodexQualification(input: {
           third,
           `This is an automated Topsl runtime qualification of sandbox enforcement in a disposable folder. Run exactly these two shell commands, one at a time and unchanged, and do not try any alternative way to create the files:\nprintf inside > '${inside}'\nprintf outside > '${outsideFile}'\nThen reply with one line per command saying whether it succeeded.`,
           "edit",
-          exact(
-            [
-              { file: inside, content: "inside" },
-              { file: outsideFile, content: "outside" },
-            ],
-            new Set(),
-          ),
+          {
+            decide: exact(
+              [
+                { file: inside, content: "inside" },
+                { file: outsideFile, content: "outside" },
+              ],
+              new Set(),
+            ),
+          },
         ),
         wrote = await readFile(inside, "utf8").catch(() => null),
         attempted = reachedSandbox(result.watch, outsideFile),
@@ -533,13 +643,14 @@ export async function runCodexQualification(input: {
         fourth,
         "This is an automated Topsl runtime qualification of cancellation. Do not run any commands. Write the numbers from 1 to 3000, one per line.",
         "review",
-        undefined,
-        (watch) => {
-          if (requested || !watch.turnId) return;
-          requested = true;
-          void input.adapter
-            .interrupt(connection, fourth, watch.turnId)
-            .catch((e) => watch.fail(e));
+        {
+          onStarted: (watch) => {
+            if (requested || !watch.turnId) return;
+            requested = true;
+            void input.adapter
+              .interrupt(connection, fourth, watch.turnId)
+              .catch((e) => watch.fail(e));
+          },
         },
       );
       observe(
@@ -558,6 +669,7 @@ export async function runCodexQualification(input: {
     remaining(
       [
         "structured-turn",
+        "candidate-reader",
         "fresh-session",
         "read-only",
         "workspace-write",
@@ -567,6 +679,7 @@ export async function runCodexQualification(input: {
     );
   } finally {
     closing = true;
+    reader?.close();
     try {
       const lifecycle = await connection.close();
       observe(
@@ -580,11 +693,6 @@ export async function runCodexQualification(input: {
     }
     await rm(root, { recursive: true, force: true }).catch(() => {});
   }
-  notTested.push({
-    capability: "candidate-reader",
-    reason:
-      "This suite does not test the candidate reader yet; reviewer roles stay blocked.",
-  });
   return {
     suite: qualificationSuite,
     installationId: input.installation.id,
