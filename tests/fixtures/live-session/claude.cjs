@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Stand-in for the parts of Claude Code's terminal that scripts/live-session.mjs
 // drives, so the procedure can be checked without a model or an account. It
-// asks for folder trust, answers the sum in a prompt, and records the exchange
-// in a Claude Code style transcript. It moves the cursor over blank cells
-// instead of writing spaces, so, as with Claude Code's prompts, its words run
-// together in the raw output and read correctly only on the rendered screen.
+// asks for folder trust as Claude Code 2.1.300 does, with "No, exit" selected
+// first, answers the sum in a prompt, and records the exchange in a Claude Code
+// style transcript. It moves the cursor over blank cells instead of writing
+// spaces, so, as with Claude Code's prompts, its words run together in the raw
+// output and read correctly only on the rendered screen.
 // If CLAUDE_CONFIG_DIR has a stand-in-api-error file, it shows an API error
 // with the status in that file instead of the answer. (Topsl passes only a few
 // environment variables to the native terminal, CLAUDE_CONFIG_DIR among them.)
@@ -50,26 +51,42 @@ const prompt = () =>
   out("\r\n────────\r\n> \r\n────────\r\n  ? for shortcuts\r\n");
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
+const answers = ["No, exit", "Yes, I trust this folder"];
+let selected = 0;
+const trustPrompt = () =>
+  out(
+    `\x1b[2J\x1b[HClaude Code stand-in\r\n\r\n Accessing workspace:\r\n\r\n ${cwd}\r\n\r\n Quick safety check: Is this a project you created or one you trust?\r\n\r\n${answers
+      .map(
+        (answer, index) => ` ${index === selected ? "❯" : " "} ${answer}\r\n`,
+      )
+      .join("")}\r\n Enter to confirm · Esc to cancel\r\n`,
+  );
 let trusted = false;
 let line = "";
 let interrupts = 0;
-out(
-  `Claude Code stand-in\r\n\r\n Accessing workspace:\r\n\r\n ${cwd}\r\n\r\n Quick safety check: Is this a project you created or one you trust?\r\n\r\n ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n`,
-);
+trustPrompt();
 process.stdin.on("data", (chunk) => {
-  for (const character of chunk.toString("utf8")) {
+  const input = chunk.toString("utf8");
+  if (!trusted) {
+    // The arrow keys move the selection; Enter confirms it.
+    if (/\x1b[[O][AB]/.test(input)) {
+      selected = 1 - selected;
+      trustPrompt();
+    } else if (input.includes("\r")) {
+      if (answers[selected] === "No, exit") process.exit(1);
+      trusted = true;
+      prompt();
+    }
+    return;
+  }
+  for (const character of input) {
     if (character === "\x03") {
       if (++interrupts >= 2) process.exit(0);
       out("\r\nPress Ctrl-C again to exit\r\n");
       continue;
     }
     interrupts = 0;
-    if (!trusted) {
-      if (character === "\r") {
-        trusted = true;
-        prompt();
-      }
-    } else if (character === "\r") {
+    if (character === "\r") {
       const text = line.trim();
       line = "";
       if (text === "/exit") process.exit(0);

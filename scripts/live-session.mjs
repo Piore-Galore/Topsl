@@ -221,6 +221,12 @@ const terminalScreen = () =>
     .catch(() => "");
 const exitPattern = /\[Native session exited: (-?\d+)\]/;
 let terminalOpen = false;
+/**
+ * Gives Topsl's terminal the keyboard focus. A click would also reach a
+ * terminal application that reads the mouse, and could change its selection.
+ */
+const focusTerminal = () =>
+  terminal.locator("textarea.xterm-helper-textarea").focus();
 
 /**
  * Claude Code in Topsl's native terminal, then the import of its transcript.
@@ -230,6 +236,7 @@ async function claudeTerminal(projectId, step) {
   const session = (step.session = {
     folderTrust: "not shown",
     folderTrustReadFrom: null,
+    folderTrustDefault: null,
     apiError: null,
     exit: null,
     run: null,
@@ -249,18 +256,47 @@ async function claudeTerminal(projectId, step) {
   await appear("the native terminal", terminal);
   terminalOpen = true;
   const press = async (key) => {
-    await terminal.click();
+    await focusTerminal();
     await page.keyboard.press(key);
   };
 
-  // Claude Code asks once whether to trust a new folder; its default answer
-  // trusts it. A sign-in screen stops the procedure before any prompt is sent.
-  // Once escape sequences are removed, Claude Code's words can run together in
-  // its raw output (it can move the cursor over blank cells instead of writing
-  // spaces), so its prompts are matched against the terminal screen as well.
+  // Claude Code asks once whether to trust a new folder. A sign-in screen stops
+  // the procedure before any prompt is sent. Once escape sequences are removed,
+  // Claude Code's words can run together in its raw output (it can move the
+  // cursor over blank cells instead of writing spaces), so its prompts are
+  // matched against the terminal screen as well.
   const signIn =
     /select login method|please run \/login|not logged in|invalid api key/i;
   const trustPrompt = /trust (the files in )?this folder|do you trust/i;
+  // The answer the prompt has selected follows its pointer on the screen.
+  const trustAnswer =
+    /[❯>]\s*(?:\d+\.\s*)?(yes, i trust this folder|no, exit)/i;
+  const selectedLine = (lines) => lines.findIndex((l) => trustAnswer.test(l));
+  // Claude Code 2.1.183 selects "Yes, I trust this folder" first, but 2.1.300
+  // lists and selects "No, exit" first. The selection is moved to the answer
+  // that trusts the folder, which is confirmed only once the screen shows it.
+  async function trustFolder() {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const lines = (await terminalScreen()).split("\n"),
+        yes = lines.findIndex((l) => /yes, i trust this folder/i.test(l)),
+        selected = selectedLine(lines);
+      if (selected >= 0)
+        session.folderTrustDefault ??= trustAnswer.exec(lines[selected])[1];
+      if (yes >= 0 && selected === yes) return press("Enter");
+      if (yes >= 0 && selected >= 0) {
+        await press(selected < yes ? "ArrowDown" : "ArrowUp");
+        await until(
+          "Claude Code's folder trust prompt to move its selection",
+          5000,
+          async () =>
+            selectedLine((await terminalScreen()).split("\n")) !== selected,
+        );
+      } else await sleep(500);
+    }
+    throw new Error(
+      "Claude Code's folder trust prompt did not show its answers on the screen.",
+    );
+  }
   // Below the input, Claude Code shows the shortcuts hint or, in place of it,
   // the permission mode.
   const inputReady =
@@ -278,7 +314,7 @@ async function claudeTerminal(projectId, step) {
       session.folderTrustReadFrom = trustPrompt.test(output)
         ? "output"
         : "screen";
-      await press("Enter");
+      await trustFolder();
       session.folderTrust = "accepted";
       return null;
     }
@@ -291,7 +327,7 @@ async function claudeTerminal(projectId, step) {
     step,
   );
   const before = (await terminalOutput()).length;
-  await terminal.click();
+  await focusTerminal();
   await page.keyboard.type(step.prompt, { delay: 10 });
   await sleep(500);
   const sentAt = Date.now();
@@ -334,7 +370,7 @@ async function claudeTerminal(projectId, step) {
   await screenshot("claude-reply");
 
   session.exit = { method: "/exit", code: null };
-  await terminal.click();
+  await focusTerminal();
   await page.keyboard.type("/exit", { delay: 20 });
   await sleep(500);
   await page.keyboard.press("Enter");
