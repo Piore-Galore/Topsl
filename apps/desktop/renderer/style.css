@@ -752,6 +752,31 @@ progress {
   overflow: auto;
   margin: 15px 0;
 }
+.approval-details {
+  margin: 12px 0 0;
+}
+.approval-details dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 8px;
+}
+.approval-details dd {
+  margin: 2px 0 0;
+}
+.approval-details pre {
+  margin: 0;
+}
+.approval-effects {
+  margin: 12px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.approval details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+}
 .terminal-panel {
   border-radius: 7px;
   overflow: hidden;

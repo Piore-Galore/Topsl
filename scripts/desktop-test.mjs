@@ -915,9 +915,170 @@ try {
       fullPage: true,
     });
   }
+  if (process.platform !== "win32") {
+    // A direct Codex chat with the protocol stand-in: a command approval is
+    // denied and a file change is allowed through the trusted confirmation,
+    // which is recorded here. Native shell wrapper is a test fixture only.
+    const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+    const chatFixture = path.join(profile, "codex-chat-fixture");
+    await writeFile(
+      chatFixture,
+      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex.cjs"))} "$@"\n`,
+    );
+    await chmod(chatFixture, 0o700);
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({
+        canceled: false,
+        filePaths: [selected],
+      });
+      globalThis.topslConfirmations = [];
+      dialog.showMessageBox = async (...args) => {
+        const options = args.at(-1);
+        globalThis.topslConfirmations.push({
+          message: options.message,
+          detail: options.detail ?? "",
+        });
+        return { response: 1, checkboxChecked: false };
+      };
+    }, chatFixture);
+    const runtime = await page.evaluate(() =>
+      window.topsl.command({ type: "select-runtime" }),
+    );
+    await expect
+      .poll(async () =>
+        (
+          await page.evaluate(() => window.topsl.command({ type: "state" }))
+        ).installations.some((i) => i.id === runtime.id),
+      )
+      .toBe(true);
+    // The window shows a change only after the service has published every
+    // change record before it, 200 at a time, and the history benchmark above
+    // left tens of thousands. Wait for that backlog to clear, so each step
+    // below waits only for its own change.
+    await page.evaluate(() => {
+      globalThis.topslPublished = 0;
+      globalThis.topslStopWatching = window.topsl.subscribe((event) => {
+        if (event.type === "changes")
+          globalThis.topslPublished = event.data.throughSequence;
+      });
+    });
+    await page.evaluate(
+      (id) => window.topsl.command({ type: "trust-installation", id }),
+      runtime.id,
+    );
+    const head = (
+      await page.evaluate(
+        (projectId) =>
+          window.topsl.command({ type: "scope-snapshot", projectId }),
+        projectIds[0],
+      )
+    ).sequence;
+    await expect
+      .poll(() => page.evaluate(() => globalThis.topslPublished), {
+        timeout: 180000,
+      })
+      .toBeGreaterThanOrEqual(head);
+    await page.evaluate(() => globalThis.topslStopWatching());
+    // A conversation, a card, or a decision shows only after the service has
+    // committed its records, each synced to disk. A slow CI disk can stretch
+    // that past the default five seconds, so these waits allow 30.
+    const committed = { timeout: 30000 };
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "fixture-project", exact: true }),
+    ).toBeVisible();
+    const conversationSelect = page.getByRole("combobox", {
+      name: "Conversation",
+      exact: true,
+    });
+    const earlierConversation = await conversationSelect.inputValue();
+    await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+    await expect(conversationSelect).not.toHaveValue(
+      earlierConversation,
+      committed,
+    );
+    await expect(page.locator(".conversation-heading")).toContainText(
+      "Chat ",
+      committed,
+    );
+    await page
+      .getByRole("combobox", { name: "Runtime", exact: true })
+      .selectOption(runtime.id);
+    await page
+      .getByRole("button", { name: "Models & account", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toContainText("fixture-model");
+    await page.getByRole("button", { name: "Close dialog" }).click();
+    await page
+      .getByRole("combobox", { name: "Model", exact: true })
+      .selectOption("fixture-model");
+    await page
+      .getByRole("combobox", { name: "Permissions", exact: true })
+      .selectOption("edit");
+    const message = page.getByRole("textbox", { name: "Message", exact: true });
+    const send = page.getByRole("button", { name: /^Send to Codex/ });
+    const chat = page.getByRole("region", { name: "Conversation transcript" });
+    await message.fill("approval");
+    await send.click();
+    const command = page.getByRole("group", {
+      name: "Run a command",
+      exact: true,
+    });
+    await expect(command).toContainText("fixture read command", committed);
+    await expect(command).toContainText("Folder");
+    await expect(command).toContainText("may run with your own access");
+    await expect(command.locator(".actions button").first()).toHaveText("Deny");
+    await command.getByRole("button", { name: "Deny", exact: true }).click();
+    await expect(command).toHaveCount(0, committed);
+    await expect(chat).toContainText("decline", committed);
+    // The next chat turn waits until the first has released the workspace.
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(
+            async (projectId) =>
+              (
+                await window.topsl.command({
+                  type: "coordination-query",
+                  projectId,
+                })
+              ).leases.every((lease) => lease.state === "released"),
+            projectIds[0],
+          ),
+        committed,
+      )
+      .toBe(true);
+    await message.fill("file approval");
+    await send.click();
+    const change = page.getByRole("group", {
+      name: "Change files",
+      exact: true,
+    });
+    await expect(change).toContainText("notes.md", committed);
+    await expect(change).toContainText("Write access requested");
+    await expect(change).toContainText("for the rest of the session");
+    await page.screenshot({
+      path: "test-results/approval-card.png",
+      fullPage: true,
+    });
+    await change
+      .getByRole("button", { name: "Review & allow once", exact: true })
+      .click();
+    await expect(change).toHaveCount(0, committed);
+    await expect(chat).toContainText("accept", committed);
+    const confirmation = await app.evaluate(() =>
+      globalThis.topslConfirmations.at(-1),
+    );
+    expect(confirmation.message).toBe("Allow this native action once?");
+    expect(confirmation.detail).toContain("Change files");
+    expect(confirmation.detail).toContain(
+      "Allowing also lets Codex write under",
+    );
+    expect(confirmation.detail).toContain("Digest:");
+  }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux).",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat approval cards for a denied command and an allowed file change against a stand-in (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {

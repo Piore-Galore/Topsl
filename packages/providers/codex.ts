@@ -16,7 +16,12 @@ import type {
   ProviderModel,
   ProviderToolCall,
   ProviderToolResult,
+  StartedItem,
 } from "./contract";
+import {
+  commandApprovalSummary,
+  fileChangeApprovalSummary,
+} from "./codex-approvals";
 const string = z.string();
 const accountSchema = z.object({
   account: z
@@ -437,7 +442,11 @@ export class CodexAdapter implements ProviderAdapter {
     }
     return null;
   }
-  approval(method: string, payload: unknown): ProviderApproval | null {
+  approval(
+    method: string,
+    payload: unknown,
+    item?: (id: string) => unknown,
+  ): ProviderApproval | null {
     if (
       ![
         "item/commandExecution/requestApproval",
@@ -449,15 +458,56 @@ export class CodexAdapter implements ProviderAdapter {
       .object({ threadId: string.min(1), turnId: string.min(1) })
       .passthrough()
       .safeParse(payload);
-    return params.success
-      ? {
-          threadId: params.data.threadId,
-          turnId: params.data.turnId,
-          method,
-          params: params.data,
-          description: JSON.stringify(params.data, null, 2).slice(0, 30000),
-        }
-      : null;
+    if (!params.success) return null;
+    const command = method === "item/commandExecution/requestApproval",
+      // A file change request names its item, which lists the files.
+      subject =
+        !command && typeof params.data.itemId === "string"
+          ? item?.(params.data.itemId)
+          : undefined;
+    return {
+      threadId: params.data.threadId,
+      turnId: params.data.turnId,
+      method,
+      params: params.data,
+      description: JSON.stringify(params.data, null, 2).slice(0, 30000),
+      summary: command
+        ? commandApprovalSummary(params.data)
+        : fileChangeApprovalSummary(params.data, subject),
+      ...(subject === undefined ? {} : { subject }),
+    };
+  }
+  startedItem(method: string, payload: unknown): StartedItem | null {
+    if (method !== "item/started") return null;
+    const parsed = z
+      .object({
+        threadId: string.min(1),
+        turnId: string.min(1),
+        item: z
+          .object({ id: string.min(1), type: z.literal("fileChange") })
+          .passthrough(),
+      })
+      .safeParse(payload);
+    if (!parsed.success) return null;
+    const { item } = parsed.data,
+      changes: unknown[] = Array.isArray(item.changes) ? item.changes : [];
+    return {
+      threadId: parsed.data.threadId,
+      turnId: parsed.data.turnId,
+      id: item.id,
+      // What an approval card shows, with each diff kept only as its digest,
+      // so a large change is not held while it waits and still binds.
+      item: {
+        type: item.type,
+        id: item.id,
+        changes: changes.map((change: any) => ({
+          path: change?.path,
+          kind: change?.kind,
+          diffDigest:
+            typeof change?.diff === "string" ? hash(change.diff) : null,
+        })),
+      },
+    };
   }
   toolCall(method: string, payload: unknown): ProviderToolCall | null {
     if (method !== "item/tool/call") return null;

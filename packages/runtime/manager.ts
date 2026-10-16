@@ -67,6 +67,9 @@ type Active = {
   client: ProviderConnection;
   adapter: ProviderAdapter;
   approvals: Map<string, { approval: Approval; params: any }>;
+  /** Items the runtime started that a later approval request may name, such
+   * as a file change's files, newest last. */
+  items: Map<string, unknown>;
   /** Present only on a fresh review session that Topsl declared tools to. */
   tools?: ToolBinding;
   finished: boolean;
@@ -702,6 +705,7 @@ export class RuntimeManager {
         client,
         adapter,
         approvals: new Map(),
+        items: new Map(),
         ...(execution?.tools ? { tools: execution.tools } : {}),
         finished: false,
         dispatched: false,
@@ -894,6 +898,18 @@ export class RuntimeManager {
   private notification(active: Active, method: string, payload: unknown): void {
     const run = active.run;
     if (active.finished) return;
+    const started = active.adapter.startedItem?.(method, payload);
+    if (
+      started &&
+      (!run.nativeSessionId || started.threadId === run.nativeSessionId) &&
+      (!run.nativeTurnId || started.turnId === run.nativeTurnId)
+    ) {
+      active.items.delete(started.id);
+      active.items.set(started.id, started.item);
+      // A turn can start many items; keep only the most recent.
+      if (active.items.size > 200)
+        active.items.delete(active.items.keys().next().value!);
+    }
     const event = active.adapter.event(method, payload);
     if (!event) return;
     if (
@@ -1007,7 +1023,9 @@ export class RuntimeManager {
     method: string,
     params: any,
   ): void {
-    const request = active.adapter.approval(method, params);
+    const request = active.adapter.approval(method, params, (id) =>
+      active.items.get(id),
+    );
     if (!request) {
       active.client.reject(
         requestId,
@@ -1033,11 +1051,16 @@ export class RuntimeManager {
       runId: active.run.id,
       method,
       description: request.description,
+      ...(request.summary ? { summary: request.summary } : {}),
       digest: hash(
         stable({
           requestId,
           method,
           params,
+          // What the request is about, such as a change's files, binds too.
+          ...(request.subject === undefined
+            ? {}
+            : { subject: request.subject }),
           runId: active.run.id,
           installationRevisionId: active.run.installationRevisionId,
         }),
