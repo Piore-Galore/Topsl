@@ -207,7 +207,8 @@ Since the [time-limit change above](#time-limits-included-the-windows-process-tr
 
 ### Validation
 
-- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset), `main` at `a4642cc` plus this change: `npm run typecheck` passed. `npm test -- tests/environments.test.ts` passed 21 tests in 228 s, and `npm test -- tests/round2-acceptance.test.ts` passed 5 with 1 skipped in 124 s.
+- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset), `main` at `a4642cc` plus this change: `npm test -- tests/environments.test.ts` passed 21 tests in 214 s, and `npm test -- tests/round2-acceptance.test.ts` passed 5 with 1 skipped in 124 s.
 - **Slow probe** (same container): with the `npm --version` probe temporarily replaced by a command that prints a version after 6 s (not committed), `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` failed under a 5 s limit with `environment phase, environment timeout: Environment preparation timed out.`, the message from pull request #3's Windows run, and passed under the 30 s limit.
 - **Re-run failure** (same container): with only the hook-timeout case's `npm --version` limit temporarily set to 1 ms (not committed), the same test failed as on the re-run, with `to have a length of 4 but got 2`, and its message named the two commands that had started.
+- **Full check** (same container): `npm run check` passed. That is the typecheck, `npm test` with 337 tests passed and 4 skipped in 41 files (3 of them skipped) in 494 s, `npm run test:release` with 16 passed and 1 skipped, and the build.
 - **Remote evidence:** this pull request's Compile Topsl and Round 2 lifecycle stress checks on the four hosted runners. The container cannot run the Windows code paths.
