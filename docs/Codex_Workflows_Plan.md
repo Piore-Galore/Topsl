@@ -263,3 +263,22 @@ Each step adds its changes and validation here when it lands.
 - `npm test` on `a136cd9`: 38 files and 341 tests passed. 3 files and 4 tests were skipped, all opt-in: the two native Codex probes, the Round 2 stress run and the coordination benchmark.
 - `npm run build` and `xvfb-run --auto-servernum npm run test:desktop` passed on `a136cd9`, including encrypted restart persistence. The docs commit after it changes no code.
 - No model requests were sent. Not established: that a live Codex model calls the tool and quotes its answer, which step 6 covers, and the dialog's new wording in the running app. macOS and Windows depend on CI.
+
+### Step 5: Codex reviews Codex in the guided setup (16 October 2026)
+
+**What changed**
+
+- The guided setup's Team step offers three pairings: Codex builds · Codex reviews, Codex builds · Claude reviews, and Claude builds · Codex reviews ([workflow-setup.tsx](../apps/desktop/renderer/components/workflow-setup.tsx)). A new draft starts with Codex in both roles. A saved draft with a pairing the list does not offer, such as Claude in both roles, which only a direct `workflow-draft-save` command can save, is still shown as saved.
+- A workflow draft records the reviewer's provider in a new `reviewer` field ([workflow-drafts.ts](../packages/domain/workflow-drafts.ts)). A draft saved before the field existed reloads with the pairing the setup gave it then, the builder's opposite provider ([drafts.ts](../packages/workflows/drafts.ts)), so an existing draft does not silently switch to Codex reviewing Codex.
+- With Codex in both roles, the Team step, the Review and start step and the workflow's card say: "Codex reviews Codex in a fresh, read-only session. This is not an independent second model." The workflow record already kept both providers, and the card still shows them.
+- The service needed no change. It already accepted Codex in both roles, and since step 4 one qualification satisfies both roles on one installation.
+- The qualification stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) now answers `--version` and lists one model, so the desktop test can register, connect and qualify it through Topsl's own screens.
+
+**Validation** (16 October 2026, Linux x64 container, on top of step 4)
+
+- `npm run typecheck` passed.
+- `npm test -- tests/workflow-drafts.test.ts tests/runtime-qualification.test.ts`: 15 tests passed. The new one checks that a new draft pairs Codex with Codex, that a saved Claude reviewer stays Claude, and that drafts saved without a reviewer reload as Codex with Claude and as Claude with Codex. Removing that reload made it fail.
+- `npm run build` and `xvfb-run --auto-servernum npm run test:desktop` passed on `fd522ad`. On macOS and Linux, the desktop test now registers and trusts the qualification stand-in, then uses the guided setup as a user would. The Team step starts as Codex builds · Codex reviews and shows the note. **Validate builder runtime**, **Discover builder models** and **Qualify builder runtime** record a qualification in four turns with every probe passed, `candidate-reader` among them, and nothing untested, and both roles show as satisfied. With a self-contained check recipe and one change boundary, the workflow is captured. Its card shows Codex in both roles, the note and `ready build`, because capture starts no build. Windows skips this part, because the qualification runs only on macOS and Linux.
+- `xvfb-run --auto-servernum node scripts/round2-ui-test.mjs` passed. This manual harness assumed the old default. It now checks the new default and the note, then picks Codex builds · Claude reviews for its run. Its old version failed against the new setup.
+- `npm test` on `fd522ad`: 38 files and 342 tests passed. 3 files and 4 tests were skipped, the same opt-in ones as in step 4.
+- No model requests were sent. Not established: a live Codex qualified for both roles, which step 6 covers, and a live builder-and-reviewer run, which waits for decision 5. macOS and Windows depend on CI.

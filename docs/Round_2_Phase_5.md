@@ -72,3 +72,5 @@ Final screenshots are regenerated under `test-results/round2-ui/` and archived i
 | R2-AT-36 | Keyboard setup/finding/plan focus/recovery; compact/zoom/reduced motion; Unicode paths; Paper/Night/System      | Physical native dialog interaction and packaged platforms remain separate |
 
 The UI integration work listed in the initial increment is complete. This phase document is implementation and local fixture/visual evidence, not a green capability badge. The [reviewed plan](Topsl_Round_2_Improvement_Plan_Reviewed.md) and [Round 2 execution record](Round_2_Execution.md) retain the independent live-provider, delivery, and release gates.
+
+Follow-up, 16 October 2026: the Team step now offers Codex builds · Codex reviews as the default preset, with a note that it is not an independent second model, beside Codex builds · Claude reviews and Claude builds · Codex reviews. `scripts/round2-ui-test.mjs` checks the default and the note, then switches to Codex builds · Claude reviews for the rest of its journey. See [step 5 of the Codex workflows plan](Codex_Workflows_Plan.md#step-5-codex-reviews-codex-in-the-guided-setup-16-october-2026).
