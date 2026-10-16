@@ -198,3 +198,13 @@ Each step adds its changes and validation here when it lands.
 - No production code installs a toolset yet. The candidate reader is step 3.
 - [`tests/fixtures/codex-app-server-0.163.0.schema.json`](../tests/fixtures/codex-app-server-0.163.0.schema.json) holds the parts of the schema that Codex CLI 0.163.0 generates (`codex app-server generate-json-schema --experimental`) that the tests check against. [`scripts/codex-schema-subset.mjs`](../scripts/codex-schema-subset.mjs) reproduces it from a newly generated schema. The scripted stand-in ([codex.cjs](../tests/fixtures/codex.cjs)) can now call a tool, and it logs every frame when `FIXTURE_LOG` is set.
 - An optional native check, [`tests/codex-tools-native.test.ts`](../tests/codex-tools-native.test.ts), runs when `TOPSL_NATIVE_TOOLS_BINARY` names a Codex executable. In an empty native home it starts a fresh read-only review thread with a fixture tool through the production adapter, and checks that Codex refuses the same tool without the opt-in. It starts no turn.
+
+**Validation** (16 October 2026, Linux x64 container, on top of step 1)
+
+- `npm run typecheck` passed.
+- `npm test -- tests/codex-tools.test.ts`: 5 tests passed. With the thread-and-turn check removed, the refusal test failed; with the manager's fresh-review guard removed, the declaration test failed.
+- `npm test -- tests/codex-tools.test.ts tests/runtime.test.ts tests/coordination.test.ts tests/workflow-service.test.ts tests/runtime-qualification.test.ts`: 5 files, 43 tests passed.
+- `TOPSL_NATIVE_TOOLS_BINARY=<Codex CLI 0.163.0, linux-x64> npm test -- tests/codex-tools-native.test.ts` passed. Codex accepted the opt-in and a fresh read-only review thread with a fixture tool, and without the opt-in refused the tool with `thread/start.dynamicTools requires experimentalApi capability`. No turn started.
+- `npm test` on `8781913`: 37 files and 333 tests passed. 3 files and 4 tests were skipped, all opt-in: the two native Codex probes, the Round 2 stress run and the coordination benchmark.
+- `npm run build` and `xvfb-run --auto-servernum npm run test:desktop` passed on `fc3e000`. The later commit adds only the opt-in native check and docs.
+- Not established: a live model calling a tool through the channel, which the reader probe in step 4 and the live run in step 6 cover. That Codex sends the declared namespace and the function name as the call's `namespace` and `tool` fields is read from the schema, not observed. macOS and Windows depend on CI.
