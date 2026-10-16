@@ -50,7 +50,11 @@ import { Lifecycle } from "../../packages/applications/lifecycle";
 import { RuntimeManager } from "../../packages/runtime/manager";
 import { Coordinator } from "../../packages/runtime/coordinator";
 import { ClaudeAdapter } from "../../packages/providers/claude";
-import type { ProviderAdapter } from "../../packages/providers/contract";
+import type {
+  ProviderAdapter,
+  ToolBinding,
+} from "../../packages/providers/contract";
+import { candidateTools } from "../../packages/context/candidate-tools";
 import { BuilderReviewerWorkflow } from "../../packages/workflows/builder-reviewer";
 import type {
   BuilderReviewerState,
@@ -143,6 +147,8 @@ export class Service {
   private publishedSequence = 0;
   private publishedActivity: boolean | undefined;
   private catalogDirty = true;
+  /** Reader tools installed for review attempts that have not dispatched yet. */
+  private readers = new Map<string, ToolBinding>();
   constructor(
     readonly directory: string,
     key: string,
@@ -221,6 +227,23 @@ export class Service {
               : `Selected role is gated. ${readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" ")}`,
           };
         },
+        installCandidateReader: async ({ attempt, grant, candidate }) => {
+          // Builders and repairs read their own workspace; only a reviewer's
+          // fresh session gets the reader.
+          if (this.store.get<Task>("task", attempt.taskId)?.role !== "reviewer")
+            throw new Error(
+              "Topsl installs the candidate reader only for review attempts.",
+            );
+          this.readers.set(
+            attempt.id,
+            candidateTools({
+              context: this.context,
+              grant,
+              attempt,
+              candidate,
+            }),
+          );
+        },
         dispatch: async ({
           attempt,
           task,
@@ -229,6 +252,8 @@ export class Service {
           context,
           mode,
         }) => {
+          const tools = this.readers.get(attempt.id);
+          this.readers.delete(attempt.id);
           this.replication.assertLocalOwner(project.id);
           const conversation: Conversation = {
             id: uid(),
@@ -245,7 +270,11 @@ export class Service {
             context.content,
             attempt.requestedModel!,
             mode,
-            { attemptId: attempt.id, freshSession: true },
+            {
+              attemptId: attempt.id,
+              freshSession: true,
+              ...(tools ? { tools } : {}),
+            },
           );
         },
         interrupt: async (attempt) => {
@@ -2743,6 +2772,7 @@ export class Service {
     if (this.notificationTimer) clearTimeout(this.notificationTimer);
     this.closePromise = (async () => {
       this.context.close();
+      this.readers.clear();
       await Promise.all([
         this.checks.shutdown(),
         this.runtime.close(),

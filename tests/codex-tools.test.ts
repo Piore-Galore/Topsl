@@ -336,6 +336,11 @@ describe("Codex tool channel", () => {
       "refused",
       "failed",
     ]);
+    expect(f.toolEvents().map((event) => event.detail)).toEqual([
+      "No Topsl tools are installed for this session.",
+      "No Topsl tools are installed for this session.",
+      "The fixture reader is unavailable.",
+    ]);
   });
 
   test("messages match the schema Codex 0.163.0 generates", async () => {

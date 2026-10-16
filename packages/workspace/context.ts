@@ -179,17 +179,9 @@ export class ContextServer {
         handled = true;
         try {
           const request = JSON.parse(buffer.split("\n")[0]);
-          const grant = this.grants.get(request.grant);
-          if (
-            !grant ||
-            this.clock() >= grant.expiresAt ||
-            typeof request.token !== "string" ||
-            !safeEqual(request.token, grant.token)
-          )
-            throw new Error("Invalid project context grant.");
           socket.end(
             JSON.stringify({
-              result: contextRequest(this.store, grant.scope, request),
+              result: this.request(request.grant, request.token, request),
             }) + "\n",
           );
         } catch (e: any) {
@@ -256,6 +248,21 @@ export class ContextServer {
       token,
       expiresAt: new Date(expiresAt).toISOString(),
     };
+  }
+  /** Answers one request under a live grant. The socket uses it, and so does
+   * Topsl itself when it answers a provider's tool call; either way the grant
+   * must not have expired or been revoked. */
+  request(grant: unknown, token: unknown, request: unknown): unknown {
+    const entry =
+      typeof grant === "string" ? this.grants.get(grant) : undefined;
+    if (
+      !entry ||
+      this.clock() >= entry.expiresAt ||
+      typeof token !== "string" ||
+      !safeEqual(token, entry.token)
+    )
+      throw new Error("Invalid project context grant.");
+    return contextRequest(this.store, entry.scope, request);
   }
   revoke(grant: string): boolean {
     return this.grants.delete(grant);

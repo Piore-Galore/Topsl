@@ -5,30 +5,15 @@ import { fixture } from "./helpers";
 import { nativeEnvironment } from "../packages/platform/system";
 import { RpcPeer } from "../packages/runtime/rpc";
 import { CodexAdapter } from "../packages/providers/codex";
-import type { ProviderToolset } from "../packages/providers/contract";
+import { candidateToolset as toolset } from "../packages/context/candidate-tools";
 
 // Optional acceptance probe of an explicitly selected local executable. The
 // native home is an empty fixture and no turn starts, so no model request is
-// made; it checks the handshake and the thread Topsl's tool channel relies on.
+// made; it checks the handshake and the thread Topsl's tool channel relies on,
+// with the reviewer's own reader tools.
 const executable = process.env.TOPSL_NATIVE_TOOLS_BINARY;
-const toolset: ProviderToolset = {
-  namespace: "topsl_fixture",
-  description: "Fixture tools answered by Topsl.",
-  tools: [
-    {
-      name: "echo",
-      description: "Returns its text.",
-      inputSchema: {
-        type: "object",
-        properties: { text: { type: "string" } },
-        required: ["text"],
-        additionalProperties: false,
-      },
-    },
-  ],
-};
 test.skipIf(!executable)(
-  "selected native Codex accepts Topsl's tools on a fresh review thread, and only after the experimental opt-in",
+  "selected native Codex accepts Topsl's reader tools on a fresh review thread, and only after the experimental opt-in",
   async () => {
     if (!executable || !path.isAbsolute(executable))
       throw new Error("Choose an absolute native executable path.");
@@ -104,7 +89,7 @@ test.skipIf(!executable)(
         }),
       ).rejects.toThrow("experimentalApi");
       console.log(
-        "Native acceptance: experimental opt-in, fresh read-only review thread with Topsl's tools, refusal without the opt-in; isolated home; zero model turns.",
+        "Native acceptance: experimental opt-in, fresh read-only review thread with Topsl's reader tools, refusal without the opt-in; isolated home; zero model turns.",
       );
     } finally {
       await Promise.all(peers.map((p) => p.close()));

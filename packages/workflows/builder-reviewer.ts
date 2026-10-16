@@ -427,7 +427,9 @@ export class BuilderReviewerWorkflow {
           )
         )
           return state;
-        if (attempt.state !== "completed")
+        if (attempt.state !== "completed") {
+          // The attempt has ended, so its reader grant goes with it.
+          this.contextServer?.revokeAttempt(attempt.id);
           return this.save(
             state,
             {
@@ -436,6 +438,7 @@ export class BuilderReviewerWorkflow {
             },
             "blocked",
           );
+        }
         const outstandingLease = this.repository.store.db
           .prepare(
             "SELECT state FROM workspace_leases WHERE attempt_id=? AND state!='released'",
@@ -774,7 +777,9 @@ export class BuilderReviewerWorkflow {
           visibility: "no-project-history",
           delivery: context.retrievalRequired
             ? "installed-before-dispatch"
-            : "initial-input-complete; retrieval-not-required",
+            : review
+              ? "initial-input-complete; retrieval-not-required"
+              : "workspace-read; retrieval-not-required",
         });
       } else if (context.retrievalRequired)
         throw new Error(
