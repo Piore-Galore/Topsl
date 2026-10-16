@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, test } from "vitest";
 import path from "node:path";
-import { chmod, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { CodexAdapter } from "../packages/providers/codex";
 import {
+  assertQualificationParent,
   exactSentinelWrite,
   qualificationTurnBudget,
   runCodexQualification,
@@ -17,22 +27,37 @@ const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const step of cleanup.splice(0).reverse()) await step();
 });
+/** Qualifications refuse the temporary directory, where the fixture's own
+ * folder lives, so each test gets a folder under the repository's cache. */
+async function qualificationParent() {
+  const cache = path.resolve("node_modules/.cache");
+  await mkdir(cache, { recursive: true });
+  const parent = await mkdtemp(path.join(cache, "topsl-qualify-"));
+  cleanup.push(() => rm(parent, { recursive: true, force: true }));
+  return parent;
+}
 async function setup(env: Record<string, string> = {}) {
   const f = await fixture();
   cleanup.push(async () => {
     f.store.close();
     await rm(f.directory, { recursive: true, force: true });
   });
-  const adapter = new CodexAdapter(
-    (_executable, cwd) =>
-      new RpcPeer(
-        process.execPath,
-        [path.resolve("tests/fixtures/codex-qualify.cjs")],
-        cwd,
-        { ...nativeEnvironment(), ELECTRON_RUN_AS_NODE: "1", ...env },
-      ),
-  );
-  return { ...f, adapter, parent: path.join(f.directory, "qualification") };
+  let connections = 0;
+  const adapter = new CodexAdapter((_executable, cwd) => {
+    connections++;
+    return new RpcPeer(
+      process.execPath,
+      [path.resolve("tests/fixtures/codex-qualify.cjs")],
+      cwd,
+      { ...nativeEnvironment(), ELECTRON_RUN_AS_NODE: "1", ...env },
+    );
+  });
+  return {
+    ...f,
+    adapter,
+    parent: await qualificationParent(),
+    connections: () => connections,
+  };
 }
 const byName = (report: { observations: any[] }) =>
   Object.fromEntries(report.observations.map((o) => [o.capability, o]));
@@ -175,6 +200,36 @@ describe("runtime qualification suite", () => {
       expect(o["workspace-write"].passed).toBe(true);
     },
   );
+
+  test.skipIf(process.platform === "win32")(
+    "refuses a folder in the temporary directory before starting the runtime",
+    async () => {
+      const f = await setup(),
+        link = path.join(f.parent, "temporary");
+      // A path outside it by name can still lead into it through a link.
+      await symlink(f.directory, link);
+      for (const parent of [
+        path.join(f.directory, "qualification"),
+        path.join(link, "qualification"),
+        path.join("/tmp", `topsl-qualify-${process.pid}`, "qualification"),
+      ]) {
+        await expect(
+          runCodexQualification({
+            adapter: f.adapter,
+            installation: f.installation,
+            model: "fixture-model",
+            parent,
+          }),
+          parent,
+        ).rejects.toThrow("outside the system temporary folders");
+        expect(existsSync(parent), parent).toBe(false);
+      }
+      expect(f.connections()).toBe(0);
+      await expect(assertQualificationParent(f.parent)).resolves.toBe(
+        undefined,
+      );
+    },
+  );
 });
 
 describe("runtime manager qualification", () => {
@@ -238,7 +293,7 @@ describe("runtime manager qualification", () => {
       const result = await f.runtime.qualify(
         f.installation,
         { model: "fixture-model" },
-        path.join(f.directory, "qualification"),
+        await qualificationParent(),
       );
       expect(result.acceptanceId).toBeTruthy();
       expect(result.report.account?.sanitized.email).toBeNull();
@@ -270,7 +325,7 @@ describe("runtime manager qualification", () => {
       await f.runtime.qualify(
         f.installation,
         { model: "fixture-model" },
-        path.join(f.directory, "qualification"),
+        await qualificationParent(),
       );
       await writeFile(
         f.installation.path,
@@ -293,7 +348,7 @@ describe("runtime manager qualification", () => {
       await f.runtime.qualify(
         changed,
         { model: "fixture-model" },
-        path.join(f.directory, "qualification"),
+        await qualificationParent(),
       );
       const readiness = f.runtime.readiness(
         changed,

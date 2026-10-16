@@ -19,6 +19,10 @@ port.on("message", async ({ data }: any) => {
         data.key,
         (event) => port.postMessage({ event }),
         data.isolatedTest === true,
+        undefined,
+        typeof data.qualificationDirectory === "string"
+          ? data.qualificationDirectory
+          : undefined,
       );
       initializing = service.start();
       await initializing;

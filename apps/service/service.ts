@@ -149,6 +149,9 @@ export class Service {
     private emit: (event: ServiceEvent) => void,
     private isolatedTest = false,
     fixtureProviders?: Partial<Record<"codex" | "claude", ProviderAdapter>>,
+    /** Test profiles only: where runtime qualifications run, outside the
+     * temporary directory that holds the profile. */
+    private qualificationDirectory?: string,
   ) {
     this.store = new Store(path.join(directory, "history.sqlite"), key);
     this.assisted = new AssistedWorkflows(this.store);
@@ -166,6 +169,13 @@ export class Service {
       this.store.close();
       throw new Error(
         "Fixture provider injection is available only to the isolated local test constructor.",
+      );
+    }
+    if (qualificationDirectory && !isolatedTest) {
+      this.coordinator.close();
+      this.store.close();
+      throw new Error(
+        "A separate qualification folder is available only to isolated test profiles.",
       );
     }
     this.checks = CheckExecutions.for(this.store);
@@ -2503,13 +2513,20 @@ export class Service {
           throw new Error(
             "Review the qualification operations and their model-turn budget first.",
           );
+        // A test profile sits in the temporary directory, where the suite's
+        // outside-write probe cannot be judged.
+        if (this.isolatedTest && !this.qualificationDirectory)
+          throw new Error(
+            "This test profile is in the OS temporary directory, where a qualification cannot be judged. Set TOPSL_TEST_QUALIFICATION_DIR to a new topsl-qualify-* folder outside it.",
+          );
         const result = await this.runtime.qualify(
           this.installation(command.id),
           {
             model: command.model,
             ...(command.effort ? { effort: command.effort } : {}),
           },
-          path.join(this.directory, "runtime-qualification"),
+          this.qualificationDirectory ??
+            path.join(this.directory, "runtime-qualification"),
         );
         this.changed();
         return result;

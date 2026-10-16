@@ -9,7 +9,6 @@ import {
   utilityProcess,
   type UtilityProcess,
 } from "electron";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openVault } from "./vault";
@@ -26,20 +25,11 @@ import { isClaudeFolderUrl } from "../../packages/workspace/project-opening";
 import { safeError } from "../../packages/domain/invariants";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
+import { testProfileSettings } from "./test-profile";
 
-let isolatedTest = false;
-if (!app.isPackaged && process.env.TOPSL_TEST_PROFILE) {
-  const profile = path.resolve(process.env.TOPSL_TEST_PROFILE);
-  if (
-    !isWithin(os.tmpdir(), profile) ||
-    !path.basename(profile).startsWith("topsl-test-")
-  )
-    throw new Error(
-      "Test profiles must be new topsl-test-* directories under the OS temporary directory.",
-    );
-  app.setPath("userData", profile);
-  isolatedTest = true;
-}
+const testProfile = testProfileSettings(process.env, app.isPackaged),
+  isolatedTest = !!testProfile;
+if (testProfile) app.setPath("userData", testProfile.profile);
 if (!app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | null = null;
 let worker: UtilityProcess | null = null;
@@ -198,7 +188,13 @@ async function unlock(passphrase?: string): Promise<AppState> {
         publish({ type: "state", data: state });
       }
     });
-    state = await request({ kind: "initialize", directory, key, isolatedTest });
+    state = await request({
+      kind: "initialize",
+      directory,
+      key,
+      isolatedTest,
+      qualificationDirectory: testProfile?.qualificationDirectory ?? null,
+    });
     publish({ type: "state", data: state });
     return state;
   } catch (e) {
@@ -400,7 +396,7 @@ async function dispatch(command: Command): Promise<any> {
     if (!i) throw new Error("Rediscover this installation first.");
     trusted.approved = await confirm(
       "Qualify this Codex runtime with live model turns?",
-      `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\nModel: ${command.model}${command.effort ? ` · effort ${command.effort}` : ""}\n\nTopsl will start up to 4 model turns through your native ChatGPT sign-in. They count against your subscription usage. In a disposable folder inside Topsl's profile it will:\n• ask for a marker reply (structured turn)\n• ask a read-only session to write a file, and check that nothing was written\n• ask an editing session to write one file inside its workspace and one outside it, and check that only the inside file exists\n• interrupt a turn that is writing a long answer\n• check that the runtime process exits when the connection closes\n\nApprovals are accepted only for those exact sentinel commands, once each; all others are declined. The folder is deleted afterwards. The result is recorded for 30 days and only for this executable, account, policy and host. It does not qualify the Claude route or the reviewer's candidate reader.`,
+      `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\nModel: ${command.model}${command.effort ? ` · effort ${command.effort}` : ""}\n\nTopsl will start up to 4 model turns through your native ChatGPT sign-in. They count against your subscription usage. In a disposable folder ${testProfile?.qualificationDirectory ? `in ${testProfile.qualificationDirectory}` : "inside Topsl's profile"} it will:\n• ask for a marker reply (structured turn)\n• ask a read-only session to write a file, and check that nothing was written\n• ask an editing session to write one file inside its workspace and one outside it, and check that only the inside file exists\n• interrupt a turn that is writing a long answer\n• check that the runtime process exits when the connection closes\n\nApprovals are accepted only for those exact sentinel commands, once each; all others are declined. The folder is deleted afterwards. The result is recorded for 30 days and only for this executable, account, policy and host. It does not qualify the Claude route or the reviewer's candidate reader.`,
       "Run qualification",
     );
     if (!trusted.approved) return null;

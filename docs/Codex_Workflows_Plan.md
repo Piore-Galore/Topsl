@@ -167,3 +167,22 @@ Approved on 16 October 2026, each with the recommended option:
 ## Delivery record
 
 Each step adds its changes and validation here when it lands.
+
+### Step 1: qualification folder check (16 October 2026)
+
+**What changed**
+
+- `runCodexQualification` calls `assertQualificationParent` before it creates a folder or starts the runtime ([qualification.ts](../packages/providers/qualification.ts)). The check resolves the folder's real path through its nearest existing ancestor, so a symbolic link cannot lead into a temporary folder, and refuses a folder inside `os.tmpdir()` or `/tmp`.
+- [`apps/desktop/test-profile.ts`](../apps/desktop/test-profile.ts) reads `TOPSL_TEST_PROFILE` and the new `TOPSL_TEST_QUALIFICATION_DIR`. A packaged app, or a run without a test profile, ignores both. The qualification folder must be a `topsl-qualify-*` directory outside the OS temporary directory and `/tmp`.
+- The service runs qualifications in that folder when one is set. A test profile without one refuses with a message that names the variable, and a service outside a test profile refuses the folder when it is constructed.
+- The consent dialog names the folder the suite will use.
+- The qualification tests moved their folders from the fixture's temporary directory to `node_modules/.cache/topsl-qualify-*`, because the suite now refuses the temporary directory.
+
+**Validation** (16 October 2026, Linux x64 container, `main` at `cbfec68` plus this change)
+
+- `npm run typecheck` passed.
+- `npm test -- tests/runtime-qualification.test.ts tests/test-profile.test.ts`: 2 files, 13 tests passed. With the `assertQualificationParent` call removed from `runCodexQualification`, the new refusal test failed, so the test exercises the check.
+- `npm test`: 36 files and 328 tests passed. 2 files and 3 tests were skipped, all opt-in: the native Codex project probe, the Round 2 stress run and the coordination benchmark.
+- `npm run build` passed.
+- `xvfb-run --auto-servernum npm run test:desktop` passed, including encrypted restart persistence.
+- No model requests were sent. These checks ran on Linux only: macOS and Windows depend on CI, and the live qualification is step 6.

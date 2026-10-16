@@ -103,4 +103,5 @@ Review follow-up, 15 October 2026: "current unqualified provider routes stay blo
 
 ## Codex workflows — 16 October 2026
 
-- **Plan.** The [Codex workflows plan](Codex_Workflows_Plan.md), approved on 16 October 2026, sets out six steps for running build and review with Codex in both roles: a reader the reviewer reaches through Codex's tools, Codex reviewing Codex in the guided setup, and one live qualification. All six steps are planned, not implemented.
+- **Plan.** The [Codex workflows plan](Codex_Workflows_Plan.md), approved on 16 October 2026, sets out six steps for running build and review with Codex in both roles: a reader the reviewer reaches through Codex's tools, Codex reviewing Codex in the guided setup, and one live qualification. Steps 2 to 6 are planned, not implemented.
+- **Qualification folder check (step 1).** The qualification now refuses a folder inside the OS temporary directory or `/tmp`, where Codex's workspace-write sandbox leaves writes open and the outside-write probe could not be judged. Development test profiles, which live in the temporary directory, use `TOPSL_TEST_QUALIFICATION_DIR` for a folder outside it. Evidence: [delivery record](Codex_Workflows_Plan.md#step-1-qualification-folder-check-16-october-2026). The suite still has fixture evidence only.
