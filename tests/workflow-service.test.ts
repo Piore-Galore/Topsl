@@ -1,7 +1,9 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { afterEach, expect, test, vi } from "vitest";
 import { rm, writeFile } from "node:fs/promises";
 import { Service } from "../apps/service/service";
+import { candidateToolset } from "../packages/context/candidate-tools";
 import {
   ClaudeAdapter,
   claudeFixtureTransport,
@@ -33,7 +35,8 @@ afterEach(async () => {
   }
 });
 async function setup(inject = true) {
-  const f = await fixture();
+  const f = await fixture(),
+    log = path.join(f.directory, "codex-frames.jsonl");
   f.store.close();
   const service = new Service(
     f.directory,
@@ -48,7 +51,10 @@ async function setup(inject = true) {
                 process.execPath,
                 [path.resolve("tests/fixtures/codex-workflow.cjs")],
                 cwd,
-                nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+                nativeEnvironment({
+                  ELECTRON_RUN_AS_NODE: "1",
+                  FIXTURE_LOG: log,
+                }),
               ),
           ),
           claude: new ClaudeAdapter(
@@ -79,12 +85,19 @@ async function setup(inject = true) {
     appId: "anthropic.claude-code-cli",
   } satisfies Installation);
   await service.start();
-  const create = (reverse = false) =>
+  const create = (
+    reverse = false,
+    team: {
+      codexReviewer?: boolean;
+      selectedPaths?: string[];
+      objective?: string;
+    } = {},
+  ) =>
     service.command({
       type: "builder-reviewer-create",
       requestId: uid(),
       projectId: "p",
-      objective: "value two",
+      objective: team.objective ?? "value two",
       acceptanceCriteria: ["value equals two"],
       interfaces: [],
       builder: {
@@ -93,11 +106,12 @@ async function setup(inject = true) {
         model: "fixture-requested",
       },
       reviewer: {
-        provider: reverse ? "codex" : "claude",
-        installationId: reverse ? f.installation.id : "claude",
+        provider: reverse || team.codexReviewer ? "codex" : "claude",
+        installationId:
+          reverse || team.codexReviewer ? f.installation.id : "claude",
         model: "fixture-requested-reviewer",
       },
-      selectedPaths: ["file.ts"],
+      selectedPaths: team.selectedPaths ?? ["file.ts"],
       approvedUntracked: [],
       maxRepairs: 2,
       requireIndependence: false,
@@ -114,7 +128,38 @@ async function setup(inject = true) {
         },
       ],
     });
-  return { ...f, service, create };
+  const frames = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { from: string; frame: any });
+  return { ...f, service, create, frames };
+}
+/** Advances a new workflow with its reviewed inputs until both turns ran. */
+async function runTurns(
+  f: Awaited<ReturnType<typeof setup>>,
+  state: { id: string },
+) {
+  await f.service.command(
+    {
+      type: "builder-reviewer-advance",
+      requestId: uid(),
+      id: state.id,
+      expectedRevision: f.service.store.get<any>("workflow", state.id).revision,
+    },
+    {
+      digest: (f.service.review("workflow-dispatch-inputs", state.id) as any)
+        .digest,
+    },
+  );
+  await vi.waitFor(
+    () =>
+      expect(["checking", "blocked"]).toContain(
+        f.service.store.get<any>("builder-reviewer", state.id)?.stage,
+      ),
+    { timeout: 8000 },
+  );
+  return f.service.store.get<any>("builder-reviewer", state.id);
 }
 test.each([false, true])(
   "service automatically completes both adapter turns for reversible assignment %s, requires native check/acceptance",
@@ -207,6 +252,126 @@ test.each([false, true])(
     );
   },
 );
+test("a Codex reviewer reads the captured build through Topsl's tools, and the Codex builder gets none", async () => {
+  const f = await setup(),
+    marker = `reader-marker-${uid()}`;
+  // Too large to arrive in the task input, so the review must read it.
+  await writeFile(
+    path.join(f.directory, "large.txt"),
+    "filler for the candidate reader\n".repeat(1000) + `last ${marker}\n`,
+  );
+  await writeFile(path.join(f.directory, "outside.txt"), "not captured\n");
+  const revoked = vi.spyOn(f.service.context, "revokeAttempt"),
+    state = await f.create(false, {
+      codexReviewer: true,
+      selectedPaths: ["file.ts", "large.txt"],
+    });
+  expect((await runTurns(f, state)).stage).toBe("checking");
+  const [builder, reviewer] = [
+    ...f.service.store.iterate<any>("attempt", { projectId: "p" }),
+  ];
+  expect([builder.provider, reviewer.provider]).toEqual(["codex", "codex"]);
+  // Only the review thread declared the reader.
+  const starts = f
+    .frames()
+    .filter(
+      (entry) =>
+        entry.from === "topsl" && entry.frame.method === "thread/start",
+    );
+  expect(starts).toHaveLength(2);
+  expect(starts[0].frame.params).not.toHaveProperty("dynamicTools");
+  expect(starts[1].frame.params.dynamicTools).toEqual([
+    {
+      type: "namespace",
+      name: "topsl_candidate",
+      description: candidateToolset.description,
+      tools: candidateToolset.tools.map((tool) => ({
+        type: "function",
+        ...tool,
+      })),
+    },
+  ]);
+  expect(
+    f.service.store.get<any>("attempt-context-grant", builder.id).delivery,
+  ).toBe("workspace-read; retrieval-not-required");
+  expect(
+    f.service.store.get<any>("attempt-context-grant", reviewer.id).delivery,
+  ).toBe("installed-before-dispatch");
+  // The read returned the pinned file and the outside path was refused, and
+  // each left a receipt under the reviewer's attempt.
+  const receipts = [
+    ...f.service.store.iterate<any>("candidate-retrieval", { projectId: "p" }),
+  ].map((receipt) => [
+    receipt.attemptId,
+    receipt.candidateId,
+    receipt.path,
+    receipt.outcome,
+  ]);
+  expect(receipts.sort()).toEqual(
+    [
+      [
+        reviewer.id,
+        reviewer.inputManifest.contentManifestId,
+        "large.txt",
+        "returned",
+      ],
+      [
+        reviewer.id,
+        reviewer.inputManifest.contentManifestId,
+        "outside.txt",
+        "denied",
+      ],
+    ].sort(),
+  );
+  const review = [
+    ...f.service.store.iterate<any>("message", { projectId: "p" }),
+  ]
+    .filter(
+      (message) =>
+        message.runId === reviewer.legacyRunId && message.role === "assistant",
+    )
+    .map((message) => message.text)
+    .join("\n");
+  expect(review).toContain(`large.txt ends last ${marker}`);
+  expect(review).toContain(
+    "outside.txt refused: Candidate path is withheld or outside the scoped manifest.",
+  );
+  const calls = (
+    f.service.store.db
+      .prepare("SELECT body FROM events WHERE kind = 'run.tool-call'")
+      .all() as Array<{ body: string }>
+  ).map((row) => JSON.parse(row.body));
+  expect(calls.map((call) => [call.tool, call.outcome])).toEqual([
+    ["read_range", "answered"],
+    ["read_range", "failed"],
+  ]);
+  // The grant ended with the review attempt.
+  expect(revoked).toHaveBeenCalledWith(reviewer.id);
+});
+test("a review attempt that fails still loses its reader grant", async () => {
+  const f = await setup();
+  await writeFile(
+    path.join(f.directory, "large.txt"),
+    "filler for the candidate reader\n".repeat(1000),
+  );
+  const revoked = vi.spyOn(f.service.context, "revokeAttempt"),
+    state = await f.create(false, {
+      codexReviewer: true,
+      selectedPaths: ["file.ts", "large.txt"],
+      objective: "value two [fixture: the review fails]",
+    });
+  const blocked = await runTurns(f, state);
+  expect(blocked.stage).toBe("blocked");
+  const [, reviewer] = [
+    ...f.service.store.iterate<any>("attempt", { projectId: "p" }),
+  ];
+  expect(reviewer.state).toBe("failed");
+  expect(blocked.detail).toContain("Attempt failed");
+  expect(
+    f.service.store.get<any>("attempt-context-grant", reviewer.id).delivery,
+  ).toBe("installed-before-dispatch");
+  expect(revoked).toHaveBeenCalledWith(reviewer.id);
+});
 test("production capability gate refuses before any builder turn and retains native routes", async () => {
   const f = await setup(false),
     state = await f.create();

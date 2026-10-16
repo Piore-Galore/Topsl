@@ -583,7 +583,7 @@ export async function runCodexQualification(input: {
   notTested.push({
     capability: "candidate-reader",
     reason:
-      "No provider tool channel for the immutable candidate reader is installed yet; reviewer roles stay blocked.",
+      "This suite does not test the candidate reader yet; reviewer roles stay blocked.",
   });
   return {
     suite: qualificationSuite,

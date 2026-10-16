@@ -1002,7 +1002,8 @@ export class RuntimeManager {
       namespace: call.namespace,
       tool: call.tool,
       outcome: refusal ? "refused" : result.success ? "answered" : "failed",
-      detail: refusal,
+      // Why a call was refused or failed; an answer's content is not kept.
+      detail: refusal ?? (result.success ? null : result.text.slice(0, 500)),
     });
     try {
       active.client.reply(requestId, active.adapter.toolResult!(result));

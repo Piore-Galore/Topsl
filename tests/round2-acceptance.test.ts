@@ -476,7 +476,13 @@ test.each([false, true])(
       expect(contexts.every((context) => context.bytes <= 128 * 1024)).toBe(
         true,
       );
-      expect(retrievals).toHaveLength(4);
+      // Only the two reviews install the reader; the builder and the repair
+      // read the workspace the candidate was captured from.
+      expect(
+        (retrievals as Array<{ attemptId: string }>).map(
+          (retrieval) => retrieval.attemptId,
+        ),
+      ).toEqual([attempts[1].id, attempts[3].id]);
       expect(
         executionEvidence(checks)
           .map((item) => item.execution.targetRevision)
