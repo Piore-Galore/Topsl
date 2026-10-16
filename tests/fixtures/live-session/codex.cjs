@@ -4,6 +4,7 @@
 // answers the sum in a prompt. After a Topsl handoff, it adds the numbers in
 // the current request to the last Claude reply in the handed-off context.
 const readline = require("node:readline");
+const { threadResponse } = require("../codex-thread.cjs");
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.0.1 (stand-in)");
   process.exit(0);
@@ -53,7 +54,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       },
     });
   else if (["thread/start", "thread/resume"].includes(request.method))
-    reply({ thread: { id: thread.threadId } });
+    reply(threadResponse(request.params, thread.threadId));
   else if (request.method === "turn/start") {
     const text = answer(request.params.input[0].text);
     reply({ turn: { id: thread.turnId, status: "inProgress" } });

@@ -1,6 +1,7 @@
 const readline = require("node:readline");
 const fs = require("node:fs");
 const path = require("node:path");
+const { threadResponse } = require("./codex-thread.cjs");
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
 const thread = "fixture-" + process.pid,
   turn = "turn-" + process.pid;
@@ -27,7 +28,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     reply({
       account: { type: "chatgpt", email: "local-fixture@example.test" },
     });
-  else if (request.method === "thread/start") reply({ thread: { id: thread } });
+  else if (request.method === "thread/start")
+    reply(threadResponse(request.params, thread));
   else if (request.method === "turn/start") {
     const input = JSON.parse(request.params.input[0].text);
     if (process.env.TOPSL_LIFECYCLE_SEED)

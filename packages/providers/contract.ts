@@ -1,4 +1,10 @@
-import type { ApprovalSummary, Installation, Provider } from "../domain/types";
+import type {
+  ApprovalSummary,
+  Installation,
+  Provider,
+  ReportedPermissions,
+} from "../domain/types";
+import type { CodexApprovalPolicy } from "../domain/chat-presets";
 import type { Evidence } from "../domain/workflow";
 import type { ProcessEvidence } from "../runtime/process-lifecycle";
 export interface ProviderConnection {
@@ -84,6 +90,9 @@ export interface PreparedTurn {
   cwd: string;
   requestedModel: string;
   mode: "review" | "edit";
+  /** Codex's approval policy for the session and its turns; `untrusted`
+   * unless the owner chose another chat preset. */
+  approvalPolicy?: CodexApprovalPolicy;
   contextPackageId: string | null;
   attemptId: string;
   workspaceIdentity: string;
@@ -94,7 +103,21 @@ export interface ProviderAccount {
   billingRoute: "native-subscription" | "api-key" | "cloud-provider";
   sanitized: { type: string; email: string | null; planType: string | null };
 }
+/** The permissions Topsl asked for when a session started or resumed, and
+ * what the runtime reported it adopted. */
+export interface SessionPermissions {
+  requested: {
+    approvalPolicy: string;
+    approvalsReviewer: string;
+    sandbox: string;
+  };
+  reported: ReportedPermissions;
+  /** Each way the report differs from the request, in words; empty when they agree. */
+  differences: string[];
+}
 export interface SessionResult {
+  /** Absent when the runtime does not report the permissions it adopted. */
+  permissions?: SessionPermissions;
   nativeThreadId?: string;
   providerSessionId?: string | null;
   instructionSources?: InstructionSourceObservation[];

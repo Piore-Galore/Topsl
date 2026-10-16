@@ -1,6 +1,7 @@
 const readline = require("node:readline");
 const fs = require("node:fs");
 const { randomUUID } = require("node:crypto");
+const { threadResponse } = require("./codex-thread.cjs");
 const session = randomUUID();
 // FIXTURE_LOG records every frame in both directions.
 const log = (from, frame) =>
@@ -105,7 +106,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     });
   else if (request.method === "thread/start") {
     tools = request.params.dynamicTools ?? [];
-    reply({ thread: { id: session }, model: "fixture-effective" });
+    reply(
+      threadResponse(request.params, session, { model: "fixture-effective" }),
+    );
   } else if (request.method === "turn/start") {
     const turn = randomUUID(),
       prompt = request.params.input[0].text;

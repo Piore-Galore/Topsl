@@ -6,6 +6,7 @@ import {
   advancedMeasurementsSchema,
 } from "./advanced-inputs";
 import { terminalModeIds } from "./terminal-modes";
+import { codexApprovalPolicies } from "./chat-presets";
 import {
   deviceIdentitySchema,
   portableContentSchema,
@@ -817,6 +818,8 @@ export const commandSchema = z.discriminatedUnion("type", [
     prompt: z.string().min(1).max(100000),
     model: z.string().min(1).max(200),
     mode: z.enum(["review", "edit", "native"]),
+    /** With the mode, picks one of the Codex chat presets. */
+    approvalPolicy: z.enum(codexApprovalPolicies).default("untrusted"),
     snapshotId: id.nullable(),
   }),
   z.object({ type: z.literal("run-interrupt"), id }),

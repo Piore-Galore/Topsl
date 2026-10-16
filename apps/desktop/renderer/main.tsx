@@ -30,6 +30,14 @@ import {
   TerminalModeSelect,
 } from "./components/terminal-mode";
 import type { TerminalModeId } from "../../../packages/domain/terminal-modes";
+import {
+  chatPreset,
+  chatPresetFor,
+  chatPresetNote,
+  chatPresets,
+  reportedPermissionsText,
+  type ChatPresetId,
+} from "../../../packages/domain/chat-presets";
 import { useScopedRefresh } from "./state/scoped";
 import { summarizeUsage } from "../../../packages/domain/usage";
 
@@ -182,7 +190,7 @@ function App() {
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
   const [models, setModels] = useState<any[]>([]);
-  const [mode, setMode] = useState<"review" | "edit">("review");
+  const [chatPresetId, setChatPresetId] = useState<ChatPresetId>("review");
   const [plan, setPlan] = useState<LifecyclePlan | null>(null);
   const [snapshot, setSnapshot] = useState<ContextSnapshot | null>(null);
   const [attachedSnapshot, setAttachedSnapshot] = useState<string | null>(null);
@@ -347,11 +355,22 @@ function App() {
     const runtime = state?.installations.find((i) => i.id === runtimeId);
     return runtime && findTerminalMode(terminalProvider(runtime), mode);
   };
-  /** A run's requested terminal mode, as it reads after the run's model. */
+  /** A run's requested terminal mode or chat preset, as it reads after the run's model. */
   const requestedMode = (run: Run) => {
     const mode = findTerminalMode(run.provider, run.permissionMode);
-    return mode ? ` · ${terminalModeText(mode)}` : "";
+    if (mode) return ` · ${terminalModeText(mode)}`;
+    const preset =
+      run.provider === "codex" && chatPresetFor(run.mode, run.approvalPolicy);
+    return preset ? ` · ${preset.label}` : "";
   };
+  const selectedPreset = chatPreset(chatPresetId);
+  /** Why each chat preset is unavailable on the selected runtime. */
+  const presetBlocks = new Map(
+    (state?.chatPresetBlocks ?? [])
+      .filter((block) => block.installationId === installationId)
+      .map((block) => [block.preset, block.reason]),
+  );
+  const presetBlocked = presetBlocks.get(chatPresetId);
   /** An open terminal's mode, as it reads on the button that shows it. */
   const openedLabel = (terminal: AppState["terminals"][number]) => {
     const mode = openedMode(terminal.installationId, terminal.permissionMode);
@@ -1262,6 +1281,11 @@ function App() {
                             Run {r.id.slice(0, 8)} · installation revision{" "}
                             {r.installationRevisionId.slice(0, 10)}
                           </small>
+                          {r.reportedPermissions && (
+                            <small>
+                              {reportedPermissionsText(r.reportedPermissions)}
+                            </small>
+                          )}
                           {r.error && <p>{r.error}</p>}
                         </span>
                         {r.status === "uncertain" && (
@@ -1308,7 +1332,8 @@ function App() {
                           installationId,
                           prompt,
                           model,
-                          mode,
+                          mode: selectedPreset.mode,
+                          approvalPolicy: selectedPreset.approvalPolicy,
                           snapshotId: attachedSnapshot,
                         });
                         if (value) {
@@ -1360,13 +1385,18 @@ function App() {
                         <label>
                           Permissions
                           <select
-                            value={mode}
+                            value={chatPresetId}
                             onChange={(e) =>
-                              setMode(e.target.value as "review" | "edit")
+                              setChatPresetId(e.target.value as ChatPresetId)
                             }
                           >
-                            <option value="review">Read-only review</option>
-                            <option value="edit">Workspace edits · ask</option>
+                            {chatPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>
+                                {presetBlocks.has(preset.id)
+                                  ? `${preset.label} (unavailable)`
+                                  : preset.label}
+                              </option>
+                            ))}
                           </select>
                         </label>
                         <ActionButton
@@ -1376,6 +1406,7 @@ function App() {
                             !conversation ||
                             !prompt.trim() ||
                             !model ||
+                            !!presetBlocked ||
                             installation?.compatibility !== "compatible" ||
                             installation?.appId !== "openai.codex-cli"
                           }
@@ -1383,6 +1414,11 @@ function App() {
                           Send to Codex ↑
                         </ActionButton>
                       </div>
+                      <p className="tiny chat-preset-note" role="note">
+                        {presetBlocked
+                          ? `Not available for this runtime. ${presetBlocked}`
+                          : chatPresetNote(selectedPreset)}
+                      </p>
                       <p className="tiny muted">
                         Codex uses an experimental local stdio adapter. Claude
                         and provider-specific features use the native terminal.

@@ -508,6 +508,10 @@ export class Service {
       terminalModes: this.store.list<TerminalModePreference>(
         "terminal-mode-preference",
       ),
+      chatPresetBlocks: this.store
+        .list<Installation>("installation")
+        .filter((i) => i.appId === "openai.codex-cli")
+        .flatMap((i) => this.runtime.chatPresetBlocks(i)),
       configurationWrites: this.store.list("configuration-write"),
     };
   }
@@ -940,7 +944,7 @@ export class Service {
     if (!("requestId" in command)) {
       const result = await this.dispatchCommand(command, trusted);
       if (
-        /^(theme|discover|trust-installation|select-runtime|runtime-(connect|models|account)|lifecycle-|project-|codex-project-|configuration-apply)/.test(
+        /^(theme|discover|trust-installation|select-runtime|runtime-(connect|models|account|qualify)|lifecycle-|project-|codex-project-|configuration-apply)/.test(
           command.type,
         )
       )
@@ -2659,6 +2663,8 @@ export class Service {
           prompt,
           command.model,
           command.mode,
+          undefined,
+          command.approvalPolicy,
         );
       }
       case "run-interrupt":
