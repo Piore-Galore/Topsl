@@ -54,6 +54,8 @@ The token count is a conservative UTF-8 byte estimate with a 1.2 margin, not a m
 
 A retrieval-dependent builder/reviewer dispatch requires a context server and an adapter `installCandidateReader` hook. The grant is installed before inference; a missing/failed installer blocks and records failure without submitting a provider turn. A prompt reference or capability declaration does not install a tool. Small fully delivered source packages retain the existing fixture path. No production provider reader qualification is established by these local tests. A materialized review directory remains a separate runtime/isolation acceptance question; copying bytes does not establish independence.
 
+**Follow-up, 16 October 2026.** Only a reviewer's package can now require retrieval. A builder or repair works in the live workspace its candidate was captured from, which matches the candidate when the turn is dispatched, so its package tells it to read omitted files there and it needs no reader. The service now installs the reader for Codex reviewers over Codex's tool channel ([Codex workflows plan, step 3](Codex_Workflows_Plan.md#step-3-candidate-reader-16-october-2026)).
+
 Parallel and advanced workflow contexts now use bounded candidate identity/coverage metadata rather than embedding format-2 file contents. Existing runtime-enforced filesystem/tool isolation gates remain in force.
 
 ## Output and binary review
