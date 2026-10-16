@@ -187,3 +187,28 @@ The assertion in [`round2-acceptance.test.ts`](../tests/round2-acceptance.test.t
 
 - **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset): `npm run typecheck` passed, and `npm test -- tests/round2-acceptance.test.ts -t "R2-AT-37/38"` passed 2 tests. With both probe limits temporarily set to 1 ms (not committed), the `reverse=true` test failed as on the Windows runner, with `expected 'error' to be 'failed'`, and the assertion reported `environment phase, environment timeout: Environment preparation timed out.`
 - **Remote evidence:** this pull request's Compile Topsl and Round 2 lifecycle stress checks on the four hosted runners.
+
+## Follow-up — version probes ran past 5 s on Windows (16 October 2026)
+
+[Pull request #11](https://github.com/Piore-Galore/Topsl/pull/11) at `9146b22`, whose change no test runs, failed its Windows x64 compile job on the first run and on one re-run, in a different test each time. Both failures came from a 5 s version probe in environment preparation.
+
+| Run | Failed test | What it shows |
+|---|---|---|
+| [First run](https://github.com/Piore-Galore/Topsl/actions/runs/38867661661/job/116864401184) | R2-AT-39, an active real check across coordinator reconstruction | When the test's 30 s wait for the check's output ended, the check log held only `Environment preparation timed out.` The install has a 30 s limit and starts after the wait begins, so it could not have timed out by then. The limit that ran out belonged to one of the two 5 s probes. This is inferred from the timing |
+| [Re-run](https://github.com/Piore-Galore/Topsl/actions/runs/38867661661/job/116870932091) | R2-AT-26, exact reviewed package hook | The case whose hook should time out failed with `timeout` after starting 2 of its 4 preparation commands, so the second command, `npm --version`, ran past its 5 s limit |
+
+Since the [time-limit change above](#time-limits-included-the-windows-process-tree-query), a limit ends when the command closes, so on the re-run the probe itself took more than 5 s. Earlier, `main` at `cbfec68` ([run](https://github.com/Piore-Galore/Topsl/actions/runs/38850966987)) failed two Windows tests without saying why: R2-AT-26 with a missing registry ended `timeout` where it expects `preparation`, and R2-AT-39's cleanup-fault check ended `error` where it expects `passed`. Those failures and R2-AT-37/38's early `error` above fit the same cause, but none of those runs recorded it.
+
+### Change
+
+- The two version probes in [`environments.ts`](../packages/workflows/environments.ts), `node --version` and `npm --version`, have 30 s each instead of 5 s. A probe's limit still ends when it closes, so a normal preparation is no slower. A check plan keeps the environment recipe it was previewed with, so plans previewed before this change keep 5 s probes.
+- Two waits that cover a whole environment preparation allow 120 s instead of 30 s: R2-AT-39's wait for its check's output in [`round2-acceptance.test.ts`](../tests/round2-acceptance.test.ts), and R2-AT-26/29's wait for its hook's output in [`environments.test.ts`](../tests/environments.test.ts). The probes and install before them can now take longer than 30 s without running out of time. A wait still returns as soon as its condition holds.
+- When R2-AT-26's hook-timeout case fails its count of started commands, the message names those commands.
+
+### Validation
+
+- **Linux x64 cloud container** (Electron as Node, `ANTHROPIC_BASE_URL` unset), `main` at `a4642cc` plus this change: `npm test -- tests/environments.test.ts` passed 21 tests in 214 s, and `npm test -- tests/round2-acceptance.test.ts` passed 5 with 1 skipped in 124 s.
+- **Slow probe** (same container): with the `npm --version` probe temporarily replaced by a command that prints a version after 6 s (not committed), `npm test -- tests/environments.test.ts -t "exact reviewed package hook"` failed under a 5 s limit with `environment phase, environment timeout: Environment preparation timed out.`, the message from pull request #3's Windows run, and passed under the 30 s limit.
+- **Re-run failure** (same container): with only the hook-timeout case's `npm --version` limit temporarily set to 1 ms (not committed), the same test failed as on the re-run, with `to have a length of 4 but got 2`, and its message named the two commands that had started.
+- **Full check** (same container): `npm run check` passed. That is the typecheck, `npm test` with 337 tests passed and 4 skipped in 41 files (3 of them skipped) in 494 s, `npm run test:release` with 16 passed and 1 skipped, and the build.
+- **Remote evidence:** this pull request's Compile Topsl and Round 2 lifecycle stress checks on the four hosted runners. The container cannot run the Windows code paths.
