@@ -671,6 +671,9 @@ export class CheckExecutions {
         timedOut = true;
         void lifecycle.stop();
       }, plan.definition.timeoutMs);
+      // The limit covers the check, not the process-tree observation after it
+      // closes, which can take several seconds on Windows.
+      child.once("close", () => clearTimeout(timer));
       execution.lifecycle = await lifecycle.completion(
         plan.definition.timeoutMs + 6_100,
       );

@@ -314,8 +314,19 @@ test("R2-AT-26: exact reviewed package hook can prepare generated dependencies; 
         "require('node:assert/strict').equal(require('fixture-value/generated.cjs'),42);",
     }),
     checks = CheckExecutions.for(f.store);
+  const verification = await checks.execute(
+      f.repository,
+      f.plan,
+      f.plan.digest,
+    ),
+    execution = checks.list("p").executions[0];
+  // A slow Windows runner once ended this check as `error`; say why if so.
   expect(
-    (await checks.execute(f.repository, f.plan, f.plan.digest)).result,
+    verification.result,
+    `${execution.failurePhase ?? "unknown"} phase, environment ${
+      checks.inspect("p", execution.id).environment?.instance.failureKind ??
+      "not failed"
+    }: ${execution.error ?? "no error recorded"}`,
   ).toBe("passed");
   const timed = await setup({
       locked: true,

@@ -529,7 +529,6 @@ test.each([false, true])(
       throw error;
     }
   },
-  120_000,
 );
 
 test("R2-AT-39 local real check: cleanup fault preserves result; storage uncertainty and reopened vault never replay", async () => {
@@ -651,7 +650,7 @@ test("R2-AT-39 local real check: cleanup fault preserves result; storage uncerta
     await recovered.shutdown();
     reopened.close();
   }
-}, 120_000);
+});
 
 test("R2-AT-39 uncertain provider fixture and an active real check survive coordinator reconstruction without replay", async () => {
   const f = await setup("Unknown dispatch and restart");
@@ -801,7 +800,7 @@ test("R2-AT-39 uncertain provider fixture and an active real check survive coord
     await recovered.shutdown();
     reopened.close();
   }
-}, 120_000);
+});
 
 test.skipIf(process.platform === "win32")(
   "R2-AT-39 actual POSIX coordinator SIGKILL retains one uncertain real check and permits cleanup only after recorded group absence",
@@ -998,7 +997,6 @@ test.skipIf(process.platform === "win32")(
       await rm(f.directory, { recursive: true, force: true });
     }
   },
-  120_000,
 );
 
 test.skipIf(!process.env.TOPSL_R2_STRESS)(
