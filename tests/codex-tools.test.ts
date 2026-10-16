@@ -119,6 +119,11 @@ async function setup() {
     await vi.waitFor(() =>
       expect(f.store.get<Run>("run", run.id)?.status).toBe("completed"),
     );
+    // The workspace stays leased until Topsl confirms the process exited,
+    // which can take seconds on Windows. The next run needs it free.
+    await vi.waitFor(() => expect(runtime.hasActive()).toBe(false), {
+      timeout: 30_000,
+    });
     return f.store
       .list<Message>("message")
       .filter((message) => message.runId === run.id);
