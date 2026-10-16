@@ -29,6 +29,9 @@ import type {
   ProviderConnection,
   ProviderAccount,
   ProviderModel,
+  ProviderToolCall,
+  ProviderToolResult,
+  ToolBinding,
 } from "../providers/contract";
 import type { Workspace } from "../domain/workflow";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
@@ -64,6 +67,8 @@ type Active = {
   client: ProviderConnection;
   adapter: ProviderAdapter;
   approvals: Map<string, { approval: Approval; params: any }>;
+  /** Present only on a fresh review session that Topsl declared tools to. */
+  tools?: ToolBinding;
   finished: boolean;
   dispatched: boolean;
 };
@@ -544,6 +549,16 @@ export class RuntimeManager {
         throw new Error(
           "Connect a compatible Codex runtime first. Claude runs through its native terminal.",
         );
+      if (
+        execution?.tools &&
+        (mode !== "review" ||
+          !execution.freshSession ||
+          !adapter.toolCall ||
+          !adapter.toolResult)
+      )
+        throw new Error(
+          "Topsl's tools are installed only on a fresh review session of a runtime that can call them. No provider turn was dispatched.",
+        );
       const requestedSettings = execution
         ? this.store.get<{ effort: string | null }>(
             "attempt-runtime-settings",
@@ -687,6 +702,7 @@ export class RuntimeManager {
         client,
         adapter,
         approvals: new Map(),
+        ...(execution?.tools ? { tools: execution.tools } : {}),
         finished: false,
         dispatched: false,
       };
@@ -695,7 +711,7 @@ export class RuntimeManager {
       client.onNotification = (method, params) =>
         this.notification(active, method, params);
       client.onRequest = (id, method, params) =>
-        this.requestApproval(active, id, method, params);
+        this.request(active, id, method, params);
       client.onExit = (detail) => {
         if (!active.finished)
           this.finish(
@@ -766,6 +782,7 @@ export class RuntimeManager {
           )
             ? { outputSchema: reviewOutputSchema }
             : {}),
+          ...(execution?.tools ? { toolset: execution.tools.toolset } : {}),
           mode,
           contextPackageId: attempt.contextPackageId,
           attemptId: attempt.id,
@@ -932,6 +949,66 @@ export class RuntimeManager {
       return;
     }
     this.changed();
+  }
+  private request(
+    active: Active,
+    requestId: string | number,
+    method: string,
+    params: unknown,
+  ): void {
+    const call = active.adapter.toolResult
+      ? active.adapter.toolCall?.(method, params)
+      : null;
+    if (!call) {
+      this.requestApproval(active, requestId, method, params);
+      return;
+    }
+    const answering = this.answerTool(active, requestId, call);
+    this.operations.add(answering);
+    void answering.then(
+      () => this.operations.delete(answering),
+      () => this.operations.delete(answering),
+    );
+  }
+  /** Runs a call on this run's own tools, only for the thread and turn it
+   * started. Every call is recorded, answered or refused. */
+  private async answerTool(
+    active: Active,
+    requestId: string | number,
+    call: ProviderToolCall,
+  ): Promise<void> {
+    const { run, tools } = active;
+    const refusal = !tools
+      ? "No Topsl tools are installed for this session."
+      : active.finished
+        ? "This run has ended."
+        : call.threadId !== run.nativeSessionId ||
+            call.turnId !== run.nativeTurnId
+          ? "This tool call is outside the active turn."
+          : call.namespace !== tools.toolset.namespace ||
+              !tools.toolset.tools.some((tool) => tool.name === call.tool)
+            ? "Topsl has no such tool."
+            : null;
+    let result: ProviderToolResult = { text: refusal ?? "", success: false };
+    if (tools && !refusal)
+      try {
+        result = await tools.call(call);
+      } catch (error) {
+        result = { text: safeError(error), success: false };
+      }
+    this.store.event("run.tool-call", {
+      runId: run.id,
+      callId: call.callId,
+      namespace: call.namespace,
+      tool: call.tool,
+      outcome: refusal ? "refused" : result.success ? "answered" : "failed",
+      detail: refusal,
+    });
+    try {
+      active.client.reply(requestId, active.adapter.toolResult!(result));
+    } catch {
+      // The connection closed while the tool ran, so nothing is waiting.
+    }
   }
   private requestApproval(
     active: Active,

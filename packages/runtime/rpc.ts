@@ -130,6 +130,10 @@ export class RpcPeer {
         title: "Topsl personal pilot",
         version: "0.1.2",
       },
+      // Review threads declare Topsl's tools through Codex's experimental API.
+      // Every runtime connection opts in, so a qualification checks the same
+      // handshake that reviews use.
+      capabilities: { experimentalApi: true },
     });
     this.notify("initialized");
     return info;

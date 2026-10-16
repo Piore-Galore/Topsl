@@ -44,9 +44,42 @@ export interface InstructionSourceObservation {
   observedAt: string;
   contentHash: null;
 }
+/** A tool that Topsl declares to a runtime and answers itself. */
+export interface ProviderTool {
+  name: string;
+  description: string;
+  /** JSON Schema for the tool's arguments. */
+  inputSchema: Record<string, unknown>;
+}
+/** Tools declared together under one namespace. */
+export interface ProviderToolset {
+  namespace: string;
+  description: string;
+  tools: ProviderTool[];
+}
+/** A runtime's request to run one declared tool. */
+export interface ProviderToolCall {
+  threadId: string;
+  turnId: string;
+  callId: string;
+  namespace: string | null;
+  tool: string;
+  arguments: unknown;
+}
+export interface ProviderToolResult {
+  text: string;
+  success: boolean;
+}
+/** The tools for one attempt, and the handler that answers their calls. */
+export interface ToolBinding {
+  toolset: ProviderToolset;
+  call(call: ProviderToolCall): Promise<ProviderToolResult>;
+}
 export interface PreparedTurn {
   requestedEffort?: string;
   outputSchema?: Record<string, unknown>;
+  /** Topsl's own tools, declared only when a fresh review session starts. */
+  toolset?: ProviderToolset;
   prompt: string;
   cwd: string;
   requestedModel: string;
@@ -148,4 +181,9 @@ export interface ProviderAdapter {
   ): Promise<void>;
   event(method: string, payload: unknown): ProviderEvent | null;
   approval(method: string, payload: unknown): ProviderApproval | null;
+  /** Reads a runtime request as a call to a tool Topsl declared, or returns
+   * null for any other request. Absent when the runtime cannot call tools. */
+  toolCall?(method: string, payload: unknown): ProviderToolCall | null;
+  /** The response that returns a tool result to the runtime. */
+  toolResult?(result: ProviderToolResult): unknown;
 }

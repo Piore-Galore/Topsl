@@ -707,6 +707,8 @@ For the personal/local pilot, use a version-tested `codex app-server` over local
 
 Use the stable API subset by default; opt into experimental methods only for explicitly selected, tested pilot capabilities. Keep the documented CLI and real native terminal available with their actual observability/approval limitations. These fallbacks must not claim the same structured capabilities or disable a required permission boundary. Schema-visible plugin methods excluded from production remain subject to section 9.5.
 
+Decided 16 October 2026 in the [Codex workflows plan](Codex_Workflows_Plan.md#reviewer-reader): every runtime connection sets `capabilities.experimentalApi` in `initialize`, because review threads declare Topsl's own tools through Codex's experimental dynamic tools. Without it, Codex CLI 0.163.0 refuses them with `thread/start.dynamicTools requires experimentalApi capability`. Opting in on every connection, not only for reviews, means a runtime qualification checks the same handshake that reviews use. Against the schemas Codex CLI 0.163.0 generates, `dynamicTools` is the only experimental field Topsl sends. The opt-in also lets Codex send one more request, `currentTime/read`, which Topsl rejects like any request it does not support; whether Codex 0.163.0 sends it to Topsl is unverified.
+
 Core operations to bind:
 
 | Operation | Interface |
@@ -715,6 +717,7 @@ Core operations to bind:
 | Start or resume | `thread/start`, `thread/resume` |
 | Read history | `thread/list`, `thread/read` |
 | Submit or interrupt | `turn/start`, `turn/interrupt` |
+| Topsl's tools on a fresh review thread (experimental) | `dynamicTools` on `thread/start`; Topsl answers `item/tool/call` |
 | Usage notification | `thread/tokenUsage/updated` |
 | Account and login | `account/read`, `account/login/start`, `account/logout` |
 | Quota snapshots | `account/rateLimits/read` |

@@ -96,6 +96,12 @@ To verify the selected runtime's experimental project API, run the optional nati
 TOPSL_NATIVE_PROJECT_BINARY=/absolute/path/to/codex npm test -- tests/codex-projects-native.test.ts
 ```
 
+To check that the selected runtime accepts the tools Topsl declares on a review thread, run the optional tool-channel test. In an empty native home it opts into the experimental API, starts one fresh read-only thread with a fixture tool, and checks that the same tool is refused without the opt-in. It starts no turn, so no model request is made:
+
+```bash
+TOPSL_NATIVE_TOOLS_BINARY=/absolute/path/to/codex npm test -- tests/codex-tools-native.test.ts
+```
+
 To try real sessions through Topsl's interface with your own sign-in, run the live session check after `npm run build`. From a disposable Topsl profile and folder, it opens Claude Code in Topsl's native terminal, sends one Codex chat, or does both, with Codex continuing Claude Code's conversation through a reviewed handoff. Each provider's one short prompt counts toward that account's usage. [Live provider sessions](docs/Live_Provider_Sessions.md) describes what it checks and records the results.
 
 ```sh
