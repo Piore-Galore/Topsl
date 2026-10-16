@@ -1,8 +1,14 @@
 // Scripted app-server for the runtime qualification suite. No model is contacted.
-// FIXTURE_SANDBOX=broken lets every approved or unapproved write land.
+// It answers as Codex CLI 0.163.0 appeared to in the owner's live run on
+// 16 October 2026. Unless the approval policy is "never", it asks before it
+// runs a command, and a command the client approves runs again outside the
+// sandbox when the sandbox blocks it. Under "never" it asks nothing and the
+// sandbox has the last word. An interrupt sent before a turn has streamed any
+// reply finds no active turn.
+// FIXTURE_SANDBOX=broken lets every write land, in the sandbox or out of it.
 // FIXTURE_REFUSE=1 answers the write probes without running anything.
 // FIXTURE_ALTERED=1 proposes a compound command instead of the requested one.
-// FIXTURE_NO_APPROVAL=1 runs commands without asking (sandbox still applies).
+// FIXTURE_ASK=1 asks for approval whatever the approval policy.
 // On a thread that declares tools, the marker turn calls read_range for the
 // file it names and quotes the line it returns. FIXTURE_READER=skip replies
 // without calling it; FIXTURE_READER=quote quotes the marker in the file that
@@ -43,10 +49,13 @@ function inside(file, root) {
   const relative = path.relative(root, file);
   return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
-function execute(line, policy) {
+/** Runs a sentinel write and returns its exit code. Inside the sandbox, a
+ * write outside the policy's writable roots fails. */
+function execute(line, policy, sandboxed) {
   const match = /^printf (\w+) > '([^']+)'$/.exec(line);
   if (!match) return 1;
   const allowed =
+    !sandboxed ||
     process.env.FIXTURE_SANDBOX === "broken" ||
     (policy?.type === "workspaceWrite" &&
       policy.writableRoots.some((root) => inside(match[2], root)));
@@ -61,7 +70,6 @@ function call(method, params) {
   return new Promise((resolve) => pending.set(id, resolve));
 }
 async function ask(params) {
-  if (process.env.FIXTURE_NO_APPROVAL) return "accept";
   const response = await call("item/commandExecution/requestApproval", params);
   return response.result?.decision ?? "decline";
 }
@@ -119,23 +127,44 @@ async function readerTurn(threadId, turnId, marker, file) {
   if (mode === "partial") line = known();
   complete(threadId, turnId, line ? `${marker}\n${line}` : marker);
 }
-async function runCommands(threadId, turnId, lines, policy) {
+async function runCommands(threadId, turnId, lines, policy, approvalPolicy) {
   for (const [index, requested] of lines.entries()) {
     const line = process.env.FIXTURE_ALTERED
         ? `${requested}; touch '${path.join(path.dirname(requested.split("'")[1]), "extra")}'`
         : requested,
       itemId = `${turnId}-cmd-${index}`,
-      command = ["bash", "-lc", line];
+      // Codex 0.163.0 reports the command as one string.
+      command = `/bin/zsh -lc "${line}"`;
     send({
       method: "item/started",
       params: {
         threadId,
         turnId,
-        item: { id: itemId, type: "commandExecution", command },
+        item: {
+          id: itemId,
+          type: "commandExecution",
+          command,
+          status: "inProgress",
+        },
       },
     });
-    const decision = await ask({ threadId, turnId, itemId, reason: "write" });
-    const exitCode = decision === "accept" ? execute(line, policy) : null;
+    let exitCode = null;
+    if (approvalPolicy === "never" && !process.env.FIXTURE_ASK)
+      exitCode = execute(line, policy, true);
+    else {
+      const decision = await ask({
+        threadId,
+        turnId,
+        itemId,
+        command,
+        startedAtMs: Date.now(),
+      });
+      if (decision === "accept" || decision === "acceptForSession") {
+        exitCode = execute(line, policy, true);
+        if (exitCode && approvalPolicy !== "never")
+          exitCode = execute(line, policy, false);
+      }
+    }
     send({
       method: "item/completed",
       params: {
@@ -145,7 +174,8 @@ async function runCommands(threadId, turnId, lines, policy) {
           id: itemId,
           type: "commandExecution",
           command,
-          status: decision === "accept" ? "completed" : "declined",
+          status:
+            exitCode === null ? "declined" : exitCode ? "failed" : "completed",
           exitCode,
         },
       },
@@ -214,6 +244,8 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
     reply({ thread: { id }, model: request.params.model });
   } else if (request.method === "turn/start") {
     const { threadId, sandboxPolicy } = request.params,
+      approvalPolicy =
+        request.params.approvalPolicy ?? threads.get(threadId)?.approvalPolicy,
       prompt = request.params.input[0].text,
       turnId = `turn-${++turnCount}`;
     reply({ turn: { id: turnId }, model: request.params.model });
@@ -228,23 +260,23 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
     if (marker) return complete(threadId, turnId, marker[0]);
     if (prompt.includes("Write the numbers")) {
       let n = 0;
-      streaming = {
-        threadId,
-        turnId,
-        timer: setInterval(
-          () =>
-            send({
-              method: "item/agentMessage/delta",
-              params: {
-                threadId,
-                turnId,
-                itemId: `${turnId}-msg`,
-                delta: `${++n}\n`,
-              },
-            }),
-          10,
-        ),
-      };
+      const delta = () =>
+        send({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId: `${turnId}-msg`,
+            delta: `${++n}\n`,
+          },
+        });
+      // The reply starts streaming a little after the turn has started.
+      const turn = (streaming = { threadId, turnId, active: false });
+      turn.timer = setTimeout(() => {
+        turn.active = true;
+        delta();
+        turn.timer = setInterval(delta, 10);
+      }, 100);
       return;
     }
     const lines = prompt
@@ -252,15 +284,18 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       .filter((line) => line.startsWith("printf "));
     if (process.env.FIXTURE_REFUSE || !lines.length)
       return complete(threadId, turnId, "I will not run commands here.");
-    await runCommands(threadId, turnId, lines, sandboxPolicy);
+    await runCommands(threadId, turnId, lines, sandboxPolicy, approvalPolicy);
     complete(threadId, turnId, "Done.");
   } else if (request.method === "turn/interrupt") {
+    if (!streaming?.active || streaming.turnId !== request.params.turnId)
+      return send({
+        id: request.id,
+        error: { code: -32600, message: "no active turn to interrupt" },
+      });
     reply({});
-    if (streaming?.turnId === request.params.turnId) {
-      clearInterval(streaming.timer);
-      complete(streaming.threadId, streaming.turnId, null, "interrupted");
-      streaming = null;
-    }
+    clearInterval(streaming.timer);
+    complete(streaming.threadId, streaming.turnId, null, "interrupted");
+    streaming = null;
   } else
     send({
       id: request.id,

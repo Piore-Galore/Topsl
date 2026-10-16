@@ -157,26 +157,60 @@ describe("runtime qualification suite", () => {
       expect(o["workspace-write"].meaning).toBe("policy-enforced");
       expect(o["candidate-reader"].meaning).toBe("behavior-observed");
       expect(report.notTested).toEqual([]);
-      // The read-only write and both workspace writes were let through once each.
-      expect(report.approvals.map((a) => a.decision)).toEqual([
-        "accept",
-        "accept",
-        "accept",
-      ]);
-      // Only the first review thread declares the reader's tools.
-      const starts = f
-        .frames()
-        .filter(
-          (entry) =>
-            entry.from === "topsl" && entry.frame.method === "thread/start",
-        )
-        .map((entry) => entry.frame.params);
+      // With approvals off, the sandbox probes' writes ran without asking.
+      expect(report.approvals).toEqual([]);
+      for (const name of ["read-only", "workspace-write"])
+        expect(o[name].detail, name).toContain(
+          "Approvals were off, and the runtime asked for none.",
+        );
+      expect(o["read-only"].detail).toContain(
+        `It reported: /bin/zsh -lc "printf readonly > '<folder>/workspace/readonly-`,
+      );
+      expect(o["read-only"].detail).toMatch(/ failed with exit code 1\.$/);
+      const frames = f.frames(),
+        sent = (method: string) =>
+          frames
+            .filter(
+              (entry) =>
+                entry.from === "topsl" && entry.frame.method === method,
+            )
+            .map((entry) => entry.frame.params);
+      // Only the first review thread declares the reader's tools, and only
+      // the two sandbox probes turn approvals off.
+      const starts = sent("thread/start"),
+        turns = sent("turn/start");
       expect(starts.map((start) => start.sandbox)).toEqual([
         "read-only",
         "read-only",
         "workspace-write",
         "read-only",
       ]);
+      for (const params of [starts, turns])
+        expect(params.map((p) => p.approvalPolicy)).toEqual([
+          "untrusted",
+          "never",
+          "never",
+          "untrusted",
+        ]);
+      expect(turns.map((turn) => turn.sandboxPolicy.type)).toEqual([
+        "readOnly",
+        "readOnly",
+        "workspaceWrite",
+        "readOnly",
+      ]);
+      // The interrupt waited for the reply's first streamed text.
+      const firstDelta = frames.findIndex(
+          (entry) => entry.frame.method === "item/agentMessage/delta",
+        ),
+        interrupt = frames.findIndex(
+          (entry) =>
+            entry.from === "topsl" && entry.frame.method === "turn/interrupt",
+        );
+      expect(firstDelta).toBeGreaterThan(-1);
+      expect(interrupt).toBeGreaterThan(firstDelta);
+      expect(o.interrupt.detail).toBe(
+        "Interrupt requested after the reply's first streamed text; the turn ended interrupted.",
+      );
       expect(starts[0].dynamicTools).toEqual([
         {
           type: "namespace",
@@ -388,27 +422,111 @@ describe("runtime qualification suite", () => {
             passed: false,
             meaning: "unknown",
           });
-        expect(report.approvals.every((a) => a.decision === "decline")).toBe(
-          true,
-        );
+        expect(report.approvals).toEqual([]);
       }
     },
   );
 
   test.skipIf(process.platform === "win32")(
-    "commands the runtime runs without asking still count as attempts",
+    "a runtime that still asks with approvals off fails both sandbox probes, and every request is declined",
     async () => {
-      const f = await setup({ FIXTURE_NO_APPROVAL: "1" }),
-        o = byName(
-          await runCodexQualification({
-            adapter: f.adapter,
-            installation: f.installation,
-            model: "fixture-model",
-            parent: f.parent,
-          }),
-        );
-      expect(o["read-only"].passed).toBe(true);
-      expect(o["workspace-write"].passed).toBe(true);
+      const f = await setup({ FIXTURE_ASK: "1" }),
+        report = await runCodexQualification({
+          adapter: f.adapter,
+          installation: f.installation,
+          model: "fixture-model",
+          parent: f.parent,
+        }),
+        o = byName(report);
+      for (const name of ["read-only", "workspace-write"])
+        expect(o[name], name).toMatchObject({
+          passed: false,
+          meaning: "unknown",
+          negativeControl: { operationAttempted: false },
+        });
+      expect(o["read-only"].detail).toContain(
+        "Approvals were off, yet the runtime asked 1 time, and Topsl declined.",
+      );
+      expect(o["workspace-write"].detail).toContain(
+        "Workspace write did not land",
+      );
+      const request = "item/commandExecution/requestApproval";
+      expect(report.approvals).toEqual([
+        { probe: "read-only", method: request, decision: "decline" },
+        { probe: "workspace-write", method: request, decision: "decline" },
+        { probe: "workspace-write", method: request, decision: "decline" },
+      ]);
+      for (const name of ["structured-turn", "fresh-session", "interrupt"])
+        expect(o[name].passed, name).toBe(true);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "the stand-in lets an approved write escape its sandbox and refuses an early interrupt, as Codex 0.163.0 appeared to",
+    async () => {
+      const f = await setup(),
+        root = await mkdtemp(path.join(f.parent, "live-")),
+        workspace = path.join(root, "workspace");
+      await mkdir(workspace);
+      const connection = f.adapter.connect(f.installation.path, workspace),
+        waiting = new Map<string, (status: string) => void>(),
+        deltas: string[] = [];
+      // Every approval is accepted, as the first live run's suite did.
+      connection.onRequest = (id) =>
+        connection.reply(id, { decision: "accept" });
+      connection.onNotification = (method, params: any) => {
+        if (method === "item/agentMessage/delta") deltas.push(params.turnId);
+        if (method === "turn/completed")
+          waiting.get(params.threadId)?.(params.turn.status);
+      };
+      cleanup.push(async () => void (await connection.close()));
+      await connection.initialize();
+      const turn = (prompt: string, mode: "review" | "edit") => ({
+          prompt,
+          cwd: workspace,
+          requestedModel: "fixture-model",
+          mode,
+          contextPackageId: null,
+          attemptId: `stand-in:${prompt.length}`,
+          workspaceIdentity: workspace,
+        }),
+        run = async (
+          prompt: string,
+          mode: "review" | "edit",
+          approvals?: "never",
+        ) => {
+          const prepared = {
+              ...turn(prompt, mode),
+              ...(approvals ? { approvals } : {}),
+            },
+            thread = (await f.adapter.startSession(connection, prepared, null))
+              .nativeSessionId,
+            // Listen before the turn starts: a turn that asks nothing can
+            // complete in the same read as the response that starts it.
+            done = new Promise<string>((resolve) =>
+              waiting.set(thread, resolve),
+            ),
+            started = await f.adapter.startTurn(connection, prepared, thread);
+          return { thread, turnId: started.nativeTurnId!, done };
+        };
+      // An approved write that the sandbox blocks lands anyway; with
+      // approvals off it does not.
+      for (const approvals of [undefined, "never"] as const) {
+        const file = path.join(root, `outside-${approvals ?? "ask"}.txt`),
+          write = await run(`printf outside > '${file}'`, "edit", approvals);
+        expect(await write.done).toBe("completed");
+        expect(existsSync(file), approvals ?? "ask").toBe(!approvals);
+      }
+      // An interrupt sent before the reply streams finds no active turn.
+      const numbers = await run("Write the numbers from 1 to 3000.", "review");
+      await expect(
+        f.adapter.interrupt(connection, numbers.thread, numbers.turnId),
+      ).rejects.toThrow("no active turn to interrupt");
+      await expect
+        .poll(() => deltas.includes(numbers.turnId), { timeout: 5000 })
+        .toBe(true);
+      await f.adapter.interrupt(connection, numbers.thread, numbers.turnId);
+      expect(await numbers.done).toBe("interrupted");
     },
   );
 
