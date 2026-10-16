@@ -776,6 +776,8 @@ test("R2-AT-39 uncertain provider fixture and an active real check survive coord
     ),
     checks = CheckExecutions.for(f.store),
     running = checks.execute(f.repository, plan, plan.digest);
+  // The check starts only after its environment is prepared: two version
+  // probes and `npm ci`, each with a 30 s limit.
   await vi.waitFor(
     () =>
       expect(
@@ -784,7 +786,7 @@ test("R2-AT-39 uncertain provider fixture and an active real check survive coord
           .map((log) => log.text)
           .join(""),
       ).toContain("active-restart-ready"),
-    { timeout: 30_000 },
+    { timeout: 120_000 },
   );
   expect(checks.list("p").executions[0].state).toBe("running");
   await checks.shutdown();
