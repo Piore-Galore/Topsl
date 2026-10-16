@@ -80,11 +80,6 @@ export interface PreparedTurn {
   outputSchema?: Record<string, unknown>;
   /** Topsl's own tools, declared only when a fresh review session starts. */
   toolset?: ProviderToolset;
-  /** "never" turns the runtime's approval requests off, so a command runs
-   * inside the sandbox without asking and its sandbox has the last word.
-   * Only the runtime qualification's sandbox probes set it; Topsl's own runs
-   * ask, which is the default. Codex reads it. */
-  approvals?: "ask" | "never";
   prompt: string;
   cwd: string;
   requestedModel: string;
@@ -191,4 +186,17 @@ export interface ProviderAdapter {
   toolCall?(method: string, payload: unknown): ProviderToolCall | null;
   /** The response that returns a tool result to the runtime. */
   toolResult?(result: ProviderToolResult): unknown;
+  /** Runs one command in the runtime's own sandbox, under the policy a turn
+   * in `mode` gets, with no thread, turn or model. The runtime qualification
+   * uses it to try writes the sandbox must block. Absent when the runtime
+   * cannot run a command this way. */
+  sandboxCommand?(
+    connection: ProviderConnection,
+    command: { argv: string[]; cwd: string; mode: "review" | "edit" },
+  ): Promise<SandboxCommandResult>;
+}
+export interface SandboxCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }

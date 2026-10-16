@@ -459,7 +459,7 @@ export function WorkflowSetup({
           <button
             type="button"
             disabled={!draft[modelKey] || !!pending}
-            title="Runs up to 4 live model turns after you review them"
+            title="Runs up to 3 live model turns after you review them"
             onClick={() =>
               void perform(`qualify-${role}`, async () => {
                 const ticket = generation.current,

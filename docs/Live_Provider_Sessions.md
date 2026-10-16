@@ -1,6 +1,6 @@
 # Live provider sessions
 
-Topsl's automated suites use stand-in providers and never contact a model. [`scripts/live-session.mjs`](../scripts/live-session.mjs) checks real sessions through Topsl's own interface, using each provider's existing sign-in on the machine that runs it: one provider, or Claude Code followed by Codex continuing the same conversation through a context handoff. Each provider gets one short prompt, which counts toward that account's usage. This covers part of remaining gate 2 in [Implementation status](Implementation_Status.md#remaining-gates-and-deliberate-limits); a session check is not a runtime qualification. With `--qualify`, the script instead runs Topsl's Codex [runtime qualification](#codex-runtime-qualification) through the guided setup, which starts up to four model turns.
+Topsl's automated suites use stand-in providers and never contact a model. [`scripts/live-session.mjs`](../scripts/live-session.mjs) checks real sessions through Topsl's own interface, using each provider's existing sign-in on the machine that runs it: one provider, or Claude Code followed by Codex continuing the same conversation through a context handoff. Each provider gets one short prompt, which counts toward that account's usage. This covers part of remaining gate 2 in [Implementation status](Implementation_Status.md#remaining-gates-and-deliberate-limits); a session check is not a runtime qualification. With `--qualify`, the script instead runs Topsl's Codex [runtime qualification](#codex-runtime-qualification) through the guided setup, which starts up to three model turns.
 
 ## Run it
 
@@ -24,7 +24,7 @@ node scripts/live-session.mjs --qualify --codex "$(command -v codex)"
 - With `--qualify`, Topsl also gets `TOPSL_TEST_QUALIFICATION_DIR`: a new `topsl-qualify-*` folder in `~/Library/Caches` on macOS or `~/.cache` on Linux, because a qualification in the temporary folder could not be judged. The script deletes that folder after every run, passed or failed.
 - `report.json` and screenshots go to `test-results/live-session/<claude|codex|both|qualify>-<time>/`. A one-provider report keeps that provider's `executable`, `prompt`, `expectedReply`, `replyObserved`, `replySeconds` and `session` at the top level. A report for both keeps them per provider under `steps`, with `conversation` for the shared conversation. The profile is deleted after a pass and kept after a failure.
 
-Approved dialogs: **Which runtime are you locating?** (Claude Code or Codex CLI), **Choose the native executable**, **Allow this native executable?**, **Select a trusted project**, **Trust this project?**, **Connect the experimental Codex integration?** (Codex only), for Claude, the transcript chosen for **Import Claude JSONL**, and, after a handoff is attached, **Send the reviewed context to Codex?** for the one message the script sends. With `--qualify`, **Qualify this Codex runtime with live model turns?** is approved once, and only when its text names the selected executable, the chosen model, up to 4 model turns and the script's qualification folder.
+Approved dialogs: **Which runtime are you locating?** (Claude Code or Codex CLI), **Choose the native executable**, **Allow this native executable?**, **Select a trusted project**, **Trust this project?**, **Connect the experimental Codex integration?** (Codex only), for Claude, the transcript chosen for **Import Claude JSONL**, and, after a handoff is attached, **Send the reviewed context to Codex?** for the one message the script sends. With `--qualify`, **Qualify this Codex runtime with live model turns?** is approved once, and only when its text names the selected executable, the chosen model, up to 3 model turns and the script's qualification folder.
 
 ### Claude Code: native terminal
 
@@ -70,12 +70,12 @@ If the Claude Code step fails, Codex is not started.
 |---|---|
 | **Models & account** | As for Codex alone. The model is the one Codex reports as default, or the one `--model` names |
 | Guided setup | In **Activity → Create a workflow → 2. Team**, **Codex builds · Codex reviews** is chosen and the runtime is selected for both roles. **Discover builder models** lists the model, and it is chosen for both roles |
-| **Qualify builder runtime** | Topsl's dialog is approved as described above, and the script does not retry. Topsl records a qualification with every probe passed, none untested, no error, and at most 4 turns started |
+| **Qualify builder runtime** | Topsl's dialog is approved as described above, and the script does not retry. Topsl records a qualification with every probe passed, none untested, no error, and at most 3 turns started |
 | Readiness | Topsl's readiness query and the guided setup both show the builder and reviewer roles satisfied with this qualification |
 
 The report keeps what Topsl recorded: the suite, the model, the turns started, each probe's capability, outcome and detail, any probe not tested, the approval requests the suite declined, any error, and when the qualification expires. It keeps only the account type and plan, and writes the home folder as `~`. `modelTurns` is the number of turns Topsl reports it started, or `null` if Topsl started the qualification but recorded nothing. A failed run keeps the same record, so a failure shows which probe failed.
 
-A qualification counts only in the profile that ran it, and this one is disposable. A pass does not qualify the user's own Topsl; that takes **Qualify builder runtime** there, with up to four more turns.
+A qualification counts only in the profile that ran it, and this one is disposable. A pass does not qualify the user's own Topsl; that takes **Qualify builder runtime** there, with up to three more turns.
 
 ## What a pass does not establish
 
@@ -98,7 +98,7 @@ node scripts/live-session.mjs --codex "$PWD/tests/fixtures/live-session/codex.cj
 CLAUDE_CONFIG_DIR="$(mktemp -d)" node scripts/live-session.mjs --claude "$PWD/tests/fixtures/live-session/claude.cjs" --codex "$PWD/tests/fixtures/live-session/codex.cjs"
 ```
 
-For the qualification, the stand-in is the suite's own scripted app-server, [`codex-qualify.cjs`](../tests/fixtures/codex-qualify.cjs), which answers each probe as a Codex runtime with a working sandbox would. It also does what Codex 0.163.0 appeared to do in the live run: a command the client approves runs again outside the sandbox when the sandbox blocks it, and an interrupt sent before the reply streams finds no active turn:
+For the qualification, the stand-in is the suite's own scripted app-server, [`codex-qualify.cjs`](../tests/fixtures/codex-qualify.cjs), which answers each probe as a Codex runtime with a working sandbox would. It runs the write probes' commands in a pretend sandbox, and, as Codex 0.163.0 did in the first live run, it refuses an interrupt sent before the reply streams:
 
 ```sh
 node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"

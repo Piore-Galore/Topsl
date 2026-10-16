@@ -53,10 +53,17 @@ const toolCallSchema = z.object({
   tool: string.min(1),
   arguments: z.unknown(),
 });
-/** Topsl's runs ask before Codex runs a command outside its known-safe list.
- * With approvals off, Codex never asks, so a command its sandbox blocks fails. */
-const approvalPolicy = (turn: PreparedTurn) =>
-  turn.approvals === "never" ? "never" : "untrusted";
+const commandExecSchema = z.object({
+  exitCode: z.number().int(),
+  stdout: string,
+  stderr: string,
+});
+/** The sandbox a turn runs in: read-only for a review, and for edits the
+ * workspace alone, without network. `command/exec` gets the same policy. */
+export const sandboxPolicy = (mode: "review" | "edit", cwd: string) =>
+  mode === "review"
+    ? { type: "readOnly" }
+    : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false };
 export class CodexAdapter implements ProviderAdapter {
   readonly provider = "codex" as const;
   constructor(
@@ -225,7 +232,7 @@ export class CodexAdapter implements ProviderAdapter {
     const params = {
       cwd: turn.cwd,
       model: turn.requestedModel,
-      approvalPolicy: approvalPolicy(turn),
+      approvalPolicy: "untrusted",
       sandbox: turn.mode === "review" ? "read-only" : "workspace-write",
       // Codex's experimental dynamic tools; the connection opts in when it
       // initializes.
@@ -288,15 +295,8 @@ export class CodexAdapter implements ProviderAdapter {
         model: turn.requestedModel,
         ...(turn.requestedEffort ? { effort: turn.requestedEffort } : {}),
         ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
-        approvalPolicy: approvalPolicy(turn),
-        sandboxPolicy:
-          turn.mode === "review"
-            ? { type: "readOnly" }
-            : {
-                type: "workspaceWrite",
-                writableRoots: [turn.cwd],
-                networkAccess: false,
-              },
+        approvalPolicy: "untrusted",
+        sandboxPolicy: sandboxPolicy(turn.mode, turn.cwd),
       }),
     );
     return {
@@ -311,6 +311,21 @@ export class CodexAdapter implements ProviderAdapter {
     turnId: string,
   ) {
     await connection.request("turn/interrupt", { threadId: sessionId, turnId });
+  }
+  /** Codex's `command/exec` runs an argv in its sandbox without a thread or
+   * turn, and answers once the process has exited. */
+  async sandboxCommand(
+    connection: ProviderConnection,
+    command: { argv: string[]; cwd: string; mode: "review" | "edit" },
+  ) {
+    return commandExecSchema.parse(
+      await connection.request("command/exec", {
+        command: command.argv,
+        cwd: command.cwd,
+        sandboxPolicy: sandboxPolicy(command.mode, command.cwd),
+        timeoutMs: 20_000,
+      }),
+    );
   }
   event(method: string, payload: unknown): ProviderEvent | null {
     const base = frame.safeParse(payload);

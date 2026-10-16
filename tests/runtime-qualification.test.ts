@@ -14,10 +14,10 @@ import {
 } from "node:fs/promises";
 import { candidateToolset } from "../packages/context/candidate-tools";
 import { createReaderProbe } from "../packages/context/reader-probe";
-import { CodexAdapter } from "../packages/providers/codex";
+import { CodexAdapter, sandboxPolicy } from "../packages/providers/codex";
+import type { ProviderConnection } from "../packages/providers/contract";
 import {
   assertQualificationParent,
-  exactSentinelWrite,
   qualificationTurnBudget,
   runCodexQualification,
 } from "../packages/providers/qualification";
@@ -98,25 +98,60 @@ const byName = (report: { observations: any[] }) =>
   Object.fromEntries(report.observations.map((o) => [o.capability, o]));
 
 describe("runtime qualification suite", () => {
-  test("accepts only the exact sentinel write", () => {
-    const file = "/data/q/workspace/inside-1.txt";
-    for (const text of [
-      `printf inside > '${file}'`,
-      `printf inside > ${file}`,
-      `printf 'inside' > "${file}"`,
-      `bash -lc printf inside > '${file}'`,
-      `/bin/zsh -lc "printf inside > '${file}'"`,
-    ])
-      expect(exactSentinelWrite(text, file, "inside")).toBe(true);
-    for (const text of [
-      `printf inside > '${file}'; rm -rf ~`,
-      `printf inside > '${file}' && curl example.test`,
-      `printf outside > '${file}'`,
-      `printf inside > '${file}.other'`,
-      `printf inside >> '${file}'`,
-      `echo inside > '${file}'`,
-    ])
-      expect(exactSentinelWrite(text, file, "inside")).toBe(false);
+  test("command/exec gets exactly the sandbox policy a turn in the same mode gets", async () => {
+    const sent: Array<{ method: string; params: any }> = [],
+      connection = {
+        request: async (method: string, params: unknown) => {
+          sent.push({ method, params });
+          return method === "command/exec"
+            ? { exitCode: 0, stdout: "", stderr: "" }
+            : { turn: { id: "turn-1" } };
+        },
+      } as unknown as ProviderConnection,
+      adapter = new CodexAdapter(),
+      cwd = "/data/q/workspace";
+    for (const mode of ["review", "edit"] as const) {
+      await adapter.startTurn(
+        connection,
+        {
+          prompt: "",
+          cwd,
+          requestedModel: "fixture-model",
+          mode,
+          contextPackageId: null,
+          attemptId: "policy",
+          workspaceIdentity: cwd,
+        },
+        "thread-1",
+      );
+      await adapter.sandboxCommand(connection, {
+        argv: ["/bin/sh", "-c", "true"],
+        cwd,
+        mode,
+      });
+    }
+    expect(sent.map((s) => s.method)).toEqual([
+      "turn/start",
+      "command/exec",
+      "turn/start",
+      "command/exec",
+    ]);
+    expect(sent.map((s) => s.params.sandboxPolicy)).toEqual([
+      sandboxPolicy("review", cwd),
+      sandboxPolicy("review", cwd),
+      sandboxPolicy("edit", cwd),
+      sandboxPolicy("edit", cwd),
+    ]);
+    expect(sandboxPolicy("review", cwd)).toEqual({ type: "readOnly" });
+    expect(sandboxPolicy("edit", cwd)).toEqual({
+      type: "workspaceWrite",
+      writableRoots: [cwd],
+      networkAccess: false,
+    });
+    expect(sent[1].params).toMatchObject({
+      command: ["/bin/sh", "-c", "true"],
+      cwd,
+    });
   });
 
   test.skipIf(process.platform === "win32")(
@@ -132,6 +167,7 @@ describe("runtime qualification suite", () => {
         o = byName(report);
       expect(report.error).toBeNull();
       expect(report.turnsStarted).toBe(qualificationTurnBudget);
+      expect(qualificationTurnBudget).toBe(3);
       for (const name of [
         "native-subscription",
         "structured-turn",
@@ -146,27 +182,24 @@ describe("runtime qualification suite", () => {
           passed: true,
           source: "trusted-runtime-validation",
         });
-      expect(o["read-only"]).toMatchObject({
-        meaning: "policy-enforced",
-        negativeControl: {
-          operationAttempted: true,
-          trustedStateChecked: true,
-          denied: true,
-        },
-      });
-      expect(o["workspace-write"].meaning).toBe("policy-enforced");
+      for (const name of ["read-only", "workspace-write"])
+        expect(o[name], name).toMatchObject({
+          meaning: "policy-enforced",
+          negativeControl: {
+            operationAttempted: true,
+            trustedStateChecked: true,
+            denied: true,
+          },
+        });
       expect(o["candidate-reader"].meaning).toBe("behavior-observed");
       expect(report.notTested).toEqual([]);
-      // With approvals off, the sandbox probes' writes ran without asking.
       expect(report.approvals).toEqual([]);
-      for (const name of ["read-only", "workspace-write"])
-        expect(o[name].detail, name).toContain(
-          "Approvals were off, and the runtime asked for none.",
-        );
-      expect(o["read-only"].detail).toContain(
-        `It reported: /bin/zsh -lc "printf readonly > '<folder>/workspace/readonly-`,
+      expect(o["read-only"].detail).toMatch(
+        /^Topsl ran the commands itself in the runtime's sandbox under the read-only policy, with no model turn\. A command printing a word ran\. The write to <folder>\/workspace\/readonly-[0-9a-f]+\.txt exited with code 1 \("\/bin\/sh: <folder>\/workspace\/readonly-[0-9a-f]+\.txt: Operation not permitted"\), and no file was created\.$/,
       );
-      expect(o["read-only"].detail).toMatch(/ failed with exit code 1\.$/);
+      expect(o["workspace-write"].detail).toMatch(
+        /^Topsl ran the writes itself in the runtime's sandbox under the workspace-write policy, with no model turn\. The write inside the workspace exited with code 0 and landed\. The write to <folder>\/outside\/outside-[0-9a-f]+\.txt exited with code 1 \(".*: Operation not permitted"\) and was denied\.$/,
+      );
       const frames = f.frames(),
         sent = (method: string) =>
           frames
@@ -175,28 +208,66 @@ describe("runtime qualification suite", () => {
                 entry.from === "topsl" && entry.frame.method === method,
             )
             .map((entry) => entry.frame.params);
-      // Only the first review thread declares the reader's tools, and only
-      // the two sandbox probes turn approvals off.
+      // Every model turn is a review turn that asks before commands; only the
+      // reader's thread declares tools.
       const starts = sent("thread/start"),
-        turns = sent("turn/start");
+        turns = sent("turn/start"),
+        commands = sent("command/exec");
       expect(starts.map((start) => start.sandbox)).toEqual([
         "read-only",
         "read-only",
-        "workspace-write",
         "read-only",
       ]);
       for (const params of [starts, turns])
         expect(params.map((p) => p.approvalPolicy)).toEqual([
           "untrusted",
-          "never",
-          "never",
+          "untrusted",
           "untrusted",
         ]);
-      expect(turns.map((turn) => turn.sandboxPolicy.type)).toEqual([
-        "readOnly",
-        "readOnly",
-        "workspaceWrite",
-        "readOnly",
+      expect(turns.map((turn) => turn.sandboxPolicy)).toEqual(
+        turns.map((turn) => sandboxPolicy("review", turn.cwd)),
+      );
+      // The sandbox probes ran no model: Topsl sent the commands itself, under
+      // the policies a review and an edit turn get.
+      const workspace = turns[0].cwd;
+      expect(
+        commands.map((c) => [c.command.slice(2, 4), c.sandboxPolicy, c.cwd]),
+      ).toEqual([
+        [
+          ['printf %s "$1"', "topsl"],
+          sandboxPolicy("review", workspace),
+          workspace,
+        ],
+        [
+          ['printf %s "$1" > "$2"', "topsl"],
+          sandboxPolicy("review", workspace),
+          workspace,
+        ],
+        [
+          ['printf %s "$1" > "$2"', "topsl"],
+          sandboxPolicy("edit", workspace),
+          workspace,
+        ],
+        [
+          ['printf %s "$1" > "$2"', "topsl"],
+          sandboxPolicy("edit", workspace),
+          workspace,
+        ],
+      ]);
+      expect(commands.map((c) => c.command.slice(4))).toEqual([
+        ["readable"],
+        [
+          "readonly",
+          expect.stringMatching(/\/workspace\/readonly-[0-9a-f]+\.txt$/),
+        ],
+        [
+          "inside",
+          expect.stringMatching(/\/workspace\/inside-[0-9a-f]+\.txt$/),
+        ],
+        [
+          "outside",
+          expect.stringMatching(/\/outside\/outside-[0-9a-f]+\.txt$/),
+        ],
       ]);
       // The interrupt waited for the reply's first streamed text.
       const firstDelta = frames.findIndex(
@@ -211,7 +282,7 @@ describe("runtime qualification suite", () => {
       expect(o.interrupt.detail).toBe(
         "Interrupt requested after the reply's first streamed text; the turn ended interrupted.",
       );
-      expect(starts[0].dynamicTools).toEqual([
+      expect(starts[1].dynamicTools).toEqual([
         {
           type: "namespace",
           name: candidateToolset.namespace,
@@ -222,7 +293,7 @@ describe("runtime qualification suite", () => {
           })),
         },
       ]);
-      for (const start of starts.slice(1))
+      for (const start of [starts[0], starts[2]])
         expect(start).not.toHaveProperty("dynamicTools");
       expect(await readdir(f.parent)).toEqual([]);
     },
@@ -297,7 +368,7 @@ describe("runtime qualification suite", () => {
         quoted: boolean,
         calls: string,
       ) =>
-        `Turn completed. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.`;
+        `Turn completed. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.${quoted ? "" : ' The reply began: "I could not read the file."'}`;
       expect(details).toEqual({
         read: {
           passed: true,
@@ -358,7 +429,8 @@ describe("runtime qualification suite", () => {
           }),
           o = byName(report);
         expect(report.error, detail).toBeNull();
-        expect(report.turnsStarted).toBe(qualificationTurnBudget);
+        // The reader's turn is the one that did not start.
+        expect(report.turnsStarted).toBe(qualificationTurnBudget - 1);
         expect(o["candidate-reader"]).toMatchObject({
           passed: false,
           meaning: "unknown",
@@ -394,41 +466,62 @@ describe("runtime qualification suite", () => {
         meaning: "unsupported",
         negativeControl: { operationAttempted: true, denied: false },
       });
+      expect(o["read-only"].detail).toMatch(
+        /exited with code 0, and a file was created\.$/,
+      );
       expect(o["workspace-write"]).toMatchObject({
         passed: false,
         meaning: "unsupported",
+        negativeControl: { operationAttempted: true, denied: false },
       });
+      expect(o["workspace-write"].detail).toMatch(
+        /exited with code 0 and created a file\.$/,
+      );
       expect(o["structured-turn"].passed).toBe(true);
     },
   );
 
   test.skipIf(process.platform === "win32")(
-    "a refusal or an altered command is not evidence of enforcement",
+    "a runtime that cannot run a command in its sandbox fails both write probes, and the other probes still run",
     async () => {
-      for (const env of [
-        { FIXTURE_REFUSE: "1" },
-        { FIXTURE_ALTERED: "1" },
-      ] as Array<Record<string, string>>) {
-        const f = await setup(env),
-          report = await runCodexQualification({
-            adapter: f.adapter,
+      const f = await setup({ FIXTURE_NO_EXEC: "1" }),
+        // An adapter with no sandboxed command at all.
+        bare = Object.assign(Object.create(f.adapter), {
+          sandboxCommand: undefined,
+        });
+      for (const [adapter, detail] of [
+        [f.adapter, "Unsupported fixture method."],
+        [bare, "This runtime adapter cannot run a command in its sandbox."],
+      ] as const) {
+        const report = await runCodexQualification({
+            adapter,
             installation: f.installation,
             model: "fixture-model",
             parent: f.parent,
           }),
           o = byName(report);
-        for (const name of ["read-only", "workspace-write"])
-          expect(o[name], `${name} ${JSON.stringify(env)}`).toMatchObject({
+        expect(report.error, detail).toBeNull();
+        expect(report.turnsStarted, detail).toBe(qualificationTurnBudget);
+        for (const name of ["read-only", "workspace-write"]) {
+          expect(o[name], `${name}: ${detail}`).toMatchObject({
             passed: false,
             meaning: "unknown",
           });
-        expect(report.approvals).toEqual([]);
+          expect(o[name].detail, `${name}: ${detail}`).toContain(detail);
+        }
+        for (const name of [
+          "structured-turn",
+          "candidate-reader",
+          "fresh-session",
+          "interrupt",
+        ])
+          expect(o[name].passed, `${name}: ${detail}`).toBe(true);
       }
     },
   );
 
   test.skipIf(process.platform === "win32")(
-    "a runtime that still asks with approvals off fails both sandbox probes, and every request is declined",
+    "an approval request during a turn is declined, so nothing runs",
     async () => {
       const f = await setup({ FIXTURE_ASK: "1" }),
         report = await runCodexQualification({
@@ -438,31 +531,36 @@ describe("runtime qualification suite", () => {
           parent: f.parent,
         }),
         o = byName(report);
-      for (const name of ["read-only", "workspace-write"])
-        expect(o[name], name).toMatchObject({
-          passed: false,
-          meaning: "unknown",
-          negativeControl: { operationAttempted: false },
-        });
-      expect(o["read-only"].detail).toContain(
-        "Approvals were off, yet the runtime asked 1 time, and Topsl declined.",
-      );
-      expect(o["workspace-write"].detail).toContain(
-        "Workspace write did not land",
-      );
-      const request = "item/commandExecution/requestApproval";
       expect(report.approvals).toEqual([
-        { probe: "read-only", method: request, decision: "decline" },
-        { probe: "workspace-write", method: request, decision: "decline" },
-        { probe: "workspace-write", method: request, decision: "decline" },
+        {
+          probe: "structured-turn",
+          method: "item/commandExecution/requestApproval",
+          decision: "decline",
+        },
       ]);
-      for (const name of ["structured-turn", "fresh-session", "interrupt"])
+      const frames = f.frames(),
+        asked = frames
+          .filter(
+            (entry) =>
+              entry.from === "fixture" &&
+              entry.frame.method === "item/commandExecution/requestApproval",
+          )
+          .map((entry) => entry.frame.id),
+        answers = frames
+          .filter(
+            (entry) => entry.from === "topsl" && asked.includes(entry.frame.id),
+          )
+          .map((entry) => entry.frame.result);
+      expect(answers).toEqual([{ decision: "decline" }]);
+      // The declined command never ran, so the read-only probe still found
+      // the workspace untouched.
+      for (const name of ["structured-turn", "read-only", "workspace-write"])
         expect(o[name].passed, name).toBe(true);
     },
   );
 
   test.skipIf(process.platform === "win32")(
-    "the stand-in lets an approved write escape its sandbox and refuses an early interrupt, as Codex 0.163.0 appeared to",
+    "the stand-in refuses an interrupt sent before the reply streams, as Codex 0.163.0 did",
     async () => {
       const f = await setup(),
         root = await mkdtemp(path.join(f.parent, "live-")),
@@ -471,9 +569,6 @@ describe("runtime qualification suite", () => {
       const connection = f.adapter.connect(f.installation.path, workspace),
         waiting = new Map<string, (status: string) => void>(),
         deltas: string[] = [];
-      // Every approval is accepted, as the first live run's suite did.
-      connection.onRequest = (id) =>
-        connection.reply(id, { decision: "accept" });
       connection.onNotification = (method, params: any) => {
         if (method === "item/agentMessage/delta") deltas.push(params.turnId);
         if (method === "turn/completed")
@@ -481,52 +576,30 @@ describe("runtime qualification suite", () => {
       };
       cleanup.push(async () => void (await connection.close()));
       await connection.initialize();
-      const turn = (prompt: string, mode: "review" | "edit") => ({
-          prompt,
+      const prepared = {
+          prompt: "Write the numbers from 1 to 3000.",
           cwd: workspace,
           requestedModel: "fixture-model",
-          mode,
+          mode: "review" as const,
           contextPackageId: null,
-          attemptId: `stand-in:${prompt.length}`,
+          attemptId: "stand-in",
           workspaceIdentity: workspace,
-        }),
-        run = async (
-          prompt: string,
-          mode: "review" | "edit",
-          approvals?: "never",
-        ) => {
-          const prepared = {
-              ...turn(prompt, mode),
-              ...(approvals ? { approvals } : {}),
-            },
-            thread = (await f.adapter.startSession(connection, prepared, null))
-              .nativeSessionId,
-            // Listen before the turn starts: a turn that asks nothing can
-            // complete in the same read as the response that starts it.
-            done = new Promise<string>((resolve) =>
-              waiting.set(thread, resolve),
-            ),
-            started = await f.adapter.startTurn(connection, prepared, thread);
-          return { thread, turnId: started.nativeTurnId!, done };
-        };
-      // An approved write that the sandbox blocks lands anyway; with
-      // approvals off it does not.
-      for (const approvals of [undefined, "never"] as const) {
-        const file = path.join(root, `outside-${approvals ?? "ask"}.txt`),
-          write = await run(`printf outside > '${file}'`, "edit", approvals);
-        expect(await write.done).toBe("completed");
-        expect(existsSync(file), approvals ?? "ask").toBe(!approvals);
-      }
-      // An interrupt sent before the reply streams finds no active turn.
-      const numbers = await run("Write the numbers from 1 to 3000.", "review");
+        },
+        thread = (await f.adapter.startSession(connection, prepared, null))
+          .nativeSessionId,
+        // Listen before the turn starts, so a completion that arrives with
+        // the response that starts the turn is not missed.
+        done = new Promise<string>((resolve) => waiting.set(thread, resolve)),
+        turnId = (await f.adapter.startTurn(connection, prepared, thread))
+          .nativeTurnId!;
       await expect(
-        f.adapter.interrupt(connection, numbers.thread, numbers.turnId),
+        f.adapter.interrupt(connection, thread, turnId),
       ).rejects.toThrow("no active turn to interrupt");
       await expect
-        .poll(() => deltas.includes(numbers.turnId), { timeout: 5000 })
+        .poll(() => deltas.includes(turnId), { timeout: 5000 })
         .toBe(true);
-      await f.adapter.interrupt(connection, numbers.thread, numbers.turnId);
-      expect(await numbers.done).toBe("interrupted");
+      await f.adapter.interrupt(connection, thread, turnId);
+      expect(await done).toBe("interrupted");
     },
   );
 

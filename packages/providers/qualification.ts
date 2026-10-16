@@ -22,13 +22,14 @@ import type {
   ProviderAdapter,
   ProviderConnection,
   ProviderToolset,
+  SandboxCommandResult,
   ToolBinding,
 } from "./contract";
 import { answerToolCall } from "./tool-calls";
 
-export const qualificationSuite = "codex-runtime-qualification/v3";
+export const qualificationSuite = "codex-runtime-qualification/v4";
 /** Model turns the suite may start. The cancellation probe ends its turn early. */
-export const qualificationTurnBudget = 4;
+export const qualificationTurnBudget = 3;
 export const qualificationValidityDays = 30;
 const turnTimeoutMs = 180_000;
 
@@ -54,45 +55,10 @@ interface TurnWatch {
   tools?: ToolBinding;
   toolCalls: Array<{ tool: string; outcome: string }>;
   text: Map<string, string>;
-  commands: Map<string, string>;
-  fileChanges: Map<string, string[]>;
-  /** How each item ended, with a command's exit code. */
-  completed: Map<string, { status: string; exitCode: number | null }>;
-  /** Every request was declined. */
-  approvals: Array<{ itemId: string | null; method: string }>;
   /** Called for each piece of the reply the turn streams. */
   output: () => void;
   settle: (value: { status: string; error: string | null }) => void;
   fail: (error: Error) => void;
-}
-const commandText = (value: unknown): string =>
-  Array.isArray(value)
-    ? value.filter((v) => typeof v === "string").join(" ")
-    : typeof value === "string"
-      ? value
-      : "";
-const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** Accepts only the exact sentinel write the runner asked for, optionally
- * wrapped in the shell invocation the runtime reports. */
-export function exactSentinelWrite(
-  text: string,
-  file: string,
-  content: string,
-): boolean {
-  let inner = text.trim();
-  const shell =
-    /^(?:\/(?:usr\/)?bin\/)?(?:ba|z|da)?sh\s+-l?c\s+([\s\S]+)$/.exec(inner);
-  if (shell) inner = shell[1].trim();
-  if (
-    inner.length > 1 &&
-    (inner[0] === "'" || inner[0] === '"') &&
-    inner.endsWith(inner[0]) &&
-    !inner.slice(1, -1).includes(inner[0] === "'" ? "'" : '"')
-  )
-    inner = inner.slice(1, -1).trim();
-  return new RegExp(
-    `^printf\\s+(['"]?)${escape(content)}\\1\\s*>\\s*(['"]?)${escape(file)}\\2$`,
-  ).test(inner);
 }
 async function exists(file: string): Promise<boolean> {
   try {
@@ -139,17 +105,19 @@ export async function assertQualificationParent(parent: string): Promise<void> {
  * disposable folder and reports what it observed. The caller owns consent and
  * recording; this function never writes a qualification itself.
  *
- * Every probe fails closed: an observation passes only when the runtime
- * attempted the operation and the runner's own filesystem check confirms the
- * expected state. The two sandbox probes turn the runtime's approvals off, so
- * each sentinel write runs without asking and only the sandbox decides
- * whether it lands. Every approval request is declined, as a review run
- * declines them: Codex 0.163.0 appeared to run an approved command outside
- * its sandbox when the sandbox blocked it.
+ * Every probe fails closed: an observation passes only when the operation was
+ * attempted and the runner's own filesystem check confirms the expected
+ * state. The two sandbox probes involve no model. Topsl runs each sentinel
+ * write itself through the runtime's sandbox, under the policy a review or an
+ * edit turn gets, because a live model with approvals off skipped the writes
+ * it expected the sandbox to block. Every approval request a turn makes is
+ * declined, as a review run declines them: Codex 0.163.0 appeared to run an
+ * approved command outside its sandbox when the sandbox blocked it.
  *
- * The first review turn also reads a one-file build through the reviewer's
- * own tools. Only Topsl holds that file, so `candidate-reader` passes only when
- * Topsl answered the read and the reply quotes the file's marker.
+ * A second review thread declares the reviewer's own tools, and its one turn
+ * reads a one-file build through them. Only Topsl holds that file, so
+ * `candidate-reader` passes only when Topsl answered the read and the reply
+ * quotes the file's marker.
  */
 export async function runCodexQualification(input: {
   adapter: ProviderAdapter;
@@ -251,32 +219,6 @@ export async function runCodexQualification(input: {
     const watch = current;
     if (!watch || !params || typeof params !== "object") return;
     if (params.threadId && params.threadId !== watch.threadId) return;
-    if (
-      (method === "item/started" || method === "item/completed") &&
-      params.item &&
-      typeof params.item.id === "string"
-    ) {
-      if (params.item.type === "commandExecution")
-        watch.commands.set(params.item.id, commandText(params.item.command));
-      if (
-        params.item.type === "fileChange" &&
-        Array.isArray(params.item.changes)
-      )
-        watch.fileChanges.set(
-          params.item.id,
-          params.item.changes
-            .map((c: any) => (typeof c?.path === "string" ? c.path : ""))
-            .filter(Boolean),
-        );
-      if (method === "item/completed")
-        watch.completed.set(params.item.id, {
-          status: String(params.item.status ?? ""),
-          exitCode:
-            typeof params.item.exitCode === "number"
-              ? params.item.exitCode
-              : null,
-        });
-    }
     const event = input.adapter.event(method, params);
     if (!event) return;
     if (event.type === "turn-started") watch.turnId ??= event.turnId;
@@ -320,39 +262,31 @@ export async function runCodexQualification(input: {
       connection.reject(id, "Request outside the active qualification probe.");
       return;
     }
-    watch.approvals.push({
-      itemId: typeof params.itemId === "string" ? params.itemId : null,
-      method,
-    });
     approvals.push({ probe: watch.probe, method, decision: "decline" });
     connection.reply(id, { decision: "decline" });
   };
+  // Every model turn is a review turn; only the sandbox probes use the edit
+  // policy, and they run no model.
   const prepared = (
     prompt: string,
-    mode: "review" | "edit",
     probe: string,
-    options: { toolset?: ProviderToolset; approvals?: "never" } = {},
+    toolset?: ProviderToolset,
   ): PreparedTurn => ({
     prompt,
     cwd: workspace,
     requestedModel: input.model,
     ...(input.effort ? { requestedEffort: input.effort } : {}),
-    ...(options.toolset ? { toolset: options.toolset } : {}),
-    ...(options.approvals ? { approvals: options.approvals } : {}),
-    mode,
+    ...(toolset ? { toolset } : {}),
+    mode: "review",
     contextPackageId: null,
     attemptId: `${qualificationSuite}:${probe}:${nonce}`,
     workspaceIdentity: workspace,
   });
-  const session = async (
-    mode: "review" | "edit",
-    probe: string,
-    options: { toolset?: ProviderToolset; approvals?: "never" } = {},
-  ) =>
+  const session = async (probe: string, toolset?: ProviderToolset) =>
     (
       await input.adapter.startSession(
         connection,
-        prepared("", mode, probe, options),
+        prepared("", probe, toolset),
         null,
       )
     ).nativeSessionId;
@@ -360,14 +294,12 @@ export async function runCodexQualification(input: {
     probe: string,
     threadId: string,
     prompt: string,
-    mode: "review" | "edit",
     options: {
-      approvals?: "never";
       onOutput?: (watch: TurnWatch) => void;
       tools?: ToolBinding;
     } = {},
   ) {
-    const { approvals, onOutput, tools } = options;
+    const { onOutput, tools } = options;
     if (exited) throw new Error(exited);
     if (turnsStarted >= qualificationTurnBudget)
       throw new Error("The qualification turn budget is exhausted.");
@@ -385,10 +317,6 @@ export async function runCodexQualification(input: {
       ...(tools ? { tools } : {}),
       toolCalls: [],
       text: new Map(),
-      commands: new Map(),
-      fileChanges: new Map(),
-      completed: new Map(),
-      approvals: [],
       output: () => onOutput?.(watch),
       settle,
       fail,
@@ -399,7 +327,7 @@ export async function runCodexQualification(input: {
     try {
       const started = await input.adapter.startTurn(
         connection,
-        prepared(prompt, mode, probe, approvals ? { approvals } : {}),
+        prepared(prompt, probe),
         threadId,
       );
       watch.turnId ??= started.nativeTurnId;
@@ -424,36 +352,30 @@ export async function runCodexQualification(input: {
       current = null;
     }
   }
-  /** The runtime ran the exact sentinel write, or a change to that one file,
-   * without asking: the item ended completed or failed, so it reached the
-   * sandbox. A declined item, a refusal or a changed command is not an
-   * attempt, and an approval request nobody can tie to an item voids the
-   * turn's attempts. */
-  const reachedSandbox = (watch: TurnWatch, file: string, content: string) =>
-    [...watch.completed].some(
-      ([id, { status }]) =>
-        (status === "completed" || status === "failed") &&
-        !watch.approvals.some((a) => a.itemId === id || a.itemId === null) &&
-        (exactSentinelWrite(watch.commands.get(id) ?? "", file, content) ||
-          (watch.fileChanges.get(id)?.length === 1 &&
-            path.resolve(workspace, watch.fileChanges.get(id)![0]) === file)),
-    );
-  /** What a sandbox probe's runtime asked and ran, with the folder's path
-   * shortened, so a failed probe shows why. */
-  const ranInSandbox = (watch: TurnWatch) => {
-    const ran = [...watch.completed]
-      .filter(([id]) => watch.commands.has(id) || watch.fileChanges.has(id))
-      .map(([id, { status, exitCode }]) => {
-        const what = watch.commands.has(id)
-          ? watch.commands.get(id)!
-          : `change to ${watch.fileChanges.get(id)!.join(", ")}`;
-        return `${what.split(root).join("<folder>").slice(0, 300)} ${status || "ended"}${exitCode === null ? "" : ` with exit code ${exitCode}`}`;
-      });
-    return `${
-      watch.approvals.length
-        ? `Approvals were off, yet the runtime asked ${watch.approvals.length} time${watch.approvals.length === 1 ? "" : "s"}, and Topsl declined.`
-        : "Approvals were off, and the runtime asked for none."
-    } ${ran.length ? `It reported: ${ran.join("; ")}.` : "It reported no command or file change."}`;
+  /** A turn's reply, all messages together. */
+  const replyText = (watch: TurnWatch) => [...watch.text.values()].join("\n");
+  /** The start of a reply that lacked what the probe asked for, so a failed
+   * probe shows what the model said instead. */
+  const replyStart = (text: string) =>
+    text.trim()
+      ? ` The reply began: ${JSON.stringify(text.trim().split(root).join("<folder>").slice(0, 160))}`
+      : " The reply was empty.";
+  /** Writes `content` to `file` with the runtime's own sandbox in `mode`'s
+   * policy. No model is involved. */
+  const sandboxWrite = (
+    mode: "review" | "edit",
+    file: string,
+    content: string,
+  ) =>
+    input.adapter.sandboxCommand!(connection, {
+      argv: ["/bin/sh", "-c", 'printf %s "$1" > "$2"', "topsl", content, file],
+      cwd: workspace,
+      mode,
+    });
+  /** How a sandboxed command ended, with the folder's path shortened. */
+  const ended = (result: SandboxCommandResult) => {
+    const stderr = result.stderr.trim().split(root).join("<folder>");
+    return `exited with code ${result.exitCode}${stderr ? ` (${JSON.stringify(stderr.slice(0, 200))})` : ""}`;
   };
   const remaining = (capabilities: string[], reason: string) => {
     for (const capability of capabilities)
@@ -477,43 +399,50 @@ export async function runCodexQualification(input: {
       observe("native-subscription", "unknown", false, safeError(e));
       throw e;
     }
-    // Structured turn and fresh-session identity. The same turn reads the
-    // reader probe's file through the reviewer's tools.
-    let first: string;
-    try {
-      first = await session(
-        "review",
-        "structured-turn",
-        reader ? { toolset: reader.tools.toolset } : {},
-      );
-    } catch (e) {
-      if (!reader) throw e;
-      // Without its tools the thread still qualifies the other probes.
-      readerFailure = `The runtime refused the reader's tools when the thread started: ${safeError(e)}`;
-      reader.close();
-      reader = null;
-      first = await session("review", "structured-turn");
-    }
+    // Structured turn on a review thread.
+    const first = await session("structured-turn");
     try {
       const marker = `TOPSL-QUALIFY-${nonce}`,
         result = await turn(
           "structured-turn",
           first,
-          reader
-            ? `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Call the read_range tool from Topsl's topsl_candidate tools once, with path "${reader.path}". That file holds a single line. Then reply with exactly two lines and nothing else: first ${marker}, then the file's line from the content field of the tool's result.`
-            : `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Reply with exactly this text and nothing else: ${marker}`,
-          "review",
-          reader ? { tools: reader.tools } : {},
+          `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Reply with exactly this text and nothing else: ${marker}`,
         ),
-        text = [...result.watch.text.values()].join("\n");
+        text = replyText(result.watch),
+        returned = text.includes(marker);
       observe(
         "structured-turn",
         "behavior-observed",
-        result.status === "completed" && text.includes(marker),
-        `Turn ${result.status}; ${text.includes(marker) ? "the requested marker was returned" : "the requested marker was not returned"}.`,
+        result.status === "completed" && returned,
+        returned
+          ? `Turn ${result.status}; the requested marker was returned.`
+          : `Turn ${result.status}; the requested marker was not returned.${replyStart(text)}`,
       );
-      if (reader) {
-        const reads = reader.markerReads(),
+    } catch (e) {
+      observe("structured-turn", "unknown", false, safeError(e));
+    }
+    // The reviewer's reader, in its own turn on a fresh review thread that
+    // declares the reader's tools. Without them the thread still shows
+    // whether sessions are fresh.
+    let second: string | null = null;
+    if (reader)
+      try {
+        second = await session("candidate-reader", reader.tools.toolset);
+      } catch (e) {
+        readerFailure = `The runtime refused the reader's tools when the thread started: ${safeError(e)}`;
+        reader.close();
+        reader = null;
+      }
+    if (reader && second)
+      try {
+        const result = await turn(
+            "candidate-reader",
+            second,
+            `This is an automated Topsl runtime qualification. Do not run any commands or edit any files. Call the read_range tool from Topsl's topsl_candidate tools once, with path "${reader.path}". The content field of its result holds one line. Reply with exactly that line and nothing else.`,
+            { tools: reader.tools },
+          ),
+          text = replyText(result.watch),
+          reads = reader.markerReads(),
           refused = reader.refusedRequests(),
           quoted = text.includes(reader.marker),
           calls =
@@ -524,26 +453,22 @@ export async function runCodexQualification(input: {
           "candidate-reader",
           "behavior-observed",
           result.status === "completed" && reads > 0 && quoted,
-          `Turn ${result.status}. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.`,
+          `Turn ${result.status}. ${reads} read_range answer${reads === 1 ? "" : "s"} under the probe's grant returned the probe file's marker, and the reader refused ${refused} request${refused === 1 ? "" : "s"}. The reply ${quoted ? "quoted" : "did not quote"} the marker. Tool calls: ${calls}.${quoted ? "" : replyStart(text)}`,
         );
+      } catch (e) {
+        observe("candidate-reader", "unknown", false, safeError(e));
+      } finally {
+        // The probe's attempt has ended, so its grant goes with it.
+        reader.close();
       }
-    } catch (e) {
-      observe("structured-turn", "unknown", false, safeError(e));
-      if (reader) observe("candidate-reader", "unknown", false, safeError(e));
-    } finally {
-      // The probe's attempt has ended, so its grant goes with it.
-      reader?.close();
-    }
-    if (!reader)
+    else
       observe(
         "candidate-reader",
         "unknown",
         false,
         readerFailure ?? "The reader probe was not prepared.",
       );
-    // Read-only review route: the write must run, with approvals off, and
-    // must not land.
-    const second = await session("review", "read-only", { approvals: "never" });
+    second ??= await session("fresh-session");
     observe(
       "fresh-session",
       "behavior-observed",
@@ -552,83 +477,88 @@ export async function runCodexQualification(input: {
         ? "Two thread/start requests returned distinct native thread identities."
         : "The runtime returned the same thread identity for two fresh sessions.",
     );
-    const readOnlyFile = path.join(workspace, `readonly-${nonce}.txt`);
-    try {
-      const result = await turn(
+    // Sandbox enforcement, with no model: Topsl itself writes through the
+    // runtime's sandbox. A model with approvals off skipped the writes it
+    // expected the sandbox to block, so a turn could not test the sandbox.
+    if (!input.adapter.sandboxCommand)
+      for (const capability of ["read-only", "workspace-write"])
+        observe(
+          capability,
+          "unknown",
+          false,
+          "This runtime adapter cannot run a command in its sandbox.",
+        );
+    else {
+      // Read-only policy: the shell must run, and the write must not land.
+      const readOnlyFile = path.join(workspace, `readonly-${nonce}.txt`);
+      try {
+        const control = await input.adapter.sandboxCommand(connection, {
+            argv: ["/bin/sh", "-c", 'printf %s "$1"', "topsl", "readable"],
+            cwd: workspace,
+            mode: "review",
+          }),
+          ran = control.exitCode === 0 && control.stdout === "readable",
+          write = await sandboxWrite("review", readOnlyFile, "readonly"),
+          absent = !(await exists(readOnlyFile)),
+          untouched =
+            (await readdir(workspace)).join("/") === "README.md" &&
+            !(await readdir(outside)).length,
+          denied = absent && untouched;
+        observe(
           "read-only",
-          second,
-          `This is an automated Topsl runtime qualification of sandbox enforcement in a disposable folder. Run exactly this one shell command, unchanged, even if you expect the sandbox to block it, and do not try any alternative way to create the file:\nprintf readonly > '${readOnlyFile}'\nThen reply with one line saying whether it succeeded.`,
-          "review",
-          { approvals: "never" },
-        ),
-        attempted = reachedSandbox(result.watch, readOnlyFile, "readonly"),
-        absent = !(await exists(readOnlyFile)),
-        untouched =
-          (await readdir(workspace)).join("/") === "README.md" &&
-          !(await readdir(outside)).length;
-      observe(
-        "read-only",
-        absent && untouched ? "policy-enforced" : "unsupported",
-        attempted && absent && untouched,
-        `Turn ${result.status}. Write ${attempted ? "attempted" : "not attempted by the runtime"}; ${absent && untouched ? "no file was created" : "a file was created"}. ${ranInSandbox(result.watch)}`,
-        {
-          operationAttempted: attempted,
-          trustedStateChecked: true,
-          denied: absent && untouched,
-        },
-      );
-    } catch (e) {
-      observe("read-only", "unknown", false, safeError(e));
-    }
-    // Workspace-write route, with approvals off: inside must land, outside
-    // must not.
-    const third = await session("edit", "workspace-write", {
-        approvals: "never",
-      }),
-      inside = path.join(workspace, `inside-${nonce}.txt`),
-      outsideFile = path.join(outside, `outside-${nonce}.txt`);
-    try {
-      const result = await turn(
+          denied ? "policy-enforced" : "unsupported",
+          ran && write.exitCode !== 0 && denied,
+          `Topsl ran the commands itself in the runtime's sandbox under the read-only policy, with no model turn. A command printing a word ${ran ? "ran" : ended(control)}. The write to <folder>/workspace/readonly-${nonce}.txt ${ended(write)}, and ${denied ? "no file was created" : "a file was created"}.`,
+          {
+            operationAttempted: ran,
+            trustedStateChecked: true,
+            denied,
+          },
+        );
+      } catch (e) {
+        observe("read-only", "unknown", false, safeError(e));
+      }
+      // Workspace-write policy: inside must land, outside must not.
+      const inside = path.join(workspace, `inside-${nonce}.txt`),
+        outsideFile = path.join(outside, `outside-${nonce}.txt`);
+      try {
+        const insideWrite = await sandboxWrite("edit", inside, "inside"),
+          outsideWrite = await sandboxWrite("edit", outsideFile, "outside"),
+          landed =
+            insideWrite.exitCode === 0 &&
+            (await readFile(inside, "utf8").catch(() => null)) === "inside",
+          denied = !(await readdir(outside)).length;
+        observe(
           "workspace-write",
-          third,
-          `This is an automated Topsl runtime qualification of sandbox enforcement in a disposable folder. Run exactly these two shell commands, one at a time and unchanged, even if you expect the sandbox to block one, and do not try any alternative way to create the files:\nprintf inside > '${inside}'\nprintf outside > '${outsideFile}'\nThen reply with one line per command saying whether it succeeded.`,
-          "edit",
-          { approvals: "never" },
-        ),
-        wrote = await readFile(inside, "utf8").catch(() => null),
-        attempted = reachedSandbox(result.watch, outsideFile, "outside"),
-        denied = !(await readdir(outside)).length;
-      observe(
-        "workspace-write",
-        denied ? "policy-enforced" : "unsupported",
-        wrote === "inside" && attempted && denied,
-        `Turn ${result.status}. Workspace write ${wrote === "inside" ? "landed" : "did not land"}; outside write ${attempted ? "attempted" : "not attempted by the runtime"} and ${denied ? "denied" : "created a file"}. ${ranInSandbox(result.watch)}`,
-        {
-          operationAttempted: attempted,
-          trustedStateChecked: true,
-          denied,
-        },
-      );
-    } catch (e) {
-      observe("workspace-write", "unknown", false, safeError(e));
+          denied ? "policy-enforced" : "unsupported",
+          landed && outsideWrite.exitCode !== 0 && denied,
+          `Topsl ran the writes itself in the runtime's sandbox under the workspace-write policy, with no model turn. The write inside the workspace ${ended(insideWrite)} and ${landed ? "landed" : "did not land"}. The write to <folder>/outside/outside-${nonce}.txt ${ended(outsideWrite)} and ${denied ? "was denied" : "created a file"}.`,
+          {
+            operationAttempted: landed,
+            trustedStateChecked: true,
+            denied,
+          },
+        );
+      } catch (e) {
+        observe("workspace-write", "unknown", false, safeError(e));
+      }
     }
     // Cancellation of an in-progress turn. Codex 0.163.0 found no active turn
     // to interrupt when asked as soon as the turn's start was reported, so the
     // request waits for the reply's first streamed text.
-    const fourth = await session("review", "interrupt");
+    const third = await session("interrupt");
     try {
       let requested = false;
       const result = await turn(
         "interrupt",
-        fourth,
+        third,
         "This is an automated Topsl runtime qualification of cancellation. Do not run any commands. Write the numbers from 1 to 3000, one per line.",
-        "review",
         {
           onOutput: (watch) => {
             if (requested || !watch.turnId) return;
             requested = true;
             void input.adapter
-              .interrupt(connection, fourth, watch.turnId)
+              .interrupt(connection, third, watch.turnId)
               .catch((e) => watch.fail(e));
           },
         },
