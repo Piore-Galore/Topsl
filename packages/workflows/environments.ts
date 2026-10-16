@@ -590,6 +590,8 @@ export async function createEnvironmentRecipe(
     toolchains,
     inputs,
     repositoryScripts,
+    // Starting npm's CLI to print its version took more than 5 s on a busy
+    // Windows runner, so each version probe gets 30 s.
     preparationProbes:
       selected.kind === "locked-node"
         ? [
@@ -597,13 +599,13 @@ export async function createEnvironmentRecipe(
               role: "node",
               executable: selected.nodeExecutable,
               args: ["--version"],
-              timeoutMs: 5000,
+              timeoutMs: 30000,
             },
             {
               role: "npm",
               executable: selected.nodeExecutable,
               args: [selected.npmCli!, "--version"],
-              timeoutMs: 5000,
+              timeoutMs: 30000,
             },
           ]
         : [],

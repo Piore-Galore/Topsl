@@ -349,7 +349,13 @@ test("R2-AT-26: exact reviewed package hook can prepare generated dependencies; 
     failureKind: "timeout",
   });
   expect(env.instance.preparationLifecycle?.state).toBe("quiescent");
-  expect(timed.store.list("environment-dispatch-intent")).toHaveLength(4);
+  // Only the hook should time out. If an earlier command ran out of time
+  // instead, say which commands had started.
+  const started = timed.store
+    .list<any>("environment-dispatch-intent")
+    .sort((a, b) => a.index - b.index)
+    .map((intent) => intent.args.join(" "));
+  expect(started, `started: ${started.join("; ")}`).toHaveLength(4);
 });
 
 test("R2-AT-27: lockfile changes alter recipe identity; modified dependency contents invalidate a run", async () => {
@@ -651,6 +657,8 @@ test("R2-AT-26/29: cancelled preparation stops before checks and retains bounded
     }),
     checks = CheckExecutions.for(f.store);
   const running = checks.execute(f.repository, f.plan, f.plan.digest);
+  // The hook starts after two version probes, each with a 30 s limit, and
+  // `npm ci`, with 60 s.
   await vi.waitFor(
     () =>
       expect(
@@ -659,7 +667,7 @@ test("R2-AT-26/29: cancelled preparation stops before checks and retains bounded
           .map((l) => l.text)
           .join(""),
       ).toContain("ready-for-cancel"),
-    { timeout: 10000 },
+    { timeout: 120_000 },
   );
   checks.cancelWorkflow(f.workflow.id);
   expect((await running).result).toBe("error");
