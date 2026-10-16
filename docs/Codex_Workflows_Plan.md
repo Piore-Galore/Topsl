@@ -336,4 +336,26 @@ The qualification was recorded in the disposable profile until 15 November 2026.
 - The interrupt result fits a gap between Codex reporting a turn as started and accepting an interrupt for it. This is also an inference.
 - If the first inference holds, approving a command in a **Workspace edits · ask** chat can also let it run outside the workspace sandbox. That is not established either.
 
-**Next.** The two sandbox probes need to run with approvals off, so that each write reaches the sandbox without an approval and only the sandbox decides, and the interrupt needs to wait for the turn's first output. Proving that takes a second live run of up to four turns. On 16 October 2026 the owner approved both the fix and that one rerun.
+**Next.** The two sandbox probes need to run with approvals off, so that each write reaches the sandbox without an approval and only the sandbox decides, and the interrupt needs to wait for the turn's first output. Proving that takes a second live run of up to four turns. On 16 October 2026 the owner approved both the fix and that one rerun. The fix is recorded [below](#step-6-follow-up-sandbox-and-interrupt-probes-16-october-2026).
+
+### Step 6 follow-up: sandbox and interrupt probes (16 October 2026)
+
+The owner approved this fix, and one more live run of up to four turns, after the [live run](#live-run-16-october-2026) failed.
+
+**What changed**
+
+- The suite is now `codex-runtime-qualification/v3` ([qualification.ts](../packages/providers/qualification.ts)). The read-only and workspace-write probes start their thread and their turn with Codex's approval policy `never`, so each sentinel write runs without asking and only the sandbox decides whether it lands. The structured-turn and interrupt probes keep `untrusted`, as Topsl's own chats do. A prepared turn's `approvals: "never"` ([contract.ts](../packages/providers/contract.ts)) sets it, and only the qualification uses it.
+- The suite declines every approval request, as a review run does. A write counts as attempted only when Codex reports the exact sentinel command, or a change to that one file, ending `completed` or `failed`, with no approval request for it. Each sandbox probe's detail says how many approval requests came in and lists the commands Codex reported, with their status and exit code, writing the qualification folder as `<folder>`.
+- The interrupt probe sends `turn/interrupt` when the reply's first text streams in, not when the turn's start is reported.
+- Topsl's qualification dialog now says that both write checks run with Codex's approvals turned off and that Topsl declines any approval request.
+- The stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) answers as Codex 0.163.0 appeared to in the live run. Unless the approval policy is `never`, it asks before running a command, and a command the client approves runs again outside the sandbox when the sandbox blocks it. It refuses an interrupt sent before the reply streams with `no active turn to interrupt`, and reports each command as one string, as 0.163.0's schema does. `FIXTURE_ASK=1` makes it ask for approval whatever the policy. `FIXTURE_NO_APPROVAL` is gone, because running without asking is now the normal path for both sandbox probes.
+
+**What did not change.** Topsl's own chats and workflow runs still use `untrusted`, and a review run still declines every approval. The runtime binding's sandbox hash describes that profile, so it is unchanged. The probes leave approvals out because an approval is the user letting a command through: a review run declines them all, so its sandbox is its only boundary, and in an edit chat the user decides each one. Whether an approved command in an edit chat runs outside the sandbox is still unverified, and the approval prompt does not mention it.
+
+**Validation** (16 October 2026, Linux x64 container)
+
+- `node scripts/test.mjs tests/runtime-qualification.test.ts`: 14 tests passed. Against the stand-in, every probe passed within four turns and no approval was requested. Both sandbox probes sent `never` on `thread/start` and `turn/start`, and the other two sent `untrusted`. `turn/interrupt` went out after the reply's first streamed text, and the turn ended `interrupted`.
+- A stand-in that asks for approval anyway (`FIXTURE_ASK=1`) failed both sandbox probes as not attempted, and all three requests were declined. The structured-turn, fresh-session and interrupt probes still passed.
+- A test of the stand-in itself: an accepted write that its sandbox blocks lands outside the workspace, the same write with approvals off does not, and an interrupt sent before the reply streams is refused with `no active turn to interrupt`.
+- The suite from `ccdc307`, before this fix, run once against the updated stand-in: it failed the same three probes as the live run, with the same results. The suite accepted the read-only and both workspace-write approvals, and the read-only and outside files were created; the interrupt got `no active turn to interrupt`. The other five probes passed in 4 turns.
+- No model requests were sent. Not established: that Codex 0.163.0 keeps these writes in its sandbox with approvals off, and accepts an interrupt once the reply streams. The approved rerun tests both.
