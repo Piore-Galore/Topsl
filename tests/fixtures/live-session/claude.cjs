@@ -9,6 +9,10 @@
 // If CLAUDE_CONFIG_DIR has a stand-in-api-error file, it shows an API error
 // with the status in that file instead of the answer. (Topsl passes only a few
 // environment variables to the native terminal, CLAUDE_CONFIG_DIR among them.)
+// Started with --permission-mode, it shows that mode below the input in place
+// of the shortcuts hint, as Claude Code does; a stand-in-mode file there names
+// another mode to show, as if Claude Code's settings had overridden the one
+// passed.
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -47,8 +51,20 @@ const record = (role, text) =>
       cwd,
     }) + "\n",
   );
-const prompt = () =>
-  out("\r\n────────\r\n> \r\n────────\r\n  ? for shortcuts\r\n");
+const modeAt = process.argv.indexOf("--permission-mode");
+const modeFile = path.join(process.env.CLAUDE_CONFIG_DIR, "stand-in-mode");
+const mode = fs.existsSync(modeFile)
+  ? fs.readFileSync(modeFile, "utf8").trim()
+  : modeAt >= 0
+    ? process.argv[modeAt + 1]
+    : null;
+const hint =
+  {
+    plan: "⏸ plan mode on (shift+tab to cycle)",
+    acceptEdits: "⏵⏵ accept edits on (shift+tab to cycle)",
+    auto: "⏵⏵ auto mode on (shift+tab to cycle)",
+  }[mode] ?? "? for shortcuts";
+const prompt = () => out(`\r\n────────\r\n> \r\n────────\r\n  ${hint}\r\n`);
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 const answers = ["No, exit", "Yes, I trust this folder"];

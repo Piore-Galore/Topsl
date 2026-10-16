@@ -102,12 +102,15 @@ To check that the selected runtime accepts the tools Topsl declares on a review 
 TOPSL_NATIVE_TOOLS_BINARY=/absolute/path/to/codex npm test -- tests/codex-tools-native.test.ts
 ```
 
-To try real sessions through Topsl's interface with your own sign-in, run the live session check after `npm run build`. From a disposable Topsl profile and folder, it opens Claude Code in Topsl's native terminal, sends one Codex chat, or does both, with Codex continuing Claude Code's conversation through a reviewed handoff. Each provider's one short prompt counts toward that account's usage. With `--qualify` and Codex alone, it instead runs the [Codex runtime qualification](#qualify-a-codex-runtime) through the guided setup, with Codex in both roles, which starts up to three model turns. [Live provider sessions](docs/Live_Provider_Sessions.md) describes what it checks and records the results.
+To try real sessions through Topsl's interface with your own sign-in, run the live session check after `npm run build`. From a disposable Topsl profile and folder, it opens Claude Code in Topsl's native terminal, sends one Codex chat, or does both, with Codex continuing Claude Code's conversation through a reviewed handoff. Each provider's one short prompt counts toward that account's usage. `--mode` opens a terminal in one of Topsl's terminal modes, never a bypass mode, `--terminal` opens Codex in the native terminal instead of a chat, and `--preset` sends the Codex chat in another preset. With `--qualify` and Codex alone, it instead runs the [Codex runtime qualification](#qualify-a-codex-runtime) through the guided setup, with Codex in both roles, which starts up to three model turns. [Live provider sessions](docs/Live_Provider_Sessions.md) describes what it checks and records the results.
 
 ```sh
 node scripts/live-session.mjs --claude "$(command -v claude)"
 node scripts/live-session.mjs --codex "$(command -v codex)"
 node scripts/live-session.mjs --claude "$(command -v claude)" --codex "$(command -v codex)"
+node scripts/live-session.mjs --claude "$(command -v claude)" --mode plan
+node scripts/live-session.mjs --codex "$(command -v codex)" --terminal --mode read-only
+node scripts/live-session.mjs --codex "$(command -v codex)" --preset edit-on-request
 node scripts/live-session.mjs --qualify --codex "$(command -v codex)"
 ```
 

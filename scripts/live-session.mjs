@@ -16,8 +16,11 @@ import os from "node:os";
 import path from "node:path";
 
 // Live acceptance of provider sessions inside Topsl: Claude Code in its native
-// terminal, Codex through the structured chat, or both, with Codex continuing
-// Claude Code's imported conversation through a reviewed context handoff.
+// terminal, Codex through the structured chat or in its native terminal, or
+// both, with Codex continuing Claude Code's imported conversation through a
+// reviewed context handoff. A terminal opens in the mode --mode chooses from
+// Topsl's Terminal mode menu, never a bypass mode, and a Codex chat uses the
+// preset --preset chooses.
 // Unlike the automated suites, this sends one real prompt per provider through
 // the selected executable and the native sign-in on this machine, so it counts
 // toward that account's usage. Topsl runs from this checkout (after
@@ -29,9 +32,12 @@ import path from "node:path";
 // roles: up to three model turns, approved once and never retried.
 
 const usage =
-  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--qualify] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt.";
+  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--terminal] [--mode id] [--preset id] [--qualify] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --terminal with --codex alone opens Codex in Topsl's native terminal instead of a chat. --mode picks the terminal's mode and --preset the Codex chat's preset. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt.";
 const options = {
   executables: {},
+  terminal: false,
+  mode: null,
+  preset: null,
   qualify: false,
   model: null,
   output: null,
@@ -39,25 +45,40 @@ const options = {
 };
 for (let index = 2; index < process.argv.length; index++) {
   const argument = process.argv[index];
+  // The value that follows an option which takes one.
+  const value = () => {
+    const next = process.argv[++index];
+    if (!next || next.startsWith("--")) throw new Error(usage);
+    return next;
+  };
   if (
     ["--claude", "--codex"].includes(argument) &&
     !options.executables[argument.slice(2)]
   )
-    options.executables[argument.slice(2)] = process.argv[++index];
+    options.executables[argument.slice(2)] = value();
+  else if (argument === "--terminal") options.terminal = true;
+  else if (argument === "--mode") options.mode = value();
+  else if (argument === "--preset") options.preset = value();
   else if (argument === "--qualify") options.qualify = true;
-  else if (argument === "--model") options.model = process.argv[++index];
-  else if (argument === "--output") options.output = process.argv[++index];
+  else if (argument === "--model") options.model = value();
+  else if (argument === "--output") options.output = value();
   else if (argument === "--keep-profile") options.keepProfile = true;
   else throw new Error(usage);
 }
 // Claude Code runs first, so that Codex can continue its conversation.
 const providers = ["claude", "codex"].filter((p) => options.executables[p]);
 const both = providers.length === 2;
+const codexChatRun =
+  !!options.executables.codex && !options.terminal && !options.qualify;
 if (
   !providers.length ||
   providers.some((p) => !path.isAbsolute(options.executables[p])) ||
   (options.model && !options.executables.codex) ||
-  (options.qualify && providers.join() !== "codex")
+  (options.model && options.terminal) ||
+  (options.qualify && providers.join() !== "codex") ||
+  (options.terminal && (providers.join() !== "codex" || options.qualify)) ||
+  (options.mode && !options.executables.claude && !options.terminal) ||
+  (options.preset && !codexChatRun)
 )
   throw new Error(usage);
 if (options.qualify && process.platform === "win32")
@@ -138,12 +159,15 @@ const output = path.resolve(
     path.join(
       "test-results",
       "live-session",
-      `${options.qualify ? "qualify" : both ? "both" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+      `${options.qualify ? "qualify" : both ? "both" : options.terminal ? "codex-terminal" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
     ),
 );
 await mkdir(output, { recursive: true });
 
-const routes = { claude: "native-terminal", codex: "structured-chat" };
+const routes = {
+  claude: "native-terminal",
+  codex: options.terminal ? "native-terminal" : "structured-chat",
+};
 /** What one provider's part of the run records. */
 const newStep = (provider) => ({
   executable: { path: tilde(options.executables[provider]) },
@@ -274,22 +298,41 @@ let terminalOpen = false;
  */
 const focusTerminal = () =>
   terminal.locator("textarea.xterm-helper-textarea").focus();
+const press = async (key) => {
+  await focusTerminal();
+  await page.keyboard.press(key);
+};
+
+/** The run Topsl records for the project's native terminal session. */
+const terminalRun = (scope) =>
+  scope.runs.find((r) => r.conversationId.startsWith("terminal:"));
+/** Keeps the mode and arguments Topsl recorded on the terminal's run. */
+function recordMode(session, run) {
+  session.mode.recorded = run?.permissionMode ?? null;
+  session.mode.args = run?.permissionArgs ?? null;
+}
 
 /**
- * Claude Code in Topsl's native terminal, then the import of its transcript.
- * Returns the imported conversation and the number Claude Code replied with.
+ * Chooses a mode in Topsl's **Terminal mode** menu, the one --mode names or
+ * Provider default, and opens the native terminal in it. Bypass modes sit
+ * under Advanced, and the script never chooses one.
  */
-async function claudeTerminal(projectId, step) {
-  const session = (step.session = {
-    folderTrust: "not shown",
-    folderTrustReadFrom: null,
-    folderTrustDefault: null,
-    apiError: null,
-    exit: null,
-    run: null,
-    transcript: null,
-    history: null,
+async function openTerminal(projectId, session) {
+  const menu = page.getByRole("combobox", {
+    name: "Terminal mode",
+    exact: true,
   });
+  await appear("the Terminal mode menu", menu);
+  const offered = await menu
+    .locator(":scope > option")
+    .evaluateAll((list) => list.map((option) => option.value));
+  const mode = options.mode ?? "provider-default";
+  if (!offered.includes(mode))
+    throw new Error(
+      `Topsl's Terminal mode menu offers ${offered.join(", ")} outside Advanced, not ${mode}.`,
+    );
+  await menu.selectOption(mode);
+  session.mode = { chosen: mode, recorded: null, args: null, shown: null };
   await page.evaluate(() => {
     window.__liveTerminal = { output: "" };
     window.topsl.subscribe((event) => {
@@ -302,10 +345,116 @@ async function claudeTerminal(projectId, step) {
     .click();
   await appear("the native terminal", terminal);
   terminalOpen = true;
-  const press = async (key) => {
-    await focusTerminal();
-    await page.keyboard.press(key);
+  // Kept now as well, in case the run stops before the session ends.
+  recordMode(
+    session,
+    terminalRun(await command({ type: "scope-snapshot", projectId })),
+  );
+}
+
+/** Waits until the terminal's output has not changed for 3 seconds. */
+async function settle() {
+  let length = -1;
+  await until(
+    "the reply to finish",
+    60000,
+    async () => {
+      const current = (await terminalOutput()).length,
+        settled = current === length;
+      length = current;
+      return settled;
+    },
+    3000,
+  ).catch(() => {});
+}
+
+/**
+ * Ends the terminal session with the provider's own exit, then if needed
+ * Ctrl+C twice and **Close session**, and records how it ended and the run
+ * Topsl recorded, with the mode it passed.
+ */
+async function closeTerminal(projectId, session, exit) {
+  session.exit = { method: exit.method, code: null };
+  await exit.keys();
+  const exited = (timeoutMs) =>
+    until("the native session to exit", timeoutMs, async () =>
+      exitPattern.exec(plain(await terminalOutput())),
+    ).catch(() => null);
+  let ended = await exited(30000);
+  if (!ended && exit.method !== "Ctrl+C twice") {
+    session.exit.method = "Ctrl+C twice";
+    await press("Control+C");
+    await sleep(500);
+    await press("Control+C");
+    ended = await exited(20000);
+  }
+  if (!ended) {
+    session.exit.method = "Close session";
+    await page
+      .getByRole("button", { name: "Close session", exact: true })
+      .click();
+    ended = await exited(20000);
+  }
+  session.exit.code = ended ? Number(ended[1]) : null;
+  terminalOpen = !ended;
+  const snapshot = () => command({ type: "scope-snapshot", projectId });
+  const scope = await until(
+    "Topsl to record the session's end",
+    10000,
+    async () => {
+      const current = await snapshot(),
+        status = terminalRun(current)?.status;
+      return status && !["starting", "running"].includes(status)
+        ? current
+        : null;
+    },
+  ).catch(snapshot);
+  const run = terminalRun(scope);
+  let processGone = null;
+  if (run?.nativePid)
+    try {
+      process.kill(run.nativePid, 0);
+      processGone = false;
+    } catch (error) {
+      processGone = error.code === "ESRCH";
+    }
+  session.run = {
+    status: run?.status ?? null,
+    processGone,
+    openTerminals: scope.terminals.length,
   };
+  recordMode(session, run);
+}
+
+/** Fails unless Topsl recorded the chosen mode and the session ended cleanly. */
+function checkTerminalEnd(session) {
+  if (session.mode.recorded !== session.mode.chosen)
+    throw new Error(
+      `Topsl recorded the terminal mode ${session.mode.recorded ?? "nothing"}, not ${session.mode.chosen}.`,
+    );
+  if (session.run.status !== "completed" || session.run.openTerminals)
+    throw new Error(
+      `The native session ended as ${session.run.status ?? "unknown"} with ${session.run.openTerminals} terminal(s) open.`,
+    );
+}
+
+/**
+ * Claude Code in Topsl's native terminal, then the import of its transcript.
+ * Returns the imported conversation and the number Claude Code replied with.
+ */
+async function claudeTerminal(projectId, step) {
+  const session = (step.session = {
+    mode: null,
+    folderTrust: "not shown",
+    folderTrustReadFrom: null,
+    folderTrustDefault: null,
+    apiError: null,
+    exit: null,
+    run: null,
+    transcript: null,
+    history: null,
+  });
+  await openTerminal(projectId, session);
 
   // Claude Code asks once whether to trust a new folder. A sign-in screen stops
   // the procedure before any prompt is sent. Once escape sequences are removed,
@@ -367,7 +516,22 @@ async function claudeTerminal(projectId, step) {
     }
     return inputReady.test(text);
   });
+  // A mode that Claude Code shows below its input has to be the one Topsl
+  // passed, or the prompt is not sent.
+  session.mode.shown =
+    /(plan mode on|accept edits on|auto mode on|bypass permissions on|\? for shortcuts)/i
+      .exec(await terminalScreen())?.[1]
+      .toLowerCase() ?? null;
   await screenshot("claude-ready");
+  const expectedShown = {
+    plan: "plan mode on",
+    "accept-edits": "accept edits on",
+    auto: "auto mode on",
+  }[session.mode.chosen];
+  if (expectedShown && session.mode.shown !== expectedShown)
+    throw new Error(
+      `Claude Code showed ${session.mode.shown ? `"${session.mode.shown}"` : "no permission mode"} below its input instead of "${expectedShown}", so no prompt was sent.`,
+    );
 
   const expected = question(
     plain(await terminalOutput()) + (await terminalScreen()),
@@ -402,76 +566,18 @@ async function claudeTerminal(projectId, step) {
   step.replyObserved = true;
   step.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
   // Let the interface settle before the screenshot.
-  let length = -1;
-  await until(
-    "the reply to finish",
-    60000,
-    async () => {
-      const current = (await terminalOutput()).length,
-        settled = current === length;
-      length = current;
-      return settled;
-    },
-    3000,
-  ).catch(() => {});
+  await settle();
   await screenshot("claude-reply");
 
-  session.exit = { method: "/exit", code: null };
-  await focusTerminal();
-  await page.keyboard.type("/exit", { delay: 20 });
-  await sleep(500);
-  await page.keyboard.press("Enter");
-  let exited = await until("Claude Code to exit", 30000, async () =>
-    exitPattern.exec(plain(await terminalOutput())),
-  ).catch(() => null);
-  if (!exited) {
-    session.exit.method = "Ctrl+C twice";
-    await press("Control+C");
-    await sleep(500);
-    await press("Control+C");
-    exited = await until("Claude Code to exit", 20000, async () =>
-      exitPattern.exec(plain(await terminalOutput())),
-    ).catch(() => null);
-  }
-  if (!exited) {
-    session.exit.method = "Close session";
-    await page
-      .getByRole("button", { name: "Close session", exact: true })
-      .click();
-    exited = await until("the native session to close", 20000, async () =>
-      exitPattern.exec(plain(await terminalOutput())),
-    ).catch(() => null);
-  }
-  session.exit.code = exited ? Number(exited[1]) : null;
-  terminalOpen = !exited;
-  const snapshot = () => command({ type: "scope-snapshot", projectId });
-  const terminalRun = (scope) =>
-    scope.runs.find((r) => r.conversationId.startsWith("terminal:"));
-  const scope = await until(
-    "Topsl to record the session's end",
-    10000,
-    async () => {
-      const current = await snapshot(),
-        status = terminalRun(current)?.status;
-      return status && !["starting", "running"].includes(status)
-        ? current
-        : null;
+  await closeTerminal(projectId, session, {
+    method: "/exit",
+    keys: async () => {
+      await focusTerminal();
+      await page.keyboard.type("/exit", { delay: 20 });
+      await sleep(500);
+      await page.keyboard.press("Enter");
     },
-  ).catch(snapshot);
-  const run = terminalRun(scope);
-  let processGone = null;
-  if (run?.nativePid)
-    try {
-      process.kill(run.nativePid, 0);
-      processGone = false;
-    } catch (error) {
-      processGone = error.code === "ESRCH";
-    }
-  session.run = {
-    status: run?.status ?? null,
-    processGone,
-    openTerminals: scope.terminals.length,
-  };
+  });
 
   // Claude Code records each message with its working directory.
   const configDirectory =
@@ -541,11 +647,97 @@ async function claudeTerminal(projectId, step) {
     throw new Error(
       "The imported history has no Claude reply with the answer.",
     );
-  if (session.run.status !== "completed" || session.run.openTerminals)
-    throw new Error(
-      `The native session ended as ${session.run.status ?? "unknown"} with ${session.run.openTerminals} terminal(s) open.`,
-    );
+  checkTerminalEnd(session);
   return { conversationId: replies[0].conversationId, reply: Number(expected) };
+}
+
+/**
+ * Codex in Topsl's native terminal: one prompt, then Ctrl+C twice. The script
+ * answers none of Codex's startup questions, such as whether to trust the
+ * folder, to update Codex or to switch models, because Codex saves the answer
+ * in its own settings or updates itself; it stops before the prompt instead.
+ */
+async function codexTerminal(projectId, step) {
+  const session = (step.session = {
+    mode: null,
+    startupQuestion: null,
+    exit: null,
+    run: null,
+  });
+  await openTerminal(projectId, session);
+  const signIn = /sign in with chatgpt|provide your own api key/i;
+  // Codex 0.163.0's strings have these questions; each saves its answer.
+  const startupQuestions = [
+    [/trust this folder\?/i, "whether to trust the folder"],
+    [/update now/i, "whether to update Codex"],
+    [/just got an upgrade/i, "whether to switch to a new model"],
+  ];
+  // Codex shows the composer's placeholder, or its hints below the composer,
+  // once it accepts a prompt; before that, the placeholder says it is waiting.
+  const inputReady = /ask codex to do anything|for shortcuts|context left/i;
+  await until("Codex to accept a prompt", 120000, async () => {
+    const output = plain(await terminalOutput()),
+      screen = await terminalScreen(),
+      text = `${output}\n${screen}`;
+    if (signIn.test(text))
+      throw new Error(
+        "Codex is not signed in. Sign in with `codex` in a terminal, then run this again.",
+      );
+    if (exitPattern.test(output))
+      throw new Error("Codex exited before accepting a prompt.");
+    const asked = startupQuestions.find(([pattern]) => pattern.test(text));
+    if (asked) {
+      session.startupQuestion = asked[1];
+      await screenshot("codex-terminal-question");
+      throw new Error(
+        `Codex asked ${asked[1]} before accepting a prompt. The script answers none of Codex's startup questions, so no prompt was sent.`,
+      );
+    }
+    return inputReady.test(screen) && !/waiting for startup/i.test(screen);
+  });
+  session.mode.shown =
+    /\b(read[- ]only|workspace[- ]write|full access)\b/i
+      .exec(await terminalScreen())?.[1]
+      .toLowerCase() ?? null;
+  await screenshot("codex-terminal-ready");
+
+  const expected = question(
+    plain(await terminalOutput()) + (await terminalScreen()),
+    step,
+  );
+  const before = (await terminalOutput()).length;
+  await focusTerminal();
+  await page.keyboard.type(step.prompt, { delay: 10 });
+  await sleep(500);
+  const sentAt = Date.now();
+  await page.keyboard.press("Enter");
+  report.modelTurns += 1;
+  await until("Codex's reply", 240000, async () => {
+    const output = plain((await terminalOutput()).slice(before)),
+      screen = await terminalScreen();
+    if (hasNumber(output, expected) || hasNumber(screen, expected)) return true;
+    if (signIn.test(`${output}\n${screen}`))
+      throw new Error("Codex asked to sign in instead of replying.");
+    if (exitPattern.test(output))
+      throw new Error("Codex exited instead of replying.");
+    return false;
+  });
+  step.replyObserved = true;
+  step.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
+  await settle();
+  await screenshot("codex-terminal-reply");
+
+  // Ctrl+C twice quits Codex. Typing a command instead could reach the model
+  // as a second prompt if Codex did not know it.
+  await closeTerminal(projectId, session, {
+    method: "Ctrl+C twice",
+    keys: async () => {
+      await press("Control+C");
+      await sleep(500);
+      await press("Control+C");
+    },
+  });
+  checkTerminalEnd(session);
 }
 
 /**
@@ -588,6 +780,7 @@ async function codexChat(projectId, step, handoff = null) {
     account: null,
     model: null,
     modelsReported: null,
+    preset: null,
     ...(handoff ? { handoff: null } : {}),
     run: null,
     approvals: [],
@@ -658,24 +851,67 @@ async function codexChat(projectId, step, handoff = null) {
   }
   const composer = page.locator("form.composer");
   await composer.locator("select").nth(0).selectOption(model);
-  await composer.locator("select").nth(1).selectOption("review");
+  // The preset --preset names, or Read-only review. Topsl's note under the
+  // menu says what it allows, or why the runtime cannot use it.
+  const presets = composer.getByRole("combobox", {
+    name: "Permissions",
+    exact: true,
+  });
+  const offered = await presets
+    .locator("option")
+    .evaluateAll((list) =>
+      list.map((option) => ({ id: option.value, label: option.textContent })),
+    );
+  const preset = offered.find((p) => p.id === (options.preset ?? "review"));
+  if (!preset)
+    throw new Error(
+      `Topsl's Permissions menu offers ${offered.map((p) => p.id).join(", ")}, not ${options.preset}.`,
+    );
+  await presets.selectOption(preset.id);
+  session.preset = {
+    ...preset,
+    note: await composer.locator(".chat-preset-note").innerText(),
+  };
+  const unavailable = /^Not available for this runtime\.\s*/;
+  if (unavailable.test(session.preset.note))
+    throw new Error(
+      `${preset.label.replace(/ \(unavailable\)$/, "")} is not available for this runtime, so no prompt was sent. ${session.preset.note.replace(unavailable, "")}`,
+    );
   // Topsl asks once before it sends the attached context.
   if (handoff)
     await app.evaluate(() => {
       globalThis.__liveSession.policy.handoff = true;
     });
   const sentAt = Date.now();
+  const turnsBefore = report.modelTurns;
   await composer.getByRole("button", { name: /Send to Codex/ }).click();
   report.modelTurns += 1;
 
   const runOf = (scope) =>
     scope.runs.find((r) => r.conversationId === conversationId);
+  // What the run recorded: the approval policy Topsl asked for and what Codex
+  // reported it adopted, also when Topsl stopped the run over a difference.
+  const recordRun = (run) => {
+    session.run = {
+      status: run.status,
+      model: run.model,
+      runtimeVersion: run.runtimeVersion,
+      approvalPolicy: run.approvalPolicy ?? null,
+      reportedPermissions: run.reportedPermissions ?? null,
+      error: withoutHome(run.error ?? null),
+    };
+    // A run that ended before Codex started its turn sent the model nothing,
+    // as when Topsl stops it over the permissions Codex reported.
+    if (["completed", "failed", "interrupted"].includes(run.status))
+      report.modelTurns = turnsBefore + (run.nativeTurnId ? 1 : 0);
+  };
   const declined = new Set();
   const scope = await until("Codex's reply", 240000, async () => {
-    await checkShownErrors();
     const current = await command({ type: "scope-snapshot", projectId }),
       run = runOf(current);
-    // Read-only review should need no approval; decline anything requested.
+    if (run) recordRun(run);
+    await checkShownErrors();
+    // The script approves nothing: any request Codex makes is declined.
     for (const approval of current.approvals.filter(
       (a) => a.runId === run?.id && !declined.has(a.id),
     )) {
@@ -703,11 +939,7 @@ async function codexChat(projectId, step, handoff = null) {
       hasNumber(m.text, expected),
   );
   step.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
-  session.run = {
-    status: run.status,
-    model: run.model,
-    runtimeVersion: run.runtimeVersion,
-  };
+  recordRun(run);
   session.usageRecords = scope.usage.filter((u) => u.runId === run.id).length;
   if (!step.replyObserved)
     throw new Error("The Codex reply does not contain the answer.");
@@ -1088,6 +1320,7 @@ try {
     await page.locator(".runtime-bar select").first().selectOption(trusted.id);
     if (provider === "claude") handoff = await claudeTerminal(projectId, step);
     else if (options.qualify) await codexQualification(projectId, trusted);
+    else if (options.terminal) await codexTerminal(projectId, step);
     else await codexChat(projectId, step, both ? handoff : null);
   }
   report.result = "passed";

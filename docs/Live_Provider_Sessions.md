@@ -1,6 +1,6 @@
 # Live provider sessions
 
-Topsl's automated suites use stand-in providers and never contact a model. [`scripts/live-session.mjs`](../scripts/live-session.mjs) checks real sessions through Topsl's own interface, using each provider's existing sign-in on the machine that runs it: one provider, or Claude Code followed by Codex continuing the same conversation through a context handoff. Each provider gets one short prompt, which counts toward that account's usage. This covers part of remaining gate 2 in [Implementation status](Implementation_Status.md#remaining-gates-and-deliberate-limits); a session check is not a runtime qualification. With `--qualify`, the script instead runs Topsl's Codex [runtime qualification](#codex-runtime-qualification) through the guided setup, which starts up to three model turns.
+Topsl's automated suites use stand-in providers and never contact a model. [`scripts/live-session.mjs`](../scripts/live-session.mjs) checks real sessions through Topsl's own interface, using each provider's existing sign-in on the machine that runs it: one provider, or Claude Code followed by Codex continuing the same conversation through a context handoff. A terminal can open in one of Topsl's [terminal modes](Provider_Permissions_Plan.md#terminals), and a Codex chat can use any of its four [presets](Provider_Permissions_Plan.md#codex-chats). Each provider gets one short prompt, which counts toward that account's usage. This covers part of remaining gate 2 in [Implementation status](Implementation_Status.md#remaining-gates-and-deliberate-limits); a session check is not a runtime qualification. With `--qualify`, the script instead runs Topsl's Codex [runtime qualification](#codex-runtime-qualification) through the guided setup, which starts up to three model turns.
 
 ## Run it
 
@@ -12,7 +12,15 @@ node scripts/live-session.mjs --claude "$(command -v claude)" --codex "$(command
 node scripts/live-session.mjs --qualify --codex "$(command -v codex)"
 ```
 
-`--claude` or `--codex` alone checks that provider. Both together run Claude Code first and then hand its conversation to Codex, as described [below](#both-handoff-from-claude-code-to-codex). `--qualify` with `--codex` alone runs the runtime qualification instead of a prompt. Like the qualification itself, it runs on macOS and Linux only. `--model <id>` chooses the Codex model instead of the one Codex reports as default, and must be one Codex reports. `--output <folder>` changes where the evidence goes, and `--keep-profile` keeps the disposable Topsl profile after a pass. Linux needs a display, for example `xvfb-run --auto-servernum`.
+`--claude` or `--codex` alone checks that provider. Both together run Claude Code first and then hand its conversation to Codex, as described [below](#both-handoff-from-claude-code-to-codex). `--terminal` with `--codex` alone opens Codex in Topsl's native terminal instead of a chat, as described [below](#codex-native-terminal). `--mode <id>` opens the terminal, Claude Code's or Codex's, in that mode from Topsl's **Terminal mode** menu instead of **Provider default**, by the id in [terminal-modes.ts](../packages/domain/terminal-modes.ts), such as `plan` or `read-only`. The script stops if the menu does not offer it outside **Advanced**, so it never opens a bypass mode. `--preset <id>` sends the Codex chat in that preset instead of **Read-only review**, by the id in [chat-presets.ts](../packages/domain/chat-presets.ts), such as `edit-on-request`. The provider permissions plan's [live check](Provider_Permissions_Plan.md#build-steps) runs these three:
+
+```sh
+node scripts/live-session.mjs --claude "$(command -v claude)" --mode plan
+node scripts/live-session.mjs --codex "$(command -v codex)" --terminal --mode read-only
+node scripts/live-session.mjs --codex "$(command -v codex)" --preset edit-on-request
+```
+
+`--qualify` with `--codex` alone runs the runtime qualification instead of a prompt. Like the qualification itself, it runs on macOS and Linux only. `--model <id>` chooses the Codex model instead of the one Codex reports as default, and must be one Codex reports. `--output <folder>` changes where the evidence goes, and `--keep-profile` keeps the disposable Topsl profile after a pass. Linux needs a display, for example `xvfb-run --auto-servernum`.
 
 ## What a run does
 
@@ -22,7 +30,7 @@ node scripts/live-session.mjs --qualify --codex "$(command -v codex)"
 - Each executable is chosen with **Locate runtime** (`select-runtime`) and trusted, and a new empty `live-project` folder inside the profile is added and trusted as a project.
 - The prompt is `What is A + B? Reply with only the number.`, with random four-digit numbers whose sum is not already on screen. After a handoff, Codex is asked `Add C to the number Claude Code replied with in the handoff above. Reply with only the number.` A step passes only if the expected sum comes back as a whole number, not inside a longer one.
 - With `--qualify`, Topsl also gets `TOPSL_TEST_QUALIFICATION_DIR`: a new `topsl-qualify-*` folder in `~/Library/Caches` on macOS or `~/.cache` on Linux, because a qualification in the temporary folder could not be judged. The script deletes that folder after every run, passed or failed.
-- `report.json` and screenshots go to `test-results/live-session/<claude|codex|both|qualify>-<time>/`. A one-provider report keeps that provider's `executable`, `prompt`, `expectedReply`, `replyObserved`, `replySeconds` and `session` at the top level. A report for both keeps them per provider under `steps`, with `conversation` for the shared conversation. The profile is deleted after a pass and kept after a failure.
+- `report.json` and screenshots go to `test-results/live-session/<claude|codex|codex-terminal|both|qualify>-<time>/`. A one-provider report keeps that provider's `executable`, `prompt`, `expectedReply`, `replyObserved`, `replySeconds` and `session` at the top level. A report for both keeps them per provider under `steps`, with `conversation` for the shared conversation. The profile is deleted after a pass and kept after a failure.
 
 Approved dialogs: **Which runtime are you locating?** (Claude Code or Codex CLI), **Choose the native executable**, **Allow this native executable?**, **Select a trusted project**, **Trust this project?**, **Connect the experimental Codex integration?** (Codex only), for Claude, the transcript chosen for **Import Claude JSONL**, and, after a handoff is attached, **Send the reviewed context to Codex?** for the one message the script sends. With `--qualify`, **Qualify this Codex runtime with live model turns?** is approved once, and only when its text names the selected executable, the chosen model, up to 3 model turns and the script's qualification folder.
 
@@ -32,22 +40,40 @@ Topsl runs Claude Code only in its native terminal. Production builds refuse the
 
 | Step | Passes when |
 |---|---|
-| **Native terminal** in the disposable folder | Claude Code starts with no arguments, under its own login, model and permission settings |
+| **Native terminal** in the disposable folder | The mode `--mode` names is chosen in **Terminal mode**, or **Provider default**. Claude Code starts with that mode's arguments (none for **Provider default**), under its own login, model and settings |
 | Claude Code's folder trust prompt | **Yes, I trust this folder** is selected and confirmed. Claude Code 2.1.183 selects it first, but 2.1.300 lists and selects **No, exit** first. The script reads the selected answer from the screen, moves to **Yes** with the arrow keys and presses Enter only once the screen shows it selected. The report's `folderTrustDefault` keeps the answer Claude Code had selected |
+| Permission mode | In **Plan**, **Accept edits** or **Auto**, Claude Code shows `plan mode on`, `accept edits on` or `auto mode on` below its input, in place of the shortcuts hint. If it shows anything else, the run stops before the prompt. The other modes are not checked on screen |
 | One prompt | Sent once Claude Code shows its shortcuts hint, or its permission mode in place of the hint, below the input. The sum appears in the terminal. A sign-in screen stops the run before any prompt is sent. After it, a sign-in request or an API error Claude Code has stopped retrying ends the run, and the report's `apiError` keeps that error's status |
-| `/exit` | The session exits with code 0, Topsl records the run as `completed`, no terminal stays open and the process is gone. If `/exit` has not ended it after 30 seconds, the script presses Ctrl+C twice and then uses **Close session**, and the report says which ended it |
+| `/exit` | The session exits with code 0, Topsl records the run as `completed` with the chosen mode, no terminal stays open and the process is gone. If `/exit` has not ended it after 30 seconds, the script presses Ctrl+C twice and then uses **Close session**, and the report says which ended it |
 | History import | Claude Code's transcript for the folder (matched by its `cwd` under `~/.claude/projects`, or `CLAUDE_CONFIG_DIR`) imports through **History → Import Claude JSONL**, and the imported history has Claude's reply with the sum |
 
 Keys and text reach Claude Code by giving Topsl's terminal the keyboard focus, not by clicking it: when a terminal application turns on mouse reporting, the terminal passes clicks to it. Claude Code's prompts are read from Topsl's terminal screen as well as from its output. In the first live run below, Topsl's terminal showed the folder trust prompt, but the output with escape sequences removed did not contain it, so the run timed out. The likely cause is that Claude Code moves the cursor over blank cells instead of writing spaces, which runs its words together in the output. The report's `folderTrustReadFrom` says whether the output or only the screen showed that prompt.
 
 Claude Code keeps that transcript in its own history; the script does not delete it.
 
+The report's `mode` keeps the mode chosen in the menu (`chosen`), the mode and arguments Topsl recorded on the run (`recorded`, `args`), and the mode Claude Code showed below its input, or `? for shortcuts` (`shown`).
+
+### Codex: native terminal
+
+With `--terminal`, Codex runs in Topsl's native terminal instead of a chat. Topsl does not connect to it, so there is no **Models & account** step, and Codex uses its own model and settings.
+
+| Step | Passes when |
+|---|---|
+| **Native terminal** in the disposable folder | The mode `--mode` names is chosen in **Terminal mode**, or **Provider default**. Codex starts with that mode's arguments, such as `-s read-only -a on-request` for **Read-only** |
+| Startup | Codex shows `Ask Codex to do anything` in its composer, or its hints below it, and no longer says `Waiting for startup`. A sign-in screen stops the run. So does a question Codex asks at startup, whether to trust the folder, to update Codex or to switch to a new model, which the script does not answer, because Codex saves the answer in its own settings or updates itself. Codex 0.163.0's own text has these questions, but whether it asks one in a given run is not established; the report's `startupQuestion` names the one it asked |
+| One prompt | The sum appears in the terminal. A sign-in request ends the run |
+| Ctrl+C twice | The session exits with code 0, Topsl records the run as `completed` with the chosen mode, no terminal stays open and the process is gone. Codex is not sent `/quit`, which would reach the model as a second prompt if Codex did not know the command. If Ctrl+C has not ended it after 30 seconds, the script uses **Close session** |
+
+The report's `mode` keeps the mode chosen, what Topsl recorded on the run, and the first of `read-only`, `workspace-write` or `full access` that Codex's screen showed once it accepted a prompt (`shown`), if any. Codex keeps the session in its own history; the script does not delete it.
+
 ### Codex: structured chat
 
 | Step | Passes when |
 |---|---|
 | **Models & account** | The connection is approved and Codex reports its models and account. The report keeps only the account type and plan, not the sign-in identity |
-| One prompt | Sent from a new chat in **Read-only review** with the chosen model. Any approval request is declined and listed. The run ends `completed` and the reply contains the sum. The report counts the usage records Topsl stored |
+| One prompt | Sent from a new chat with the chosen model, in the preset `--preset` names or **Read-only review**. If the note under **Permissions** says the preset is not available for this runtime, the run stops before the prompt. Any approval request is declined and listed. The run ends `completed` and the reply contains the sum. The report counts the usage records Topsl stored |
+
+The report's `preset` keeps the preset's id, its name in the menu and the note under it. Its `run` keeps the approval policy Topsl asked Codex for (`approvalPolicy`), and the approval policy, approvals reviewer and sandbox Codex reported at `thread/start` (`reportedPermissions`), also when Topsl stopped the run because they differ. A run that ended before Codex started its turn, such as one Topsl stopped that way, adds nothing to `modelTurns`.
 
 ### Both: handoff from Claude Code to Codex
 
@@ -57,7 +83,7 @@ Claude Code runs as above, up to its history import. Codex then continues the im
 |---|---|
 | **Models & account** | As for Codex alone |
 | **Prepare handoff** | With Codex selected and Claude Code's imported conversation open, Topsl shows the handoff for review. Its text has Claude Code's reply with the sum, and the script then chooses **Attach to next Codex message**. The report keeps the reviewed snapshot's SHA-256, its length and how many messages it carries |
-| One prompt | Sent in **Read-only review** with the handoff attached, once **Send the reviewed context to Codex?** is approved. The run ends `completed` and the reply is Claude Code's number plus the new one, which Codex can only work out from the handed-off context |
+| One prompt | Sent in **Read-only review**, or the preset `--preset` names, with the handoff attached, once **Send the reviewed context to Codex?** is approved. The run ends `completed` and the reply is Claude Code's number plus the new one, which Codex can only work out from the handed-off context |
 | Shared conversation | The imported conversation keeps both replies, attributed to Claude Code and Codex |
 
 If the Claude Code step fails, Codex is not started.
@@ -80,6 +106,7 @@ A qualification counts only in the profile that ran it, and this one is disposab
 ## What a pass does not establish
 
 - Sandbox enforcement, tool approvals or edits. For Codex, [runtime qualification](../README.md#qualify-a-codex-runtime) covers those separately.
+- That a provider enforces the terminal mode or chat preset. The sum needs no tool, so no permission is tested. For a terminal, the report shows what Topsl passed and, for Claude Code, the mode it showed below its input. For a chat, it shows what Codex reported it adopted, which Topsl checks against what it asked for.
 - Packaged applications, other operating systems or other provider versions than the one run.
 - Claude Code's billing mode. Its terminal owns its login and billing, and the report does not read them; the screenshots show whatever Claude Code displays.
 - Native sidebar or history refresh in the providers' own applications.
@@ -117,6 +144,36 @@ After a handoff, the Codex stand-in adds the numbers in the current request to t
 ```sh
 config="$(mktemp -d)" && echo 403 > "$config/stand-in-api-error"
 CLAUDE_CONFIG_DIR="$config" node scripts/live-session.mjs --claude "$PWD/tests/fixtures/live-session/claude.cjs"
+```
+
+The live check's three runs have stand-ins as well. The Claude stand-in shows the mode it was started with below its input, and the chat stand-in reports the permissions it was asked for. For a Codex terminal, the stand-in is [`codex-terminal.cjs`](../tests/fixtures/live-session/codex-terminal.cjs), which waits for startup, answers the sum and quits on Ctrl+C twice. It shows the arguments it was started with, so its report's `shown` is `read-only` from that line:
+
+```sh
+CLAUDE_CONFIG_DIR="$(mktemp -d)" node scripts/live-session.mjs --claude "$PWD/tests/fixtures/live-session/claude.cjs" --mode plan
+node scripts/live-session.mjs --codex "$PWD/tests/fixtures/live-session/codex-terminal.cjs" --terminal --mode read-only
+node scripts/live-session.mjs --codex "$PWD/tests/fixtures/live-session/codex.cjs" --preset edit-on-request
+```
+
+A `stand-in-mode` file in `CLAUDE_CONFIG_DIR` makes the Claude stand-in show another mode, as if Claude Code's settings had overridden the one passed. With `default` there, a run in Plan fails before the prompt with `Claude Code showed "? for shortcuts" below its input instead of "plan mode on", so no prompt was sent.`:
+
+```sh
+config="$(mktemp -d)" && echo default > "$config/stand-in-mode"
+CLAUDE_CONFIG_DIR="$config" node scripts/live-session.mjs --claude "$PWD/tests/fixtures/live-session/claude.cjs" --mode plan
+```
+
+A `stand-in-question` file in `CODEX_HOME` makes the Codex terminal stand-in ask a startup question instead: `trust`, `update`, `model` or `sign-in`. The run then fails before the prompt, for example with `Codex asked whether to update Codex before accepting a prompt. The script answers none of Codex's startup questions, so no prompt was sent.`:
+
+```sh
+home="$(mktemp -d)" && echo update > "$home/stand-in-question"
+CODEX_HOME="$home" node scripts/live-session.mjs --codex "$PWD/tests/fixtures/live-session/codex-terminal.cjs" --terminal --mode read-only
+```
+
+A chat stand-in that reports another approval policy than the one asked for, through the variables in [codex-thread.cjs](../tests/fixtures/codex-thread.cjs), shows Topsl stopping the run before the prompt. The report keeps what the stand-in reported, and `modelTurns` is 0:
+
+```sh
+standin="$(mktemp -d)/codex-reports-never"
+printf '#!/bin/sh\nFIXTURE_REPORTED_APPROVAL=never exec node "%s" "$@"\n' "$PWD/tests/fixtures/live-session/codex.cjs" > "$standin" && chmod +x "$standin"
+node scripts/live-session.mjs --codex "$standin" --preset edit-on-request
 ```
 
 ## Results
