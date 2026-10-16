@@ -96,11 +96,12 @@ To verify the selected runtime's experimental project API, run the optional nati
 TOPSL_NATIVE_PROJECT_BINARY=/absolute/path/to/codex npm test -- tests/codex-projects-native.test.ts
 ```
 
-To try one real session through Topsl's interface with your own sign-in, run the live session check after `npm run build`. It opens Claude Code in Topsl's native terminal, or sends one Codex chat, from a disposable Topsl profile and folder. Its one short prompt counts toward that account's usage. [Live provider sessions](docs/Live_Provider_Sessions.md) describes what it checks and records the results.
+To try real sessions through Topsl's interface with your own sign-in, run the live session check after `npm run build`. From a disposable Topsl profile and folder, it opens Claude Code in Topsl's native terminal, sends one Codex chat, or does both, with Codex continuing Claude Code's conversation through a reviewed handoff. Each provider's one short prompt counts toward that account's usage. [Live provider sessions](docs/Live_Provider_Sessions.md) describes what it checks and records the results.
 
 ```sh
 node scripts/live-session.mjs --claude "$(command -v claude)"
 node scripts/live-session.mjs --codex "$(command -v codex)"
+node scripts/live-session.mjs --claude "$(command -v claude)" --codex "$(command -v codex)"
 ```
 
 The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without Developer ID signing/notarization or Windows publisher signing. macOS bundles use an ad-hoc signature to seal the finished app, helpers, and native modules. Packaging checks the bundle with Apple's strict signature verifier; both Mac CI jobs also extract the ZIP and verify it before recording checksums or uploading a release. An ad-hoc signature verifies bundle integrity but does not identify the publisher or provide Apple notarization. Native runtime compatibility and production eligibility are separate from compilation.
