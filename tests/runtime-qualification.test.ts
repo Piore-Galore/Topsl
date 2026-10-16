@@ -477,7 +477,7 @@ describe("runtime qualification suite", () => {
       connection.onNotification = (method, params: any) => {
         if (method === "item/agentMessage/delta") deltas.push(params.turnId);
         if (method === "turn/completed")
-          waiting.get(params.turn.id)?.(params.turn.status);
+          waiting.get(params.threadId)?.(params.turn.status);
       };
       cleanup.push(async () => void (await connection.close()));
       await connection.initialize();
@@ -501,14 +501,13 @@ describe("runtime qualification suite", () => {
             },
             thread = (await f.adapter.startSession(connection, prepared, null))
               .nativeSessionId,
-            started = await f.adapter.startTurn(connection, prepared, thread);
-          return {
-            thread,
-            turnId: started.nativeTurnId!,
-            done: new Promise<string>((resolve) =>
-              waiting.set(started.nativeTurnId!, resolve),
+            // Listen before the turn starts: a turn that asks nothing can
+            // complete in the same read as the response that starts it.
+            done = new Promise<string>((resolve) =>
+              waiting.set(thread, resolve),
             ),
-          };
+            started = await f.adapter.startTurn(connection, prepared, thread);
+          return { thread, turnId: started.nativeTurnId!, done };
         };
       // An approved write that the sandbox blocks lands anyway; with
       // approvals off it does not.
