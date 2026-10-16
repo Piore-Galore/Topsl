@@ -412,8 +412,19 @@ test.each([false, true])(
           f.definition,
         ),
         checks = CheckExecutions.for(f.store);
+      const verification = await checks.execute(
+          f.repository,
+          plan,
+          plan.digest,
+        ),
+        [execution] = checks.list("p").executions;
+      // A slow Windows runner once ended this check as `error`; say why if so.
       expect(
-        (await checks.execute(f.repository, plan, plan.digest)).result,
+        verification.result,
+        `${execution.failurePhase ?? "unknown"} phase, environment ${
+          checks.inspect("p", execution.id).environment?.instance.failureKind ??
+          "not failed"
+        }: ${execution.error ?? "no error recorded"}`,
       ).toBe("failed");
       expect(
         executionEvidence(checks)[0]
