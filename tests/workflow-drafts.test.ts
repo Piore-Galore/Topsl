@@ -36,3 +36,26 @@ test("R2-AT-32/34 protected workflow drafts preserve project scope and reject st
   drafts.delete("one", null, update.revision);
   expect(drafts.query("one", null)).toBeNull();
 });
+test("a new draft pairs Codex with Codex, and an older saved draft keeps its pairing", async () => {
+  const f = await fixture();
+  opened.push(f);
+  f.store.put("project", { id: "one" });
+  const drafts = new WorkflowDrafts(f.store),
+    fresh = workflowDraftInput.parse({});
+  expect([fresh.builder, fresh.reviewer]).toEqual(["codex", "codex"]);
+  const saved = drafts.save("one", null, 0, { ...fresh, reviewer: "claude" });
+  expect(drafts.query("one", null)?.draft.reviewer).toBe("claude");
+  // Drafts saved before the reviewer choice have no reviewer; the setup then
+  // paired the builder with the other provider.
+  for (const [builder, reviewer] of [
+    ["codex", "claude"],
+    ["claude", "codex"],
+  ] as const) {
+    const { reviewer: _, ...older } = { ...saved.draft, builder };
+    f.store.put("workflow-draft", { ...saved, draft: older });
+    expect(drafts.query("one", null)?.draft).toMatchObject({
+      builder,
+      reviewer,
+    });
+  }
+});

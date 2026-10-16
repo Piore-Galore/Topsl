@@ -8,12 +8,25 @@ import {
   chmod,
   appendFile,
 } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-desktop-"));
 const desktopEnvironment = { ...process.env, TOPSL_TEST_PROFILE: profile };
 delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
+// A qualification refuses the temporary folders that hold the profile, and
+// runs on macOS and Linux only.
+let qualificationDirectory = null;
+if (process.platform !== "win32") {
+  await mkdir(path.resolve("node_modules/.cache"), { recursive: true });
+  const directory = await mkdtemp(
+    path.resolve("node_modules/.cache/topsl-qualify-"),
+  );
+  qualificationDirectory = directory;
+  process.on("exit", () => rmSync(directory, { recursive: true, force: true }));
+  desktopEnvironment.TOPSL_TEST_QUALIFICATION_DIR = directory;
+}
 const project = path.join(profile, "fixture-project");
 await mkdir(project);
 const canonicalProject = await realpath(project);
@@ -765,9 +778,146 @@ try {
     page.getByRole("dialog", { name: "Command palette" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  if (qualificationDirectory) {
+    // A Codex-only team through the guided setup: the scripted qualification
+    // stand-in is registered, connected and qualified as a user would, so no
+    // model is contacted. Native shell wrapper is a test fixture only.
+    const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+    const qualifyFixture = path.join(profile, "codex-qualify-fixture");
+    await writeFile(
+      qualifyFixture,
+      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex-qualify.cjs"))} "$@"\n`,
+    );
+    await chmod(qualifyFixture, 0o700);
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({
+        canceled: false,
+        filePaths: [selected],
+      });
+    }, qualifyFixture);
+    const runtime = await page.evaluate(() =>
+      window.topsl.command({ type: "select-runtime" }),
+    );
+    await expect
+      .poll(async () =>
+        (
+          await page.evaluate(() => window.topsl.command({ type: "state" }))
+        ).installations.some((i) => i.id === runtime.id),
+      )
+      .toBe(true);
+    await page.evaluate(
+      (id) => window.topsl.command({ type: "trust-installation", id }),
+      runtime.id,
+    );
+    const pairing =
+      "Codex reviews Codex in a fresh, read-only session. This is not an independent second model.";
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByRole("button", { name: "Activity", exact: true }).click();
+    const setup = page.locator(".guided-workflow");
+    await setup.locator("summary").first().click();
+    await setup
+      .getByRole("textbox", { name: "Objective", exact: true })
+      .fill("Codex builds and Codex reviews");
+    await setup
+      .getByRole("textbox", {
+        name: "Acceptance criteria · one per line",
+        exact: true,
+      })
+      .fill("The fixture check passes");
+    await setup.getByRole("button", { name: "2. Team", exact: true }).click();
+    await expect(setup.getByLabel("Team preset")).toHaveValue("codex:codex");
+    await expect(setup.getByText(pairing, { exact: true })).toBeVisible();
+    await setup.getByLabel("Selected builder runtime").selectOption(runtime.id);
+    await setup
+      .getByLabel("Selected reviewer runtime")
+      .selectOption(runtime.id);
+    await setup
+      .getByRole("button", { name: "Validate builder runtime", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          (
+            await page.evaluate(() => window.topsl.command({ type: "state" }))
+          ).installations.find((i) => i.id === runtime.id).compatibility,
+      )
+      .toBe("compatible");
+    const discover = setup.getByRole("button", {
+      name: "Discover builder models",
+      exact: true,
+    });
+    await expect(discover).toBeEnabled();
+    await discover.click();
+    await expect(
+      setup
+        .getByLabel("Requested reviewer model")
+        .locator('option[value="fixture-model"]'),
+    ).toHaveCount(1);
+    await setup
+      .getByLabel("Requested builder model")
+      .selectOption("fixture-model");
+    await setup
+      .getByLabel("Requested reviewer model")
+      .selectOption("fixture-model");
+    await setup
+      .getByRole("button", { name: "Qualify builder runtime", exact: true })
+      .click();
+    const summary = setup.getByText(/^Qualification recorded until/).first();
+    await expect(summary).toBeVisible({ timeout: 120000 });
+    await expect(summary).toContainText("candidate-reader");
+    await expect(summary).not.toContainText("Not passed");
+    await expect(summary).not.toContainText("Not tested");
+    await expect(summary).toContainText("Model turns started: 4.");
+    // The same qualification covers both roles on one installation.
+    await expect(
+      setup.getByText(/^Role requirements currently satisfied/),
+    ).toHaveCount(2);
+    await page.screenshot({
+      path: "test-results/codex-team.png",
+      fullPage: true,
+    });
+    await setup
+      .getByRole("button", { name: "3. Environment", exact: true })
+      .click();
+    await setup
+      .getByLabel("Preparation and check recipe")
+      .selectOption({ label: "Self-contained command" });
+    await setup.getByRole("button", { name: "4. Scope", exact: true }).click();
+    await setup
+      .getByRole("textbox", {
+        name: "Change boundaries · relative paths, one per line",
+        exact: true,
+      })
+      .fill("AGENTS.md");
+    await setup
+      .getByRole("button", { name: "5. Review and start", exact: true })
+      .click();
+    await expect(setup.getByText(pairing, { exact: true })).toBeVisible();
+    const capture = setup.getByRole("button", {
+      name: "Capture coordinated workflow",
+      exact: true,
+    });
+    await expect(capture).toBeEnabled();
+    await capture.click();
+    await expect(setup.getByText(/^Workflow captured/)).toBeVisible();
+    const card = page.locator(".workflow-card").filter({
+      has: page.getByRole("heading", {
+        name: "Codex builds and Codex reviews",
+        exact: true,
+      }),
+    });
+    await expect(card).toContainText("codex · requested fixture-model");
+    await expect(card.getByText(pairing, { exact: true })).toBeVisible();
+    // Capture dispatches nothing; starting the build is a separate action.
+    await expect(card.getByText("ready build", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: "test-results/codex-team-workflow.png",
+      fullPage: true,
+    });
+  }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette.",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {

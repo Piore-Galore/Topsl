@@ -139,6 +139,12 @@ try {
     ];
     global.fixture.notify();
   });
+  const pairing =
+    "Codex reviews Codex in a fresh, read-only session. This is not an independent second model.";
+  await expect(setup.getByLabel("Team preset")).toHaveValue("codex:codex");
+  await expect(setup.getByText(pairing, { exact: true })).toBeVisible();
+  await setup.getByLabel("Team preset").selectOption("codex:claude");
+  await expect(setup.getByText(pairing, { exact: true })).toHaveCount(0);
   await setup
     .getByLabel("Selected builder runtime")
     .selectOption("fixture-codex");
@@ -188,6 +194,10 @@ try {
   await expect(setup.getByText(/Workflow captured/)).toBeVisible();
   expect(
     await app.evaluate(() => ({
+      providers: [
+        global.fixture.lastCapture.builder.provider,
+        global.fixture.lastCapture.reviewer.provider,
+      ],
       models: [
         global.fixture.lastCapture.builder.model,
         global.fixture.lastCapture.reviewer.model,
@@ -195,6 +205,7 @@ try {
       recipe: global.fixture.lastCapture.checks[0].environmentRecipeId,
     })),
   ).toEqual({
+    providers: ["codex", "claude"],
     models: ["explicit-native-builder", "explicit-native-reviewer"],
     recipe: "fixture-recipe",
   });

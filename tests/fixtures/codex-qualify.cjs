@@ -13,9 +13,15 @@
 // from FIXTURE_READER_MARKER.
 // FIXTURE_REFUSE_TOOLS=1 refuses a thread/start that declares tools.
 // FIXTURE_LOG appends every frame, in both directions, to that file.
+// It answers --version and lists one model, so the desktop test can register,
+// connect and qualify it through Topsl's own interface.
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.163.0-qualify-fixture");
+  process.exit(0);
+}
 const log = (from, frame) => {
   if (process.env.FIXTURE_LOG)
     fs.appendFileSync(
@@ -173,6 +179,17 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
   const reply = (result) => send({ id: request.id, result });
   if (request.method === "initialize")
     reply({ platformFamily: "unix", platformOs: process.platform });
+  else if (request.method === "model/list")
+    reply({
+      data: [
+        {
+          id: "fixture",
+          model: "fixture-model",
+          displayName: "Fixture",
+          isDefault: true,
+        },
+      ],
+    });
   else if (request.method === "account/read")
     reply({
       account: {

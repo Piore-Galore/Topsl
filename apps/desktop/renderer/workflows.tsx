@@ -4,7 +4,7 @@ import type { ProviderCapability } from "../../../packages/providers/contract";
 import type { BuilderReviewerState } from "../../../packages/workflows/builder-reviewer";
 import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
 import { Freshness } from "./components/freshness";
-import { WorkflowSetup } from "./components/workflow-setup";
+import { codexPairingNote, WorkflowSetup } from "./components/workflow-setup";
 import { WorkflowEvidence } from "./components/workflow-evidence";
 import { AssistedHandoff } from "./components/assisted-handoff";
 import { SpecificationDraft } from "./components/specification-draft";
@@ -222,6 +222,10 @@ export function Workflows({ projectId }: { projectId: string }) {
                 <dt>Isolation</dt>
                 <dd>Independence not enforced</dd>
               </dl>
+              {workflow.builder.provider === "codex" &&
+                workflow.reviewer.provider === "codex" && (
+                  <p>{codexPairingNote}</p>
+                )}
               {workflow.checksStatus.map((check) => (
                 <p key={check.definition}>
                   {check.definition}: {check.result} on{" "}

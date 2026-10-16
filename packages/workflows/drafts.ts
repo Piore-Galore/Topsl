@@ -22,12 +22,19 @@ export class WorkflowDrafts {
     return `workflow-draft:${hash(stable({ projectId, workflowId }))}`;
   }
   query(projectId: string, workflowId: string | null): WorkflowDraft | null {
-    return (
-      this.store.get<WorkflowDraft>(
-        "workflow-draft",
-        this.id(projectId, workflowId),
-      ) ?? null
+    const saved = this.store.get<WorkflowDraft>(
+      "workflow-draft",
+      this.id(projectId, workflowId),
     );
+    if (!saved || saved.draft.reviewer) return saved ?? null;
+    // Drafts saved before the reviewer choice always paired Codex with Claude.
+    return {
+      ...saved,
+      draft: {
+        ...saved.draft,
+        reviewer: saved.draft.builder === "codex" ? "claude" : "codex",
+      },
+    };
   }
   save(
     projectId: string,

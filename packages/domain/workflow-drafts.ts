@@ -6,6 +6,7 @@ export const workflowDraftInput = z.object({
   criteria: text.default(""),
   interfaces: text.default(""),
   builder: z.enum(["codex", "claude"]).default("codex"),
+  reviewer: z.enum(["codex", "claude"]).default("codex"),
   builderRuntime: z.string().max(256).default(""),
   reviewerRuntime: z.string().max(256).default(""),
   builderModel: z.string().max(200).default(""),
