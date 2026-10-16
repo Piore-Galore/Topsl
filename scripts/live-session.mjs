@@ -14,39 +14,44 @@ import { randomInt } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-// Live acceptance of one provider session inside Topsl: Claude Code in its
-// native terminal, or Codex through the structured chat. Unlike the automated
-// suites, this sends one real prompt through the selected executable and the
-// native sign-in on this machine, so it counts toward that account's usage.
-// Topsl runs from this checkout (after `npm run build`) with a new disposable
-// topsl-test-* profile, so the user's own Topsl profile is not opened. Only the
-// native dialogs this procedure expects are approved. The provider keeps the
-// session in its own history, as it does for any native session.
+// Live acceptance of provider sessions inside Topsl: Claude Code in its native
+// terminal, Codex through the structured chat, or both, with Codex continuing
+// Claude Code's imported conversation through a reviewed context handoff.
+// Unlike the automated suites, this sends one real prompt per provider through
+// the selected executable and the native sign-in on this machine, so it counts
+// toward that account's usage. Topsl runs from this checkout (after
+// `npm run build`) with a new disposable topsl-test-* profile, so the user's
+// own Topsl profile is not opened. Only the native dialogs this procedure
+// expects are approved. The provider keeps the session in its own history, as
+// it does for any native session.
 
 const usage =
-  "Usage: node scripts/live-session.mjs (--claude | --codex) /absolute/path/to/executable [--model id] [--output directory] [--keep-profile]";
+  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex.";
 const options = {
-  provider: null,
-  executable: null,
+  executables: {},
   model: null,
   output: null,
   keepProfile: false,
 };
 for (let index = 2; index < process.argv.length; index++) {
   const argument = process.argv[index];
-  if (["--claude", "--codex"].includes(argument) && !options.provider) {
-    options.provider = argument.slice(2);
-    options.executable = process.argv[++index];
-  } else if (argument === "--model") options.model = process.argv[++index];
+  if (
+    ["--claude", "--codex"].includes(argument) &&
+    !options.executables[argument.slice(2)]
+  )
+    options.executables[argument.slice(2)] = process.argv[++index];
+  else if (argument === "--model") options.model = process.argv[++index];
   else if (argument === "--output") options.output = process.argv[++index];
   else if (argument === "--keep-profile") options.keepProfile = true;
   else throw new Error(usage);
 }
+// Claude Code runs first, so that Codex can continue its conversation.
+const providers = ["claude", "codex"].filter((p) => options.executables[p]);
+const both = providers.length === 2;
 if (
-  !options.provider ||
-  !options.executable ||
-  !path.isAbsolute(options.executable) ||
-  (options.model && options.provider !== "codex")
+  !providers.length ||
+  providers.some((p) => !path.isAbsolute(options.executables[p])) ||
+  (options.model && !options.executables.codex)
 )
   throw new Error(usage);
 try {
@@ -106,16 +111,29 @@ const output = path.resolve(
     path.join(
       "test-results",
       "live-session",
-      `${options.provider}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+      `${both ? "both" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
     ),
 );
 await mkdir(output, { recursive: true });
 
+const routes = { claude: "native-terminal", codex: "structured-chat" };
+/** What one provider's part of the run records. */
+const newStep = (provider) => ({
+  executable: { path: tilde(options.executables[provider]) },
+  prompt: null,
+  expectedReply: null,
+  replyObserved: false,
+  replySeconds: null,
+  session: {},
+});
+// A single-provider report keeps its step at the top level. A run with both
+// keeps one step per provider, in the order they ran, and the conversation
+// they share.
 const report = {
   schemaVersion: 1,
   kind: "topsl-live-session",
-  provider: options.provider,
-  route: options.provider === "claude" ? "native-terminal" : "structured-chat",
+  provider: both ? "both" : providers[0],
+  route: both ? "handoff" : routes[providers[0]],
   observedAt: new Date().toISOString(),
   host: `${os.platform()}/${os.arch()} ${os.release()}`,
   topsl: {
@@ -124,15 +142,10 @@ const report = {
     trackedChanges:
       (git("status", "--porcelain", "--untracked-files=no") ?? "") !== "",
   },
-  executable: { path: tilde(options.executable) },
   removedEnvironment,
   dialogs: [],
   modelTurns: 0,
-  prompt: null,
-  expectedReply: null,
-  replyObserved: false,
-  replySeconds: null,
-  session: {},
+  ...(both ? { steps: {}, conversation: null } : newStep(providers[0])),
   screenshots: [],
   profile: tilde(profile),
   profileDeleted: false,
@@ -174,18 +187,28 @@ async function appear(label, locator, timeoutMs = 30000) {
   });
 }
 
-/** A sum the provider must work out, which no screen text already contains. */
-function question(shown) {
+/**
+ * A sum the provider must work out, which no screen text already contains.
+ * After a handoff, one term is the number Claude Code replied with, which only
+ * the handed-off context gives.
+ */
+function question(shown, step, handedOff = null) {
   let first, second, expected;
   do {
     first = randomInt(1000, 5000);
     second = randomInt(1000, 5000);
-    expected = String(first + second);
+    expected = String((handedOff ?? first) + second);
   } while (shown.includes(expected));
-  report.prompt = `What is ${first} + ${second}? Reply with only the number.`;
-  report.expectedReply = expected;
+  step.prompt =
+    handedOff === null
+      ? `What is ${first} + ${second}? Reply with only the number.`
+      : `Add ${second} to the number Claude Code replied with in the handoff above. Reply with only the number.`;
+  step.expectedReply = expected;
   return expected;
 }
+/** Whether the text has the number on its own, not inside a longer number. */
+const hasNumber = (text, number) =>
+  new RegExp(`(?<![0-9])${number}(?![0-9])`).test(text);
 
 const terminal = page.getByRole("region", { name: "Native terminal" });
 const terminalOutput = () => page.evaluate(() => window.__liveTerminal.output);
@@ -198,11 +221,22 @@ const terminalScreen = () =>
     .catch(() => "");
 const exitPattern = /\[Native session exited: (-?\d+)\]/;
 let terminalOpen = false;
+/**
+ * Gives Topsl's terminal the keyboard focus. A click would also reach a
+ * terminal application that reads the mouse, and could change its selection.
+ */
+const focusTerminal = () =>
+  terminal.locator("textarea.xterm-helper-textarea").focus();
 
-async function claudeTerminal(projectId) {
-  const session = (report.session = {
+/**
+ * Claude Code in Topsl's native terminal, then the import of its transcript.
+ * Returns the imported conversation and the number Claude Code replied with.
+ */
+async function claudeTerminal(projectId, step) {
+  const session = (step.session = {
     folderTrust: "not shown",
     folderTrustReadFrom: null,
+    folderTrustDefault: null,
     apiError: null,
     exit: null,
     run: null,
@@ -222,18 +256,47 @@ async function claudeTerminal(projectId) {
   await appear("the native terminal", terminal);
   terminalOpen = true;
   const press = async (key) => {
-    await terminal.click();
+    await focusTerminal();
     await page.keyboard.press(key);
   };
 
-  // Claude Code asks once whether to trust a new folder; its default answer
-  // trusts it. A sign-in screen stops the procedure before any prompt is sent.
-  // Once escape sequences are removed, Claude Code's words can run together in
-  // its raw output (it can move the cursor over blank cells instead of writing
-  // spaces), so its prompts are matched against the terminal screen as well.
+  // Claude Code asks once whether to trust a new folder. A sign-in screen stops
+  // the procedure before any prompt is sent. Once escape sequences are removed,
+  // Claude Code's words can run together in its raw output (it can move the
+  // cursor over blank cells instead of writing spaces), so its prompts are
+  // matched against the terminal screen as well.
   const signIn =
     /select login method|please run \/login|not logged in|invalid api key/i;
   const trustPrompt = /trust (the files in )?this folder|do you trust/i;
+  // The answer the prompt has selected follows its pointer on the screen.
+  const trustAnswer =
+    /[❯>]\s*(?:\d+\.\s*)?(yes, i trust this folder|no, exit)/i;
+  const selectedLine = (lines) => lines.findIndex((l) => trustAnswer.test(l));
+  // Claude Code 2.1.183 selects "Yes, I trust this folder" first, but 2.1.300
+  // lists and selects "No, exit" first. The selection is moved to the answer
+  // that trusts the folder, which is confirmed only once the screen shows it.
+  async function trustFolder() {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const lines = (await terminalScreen()).split("\n"),
+        yes = lines.findIndex((l) => /yes, i trust this folder/i.test(l)),
+        selected = selectedLine(lines);
+      if (selected >= 0)
+        session.folderTrustDefault ??= trustAnswer.exec(lines[selected])[1];
+      if (yes >= 0 && selected === yes) return press("Enter");
+      if (yes >= 0 && selected >= 0) {
+        await press(selected < yes ? "ArrowDown" : "ArrowUp");
+        await until(
+          "Claude Code's folder trust prompt to move its selection",
+          5000,
+          async () =>
+            selectedLine((await terminalScreen()).split("\n")) !== selected,
+        );
+      } else await sleep(500);
+    }
+    throw new Error(
+      "Claude Code's folder trust prompt did not show its answers on the screen.",
+    );
+  }
   // Below the input, Claude Code shows the shortcuts hint or, in place of it,
   // the permission mode.
   const inputReady =
@@ -251,7 +314,7 @@ async function claudeTerminal(projectId) {
       session.folderTrustReadFrom = trustPrompt.test(output)
         ? "output"
         : "screen";
-      await press("Enter");
+      await trustFolder();
       session.folderTrust = "accepted";
       return null;
     }
@@ -261,18 +324,19 @@ async function claudeTerminal(projectId) {
 
   const expected = question(
     plain(await terminalOutput()) + (await terminalScreen()),
+    step,
   );
   const before = (await terminalOutput()).length;
-  await terminal.click();
-  await page.keyboard.type(report.prompt, { delay: 10 });
+  await focusTerminal();
+  await page.keyboard.type(step.prompt, { delay: 10 });
   await sleep(500);
   const sentAt = Date.now();
   await page.keyboard.press("Enter");
-  report.modelTurns = 1;
+  report.modelTurns += 1;
   await until("Claude Code's reply", 240000, async () => {
     const output = plain((await terminalOutput()).slice(before)),
       screen = await terminalScreen();
-    if (output.includes(expected) || screen.includes(expected)) return true;
+    if (hasNumber(output, expected) || hasNumber(screen, expected)) return true;
     // An API error Claude Code has given up on stays on screen; while it
     // retries one, it says so.
     const apiError = /API Error: (\d{3})/.exec(screen);
@@ -288,8 +352,8 @@ async function claudeTerminal(projectId) {
       throw new Error("Claude Code exited instead of replying.");
     return false;
   });
-  report.replyObserved = true;
-  report.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
+  step.replyObserved = true;
+  step.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
   // Let the interface settle before the screenshot.
   let length = -1;
   await until(
@@ -306,7 +370,7 @@ async function claudeTerminal(projectId) {
   await screenshot("claude-reply");
 
   session.exit = { method: "/exit", code: null };
-  await terminal.click();
+  await focusTerminal();
   await page.keyboard.type("/exit", { delay: 20 });
   await sleep(500);
   await page.keyboard.press("Enter");
@@ -411,7 +475,7 @@ async function claudeTerminal(projectId) {
     (m) =>
       m.role === "assistant" &&
       m.provider === "claude" &&
-      m.text.includes(expected),
+      hasNumber(m.text, expected),
   );
   session.history = {
     matchingMessages: found.items.length,
@@ -434,13 +498,20 @@ async function claudeTerminal(projectId) {
     throw new Error(
       `The native session ended as ${session.run.status ?? "unknown"} with ${session.run.openTerminals} terminal(s) open.`,
     );
+  return { conversationId: replies[0].conversationId, reply: Number(expected) };
 }
 
-async function codexChat(projectId) {
-  const session = (report.session = {
+/**
+ * Codex through the structured chat: one prompt in a new chat or, after a
+ * handoff, in Claude Code's imported conversation with the reviewed context
+ * attached.
+ */
+async function codexChat(projectId, step, handoff = null) {
+  const session = (step.session = {
     account: null,
     model: null,
     modelsReported: null,
+    ...(handoff ? { handoff: null } : {}),
     run: null,
     approvals: [],
     usageRecords: null,
@@ -466,23 +537,78 @@ async function codexChat(projectId) {
   if (!model) throw new Error("Codex reported no model to select.");
   session.model = model;
 
-  await page.getByRole("button", { name: "+ New chat", exact: true }).click();
-  await appear(
-    "the new chat",
-    page.locator(".conversation-heading").filter({ hasText: "Chat 1" }),
+  let conversationId = handoff?.conversationId;
+  if (handoff) {
+    await page
+      .getByRole("combobox", { name: "Conversation" })
+      .selectOption(conversationId);
+    await appear(
+      "Claude Code's imported conversation",
+      page
+        .locator(".conversation-heading")
+        .filter({ hasText: "Imported claude" }),
+    );
+  } else {
+    await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+    await appear(
+      "the new chat",
+      page.locator(".conversation-heading").filter({ hasText: "Chat 1" }),
+    );
+    conversationId = (
+      await command({ type: "scope-snapshot", projectId })
+    ).conversations.find((c) => c.title === "Chat 1")?.id;
+    if (!conversationId) throw new Error("Topsl did not create the chat.");
+  }
+  const expected = question(
+    await page.locator("main").innerText(),
+    step,
+    handoff?.reply ?? null,
   );
-  const conversationId = (
-    await command({ type: "scope-snapshot", projectId })
-  ).conversations.find((c) => c.title === "Chat 1")?.id;
-  if (!conversationId) throw new Error("Topsl did not create the chat.");
-  const expected = question(await page.locator("main").innerText());
-  await page.getByRole("textbox", { name: "Message" }).fill(report.prompt);
+  await page.getByRole("textbox", { name: "Message" }).fill(step.prompt);
+  if (handoff) {
+    // The context is reviewed in full before it is attached, and it has to
+    // carry Claude Code's reply.
+    await page
+      .getByRole("button", { name: "Prepare handoff", exact: true })
+      .click();
+    const review = page.getByRole("dialog", { name: "Handoff to codex" });
+    await appear("the handoff to review", review);
+    const text = await review.locator("pre.snapshot").innerText();
+    const sections = text.split(/^(?=## )/m).slice(1);
+    session.handoff = {
+      snapshotHash: (
+        await review.getByText(/^Snapshot SHA-256:/).innerText()
+      ).replace(/^Snapshot SHA-256:\s*/, ""),
+      characters: text.length,
+      messages: sections.length,
+      claudeReplies: sections.filter(
+        (section) =>
+          section.startsWith("## assistant · claude · ") &&
+          hasNumber(section.slice(section.indexOf("\n")), handoff.reply),
+      ).length,
+    };
+    await screenshot("handoff-review");
+    if (!session.handoff.claudeReplies)
+      throw new Error("The handoff does not contain Claude Code's reply.");
+    await review
+      .getByRole("button", { name: "Attach to next Codex message" })
+      .click();
+    await appear(
+      "the attached handoff",
+      page.getByText("Reviewed handoff attached"),
+    );
+  }
   const composer = page.locator("form.composer");
   await composer.locator("select").nth(0).selectOption(model);
   await composer.locator("select").nth(1).selectOption("review");
+  // Topsl asks once before it sends the attached context.
+  if (handoff)
+    await app.evaluate(() => {
+      globalThis.__liveSession.policy.handoff = true;
+    });
   const sentAt = Date.now();
   await composer.getByRole("button", { name: /Send to Codex/ }).click();
-  report.modelTurns = 1;
+  report.modelTurns += 1;
 
   const runOf = (scope) =>
     scope.runs.find((r) => r.conversationId === conversationId);
@@ -512,25 +638,84 @@ async function codexChat(projectId) {
     conversationId,
     query: expected,
   });
-  report.replyObserved = found.items.some(
+  step.replyObserved = found.items.some(
     (m) =>
       m.role === "assistant" &&
       m.provider === "codex" &&
-      m.text.includes(expected),
+      hasNumber(m.text, expected),
   );
-  report.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
+  step.replySeconds = Math.round((Date.now() - sentAt) / 100) / 10;
   session.run = {
     status: run.status,
     model: run.model,
     runtimeVersion: run.runtimeVersion,
   };
   session.usageRecords = scope.usage.filter((u) => u.runId === run.id).length;
+  if (!step.replyObserved)
+    throw new Error("The Codex reply does not contain the answer.");
   await expect(page.locator(".conversation")).toContainText(expected, {
     timeout: 30000,
   });
   await screenshot("codex-reply");
-  if (!report.replyObserved)
-    throw new Error("The Codex reply does not contain the answer.");
+  if (!handoff) return;
+  // The one conversation keeps both providers' replies, each attributed.
+  const messages = (
+    await command({
+      type: "history-page",
+      projectId,
+      conversationId,
+      limit: 80,
+    })
+  ).items;
+  const replies = (provider, number) =>
+    messages.filter(
+      (m) =>
+        m.role === "assistant" &&
+        m.provider === provider &&
+        hasNumber(m.text, number),
+    ).length;
+  report.conversation = {
+    messages: messages.length,
+    claudeReplies: replies("claude", handoff.reply),
+    codexReplies: replies("codex", expected),
+  };
+  if (!report.conversation.claudeReplies || !report.conversation.codexReplies)
+    throw new Error("The conversation does not keep both providers' replies.");
+}
+
+/** Locates and trusts the provider's executable, as a user would. */
+async function locate(provider, step) {
+  const executable = options.executables[provider];
+  await app.evaluate(
+    (_electron, selection) =>
+      Object.assign(globalThis.__liveSession.policy, selection),
+    {
+      executable,
+      executableRealPath: await realpath(executable),
+      runtimeKind: provider === "claude" ? "Claude Code" : "Codex CLI",
+    },
+  );
+  const installation = await command({ type: "select-runtime" });
+  if (!installation?.appId?.includes(provider))
+    throw new Error("Topsl did not record the selected executable.");
+  await until("Topsl to list the executable", 30000, async () =>
+    (await command({ type: "state" })).installations.some(
+      (i) => i.id === installation.id,
+    ),
+  );
+  const trusted = await command({
+    type: "trust-installation",
+    id: installation.id,
+  });
+  if (!trusted?.trusted) throw new Error("Topsl did not trust the executable.");
+  step.executable = {
+    path: tilde(trusted.path),
+    realPath: tilde(trusted.realPath),
+    version: trusted.version,
+    owner: trusted.owner,
+    identity: trusted.identity,
+  };
+  return trusted;
 }
 
 try {
@@ -579,7 +764,12 @@ try {
                 : message === "Connect the experimental Codex integration?" &&
                     detail.includes(`\n${policy.executableRealPath}\n`)
                   ? "Connect"
-                  : null;
+                  : message === "Send the reviewed context to Codex?" &&
+                      policy.handoff
+                    ? "Send context"
+                    : null;
+        // The handoff approval covers the one message the script sends.
+        if (expected === "Send context") policy.handoff = false;
         const response = Math.max(0, buttons.indexOf(expected));
         dialogs.push({ dialog: message, answer: buttons[response] ?? null });
         return { response, checkboxChecked: false };
@@ -587,49 +777,43 @@ try {
     },
     {
       project: canonicalProject,
-      executable: options.executable,
-      executableRealPath: await realpath(options.executable),
-      runtimeKind: options.provider === "claude" ? "Claude Code" : "Codex CLI",
+      executable: null,
+      executableRealPath: null,
+      runtimeKind: null,
       transcript: null,
+      handoff: false,
     },
   );
 
-  const installation = await command({ type: "select-runtime" });
-  if (!installation?.appId?.includes(options.provider))
-    throw new Error("Topsl did not record the selected executable.");
-  await until("Topsl to list the executable", 30000, async () =>
-    (await command({ type: "state" })).installations.some(
-      (i) => i.id === installation.id,
-    ),
-  );
-  const trusted = await command({
-    type: "trust-installation",
-    id: installation.id,
-  });
-  if (!trusted?.trusted) throw new Error("Topsl did not trust the executable.");
-  report.executable = {
-    path: tilde(trusted.path),
-    realPath: tilde(trusted.realPath),
-    version: trusted.version,
-    owner: trusted.owner,
-    identity: trusted.identity,
-  };
-
-  await page.getByRole("button", { name: "Workspace", exact: true }).click();
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
-  await appear(
-    "the disposable project",
-    page.getByRole("heading", { name: "live-project", exact: true }),
-  );
-  const projectId = (await command({ type: "state" })).projects.find(
-    (p) => p.realPath === canonicalProject,
-  )?.id;
-  if (!projectId) throw new Error("Topsl did not add the disposable project.");
-  await page.locator(".runtime-bar select").first().selectOption(trusted.id);
-  if (options.provider === "claude") await claudeTerminal(projectId);
-  else await codexChat(projectId);
+  let projectId = null,
+    handoff = null;
+  for (const provider of providers) {
+    const step = both
+      ? (report.steps[provider] = {
+          route: routes[provider],
+          ...newStep(provider),
+        })
+      : report;
+    const trusted = await locate(provider, step);
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    if (!projectId) {
+      await page
+        .getByRole("button", { name: "+ Add project", exact: true })
+        .click();
+      await appear(
+        "the disposable project",
+        page.getByRole("heading", { name: "live-project", exact: true }),
+      );
+      projectId = (await command({ type: "state" })).projects.find(
+        (p) => p.realPath === canonicalProject,
+      )?.id;
+      if (!projectId)
+        throw new Error("Topsl did not add the disposable project.");
+    }
+    await page.locator(".runtime-bar select").first().selectOption(trusted.id);
+    if (provider === "claude") handoff = await claudeTerminal(projectId, step);
+    else await codexChat(projectId, step, both ? handoff : null);
+  }
   report.result = "passed";
 } catch (error) {
   report.failure = error instanceof Error ? error.message : String(error);
