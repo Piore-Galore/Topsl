@@ -469,3 +469,63 @@ The qualification was recorded in the disposable profile until 15 November 2026.
 - A Codex reviewer reads the build only through this reader, so the reviewer role stays blocked until a qualification passes `candidate-reader`.
 
 **Next.** Telling those explanations apart needs the reader probe to record what Codex reports about the call when it completes, which includes the content Codex received, and more of the reply. Another live run needs the owner's approval.
+
+### Reader diagnostics (16 October 2026)
+
+After the [live run of the rework](#live-run-of-the-rework-16-october-2026), the reader probe records what Codex reports about its call, so the next failure can show where the line was lost. It sends no model requests of its own. The owner chose to run the live qualification once more with it.
+
+**What changed**
+
+- When the reader's turn ends, the `candidate-reader` detail adds how Codex reported each tool call when the call completed, from the `dynamicToolCall` item in Codex's `item/completed` notification ([qualification.ts](../packages/providers/qualification.ts)). For each call it gives the tool, its status, its `success` flag, how many content items it held, how many characters of text they hold, and whether that text holds the probe's marker. The text itself stays in memory and is never recorded. A turn with no completed call says `Codex reported no completed tool call.`
+- The detail also lists the type of each item Codex completed in the turn, in order, so a reply that came after reasoning, a command or an earlier message shows up. It lists at most 5 calls and 20 items.
+- When a reply lacks what its probe asked for, the detail now quotes its first 400 characters, up from 160. This applies to `structured-turn` too.
+- The suite stays `codex-runtime-qualification/v4` with a budget of 3 turns. What passes or fails is unchanged, so a qualification recorded before this change stays valid.
+- `FIXTURE_READER=dropped` makes the stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) read the file, then report the call with no content items and reply without the line.
+
+**What it can tell apart.** If Codex reports the call with content that holds the marker, Codex received Topsl's answer intact, and a reply that still lacks the line points at what the model saw or did with it. If Codex reports the call without content, or with content that lacks the marker, the answer was lost or changed before Codex recorded it. Neither case shows the model's own input, which Codex does not report.
+
+**Validation** (16 October 2026, Linux x64 container)
+
+- `node scripts/test.mjs tests/runtime-qualification.test.ts`: 14 tests passed. Against the stand-in, the reader's detail gave Codex's report of the call in every mode, and the character count matched Topsl's answer. A read whose reply quoted the marker, and one whose reply left it out, were both reported as `completed (success: true)` with 1 content item that holds the marker. A partial read was reported as holding a content item without the marker. A read of another path and a call naming another turn were reported as `failed (success: false)`. When the stand-in never called the tool, the detail said Codex reported no completed tool call. `FIXTURE_READER=dropped` was reported as `completed (success: true) with no content items`, and it failed, since the reply did not quote the marker.
+- `npm run check` passed on `fe98a2e`: typecheck, 343 tests passed and 4 skipped in 41 files (the skipped ones need a real Codex or the stress flag), the release tests and the build.
+- After the build, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed on `fe98a2e`. Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns, and both roles were ready. The reader's detail ended `Codex reported read_range as completed (success: true) with 1 content item of 688 characters that holds the marker. Items completed: dynamicToolCall, agentMessage.`
+- The same command with a wrapper that sets `FIXTURE_READER=dropped` failed with `Not passed: candidate-reader.`, with the builder ready and the reviewer blocked by `candidate-reader-unavailable`. The detail said `Codex reported read_range as completed (success: true) with no content items. Items completed: dynamicToolCall, agentMessage. The reply began: "I could not read the file."`
+- `xvfb-run --auto-servernum npm run test:desktop` passed on `fe98a2e`, including the Codex-only team qualified against the stand-in through Topsl's screens.
+- No model requests were sent. Not established: what a live Codex reports about the reader's call. The owner chose one more live run of up to 3 turns to find out, recorded [below](#live-run-with-the-reader-diagnostics-16-october-2026) and in [Live provider sessions](Live_Provider_Sessions.md#results).
+
+### Live run with the reader diagnostics (16 October 2026)
+
+**How it ran**
+
+- The owner ran the command from [PR #15](https://github.com/Piore-Galore/Topsl/pull/15) in Terminal at `762dbec`, after `npm run build`, on the same Mac with the same Codex CLI 0.163.0 (npm package `@openai/codex`, signed in with ChatGPT). It was the one live run the owner chose with the reader diagnostics.
+- The stand-in check ran first and passed: Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns and no approval requests, both roles were ready, and the folder and the profile were deleted.
+- The script then approved the live qualification dialog once. Topsl started 3 turns with `gpt-6.1-sol`, and the suite took 41.8 seconds.
+
+**Result: passed**, with every probe passed, nothing untested and no approval requests.
+
+| Probe | Result | What Topsl recorded |
+|---|---|---|
+| `native-subscription` | Passed | A ChatGPT account, billing route `native-subscription` |
+| `structured-turn` | Passed | The turn completed and returned the marker |
+| `candidate-reader` | Passed | One `read_range` answer under the probe's grant returned the file's marker, the reader refused nothing, and the reply quoted the marker. Codex reported `read_range` as `completed (success: true)` with 1 content item of 688 characters that holds the marker. The turn completed a `userMessage`, the `dynamicToolCall`, a `reasoning` item and an `agentMessage`, in that order |
+| `fresh-session` | Passed | Two `thread/start` requests returned different threads |
+| `read-only` | Passed, policy-enforced | With no model turn, a command printing a word ran in Codex's sandbox under the read-only policy. The write into the workspace exited with code 1 (`topsl: <folder>/workspace/readonly-….txt: Operation not permitted`), and no file was created |
+| `workspace-write` | Passed, policy-enforced | Under the workspace-write policy, the write inside the workspace exited with code 0 and landed. The write to the outside folder exited with code 1 (`Operation not permitted`) and was denied |
+| `interrupt` | Passed | Topsl sent `turn/interrupt` after the reply's first streamed text, and the turn ended `interrupted` |
+| `process-lifecycle` | Passed | The child exited, its stdio closed, and its process group was gone |
+
+The qualification was recorded in the disposable profile until 15 November 2026. Topsl's readiness query and the guided setup both showed the builder and the reviewer ready. The folder in `~/Library/Caches` and the profile were deleted. The report and screenshots are in the owner's `test-results/live-session/qualify-2026-10-16T12-53-54-222Z`, and the stand-in check's in `qualify-2026-10-16T12-53-45-103Z`.
+
+**What it establishes**
+
+- For the first time, every probe of the suite passed with a live Codex. With Codex CLI 0.163.0 on that Mac and `gpt-6.1-sol`, one runtime qualified for both the builder and the reviewer role in the disposable profile. It does not qualify the owner's own Topsl, as [Live provider sessions](Live_Provider_Sessions.md#codex-runtime-qualification) explains.
+- Codex recorded the reader's answer with the marker in it: one content item of 688 characters, the same size as Topsl's answer to the same request in the stand-in runs. The model then quoted the marker.
+- The sandbox probes passed as in the run of the rework, and the interrupt passed for the third live run in a row.
+
+**What it does not show**
+
+- Why the replies in the [rerun](#live-rerun-16-october-2026) and the [run of the rework](#live-run-of-the-rework-16-october-2026) left out the line. Those runs came before the diagnostics, and this one passed, so the two explanations recorded there are still not told apart.
+- That a Codex reviewer will always use what the reader returns. In all four live runs the reader returned the marker, and the reply quoted it in two of them, so a real review can miss what it read in the same way.
+- How Codex treats a model's own command during a turn, as for the run before.
+
+**Next.** With step 6 passed, the plan's [decision 5](#decisions), a live builder-and-reviewer run with its own turn budget, is the owner's to make.

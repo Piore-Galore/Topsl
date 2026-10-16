@@ -15,7 +15,8 @@
 // another path instead; FIXTURE_READER=stray calls it naming another turn;
 // FIXTURE_READER=unquoted reads the file but does not quote it;
 // FIXTURE_READER=partial reads only its first bytes, then quotes the marker
-// from FIXTURE_READER_MARKER.
+// from FIXTURE_READER_MARKER; FIXTURE_READER=dropped reads the file, then
+// reports the call with no content items and does not quote it.
 // FIXTURE_REFUSE_TOOLS=1 refuses a thread/start that declares tools.
 // FIXTURE_LOG appends every frame, in both directions, to that file.
 // It answers --version and lists one model, so the desktop test can register,
@@ -163,7 +164,8 @@ async function readerTurn(threadId, turnId, file) {
         tool: "read_range",
         arguments: args,
         status: response.result?.success ? "completed" : "failed",
-        contentItems: response.result?.contentItems ?? null,
+        contentItems:
+          mode === "dropped" ? null : (response.result?.contentItems ?? null),
         success: response.result?.success ?? null,
         durationMs: 1,
       },
@@ -175,7 +177,7 @@ async function readerTurn(threadId, turnId, file) {
   } catch {
     // A refusal is plain text.
   }
-  if (mode === "unquoted") line = "";
+  if (mode === "unquoted" || mode === "dropped") line = "";
   if (mode === "partial") line = known();
   complete(threadId, turnId, line || fallback);
 }
