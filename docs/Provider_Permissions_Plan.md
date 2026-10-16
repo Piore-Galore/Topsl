@@ -168,7 +168,7 @@ Built from `main` at `4b9f93e` while the Codex workflows plan's last three pull 
 
 ### Step 2: terminal modes (16 October 2026)
 
-Built on step 1's branch, `claude/provider-permissions` at `a049284` (`main` at `c5d0700` merged in), because both steps change the same files. It merges after step 1.
+Built on step 1's branch, `claude/provider-permissions` at `a049284` (`main` at `c5d0700` merged in), because both steps change the same files, and step 1's branch at `795ddb1` was merged in later. It merges after step 1.
 
 **What changed**
 
@@ -190,3 +190,8 @@ Built on step 1's branch, `claude/provider-permissions` at `a049284` (`main` at 
 - Mutation check on `fea5b36`, each change made alone and reverted: with the table's arguments ignored, 5 of the 12 tests failed; without the runtime manager's confirmation check, 2; with bypass modes remembered, 1; with the review handoff not opening in Plan, 2.
 - `xvfb-run --auto-servernum npm run test:desktop` passed on `fea5b36`, including encrypted restart persistence. Through Topsl's screens, with the terminal stand-in registered as Claude Code: the **Terminal mode** menu lists Claude Code's modes with **Bypass** alone under **Advanced**; a terminal opened in Plan shows `--permission-mode plan` in the stand-in's output and in the terminal's heading (the test's screenshot is `test-results/terminal-mode.png`, which is not committed), and the menu returns to Plan; **Bypass** declined in Topsl's warning starts nothing; **Bypass** confirmed starts with `--permission-mode bypassPermissions`; both runs record what was passed, and the project still remembers Plan after the restart. These waits allow 30 seconds, as in step 1's follow-up.
 - No model requests were sent, and no real Claude Code or Codex was started in any mode. Not established: how each provider treats these modes under the owner's own settings, which step 4 covers. The service and desktop terminal tests use a shell wrapper and do not run on Windows, so there only the table tests run. macOS and Windows depend on CI.
+
+**Follow-up: Linux desktop test** (16 October 2026)
+
+- The [Linux desktop test failed](https://github.com/Piore-Galore/Topsl/actions/runs/38924561455/job/117052683380) on `1618a82` at **+ New chat**, in step 1's chat steps, before the terminal steps. The cause and step 1's fix are under [step 1](#step-1-approval-card-16-october-2026).
+- With step 1's branch merged in at `795ddb1`, `xvfb-run --auto-servernum npm run test:desktop` passed in the Linux x64 container, including the terminal steps and encrypted restart persistence.
