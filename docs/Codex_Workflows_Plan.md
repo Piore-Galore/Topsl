@@ -472,7 +472,7 @@ The qualification was recorded in the disposable profile until 15 November 2026.
 
 ### Reader diagnostics (16 October 2026)
 
-After the [live run of the rework](#live-run-of-the-rework-16-october-2026), the reader probe records what Codex reports about its call, so the next failure can show where the line was lost. It sends no model requests of its own. Whether to run the live qualification again is the owner's decision.
+After the [live run of the rework](#live-run-of-the-rework-16-october-2026), the reader probe records what Codex reports about its call, so the next failure can show where the line was lost. It sends no model requests of its own. The owner chose to run the live qualification once more with it.
 
 **What changed**
 
@@ -483,3 +483,12 @@ After the [live run of the rework](#live-run-of-the-rework-16-october-2026), the
 - `FIXTURE_READER=dropped` makes the stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) read the file, then report the call with no content items and reply without the line.
 
 **What it can tell apart.** If Codex reports the call with content that holds the marker, Codex received Topsl's answer intact, and a reply that still lacks the line points at what the model saw or did with it. If Codex reports the call without content, or with content that lacks the marker, the answer was lost or changed before Codex recorded it. Neither case shows the model's own input, which Codex does not report.
+
+**Validation** (16 October 2026, Linux x64 container)
+
+- `node scripts/test.mjs tests/runtime-qualification.test.ts`: 14 tests passed. Against the stand-in, the reader's detail gave Codex's report of the call in every mode, and the character count matched Topsl's answer. A read whose reply quoted the marker, and one whose reply left it out, were both reported as `completed (success: true)` with 1 content item that holds the marker. A partial read was reported as holding a content item without the marker. A read of another path and a call naming another turn were reported as `failed (success: false)`. When the stand-in never called the tool, the detail said Codex reported no completed tool call. `FIXTURE_READER=dropped` was reported as `completed (success: true) with no content items`, and it failed, since the reply did not quote the marker.
+- `npm run check` passed on `fe98a2e`: typecheck, 343 tests passed and 4 skipped in 41 files (the skipped ones need a real Codex or the stress flag), the release tests and the build.
+- After the build, `xvfb-run --auto-servernum node scripts/live-session.mjs --qualify --codex "$PWD/tests/fixtures/live-session/codex-qualify.cjs"` passed on `fe98a2e`. Topsl recorded `codex-runtime-qualification/v4` with every probe passed in 3 turns, and both roles were ready. The reader's detail ended `Codex reported read_range as completed (success: true) with 1 content item of 688 characters that holds the marker. Items completed: dynamicToolCall, agentMessage.`
+- The same command with a wrapper that sets `FIXTURE_READER=dropped` failed with `Not passed: candidate-reader.`, with the builder ready and the reviewer blocked by `candidate-reader-unavailable`. The detail said `Codex reported read_range as completed (success: true) with no content items. Items completed: dynamicToolCall, agentMessage. The reply began: "I could not read the file."`
+- `xvfb-run --auto-servernum npm run test:desktop` passed on `fe98a2e`, including the Codex-only team qualified against the stand-in through Topsl's screens.
+- No model requests were sent. Not established: what a live Codex reports about the reader's call. The owner chose one more live run of up to 3 turns to find out, and its result will be recorded here and in [Live provider sessions](Live_Provider_Sessions.md#results).
