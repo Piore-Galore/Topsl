@@ -232,3 +232,65 @@ Built from `main` at `791a618`, after steps 1 and 2 were merged.
 - On `616d648`, the [Windows x64 job failed](https://github.com/Piore-Galore/Topsl/actions/runs/38945662639/job/117132620534) in `a chat that continues in another preset asks for it when its thread resumes`: Topsl refused the second chat with `This workspace already has a native session or writer lease.` The job's first attempt had failed in `npm ci`, before any test ran.
 - Cause: Topsl records a run as `completed` before it has confirmed that Codex's process exited, and the workspace stays leased until then. On Windows, that check also looks up the process's descendants, which can take seconds, as [codex-tools.test.ts](../tests/codex-tools.test.ts) already notes. The test waited only for the first run's status, so it started the second chat too soon. With the stand-in changed locally to exit 3 seconds after Topsl stops it, the unchanged test failed in the Linux container with the same error.
 - Fix: the test's helper also waits until the runtime manager has no active run, as the tools tests do ([chat-presets.test.ts](../tests/chat-presets.test.ts)). With the same slow exit, the 20 tests passed, and they passed again without it. No product code changed.
+
+### Step 4: live check (16 October 2026)
+
+Built on step 3's branch at `616d648`, because the chat check uses step 3's presets, and step 3's branch at `6731abe` was merged in later. It merges after step 3. This part adds what the live runs need; the runs themselves are started by the owner in Terminal on their Mac.
+
+**What changed**
+
+- [`scripts/live-session.mjs`](../scripts/live-session.mjs) has three new options, described in [Live provider sessions](Live_Provider_Sessions.md#run-it):
+  - `--mode <id>` chooses the mode in **Terminal mode** before the native terminal opens, for Claude Code or Codex. The script takes only a mode the menu offers outside **Advanced**, so it cannot open **Bypass** or **Full access**. The report keeps the mode chosen, the mode and arguments Topsl recorded on the run, and the mode the provider showed. In **Plan**, **Accept edits** or **Auto**, the run stops before the prompt unless Claude Code shows that mode below its input.
+  - `--terminal` opens Codex in the native terminal instead of a chat: one prompt, then Ctrl+C twice. The script answers none of Codex's startup questions (whether to trust the folder, to update Codex or to switch to a new model), because Codex saves the answer in its own settings or updates itself; it stops before the prompt instead. It does not send `/quit`, which would reach the model as a second prompt if Codex did not know the command. The strings in Codex CLI 0.163.0's Linux executable include those questions and the composer's `Ask Codex to do anything`, `Waiting for startup` and `context left`, which the script waits for. How Codex's screen looks in Topsl's terminal, and whether it asks a question when started with a mode's flags, is not established.
+  - `--preset <id>` sends the chat in that preset, and the script stops before the prompt when the note under **Permissions** says it is not available. The report keeps the preset, the approval policy Topsl asked for and what Codex reported, also when Topsl stopped the run over a difference. A run that ended before Codex started its turn adds nothing to `modelTurns`.
+- The [Claude stand-in](../tests/fixtures/live-session/claude.cjs) shows the mode it was started with below its input, and a new [Codex terminal stand-in](../tests/fixtures/live-session/codex-terminal.cjs) stands in for Codex's own terminal interface. A file in each one's settings folder makes it show another mode or ask a startup question.
+
+**Validation** (16 October 2026, Linux x64 container, `d4b0a63` on step 3's branch at `616d648`)
+
+- `npm run check` passed on `d4b0a63`: typecheck, 386 tests passed and 4 skipped in 44 files, the release tests and the build. This step changes no product code. The scan for bypass flags in [terminal-modes.test.ts](../tests/terminal-modes.test.ts) also covers the script, which names none.
+- After `npm run build`, the script ran each case below once with stand-ins, under `xvfb-run --auto-servernum` with Node 22. The live check's three runs passed:
+  - Claude Code in **Plan**: Topsl recorded `plan` with `--permission-mode plan` on the run, the stand-in showed `plan mode on`, the sum came back, `/exit` ended the session with code 0 and the run was `completed`.
+  - Codex in the native terminal in **Read-only**: Topsl recorded `read-only` with `-s read-only -a on-request`, the stand-in's screen showed `read-only` in the arguments it printed, the sum came back, Ctrl+C twice ended the session with code 0 and the run was `completed`.
+  - A Codex chat in **Workspace edits · ask when needed**: Topsl asked for `on-request` and recorded what the stand-in reported, `on-request` with reviewer `user` and sandbox `workspaceWrite`, and the run was `completed` with the sum.
+- Also passed: Claude Code in **Provider default**, with no arguments and the shortcuts hint, and in **Accept edits**; Codex's terminal in **Provider default**; chats in **Read-only review** and **Workspace edits · ask**, each recording what the stand-in reported; both providers with the handoff, in the default mode and preset and with Claude Code in **Plan** and Codex in **Ask when needed**; and the qualification stand-in, in 3 turns.
+- Each of these stopped before any prompt, with `modelTurns` 0:
+  - in **Plan**, a Claude stand-in that showed the shortcuts hint instead, as if its settings had overridden the mode: `Claude Code showed "? for shortcuts" below its input instead of "plan mode on", so no prompt was sent.`;
+  - `--mode bypass` and `--mode full-access`, which the menu offers only under **Advanced**, for example `Topsl's Terminal mode menu offers provider-default, manual, plan, accept-edits, auto, dont-ask outside Advanced, not bypass.`;
+  - the Codex terminal stand-in asking whether to trust the folder, to update Codex or to switch to a new model, and showing its sign-in screen. Each time, Topsl had recorded **Read-only** on the run;
+  - `--preset edit-never` on the unqualified stand-in, with Topsl's reason after `Workspace edits · no asking is not available for this runtime, so no prompt was sent.`, and a preset id Topsl does not offer;
+  - a chat stand-in that reported approval policy `never` when asked for `on-request`. Topsl failed the run with `Codex did not adopt the permissions Topsl asked for (approval policy: Topsl asked for on-request, Codex reported never). Topsl stopped before sending the prompt.`, and the report kept what the stand-in reported.
+- Eight option combinations the script does not take, such as `--terminal` with Claude Code, `--mode` with a Codex chat or `--preset` with a Codex terminal, each stopped with the usage message.
+- No model requests were sent, and no real Claude Code or Codex was started. Not established: anything about the live providers, which the three live runs cover. In particular, the text the script waits for in Codex's terminal comes from Codex 0.163.0's executable, not from a run, so a live Codex may look different in Topsl's terminal, or ask a startup question when started with **Read-only**'s flags.
+
+**Live runs** (17 October 2026, the owner's Mac, macOS on Apple silicon `darwin/arm64 27.0.0`, at `69f7867`)
+
+The owner ran the three stand-in runs and then each live run once, in Terminal, with no retries. The stand-ins passed as on Linux. [Live provider sessions](Live_Provider_Sessions.md#results) has each run's details.
+
+- Codex CLI 0.163.0 in the native terminal in **Read-only**: **passed**. Topsl started Codex with `-s read-only -a on-request` and recorded **Read-only** on the run. Codex asked no startup question, the sum came back after 20.8 seconds, and Ctrl+C twice ended the session with code 0. Codex's screen did not show its sandbox mode, so only the arguments Topsl passed show it.
+- A Codex chat in **Workspace edits · ask when needed**: **passed**. `gpt-6.1-sol` answered after 14.3 seconds. Topsl asked for `on-request`, and Codex reported `on-request` with reviewer `user` and sandbox `workspaceWrite`. No approval was requested.
+- Claude Code 2.1.300 in the native terminal in **Plan**: **stopped before the prompt**, with no model turn. Topsl started Claude Code with `--permission-mode plan` and recorded **Plan** on the run. After the folder trust prompt, Claude Code asked **Make auto mode your default permission mode?** in place of its input, as the screenshot shows, and the script stopped because the screen showed no permission mode. The question was not answered.
+
+**Follow-up: Claude Code's startup question** (17 October 2026)
+
+The Claude Code run showed a flaw in the script. It took Claude Code as ready once its output or its screen held the line below the input. The screen showed no such line, so the output must still have held one after the question replaced it on the screen. In **Plan**, the mode check then stopped the run, but in **Provider default**, which has no mode to check, the script would have typed the prompt and pressed Enter into the question, answering it for the owner. `85d0c09` changes the script and the Claude stand-in, and no product code:
+
+- Claude Code is ready only when Topsl's terminal screen shows the line below its input.
+- A question about Claude Code's default permission mode stops the run before the prompt in every mode, and the report's `startupQuestion` names it. The script still answers none of Claude Code's questions except folder trust, because Claude Code saves the answer in its own settings.
+- A `stand-in-question` file in the Claude stand-in's settings folder makes it draw its input and the line below it, then replace them with that question. It saves an answer, if it gets one, to `stand-in-question-answer`.
+
+**Validation** (17 October 2026, Linux x64 container, `85d0c09`, stand-ins under `xvfb-run --auto-servernum` with Node 22)
+
+- With the stand-in asking the question, the script stopped before the prompt in **Plan**, in **Provider default** and with both providers, each time with `Claude Code asked whether to change its default permission mode before accepting a prompt. The script answers none of Claude Code's startup questions except folder trust, so no prompt was sent.` The report's `startupQuestion` named the question, `modelTurns` was 0 and the stand-in saved no answer.
+- The script from `69f7867`, with the same stand-in, failed in **Plan** with the Mac's message, `Claude Code showed no permission mode below its input instead of "plan mode on", so no prompt was sent.` In **Provider default** it typed its prompt and pressed Enter into the question, and the stand-in saved the answer `Yes, set auto mode as my default permission mode`. The run then failed with `Timed out waiting for Claude Code's reply.`, with one model turn counted.
+- The step's other stand-in runs, listed in the validation above, gave the same results as at `d4b0a63`, and the eight option combinations the script does not take stopped with its usage message.
+- `npm run check` passed on `85d0c09`: typecheck, 386 tests passed and 4 skipped in 44 files, the release tests and the build.
+
+**Live reruns of Claude Code in Plan** (17 October 2026, the owner's Mac, macOS on Apple silicon `darwin/arm64 27.0.0`, at `72e3d37`)
+
+Twice, the owner ran the Claude stand-in in **Plan** and then Claude Code in **Plan** once, in Terminal. The stand-in passed both times. [Live provider sessions](Live_Provider_Sessions.md#results) has each run's details.
+
+- First rerun: **stopped before the prompt**, as `85d0c09` intends. After the folder trust prompt, Claude Code asked about its default permission mode again. The script stopped with the message above, and the report's `startupQuestion` named the question. Nothing answered it, and no model turn was counted.
+- The question is about the owner's own Claude Code settings, so neither Topsl nor the script answers it. The owner answered it in Claude Code in Terminal, outside Topsl. Claude Code keeps the answer in its own settings, and this record does not keep it.
+- Second rerun: **passed**. Topsl started Claude Code 2.1.300 with `--permission-mode plan` and recorded **Plan** on the run. Claude Code asked no question besides folder trust, showed `plan mode on` below its input and answered with the sum after 4.6 seconds. `/exit` ended the session with code 0, the run was `completed`, and the imported transcript had the reply.
+
+All three of the live check's runs have now passed: Codex's terminal in **Read-only** and a Codex chat in **Ask when needed** at `69f7867`, and Claude Code in **Plan** at `72e3d37`. Each pass covers that Mac, those provider versions and one prompt. The prompt asks for a sum, which needs no tool, so no run tested what a mode or preset allows or blocks ([What a pass does not establish](Live_Provider_Sessions.md#what-a-pass-does-not-establish)).

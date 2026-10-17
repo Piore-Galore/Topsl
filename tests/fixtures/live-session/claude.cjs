@@ -9,6 +9,16 @@
 // If CLAUDE_CONFIG_DIR has a stand-in-api-error file, it shows an API error
 // with the status in that file instead of the answer. (Topsl passes only a few
 // environment variables to the native terminal, CLAUDE_CONFIG_DIR among them.)
+// Started with --permission-mode, it shows that mode below the input in place
+// of the shortcuts hint, as Claude Code does; a stand-in-mode file there names
+// another mode to show, as if Claude Code's settings had overridden the one
+// passed.
+// A stand-in-question file there makes it ask, once the folder is trusted,
+// whether to make auto mode the default permission mode, as Claude Code 2.1.300
+// did in a live run. It first draws the input and the line below it, with
+// spaces, then replaces them with the question, so that line stays in the raw
+// output but leaves the screen. An answer is saved to stand-in-question-answer
+// there, as Claude Code saves it in its settings.
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -47,8 +57,20 @@ const record = (role, text) =>
       cwd,
     }) + "\n",
   );
-const prompt = () =>
-  out("\r\n────────\r\n> \r\n────────\r\n  ? for shortcuts\r\n");
+const modeAt = process.argv.indexOf("--permission-mode");
+const modeFile = path.join(process.env.CLAUDE_CONFIG_DIR, "stand-in-mode");
+const mode = fs.existsSync(modeFile)
+  ? fs.readFileSync(modeFile, "utf8").trim()
+  : modeAt >= 0
+    ? process.argv[modeAt + 1]
+    : null;
+const hint =
+  {
+    plan: "⏸ plan mode on (shift+tab to cycle)",
+    acceptEdits: "⏵⏵ accept edits on (shift+tab to cycle)",
+    auto: "⏵⏵ auto mode on (shift+tab to cycle)",
+  }[mode] ?? "? for shortcuts";
+const prompt = () => out(`\r\n────────\r\n> \r\n────────\r\n  ${hint}\r\n`);
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 const answers = ["No, exit", "Yes, I trust this folder"];
@@ -60,6 +82,20 @@ const trustPrompt = () =>
         (answer, index) => ` ${index === selected ? "❯" : " "} ${answer}\r\n`,
       )
       .join("")}\r\n Enter to confirm · Esc to cancel\r\n`,
+  );
+const choices = [
+  "Yes, set auto mode as my default permission mode",
+  "No, keep my current default",
+];
+let choice = 0;
+let asking = fs.existsSync(
+  path.join(process.env.CLAUDE_CONFIG_DIR, "stand-in-question"),
+);
+const question = () =>
+  out(
+    `\x1b[2J\x1b[HMake auto mode your default permission mode?\r\n\r\n Auto mode lets Claude handle permission prompts automatically.\r\n\r\n${choices
+      .map((text, index) => ` ${index === choice ? "❯" : " "} ${text}\r\n`)
+      .join("")}`,
   );
 let trusted = false;
 let line = "";
@@ -75,6 +111,25 @@ process.stdin.on("data", (chunk) => {
     } else if (input.includes("\r")) {
       if (answers[selected] === "No, exit") process.exit(1);
       trusted = true;
+      if (asking) {
+        process.stdout.write(`\r\n────────\r\n> \r\n────────\r\n  ${hint}\r\n`);
+        question();
+      } else prompt();
+    }
+    return;
+  }
+  if (asking) {
+    // Other keys are ignored while the question is shown.
+    if (/\x1b[[O][AB]/.test(input)) {
+      choice = 1 - choice;
+      question();
+    } else if (input.includes("\r")) {
+      fs.writeFileSync(
+        path.join(process.env.CLAUDE_CONFIG_DIR, "stand-in-question-answer"),
+        choices[choice],
+      );
+      asking = false;
+      out("\x1b[2J\x1b[H");
       prompt();
     }
     return;
