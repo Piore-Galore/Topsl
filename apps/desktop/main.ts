@@ -36,6 +36,7 @@ import {
 } from "../../packages/domain/auto-accept";
 import {
   claudeStepMode,
+  claudeTranscriptConfirmation,
   type ClaudeStep,
 } from "../../packages/domain/claude-steps";
 import { isWithin, runFile } from "../../packages/platform/system";
@@ -87,8 +88,9 @@ let state: AppState = {
   terminals: [],
   terminalModes: [],
   chatPresetBlocks: [],
-  // The setting is stored in the vault too; until it opens, nothing runs.
+  // The settings are stored in the vault too; until it opens, nothing runs.
   autoAccept: "off",
+  claudeTranscriptRead: false,
   serviceError: null,
   configurationWrites: [],
 };
@@ -708,6 +710,13 @@ async function dispatch(command: Command): Promise<any> {
     )
       return null;
     trusted.confirmedAutoAccept = command.level;
+  }
+  if (command.type === "claude-transcript-read-set" && command.enabled) {
+    // Asked before the service sees the request; the renderer cannot answer it.
+    const text = claudeTranscriptConfirmation();
+    if (!(await confirm(text.message, text.detail, text.affirmative)))
+      return null;
+    trusted.confirmedTranscriptRead = true;
   }
   if (command.type === "approval-decide") {
     const approval: Approval = await request({

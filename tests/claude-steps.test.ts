@@ -38,6 +38,7 @@ import type {
 } from "../packages/workflows/builder-reviewer";
 import type { CandidateSnapshot } from "../packages/workflows/candidates";
 import { createTaskContext } from "../packages/context/packages";
+import { claudeTranscriptShapes } from "../packages/history/claude-transcript";
 import { fixture } from "./helpers";
 
 class FixtureCodex extends CodexAdapter {
@@ -59,11 +60,14 @@ const argumentsLine = /Stand-in arguments: (\[[^\r\n]*\])\r*\n/,
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const services: Service[] = [],
-  directories: string[] = [];
+  directories: string[] = [],
+  configDirectory = process.env.CLAUDE_CONFIG_DIR;
 afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
+  if (configDirectory === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = configDirectory;
 });
 
 /**
@@ -263,6 +267,16 @@ async function setup() {
       source: "owner-paste",
       claudeCodeStopped: true,
     });
+  /** Hands back the step for Topsl to read Claude's reply from its transcript. */
+  const fromTranscript = (id: string) =>
+    service.command({
+      type: "claude-step-return",
+      projectId: "p",
+      workflowId: id,
+      stepId: step(id)!.id,
+      source: "claude-transcript",
+      claudeCodeStopped: true,
+    });
   /** A Codex chat edit turn in the project, which a held folder refuses. */
   const chatEdit = () => {
     const conversation: Conversation = {
@@ -298,6 +312,7 @@ async function setup() {
     open,
     exit,
     handBack,
+    fromTranscript,
     chatEdit,
     /** Closes Topsl and starts it again on the same profile. */
     restart: async () => {
@@ -309,6 +324,44 @@ async function setup() {
 }
 const review = (candidateRevision: string, findings: unknown[] = []) =>
   JSON.stringify({ candidateRevision, summary: "Reviewed.", findings });
+/**
+ * Claude Code's transcript of a step's session in `config`, in the record
+ * shapes Topsl recognizes: the pasted instructions, Claude's reply, and the
+ * owner's /exit.
+ */
+async function writeTranscript(
+  config: string,
+  session: { sessionId: string; cwd: string; instructions: string },
+  reply: string,
+): Promise<string> {
+  const folder = path.join(
+      config,
+      "projects",
+      session.cwd.replace(/[^a-zA-Z0-9]/g, "-"),
+    ),
+    file = path.join(folder, `${session.sessionId}.jsonl`),
+    record = (type: "user" | "assistant", content: unknown) =>
+      JSON.stringify({
+        parentUuid: null,
+        isSidechain: false,
+        userType: "external",
+        cwd: session.cwd,
+        sessionId: session.sessionId,
+        version: "2.1.300",
+        type,
+        message: { role: type, content },
+        uuid: uid(),
+        timestamp: now(),
+      }) + "\n";
+  await mkdir(folder, { recursive: true });
+  await writeFile(
+    file,
+    record("user", session.instructions) +
+      record("assistant", [{ type: "text", text: reply }]) +
+      record("user", "<command-name>/exit</command-name>"),
+  );
+  return file;
+}
 
 describe("a Claude Code step's mode", () => {
   test("a review opens only in Plan, and a build in Bypass only while auto-accept is Everything", () => {
@@ -433,7 +486,10 @@ describe.skipIf(process.platform === "win32")(
       expect(result.outcome).toBe("taken");
       await f.stage(id, "checking");
       const ended = f.service.store.get<ClaudeStep>("claude-step", waiting.id)!;
-      expect(ended).toMatchObject({ state: "returned" });
+      expect(ended).toMatchObject({
+        state: "returned",
+        replySource: "owner-paste",
+      });
       expect(ended.stoppedAt).toBeTruthy();
       expect(
         f.service.store.get<ClaudeStepReply>(
@@ -953,3 +1009,215 @@ test("a terminal step's instructions carry no file excerpts, and say where the f
   }
   f.store.close();
 });
+
+describe.skipIf(process.platform === "win32")(
+  "a Claude Code step's reply from its session's transcript",
+  () => {
+    test("off until the owner confirms it in Topsl's dialog; then a build's reply comes from its session's transcript", async () => {
+      const f = await setup(),
+        config = path.join(f.directory, "claude-config");
+      process.env.CLAUDE_CONFIG_DIR = config;
+      expect(f.service.state().claudeTranscriptRead).toBe(false);
+      const id = await f.run("claude", "codex");
+      await f.stage(id, "building");
+      const waiting = f.step(id)!,
+        opened = await f.open(id);
+      await writeFile(
+        path.join(f.project, "file.ts"),
+        "export const value = 2;\n",
+      );
+      await f.exit(opened.terminalId);
+      const handBack = (fields: Record<string, unknown>) =>
+        f.service.command({
+          type: "claude-step-return",
+          projectId: "p",
+          workflowId: id,
+          stepId: waiting.id,
+          claudeCodeStopped: true,
+          ...fields,
+        } as any);
+      // Off: the owner pastes the reply.
+      await expect(f.fromTranscript(id)).rejects.toThrow(
+        "Turn on reading Claude Code's transcripts in Settings, or paste Claude's final reply.",
+      );
+      await expect(handBack({ source: "owner-paste" })).rejects.toThrow(
+        "Paste Claude's final reply to hand it back.",
+      );
+      await expect(
+        handBack({ source: "claude-transcript", reply: "Changed it." }),
+      ).rejects.toThrow(
+        "A reply Topsl reads from the transcript comes without pasted text.",
+      );
+      // Turning it on takes the confirmation only Topsl's own dialog gives.
+      await expect(
+        f.service.command({
+          type: "claude-transcript-read-set",
+          enabled: true,
+        }),
+      ).rejects.toThrow(
+        "Turning on the transcript read needs your confirmation in Topsl's own dialog.",
+      );
+      expect(f.service.state().claudeTranscriptRead).toBe(false);
+      await f.service.command(
+        { type: "claude-transcript-read-set", enabled: true },
+        { confirmedTranscriptRead: true },
+      );
+      expect(f.service.state().claudeTranscriptRead).toBe(true);
+
+      // Before Claude Code wrote its transcript, the step keeps waiting and says why.
+      const missing = await f.fromTranscript(id);
+      expect(missing.outcome).toBe("unread");
+      expect(missing.detail).toContain(
+        `Topsl took no reply from the session's transcript: Claude Code has no projects folder Topsl can read at ${path.join(config, "projects")}.`,
+      );
+      expect(missing.detail).toContain("Paste Claude's final reply instead");
+      expect(f.step(id)).toMatchObject({
+        state: "waiting",
+        replyId: null,
+        detail: missing.detail,
+      });
+      expect(f.workflow(id).stage).toBe("building");
+      expect(
+        f.service.store.list<ClaudeStepReply>("claude-step-reply"),
+      ).toEqual([]);
+
+      const file = await writeTranscript(
+        config,
+        opened,
+        "Changed the value to two.",
+      );
+      const result = await f.fromTranscript(id);
+      expect(result.outcome).toBe("taken");
+      await f.stage(id, "checking");
+      const ended = f.service.store.get<ClaudeStep>("claude-step", waiting.id)!;
+      expect(ended).toMatchObject({
+        state: "returned",
+        replySource: "claude-transcript",
+      });
+      expect(
+        f.service.store.get<ClaudeStepReply>(
+          "claude-step-reply",
+          ended.replyId!,
+        ),
+      ).toMatchObject({
+        source: "claude-transcript",
+        text: "Changed the value to two.",
+        outcome: "taken",
+        transcript: {
+          shapes: claudeTranscriptShapes,
+          sessionId: opened.sessionId,
+          file: await realpath(file),
+          records: 3,
+        },
+      });
+      // Topsl captured the folder as the build, as after a pasted reply.
+      const state = f.workflow(id);
+      expect(
+        f.service.store.get<CandidateSnapshot>("candidate", state.candidateId)!
+          .authorAttemptId,
+      ).toBe(waiting.attemptId);
+      // Turning it off takes no confirmation.
+      await f.service.command({
+        type: "claude-transcript-read-set",
+        enabled: false,
+      });
+      expect(f.service.state().claudeTranscriptRead).toBe(false);
+    });
+
+    test("a review's reply comes from its latest session, in its copy, and one without valid findings keeps it waiting", async () => {
+      const f = await setup(),
+        config = path.join(f.directory, "claude-config");
+      process.env.CLAUDE_CONFIG_DIR = config;
+      await f.service.command(
+        { type: "claude-transcript-read-set", enabled: true },
+        { confirmedTranscriptRead: true },
+      );
+      const id = await f.run("codex", "claude");
+      await vi.waitFor(() => expect(f.step(id)?.role).toBe("reviewer"), {
+        timeout: 10_000,
+      });
+      const waiting = f.step(id)!,
+        first = await f.open(id);
+      await f.exit(first.terminalId);
+      // A transcript of the session in the project folder is not the review's.
+      const outside = await writeTranscript(
+        config,
+        { ...first, cwd: f.project },
+        review(waiting.candidateRevision),
+      );
+      let result = await f.fromTranscript(id);
+      expect(result.outcome).toBe("unread");
+      expect(result.detail).toContain(
+        "Line 1 of the transcript names a folder other than the step's.",
+      );
+      await rm(outside);
+      // In the copy, a finding on a line the build does not have is invalid.
+      await writeTranscript(
+        config,
+        first,
+        review(waiting.candidateRevision, [
+          {
+            title: "Wrong",
+            severity: "high",
+            file: "file.ts",
+            line: 9,
+            behavior: "b",
+            evidence: "e",
+          },
+        ]),
+      );
+      result = await f.fromTranscript(id);
+      expect(result.outcome).toBe("invalid");
+      expect(result.detail).toContain('finding 1 names "file.ts" line 9');
+      expect(f.step(id)).toMatchObject({ state: "waiting", replyId: null });
+      expect(
+        f.service.store.list<ClaudeStepReply>("claude-step-reply"),
+      ).toEqual([
+        expect.objectContaining({
+          outcome: "invalid",
+          source: "claude-transcript",
+          transcript: expect.objectContaining({ sessionId: first.sessionId }),
+        }),
+      ]);
+      // Opened again, only the new session counts.
+      const second = await f.open(id);
+      await f.exit(second.terminalId);
+      const older =
+        f.service.store.list<ClaudeStepReply>("claude-step-reply")[0]
+          .transcript!;
+      const take = (fields: object) =>
+        f.service.workflows.returnClaudeStep({
+          projectId: "p",
+          workflowId: id,
+          stepId: waiting.id,
+          reply: review(waiting.candidateRevision),
+          source: "claude-transcript",
+          ...fields,
+        });
+      await expect(take({ transcript: older })).rejects.toThrow(
+        "Claude Code opened again for this step while Topsl read the transcript. Hand the reply back again.",
+      );
+      await expect(take({})).rejects.toThrow(
+        "A reply from the transcript comes with the transcript Topsl read, and only then.",
+      );
+      result = await f.fromTranscript(id);
+      expect(result.outcome).toBe("unread");
+      expect(result.detail).toContain(
+        `Claude Code has no transcript for session ${second.sessionId}`,
+      );
+      await writeTranscript(config, second, review(waiting.candidateRevision));
+      result = await f.fromTranscript(id);
+      expect(result.outcome).toBe("taken");
+      await f.stage(id, "checking");
+      expect(f.workflow(id).reviewArtifactId).toBeTruthy();
+      const ended = f.service.store.get<ClaudeStep>("claude-step", waiting.id)!;
+      expect(ended.replySource).toBe("claude-transcript");
+      expect(
+        f.service.store.get<ClaudeStepReply>(
+          "claude-step-reply",
+          ended.replyId!,
+        )!.transcript!.sessionId,
+      ).toBe(second.sessionId);
+    });
+  },
+);

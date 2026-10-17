@@ -13,7 +13,9 @@ import {
   type ClaudeStep,
   type ClaudeStepOpen,
   type ClaudeStepReply,
+  type ClaudeStepReplySource,
   type ClaudeStepRole,
+  type ClaudeTranscriptSource,
 } from "../domain/claude-steps";
 import type { Store } from "../persistence/store";
 import type {
@@ -198,6 +200,14 @@ export function claudeStepHolding(
     )
       return step;
   return undefined;
+}
+
+/** The step's latest opening that started Claude Code. */
+function latestOpened(step: ClaudeStep): ClaudeStepOpen | undefined {
+  return step.opens
+    .filter((open) => open.state === "opened")
+    .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
+    .at(-1);
 }
 
 /** Why a reply is not a review of this build, or null when it is one. */
@@ -1099,6 +1109,7 @@ export class BuilderReviewerWorkflow {
         state: "waiting",
         opens: [],
         replyId: null,
+        replySource: null,
         stoppedAt: null,
         detail: "Waiting for the owner to open Claude Code.",
         createdAt: at,
@@ -1149,6 +1160,38 @@ export class BuilderReviewerWorkflow {
         step.contextPackageId,
       ).content,
     };
+  }
+  /** The step's latest session that opened, whose transcript a hand-back reads. */
+  claudeStepSession(
+    projectId: string,
+    workflowId: string,
+    stepId: string,
+  ): { step: ClaudeStep; open: ClaudeStepOpen } {
+    const step = this.step(projectId, workflowId, stepId);
+    if (step.state !== "waiting")
+      throw new Error("This Claude Code step has already ended.");
+    const open = latestOpened(step);
+    if (!open)
+      throw new Error(
+        "Open Claude Code for this step in Topsl's terminal before handing back its reply.",
+      );
+    return { step, open };
+  }
+  /** Says why Topsl took no reply from the transcript. The step keeps waiting. */
+  claudeStepUnread(stepId: string, reason: string): string {
+    const detail = `Topsl took no reply from the session's transcript: ${reason} Paste Claude's final reply instead, or open Claude Code again.`;
+    this.repository.store.transaction(() => {
+      const step = this.repository.require<ClaudeStep>("claude-step", stepId);
+      if (step.state !== "waiting")
+        throw new Error("This Claude Code step has already ended.");
+      this.repository.store.save(
+        "claude-step",
+        { ...step, detail, updatedAt: now() },
+        "claude-step.transcript-unread",
+      );
+    });
+    this.changed();
+    return detail;
   }
   /** Records an opening before Claude Code starts, so its session id is kept either way. */
   claudeStepOpening(
@@ -1222,7 +1265,7 @@ export class BuilderReviewerWorkflow {
     outcome: "stale" | "cancelled",
     detail: string,
     stopped: boolean,
-    replyId: string | null = null,
+    reply: ClaudeStepReply | null = null,
   ): Promise<void> {
     this.repository.store.transaction(() => {
       this.repository.store.save(
@@ -1230,7 +1273,8 @@ export class BuilderReviewerWorkflow {
         {
           ...step,
           state: outcome,
-          replyId,
+          replyId: reply?.id ?? null,
+          replySource: reply?.source ?? null,
           stoppedAt: stopped ? now() : null,
           detail,
           updatedAt: now(),
@@ -1274,17 +1318,20 @@ export class BuilderReviewerWorkflow {
   }
   /**
    * The owner hands back Claude's final reply, having confirmed that Claude
-   * Code stopped. A review's reply must name this build, and each finding a
-   * text line in it; otherwise the step keeps waiting and says why. A reply
-   * that comes after the specification or the build changed, or after the
-   * workflow moved on, is kept as evidence only.
+   * Code stopped: pasted, or read from the latest session's transcript. A
+   * review's reply must name this build, and each finding a text line in it;
+   * otherwise the step keeps waiting and says why. A reply that comes after
+   * the specification or the build changed, or after the workflow moved on,
+   * is kept as evidence only.
    */
   async returnClaudeStep(input: {
     projectId: string;
     workflowId: string;
     stepId: string;
     reply: string;
-    source: "owner-paste";
+    source: ClaudeStepReplySource;
+    /** The transcript a reply from one was read from. */
+    transcript?: ClaudeTranscriptSource;
   }): Promise<{
     outcome: ClaudeStepReply["outcome"];
     detail: string;
@@ -1299,9 +1346,18 @@ export class BuilderReviewerWorkflow {
       if (step.state !== "waiting")
         throw new Error("This Claude Code step has already ended.");
       // Each stage records the session it ran in.
-      if (!step.opens.some((open) => open.state === "opened"))
+      const latest = latestOpened(step);
+      if (!latest)
         throw new Error(
           "Open Claude Code for this step in Topsl's terminal before handing back its reply.",
+        );
+      if ((input.source === "claude-transcript") !== !!input.transcript)
+        throw new Error(
+          "A reply from the transcript comes with the transcript Topsl read, and only then.",
+        );
+      if (input.transcript && input.transcript.sessionId !== latest.sessionId)
+        throw new Error(
+          "Claude Code opened again for this step while Topsl read the transcript. Hand the reply back again.",
         );
       let state = this.state(id);
       const record = (
@@ -1314,6 +1370,7 @@ export class BuilderReviewerWorkflow {
           workflowId: id,
           stepId: step.id,
           source: input.source,
+          ...(input.transcript ? { transcript: input.transcript } : {}),
           text: input.reply,
           hash: hash(input.reply),
           outcome,
@@ -1333,7 +1390,7 @@ export class BuilderReviewerWorkflow {
           "stale",
           detail,
           true,
-          record("stale", detail).id,
+          record("stale", detail),
         );
         this.changed();
         return { outcome: "stale", detail, state };
@@ -1360,7 +1417,7 @@ export class BuilderReviewerWorkflow {
           "stale",
           detail,
           true,
-          record("stale", detail).id,
+          record("stale", detail),
         );
         state = this.save(
           state,
@@ -1413,6 +1470,7 @@ export class BuilderReviewerWorkflow {
             ...step,
             state: "returned",
             replyId: reply.id,
+            replySource: reply.source,
             stoppedAt: now(),
             detail,
             updatedAt: now(),
