@@ -3,17 +3,42 @@ import {
   workflowDraftInput,
   type WorkflowDraftInput,
 } from "../../../../packages/domain/workflow-drafts";
+import { teamRole } from "../../../../packages/domain/claude-steps";
 import { ScopedReadFence } from "../state/scoped";
 const steps = ["Goal", "Team", "Environment", "Scope", "Review and start"];
+// The four teams of the Claude workflows plan. A Claude role is a Claude Code
+// step the owner runs in Topsl's terminal.
 const teams = [
   ["codex", "codex"],
-  ["codex", "claude"],
   ["claude", "codex"],
+  ["codex", "claude"],
+  ["claude", "claude"],
 ] as const;
 const providerName = (provider: string) =>
   provider === "codex" ? "Codex" : "Claude";
 export const codexPairingNote =
   "Codex reviews Codex in a fresh, read-only session. This is not an independent second model.";
+export const claudePairingNote =
+  "Claude reviews Claude in a fresh Claude Code session. This is not an independent second model.";
+/** The note for a team whose reviewer is the builder's own tool, if it is one. */
+export const pairingNote = (builder: string, reviewer: string) =>
+  builder !== reviewer
+    ? null
+    : builder === "codex"
+      ? codexPairingNote
+      : claudePairingNote;
+export function PairingNote({
+  builder,
+  reviewer,
+  className,
+}: {
+  builder: string;
+  reviewer: string;
+  className?: string;
+}) {
+  const note = pairingNote(builder, reviewer);
+  return note ? <p className={className}>{note}</p> : null;
+}
 const lines = (value: string) =>
   value
     .split("\n")
@@ -141,7 +166,18 @@ export function WorkflowSetup({
   }, [projectId]);
   const builderProvider = draft.builder,
     reviewerProvider = draft.reviewer,
-    codexPair = builderProvider === "codex" && reviewerProvider === "codex";
+    builderRole = teamRole(
+      builderProvider,
+      draft.builderRuntime,
+      draft.builderModel,
+      draft.builderEffort,
+    ),
+    reviewerRole = teamRole(
+      reviewerProvider,
+      draft.reviewerRuntime,
+      draft.reviewerModel,
+      draft.reviewerEffort,
+    );
   const choices = (provider: string) =>
     runtimes.filter(
       (runtime) =>
@@ -186,22 +222,12 @@ export function WorkflowSetup({
       type: "workflow-readiness-query" as const,
       projectId,
       builder:
-        draft.builderRuntime && draft.builderModel
-          ? {
-              provider: builderProvider,
-              installationId: draft.builderRuntime,
-              model: draft.builderModel,
-              ...(draft.builderEffort ? { effort: draft.builderEffort } : {}),
-            }
+        builderRole.installationId && builderRole.model
+          ? builderRole
           : undefined,
       reviewer:
-        draft.reviewerRuntime && draft.reviewerModel
-          ? {
-              provider: reviewerProvider,
-              installationId: draft.reviewerRuntime,
-              model: draft.reviewerModel,
-              ...(draft.reviewerEffort ? { effort: draft.reviewerEffort } : {}),
-            }
+        reviewerRole.installationId && reviewerRole.model
+          ? reviewerRole
           : undefined,
     };
   }
@@ -272,8 +298,8 @@ export function WorkflowSetup({
     reviewer &&
     draft.objective.trim() &&
     lines(draft.criteria).length &&
-    draft.builderModel &&
-    draft.reviewerModel &&
+    builderRole.model &&
+    reviewerRole.model &&
     draft.checkExecutable &&
     selectedEnvironment &&
     !selectedEnvironment.blockers.length
@@ -298,18 +324,8 @@ export function WorkflowSetup({
       objective: draft.objective,
       acceptanceCriteria: lines(draft.criteria),
       interfaces: lines(draft.interfaces),
-      builder: {
-        provider: builderProvider,
-        installationId: draft.builderRuntime,
-        model: draft.builderModel,
-        ...(draft.builderEffort ? { effort: draft.builderEffort } : {}),
-      },
-      reviewer: {
-        provider: reviewerProvider,
-        installationId: draft.reviewerRuntime,
-        model: draft.reviewerModel,
-        ...(draft.reviewerEffort ? { effort: draft.reviewerEffort } : {}),
-      },
+      builder: builderRole,
+      reviewer: reviewerRole,
       selectedPaths: draft.selectedPaths.trim()
         ? lines(draft.selectedPaths)
         : undefined,
@@ -382,11 +398,71 @@ export function WorkflowSetup({
       : runtimeId === draft.builderRuntime
         ? (readiness?.roles?.builder?.models ?? [])
         : (readiness?.roles?.reviewer?.models ?? []));
+  function runtimeSelect(
+    role: "builder" | "reviewer",
+    provider: string,
+    runtimeKey: "builderRuntime" | "reviewerRuntime",
+  ) {
+    return (
+      <label>
+        Selected {role} runtime
+        <select
+          value={draft[runtimeKey]}
+          onChange={(event) => update({ [runtimeKey]: event.target.value })}
+        >
+          <option value="">Choose a trusted runtime</option>
+          {choices(provider).map((runtime) => (
+            <option
+              key={runtime.installation.id}
+              value={runtime.installation.id}
+            >
+              {runtime.installation.version ?? "Version unknown"} ·{" "}
+              {runtime.installation.realPath}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+  /** A Claude role: a Claude Code step, with no model, effort or qualification. */
+  function claudeFields(role: "builder" | "reviewer") {
+    const runtimeKey =
+      role === "builder" ? "builderRuntime" : "reviewerRuntime";
+    return (
+      <fieldset>
+        <legend>
+          {role === "builder" ? "Builder" : "Reviewer"} · Claude Code
+        </legend>
+        {runtimeSelect(role, "claude", runtimeKey)}
+        <p>
+          {role === "builder"
+            ? "Each build or repair is a step you run in Claude Code, in Topsl's terminal in the project folder."
+            : "Each review is a step you run in Claude Code, in Topsl's terminal in Plan, in a read-only copy of the build."}{" "}
+          Topsl copies the step's instructions, and after Claude Code exits you
+          hand back Claude's final reply. Claude Code runs under your own login,
+          and Topsl answers none of its questions.
+        </p>
+        <p>
+          Topsl passes it no model or effort, so Claude Code's own settings
+          decide. Claude's structured route stays gated.
+        </p>
+        {readiness?.roles?.[role] && (
+          <p>
+            {readiness.roles[role].ready
+              ? "Role requirements currently satisfied"
+              : "Role blocked"}{" "}
+            · a Claude Code step needs only a trusted Claude Code installation.
+          </p>
+        )}
+      </fieldset>
+    );
+  }
   function roleFields(
     role: "builder" | "reviewer",
     provider: string,
     selected: any,
   ) {
+    if (provider === "claude") return claudeFields(role);
     const runtimeKey =
         role === "builder" ? "builderRuntime" : "reviewerRuntime",
       modelKey = role === "builder" ? "builderModel" : "reviewerModel";
@@ -399,24 +475,7 @@ export function WorkflowSetup({
         <legend>
           {role === "builder" ? "Builder" : "Reviewer"} · {provider}
         </legend>
-        <label>
-          Selected {role} runtime
-          <select
-            value={draft[runtimeKey]}
-            onChange={(event) => update({ [runtimeKey]: event.target.value })}
-          >
-            <option value="">Choose a trusted runtime</option>
-            {choices(provider).map((runtime) => (
-              <option
-                key={runtime.installation.id}
-                value={runtime.installation.id}
-              >
-                {runtime.installation.version ?? "Version unknown"} ·{" "}
-                {runtime.installation.realPath}
-              </option>
-            ))}
-          </select>
-        </label>
+        {runtimeSelect(role, provider, runtimeKey)}
         <button
           type="button"
           disabled={!selected || !!pending}
@@ -677,22 +736,18 @@ export function WorkflowSetup({
                   update({ builder, reviewer });
                 }}
               >
-                {[
-                  ...teams,
-                  // A saved pairing the presets do not offer stays visible.
-                  ...(teams.some(
-                    ([b, r]) => b === builderProvider && r === reviewerProvider,
-                  )
-                    ? []
-                    : [[builderProvider, reviewerProvider] as const]),
-                ].map(([b, r]) => (
+                {teams.map(([b, r]) => (
                   <option key={`${b}:${r}`} value={`${b}:${r}`}>
                     {providerName(b)} builds · {providerName(r)} reviews
                   </option>
                 ))}
               </select>
             </label>
-            {codexPair && <p className="full-width">{codexPairingNote}</p>}
+            <PairingNote
+              builder={builderProvider}
+              reviewer={reviewerProvider}
+              className="full-width"
+            />
             {roleFields("builder", builderProvider, builder)}
             {roleFields("reviewer", reviewerProvider, reviewer)}
           </>
@@ -849,12 +904,23 @@ export function WorkflowSetup({
               {builderProvider} builder / {reviewerProvider} reviewer · at most
               two repair rounds.
             </p>
-            {codexPair && <p>{codexPairingNote}</p>}
+            <PairingNote
+              builder={builderProvider}
+              reviewer={reviewerProvider}
+            />
             <dl>
               <dt>Builder requested model</dt>
-              <dd>{draft.builderModel || "Unselected"}</dd>
+              <dd>
+                {builderProvider === "claude"
+                  ? "Set in Claude Code · a step you run in Topsl's terminal"
+                  : draft.builderModel || "Unselected"}
+              </dd>
               <dt>Reviewer requested model</dt>
-              <dd>{draft.reviewerModel || "Unselected"}</dd>
+              <dd>
+                {reviewerProvider === "claude"
+                  ? "Set in Claude Code · a step you run in Topsl's terminal"
+                  : draft.reviewerModel || "Unselected"}
+              </dd>
               <dt>Environment</dt>
               <dd>
                 {selectedEnvironment?.label ?? "Not selected"} · preparation

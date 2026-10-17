@@ -16,6 +16,41 @@ export type ClaudeStepRole = "builder" | "reviewer" | "repair";
 /** The model a Claude step's role names: Topsl passes none, so Claude Code's own setting decides. */
 export const claudeStepModel = "set-in-claude-code";
 
+/** What each role's step is called on Topsl's screens. */
+export const claudeStepNoun = {
+  builder: "build",
+  reviewer: "review",
+  repair: "repair",
+} as const satisfies Record<ClaudeStepRole, string>;
+
+/**
+ * A workflow role as the setup screen captures it. A Claude role is a Claude
+ * Code step, to which Topsl passes no model or effort; the screens never offer
+ * Claude's structured route, which stays gated.
+ */
+export function teamRole(
+  provider: "codex" | "claude",
+  installationId: string,
+  model: string,
+  effort?: string,
+):
+  | {
+      provider: "codex";
+      installationId: string;
+      model: string;
+      effort?: string;
+    }
+  | {
+      provider: "claude";
+      installationId: string;
+      model: typeof claudeStepModel;
+      route: "terminal";
+    } {
+  return provider === "claude"
+    ? { provider, installationId, model: claudeStepModel, route: "terminal" }
+    : { provider, installationId, model, ...(effort ? { effort } : {}) };
+}
+
 /** One opening of Claude Code for a step, each with a new session id. */
 export interface ClaudeStepOpen {
   sessionId: string;
@@ -82,6 +117,32 @@ export interface ClaudeTranscriptSource {
   records: number;
   /** The id of the last record of Claude's reply. */
   replyRecord: string;
+}
+
+/** How a reply's source reads on Topsl's screens and in its acceptance dialog. */
+export const claudeReplySourceText = {
+  "owner-paste": "pasted by you",
+  "claude-transcript": "read from its session's transcript",
+} as const satisfies Record<ClaudeStepReplySource, string>;
+
+/** A step whose reply Topsl took, as acceptance names it. */
+export interface ClaudeStepProvenance {
+  role: ClaudeStepRole;
+  replySource: ClaudeStepReplySource;
+  /** The session the reply came from: the step's latest opening. */
+  sessionId: string | null;
+  mode: TerminalModeId | null;
+  runtimeVersion: string | null;
+}
+
+/** One step's line in Topsl's acceptance dialog. */
+export function claudeStepProvenanceText(step: ClaudeStepProvenance): string {
+  return [
+    `Claude Code ${claudeStepNoun[step.role]}: reply ${claudeReplySourceText[step.replySource]}`,
+    `session ${step.sessionId ?? "unknown"}`,
+    step.mode ? terminalMode("claude", step.mode).label : "mode unknown",
+    `Claude Code ${step.runtimeVersion ?? "version unknown"}`,
+  ].join(" · ");
 }
 
 /** A reply the owner handed back, kept whether or not Topsl took it. */

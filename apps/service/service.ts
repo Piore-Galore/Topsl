@@ -4,6 +4,7 @@ import { Store } from "../../packages/persistence/store";
 import { AssistedWorkflows } from "../../packages/workflows/assisted";
 import {
   capabilitySatisfies,
+  evaluateStepReadiness,
   type RuntimeSelection,
 } from "../../packages/providers/readiness";
 import { WorkflowDrafts } from "../../packages/workflows/drafts";
@@ -574,21 +575,21 @@ export class Service {
     reviewer?: RuntimeSelection;
   }) {
     this.require<Project>("project", input.projectId);
+    // A Claude Code step is ready when its installation is trusted; the owner
+    // signs in and runs it in Claude Code.
+    const readiness = (
+      selection: RuntimeSelection | undefined,
+      role: "implementer" | "reviewer",
+    ) => {
+      if (!selection) return null;
+      const installation = this.installation(selection.installationId);
+      return selection.route === "terminal"
+        ? evaluateStepReadiness({ role, selection, installation })
+        : this.runtime.readiness(installation, selection, role);
+    };
     const roles = {
-      builder: input.builder
-        ? this.runtime.readiness(
-            this.installation(input.builder.installationId),
-            input.builder,
-            "implementer",
-          )
-        : null,
-      reviewer: input.reviewer
-        ? this.runtime.readiness(
-            this.installation(input.reviewer.installationId),
-            input.reviewer,
-            "reviewer",
-          )
-        : null,
+      builder: readiness(input.builder, "implementer"),
+      reviewer: readiness(input.reviewer, "reviewer"),
     };
     return this.observed(input.projectId, () => ({
       mode: "coordinated" as const,
@@ -764,18 +765,21 @@ export class Service {
       this.openingSteps.delete(input.stepId);
     }
   }
+  /** The terminal Topsl opened for this step that still runs, if one does. */
+  private claudeStepTerminal(step: ClaudeStep): string | null {
+    return (
+      this.runtime
+        .terminalState()
+        .find((terminal) =>
+          step.opens.some((open) => open.terminalId === terminal.id),
+        )?.id ?? null
+    );
+  }
   /** Refuses while Claude Code runs, or is opening, in a terminal Topsl opened for this step. */
   private assertClaudeStepExited(stepId: string) {
     const step = this.store.get<ClaudeStep>("claude-step", stepId);
     if (!step) return;
-    if (
-      this.openingSteps.has(stepId) ||
-      this.runtime
-        .terminalState()
-        .some((terminal) =>
-          step.opens.some((open) => open.terminalId === terminal.id),
-        )
-    )
+    if (this.openingSteps.has(stepId) || this.claudeStepTerminal(step))
       throw new Error(
         "Claude Code is still running in Topsl's terminal for this step. Exit it, then confirm that it stopped.",
       );
@@ -1170,6 +1174,8 @@ export class Service {
         checks: this.workflows.list(state.projectId).find((w) => w.id === id)
           ?.checksStatus,
         isolation: state.isolation,
+        // Acceptance shows where each Claude Code step's reply came from.
+        claudeSteps: this.workflows.claudeStepProvenance(id),
       };
     }
     return this.require(kind, id);
@@ -2092,6 +2098,10 @@ export class Service {
                 `workflow-specification:${workflow.id}`,
               )?.revisionId ?? workflow.specificationId,
             approvals: this.awaitingApproval(workflow.activeAttemptId),
+            // Where the workflow page shows the Claude Code it waits on.
+            claudeStepTerminalId: workflow.claudeStep
+              ? this.claudeStepTerminal(workflow.claudeStep)
+              : null,
           })),
           runtimes: this.store
             .list<Installation>("installation")

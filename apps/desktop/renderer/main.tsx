@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import type {
   AppState,
   Approval,
@@ -14,13 +12,17 @@ import type {
   Run,
 } from "../../../packages/domain/types";
 import type { Command } from "../../../packages/domain/commands";
-import "@xterm/xterm/css/xterm.css";
 import "./style.css";
 import { Projects } from "./projects";
 import { Coordination, type ProjectView } from "./coordination";
 import { ActionButton, ActionContext } from "./components/action-button";
 import { Transcript } from "./components/transcript";
 import { ApprovalCard } from "./components/approval-card";
+import {
+  recordTerminalOutput,
+  TerminalPanel,
+  terminalOutput,
+} from "./components/terminal-panel";
 import {
   findTerminalMode,
   startingTerminalMode,
@@ -81,83 +83,6 @@ function Modal({
       </div>
       {children}
     </dialog>
-  );
-}
-function TerminalPanel({
-  id,
-  initial,
-  mode,
-  close,
-}: {
-  id: string;
-  initial: string;
-  /** The permission mode Topsl asked for, if any. */
-  mode: string | null;
-  close: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const terminal = new Terminal({
-      fontFamily: "Menlo, Consolas, monospace",
-      fontSize: 13,
-      cursorBlink: true,
-      scrollback: 3000,
-      theme: {
-        background: "#202421",
-        foreground: "#e7e7dd",
-        cursor: "#db9b66",
-      },
-    });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
-    terminal.open(ref.current!);
-    fit.fit();
-    terminal.write(initial);
-    terminal.parser.registerOscHandler(52, () => true); // Native output cannot write the system clipboard.
-    const input = terminal.onData((data) => {
-      void window.topsl
-        .command({ type: "terminal-input", id, data })
-        .catch(() => {});
-    });
-    const resize = new ResizeObserver(() => {
-      fit.fit();
-      void window.topsl
-        .command({
-          type: "terminal-resize",
-          id,
-          cols: Math.max(20, terminal.cols),
-          rows: Math.max(5, terminal.rows),
-        })
-        .catch(() => {});
-    });
-    resize.observe(ref.current!);
-    const unsubscribe = window.topsl.subscribe((e) => {
-      if (e.type === "terminal" && e.data.id === id)
-        terminal.write(e.data.data);
-    });
-    return () => {
-      unsubscribe();
-      resize.disconnect();
-      input.dispose();
-      terminal.dispose();
-    };
-  }, [id]);
-  return (
-    <section className="terminal-panel">
-      <div className="terminal-heading">
-        <span>
-          Native session{mode ? ` · ${mode}` : ""} · native permissions and
-          billing · output stays in memory
-        </span>
-        <ActionButton onClick={close}>Close session</ActionButton>
-      </div>
-      <div
-        className="terminal"
-        ref={ref}
-        role="region"
-        aria-label="Native terminal"
-      />
-    </section>
   );
 }
 function Badge({
@@ -237,7 +162,6 @@ function App() {
   const [terminalModeChoice, setTerminalModeChoice] =
     useState<TerminalModeId | null>(null);
   useEffect(() => setTerminalModeChoice(null), [projectId, installationId]);
-  const terminalBuffers = useRef(new Map<string, string>());
   async function act(command: Command): Promise<any> {
     const scopeTicket = scopeGeneration.current;
     const scoped = "projectId" in command || "conversationId" in command;
@@ -307,13 +231,8 @@ function App() {
     return window.topsl.subscribe((event) => {
       if (event.type === "state") setState(event.data);
       if (event.type === "error") setNotice(event.data);
-      if (event.type === "terminal") {
-        const { id, data } = event.data;
-        terminalBuffers.current.set(
-          id,
-          ((terminalBuffers.current.get(id) ?? "") + data).slice(-262144),
-        );
-      }
+      if (event.type === "terminal")
+        recordTerminalOutput(event.data.id, event.data.data);
     });
   }, []);
   useEffect(() => {
@@ -1243,7 +1162,7 @@ function App() {
                       <TerminalPanel
                         key={terminalId}
                         id={terminalId}
-                        initial={terminalBuffers.current.get(terminalId) ?? ""}
+                        initial={terminalOutput(terminalId)}
                         mode={(() => {
                           const open = (
                             scopedData?.terminals ?? state.terminals

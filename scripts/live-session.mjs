@@ -37,8 +37,8 @@ import { createDemoFixture } from "./round2-demo-fixture.mjs";
 
 const usage =
   "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--terminal] [--mode id] [--preset id] [--qualify] [--workflow codex-codex] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --terminal with --codex alone opens Codex in Topsl's native terminal instead of a chat. --mode picks the terminal's mode and --preset the Codex chat's preset. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt. --workflow codex-codex with --codex alone runs the qualification, then one build and one review of a seeded project.";
-// The teams --workflow can run. The Claude teams follow once Topsl can run a
-// Claude step in a workflow.
+// The teams --workflow can run. The Claude teams follow with the Claude
+// workflows plan's step 5.
 const workflowTeams = ["codex-codex"];
 const options = {
   executables: {},

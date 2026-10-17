@@ -712,6 +712,31 @@ describe.skipIf(process.platform === "win32")(
           text: "Changed the value.",
         }),
       ]);
+      // The workflow page lists the reply and why it was not used, and
+      // acceptance names no step whose reply was only kept as evidence.
+      expect(
+        (
+          await f.service.command({
+            type: "builder-reviewer-query",
+            projectId: "p",
+          })
+        ).workflows.find((workflow: { id: string }) => workflow.id === id)
+          .claudeSteps,
+      ).toEqual([
+        expect.objectContaining({
+          state: "stale",
+          replySource: "owner-paste",
+          replies: [
+            expect.objectContaining({
+              outcome: "stale",
+              detail: result.detail,
+            }),
+          ],
+        }),
+      ]);
+      expect(
+        (f.service.review("workflow-acceptance", id) as any).claudeSteps,
+      ).toEqual([]);
       // The stale build holds the folder no longer.
       await expect(f.chatEdit()).resolves.toBeTruthy();
     });
@@ -1218,6 +1243,413 @@ describe.skipIf(process.platform === "win32")(
           ended.replyId!,
         )!.transcript!.sessionId,
       ).toBe(second.sessionId);
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "Claude Code steps as Topsl's screens show them",
+  () => {
+    test("a Claude Code step needs only a trusted Claude Code installation, whatever the structured rollout says", async () => {
+      const f = await setup();
+      const claude: RoleAssignment = {
+          provider: "claude",
+          installationId: "claude",
+          model: claudeStepModel,
+          route: "terminal",
+        },
+        codex: RoleAssignment = {
+          provider: "codex",
+          installationId: f.installation.id,
+          model: "fixture-requested",
+        };
+      const query = (builder: RoleAssignment, reviewer: RoleAssignment) =>
+        f.service.command({
+          type: "workflow-readiness-query",
+          projectId: "p",
+          builder,
+          reviewer,
+        });
+      // The service's rollout turns off structured routes, which a Claude
+      // Code step does not use.
+      f.service.store.put("preference", {
+        id: "round-2-rollout",
+        disabled: ["qualified-structured-routes"],
+      });
+      const steps = await query(claude, claude);
+      expect(steps.runnable).toBe(true);
+      expect(steps.roles.builder).toMatchObject({
+        role: "implementer",
+        ready: true,
+        blockers: [],
+        capabilitiesUsed: [],
+      });
+      expect(steps.roles.reviewer).toMatchObject({
+        role: "reviewer",
+        ready: true,
+        blockers: [],
+      });
+      expect(steps.roles.builder.warnings).toEqual([
+        "Claude Code runs this step in Topsl's terminal under your login. Signing in, its permission prompts and its billing stay in Claude Code.",
+      ]);
+      const mixed = await query(codex, claude);
+      expect(mixed.runnable).toBe(false);
+      expect(
+        mixed.roles.builder.blockers.map((b: { code: string }) => b.code),
+      ).toContain("route-disabled");
+      expect(mixed.roles.reviewer.ready).toBe(true);
+      // An untrusted Claude Code, or a terminal role on Codex, is not ready.
+      expect(
+        (await query({ ...claude, installationId: f.installation.id }, claude))
+          .roles.builder.blockers,
+      ).toEqual([
+        expect.objectContaining({ code: "terminal-route-claude-only" }),
+      ]);
+      f.service.store.put("installation", { ...f.claude, trusted: false });
+      const untrusted = await query(claude, claude);
+      expect(untrusted.runnable).toBe(false);
+      expect(untrusted.roles.reviewer.blockers).toEqual([
+        expect.objectContaining({
+          code: "executable-untrusted",
+          action: "review-executable",
+        }),
+      ]);
+    });
+
+    test("the workflow page sees the step's terminal while it runs, every opening and reply, and where each taken reply came from", async () => {
+      const f = await setup(),
+        config = path.join(f.directory, "claude-config");
+      process.env.CLAUDE_CONFIG_DIR = config;
+      await f.service.command(
+        { type: "claude-transcript-read-set", enabled: true },
+        { confirmedTranscriptRead: true },
+      );
+      const item = async (id: string) =>
+        (
+          await f.service.command({
+            type: "builder-reviewer-query",
+            projectId: "p",
+          })
+        ).workflows.find((workflow: { id: string }) => workflow.id === id);
+      const id = await f.run("claude", "claude");
+      await f.stage(id, "building");
+      expect(await item(id)).toMatchObject({
+        claudeStep: { role: "builder", state: "waiting" },
+        claudeStepTerminalId: null,
+        claudeSteps: [
+          expect.objectContaining({ role: "builder", opens: [], replies: [] }),
+        ],
+        claudeProvenance: [],
+      });
+      const build = await f.open(id, { permissionMode: "accept-edits" });
+      expect((await item(id)).claudeStepTerminalId).toBe(build.terminalId);
+      await writeFile(
+        path.join(f.project, "file.ts"),
+        "export const value = 2;\n",
+      );
+      await f.exit(build.terminalId);
+      expect((await item(id)).claudeStepTerminalId).toBeNull();
+      expect((await f.handBack(id, "Changed the value to two.")).outcome).toBe(
+        "taken",
+      );
+      await vi.waitFor(() => expect(f.step(id)?.role).toBe("reviewer"), {
+        timeout: 10_000,
+      });
+      const reviewStep = f.step(id)!,
+        reviewing = await f.open(id);
+      await f.exit(reviewing.terminalId);
+      expect((await f.handBack(id, "Looks right.")).outcome).toBe("invalid");
+      await writeTranscript(
+        config,
+        reviewing,
+        review(reviewStep.candidateRevision),
+      );
+      expect((await f.fromTranscript(id)).outcome).toBe("taken");
+      await f.stage(id, "checking");
+      const view = await item(id);
+      expect(
+        view.claudeSteps.map((step: ClaudeStep) => [
+          step.role,
+          step.state,
+          step.replySource,
+        ]),
+      ).toEqual([
+        ["builder", "returned", "owner-paste"],
+        ["reviewer", "returned", "claude-transcript"],
+      ]);
+      expect(view.claudeSteps[0].opens).toEqual([
+        expect.objectContaining({
+          sessionId: build.sessionId,
+          mode: "accept-edits",
+          runtimeVersion: "2.1.300",
+          state: "opened",
+        }),
+      ]);
+      expect(
+        view.claudeSteps[1].replies.map((reply: ClaudeStepReply) => [
+          reply.source,
+          reply.outcome,
+        ]),
+      ).toEqual([
+        ["owner-paste", "invalid"],
+        ["claude-transcript", "taken"],
+      ]);
+      expect(view.claudeSteps[1].replies[0].detail).toContain(
+        "Topsl did not take this reply",
+      );
+      // The page gets each reply's outcome and reason, not its text.
+      for (const step of view.claudeSteps)
+        for (const reply of step.replies)
+          expect(Object.keys(reply).sort()).toEqual([
+            "detail",
+            "id",
+            "outcome",
+            "receivedAt",
+            "source",
+          ]);
+      const provenance = [
+        {
+          role: "builder",
+          replySource: "owner-paste",
+          sessionId: build.sessionId,
+          mode: "accept-edits",
+          runtimeVersion: "2.1.300",
+        },
+        {
+          role: "reviewer",
+          replySource: "claude-transcript",
+          sessionId: reviewing.sessionId,
+          mode: "plan",
+          runtimeVersion: "2.1.300",
+        },
+      ];
+      expect(view.claudeProvenance).toEqual(provenance);
+      // Acceptance names the same steps.
+      expect(
+        (f.service.review("workflow-acceptance", id) as any).claudeSteps,
+      ).toEqual(provenance);
+      // A review read from the transcript is Topsl's own observation of it.
+      expect(
+        f.service.store.get<any>("artifact", f.workflow(id).reviewArtifactId!)
+          .provenance,
+      ).toMatchObject({
+        level: "source-observation",
+        source: "claude-code-terminal:transcript",
+      });
+    });
+
+    test("a pasted Claude Code review is recorded as the owner's, and a Codex review as Codex's", async () => {
+      const f = await setup();
+      const pasted = await f.run("codex", "claude");
+      await vi.waitFor(() => expect(f.step(pasted)?.role).toBe("reviewer"), {
+        timeout: 10_000,
+      });
+      const waiting = f.step(pasted)!,
+        opened = await f.open(pasted);
+      await f.exit(opened.terminalId);
+      expect(
+        (await f.handBack(pasted, review(waiting.candidateRevision))).outcome,
+      ).toBe("taken");
+      await f.stage(pasted, "checking");
+      expect(
+        f.service.store.get<any>(
+          "artifact",
+          f.workflow(pasted).reviewArtifactId!,
+        ).provenance,
+      ).toMatchObject({
+        level: "user-confirmation",
+        source: "claude-code-terminal:owner-paste",
+      });
+      expect(
+        (f.service.review("workflow-acceptance", pasted) as any).claudeSteps,
+      ).toEqual([
+        {
+          role: "reviewer",
+          replySource: "owner-paste",
+          sessionId: opened.sessionId,
+          mode: "plan",
+          runtimeVersion: "2.1.300",
+        },
+      ]);
+      const codex = await f.run("codex", "codex");
+      await f.stage(codex, "checking");
+      expect(
+        f.service.store.get<any>(
+          "artifact",
+          f.workflow(codex).reviewArtifactId!,
+        ).provenance,
+      ).toMatchObject({ level: "provider-ack", source: "codex" });
+      expect(
+        (f.service.review("workflow-acceptance", codex) as any).claudeSteps,
+      ).toEqual([]);
+    });
+
+    test("after a repair, acceptance names the build and the repair that made the build, and only the review of it", async () => {
+      const f = await setup();
+      const id = await f.run("claude", "claude");
+      await f.stage(id, "building");
+      const build = await f.open(id, { permissionMode: "accept-edits" });
+      await writeFile(
+        path.join(f.project, "file.ts"),
+        "export const value = 3;\n",
+      );
+      await f.exit(build.terminalId);
+      expect((await f.handBack(id, "Changed the value.")).outcome).toBe(
+        "taken",
+      );
+      await vi.waitFor(() => expect(f.step(id)?.role).toBe("reviewer"), {
+        timeout: 10_000,
+      });
+      const first = f.step(id)!,
+        firstReview = await f.open(id);
+      await f.exit(firstReview.terminalId);
+      expect(
+        (
+          await f.handBack(
+            id,
+            review(first.candidateRevision, [
+              {
+                title: "Not two",
+                severity: "high",
+                file: "file.ts",
+                line: 1,
+                behavior: "The value is three.",
+                evidence: "export const value = 3;",
+              },
+            ]),
+          )
+        ).outcome,
+      ).toBe("taken");
+      await f.stage(id, "ready-repair");
+      await f.service.command(
+        {
+          type: "builder-reviewer-advance",
+          requestId: uid(),
+          id,
+          expectedRevision: f.revision(id),
+        },
+        {
+          digest: (f.service.review("workflow-dispatch-inputs", id) as any)
+            .digest,
+        },
+      );
+      await f.stage(id, "repairing");
+      expect(f.step(id)?.role).toBe("repair");
+      const repair = await f.open(id);
+      await writeFile(
+        path.join(f.project, "file.ts"),
+        "export const value = 2;\n",
+      );
+      await f.exit(repair.terminalId);
+      expect((await f.handBack(id, "Made it two.")).outcome).toBe("taken");
+      await vi.waitFor(() => expect(f.step(id)?.role).toBe("reviewer"), {
+        timeout: 10_000,
+      });
+      const second = f.step(id)!,
+        secondReview = await f.open(id);
+      await f.exit(secondReview.terminalId);
+      expect(
+        (await f.handBack(id, review(second.candidateRevision))).outcome,
+      ).toBe("taken");
+      await f.stage(id, "checking");
+      const pasted = (
+        role: ClaudeStep["role"],
+        open: { sessionId: string },
+        mode: string,
+      ) => ({
+        role,
+        replySource: "owner-paste",
+        sessionId: open.sessionId,
+        mode,
+        runtimeVersion: "2.1.300",
+      });
+      // The repair kept the build's changes, so both count; the first review
+      // was of a build that is no longer the one to accept.
+      const provenance = [
+        pasted("builder", build, "accept-edits"),
+        pasted("repair", repair, "provider-default"),
+        pasted("reviewer", secondReview, "plan"),
+      ];
+      expect(
+        (f.service.review("workflow-acceptance", id) as any).claudeSteps,
+      ).toEqual(provenance);
+      const view = (
+        await f.service.command({
+          type: "builder-reviewer-query",
+          projectId: "p",
+        })
+      ).workflows.find((workflow: { id: string }) => workflow.id === id);
+      expect(view.claudeProvenance).toEqual(provenance);
+      // The workflow page still lists all four steps.
+      expect(view.claudeSteps.map((step: ClaudeStep) => step.role)).toEqual([
+        "builder",
+        "reviewer",
+        "repair",
+        "reviewer",
+      ]);
+    });
+
+    test("after a restart, acceptance names only the build since it", async () => {
+      const f = await setup();
+      const id = await f.run("claude", "codex");
+      /** Runs the build step the workflow waits on to its reply. */
+      const build = async (source: string) => {
+        await f.stage(id, "building");
+        const opened = await f.open(id);
+        await writeFile(path.join(f.project, "file.ts"), source);
+        await f.exit(opened.terminalId);
+        expect((await f.handBack(id, "Changed the value.")).outcome).toBe(
+          "taken",
+        );
+        await f.stage(id, "checking");
+        return opened;
+      };
+      const before = await build("export const value = 2;\n");
+      await f.service.command({
+        type: "builder-reviewer-specification-publish",
+        requestId: uid(),
+        id,
+        expectedRevision: f.revision(id),
+        objective: "value two, restated",
+        acceptanceCriteria: ["value equals two"],
+        interfaces: [],
+      });
+      await f.service.command({
+        type: "builder-reviewer-specification-restart",
+        requestId: uid(),
+        id,
+        expectedRevision: f.revision(id),
+        specificationId: f.service.revisions.head(
+          "p",
+          `workflow-specification:${id}`,
+        )!.revisionId,
+      });
+      await f.stage(id, "ready-build");
+      await f.service.command(
+        {
+          type: "builder-reviewer-advance",
+          requestId: uid(),
+          id,
+          expectedRevision: f.revision(id),
+        },
+        {
+          digest: (f.service.review("workflow-dispatch-inputs", id) as any)
+            .digest,
+        },
+      );
+      const after = await build("export const value = 2; // restated\n");
+      expect(after.sessionId).not.toBe(before.sessionId);
+      expect(
+        (f.service.review("workflow-acceptance", id) as any).claudeSteps,
+      ).toEqual([
+        {
+          role: "builder",
+          replySource: "owner-paste",
+          sessionId: after.sessionId,
+          mode: "provider-default",
+          runtimeVersion: "2.1.300",
+        },
+      ]);
     });
   },
 );

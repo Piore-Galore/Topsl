@@ -21,7 +21,7 @@ node scripts/live-session.mjs --codex "$(command -v codex)" --terminal --mode re
 node scripts/live-session.mjs --codex "$(command -v codex)" --preset edit-on-request
 ```
 
-`--qualify` with `--codex` alone runs the runtime qualification instead of a prompt. Like the qualification itself, it runs on macOS and Linux only. So does `--workflow codex-codex` with `--codex` alone, which runs the qualification and then the [workflow](#codex-builds--codex-reviews). It is the first live run in the [Claude workflows plan](Claude_Workflows_Plan.md#live-runs); the teams with Claude follow once Topsl can run a Claude step. `--model <id>` chooses the Codex model instead of the one Codex reports as default, and must be one Codex reports. `--output <folder>` changes where the evidence goes, and `--keep-profile` keeps the disposable Topsl profile after a pass. Linux needs a display, for example `xvfb-run --auto-servernum`.
+`--qualify` with `--codex` alone runs the runtime qualification instead of a prompt. Like the qualification itself, it runs on macOS and Linux only. So does `--workflow codex-codex` with `--codex` alone, which runs the qualification and then the [workflow](#codex-builds--codex-reviews). It is the first live run in the [Claude workflows plan](Claude_Workflows_Plan.md#live-runs). The teams with Claude follow with the plan's step 5: Topsl's screens run them since step 4, but this script does not yet. `--model <id>` chooses the Codex model instead of the one Codex reports as default, and must be one Codex reports. `--output <folder>` changes where the evidence goes, and `--keep-profile` keeps the disposable Topsl profile after a pass. Linux needs a display, for example `xvfb-run --auto-servernum`.
 
 ## What a run does
 

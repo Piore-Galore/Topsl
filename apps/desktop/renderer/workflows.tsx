@@ -1,10 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import type { Approval, Installation } from "../../../packages/domain/types";
 import type { ProviderCapability } from "../../../packages/providers/contract";
-import type { BuilderReviewerState } from "../../../packages/workflows/builder-reviewer";
+import type {
+  BuilderReviewerState,
+  ClaudeStepView,
+  RoleAssignment,
+} from "../../../packages/workflows/builder-reviewer";
 import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
 import { Freshness } from "./components/freshness";
-import { codexPairingNote, WorkflowSetup } from "./components/workflow-setup";
+import { PairingNote, WorkflowSetup } from "./components/workflow-setup";
+import {
+  cancelWait,
+  ClaudeStepPanel,
+  ClaudeStepsRecord,
+  holdsFolder,
+} from "./components/claude-step";
+import {
+  claudeReplySourceText,
+  claudeStepNoun,
+  type ClaudeStep,
+  type ClaudeStepProvenance,
+} from "../../../packages/domain/claude-steps";
 import { WorkflowEvidence } from "./components/workflow-evidence";
 import { AssistedHandoff } from "./components/assisted-handoff";
 import { SpecificationDraft } from "./components/specification-draft";
@@ -23,7 +39,18 @@ type Item = BuilderReviewerState & {
   }>;
   /** Requests the running turn waits on, answered here as in its chat. */
   approvals: Approval[];
+  /** The Claude Code step the workflow waits on, if its stage is one. */
+  claudeStep: ClaudeStep | null;
+  /** The terminal Topsl opened for that step, while it runs. */
+  claudeStepTerminalId: string | null;
+  claudeSteps: ClaudeStepView[];
+  claudeProvenance: ClaudeStepProvenance[];
 };
+/** How a role reads on its workflow's card. */
+const roleText = (role: RoleAssignment) =>
+  role.route === "terminal"
+    ? "Claude Code · a step you run in Topsl's terminal · model and effort set in Claude Code"
+    : `${role.provider} · requested ${role.model} · effective settings require a runtime report`;
 type Snapshot = {
   workflows: Item[];
   runtimes: Array<{
@@ -43,6 +70,8 @@ export function Workflows({ projectId }: { projectId: string }) {
     [pending, setPending] = useState<Record<string, boolean>>({}),
     [error, setError] = useState("");
   const [activeWorkflow, setActiveWorkflow] = useState("");
+  /** The owner's confirmation that Claude Code stopped, by step. */
+  const [stopped, setStopped] = useState<Record<string, boolean>>({});
   const [inspection, setInspection] = useState<any>(null),
     generation = useRef(0),
     reads = useRef(new ScopedReadFence(projectId)),
@@ -83,6 +112,7 @@ export function Workflows({ projectId }: { projectId: string }) {
     activeInspection.current = "";
     setError("");
     setPending({});
+    setStopped({});
     setActiveWorkflow("");
     return () => {
       generation.current++;
@@ -213,6 +243,22 @@ export function Workflows({ projectId }: { projectId: string }) {
                   }
                 />
               ))}
+              <ClaudeStepPanel
+                projectId={projectId}
+                workflow={workflow}
+                pending={!!pending[workflow.id]}
+                stopped={
+                  !!workflow.claudeStep && !!stopped[workflow.claudeStep.id]
+                }
+                setStopped={(value) =>
+                  workflow.claudeStep &&
+                  setStopped((current) => ({
+                    ...current,
+                    [workflow.claudeStep!.id]: value,
+                  }))
+                }
+                run={(action) => run(workflow.id, action)}
+              />
               <AssistedHandoff
                 projectId={projectId}
                 workflow={workflow}
@@ -220,17 +266,9 @@ export function Workflows({ projectId }: { projectId: string }) {
               />
               <dl>
                 <dt>Builder</dt>
-                <dd>
-                  {workflow.builder.provider} · requested{" "}
-                  {workflow.builder.model} · effective settings require a
-                  runtime report
-                </dd>
+                <dd>{roleText(workflow.builder)}</dd>
                 <dt>Reviewer</dt>
-                <dd>
-                  {workflow.reviewer.provider} · requested{" "}
-                  {workflow.reviewer.model} · effective settings require a
-                  runtime report
-                </dd>
+                <dd>{roleText(workflow.reviewer)}</dd>
                 <dt>Candidate</dt>
                 <dd className="path">{workflow.candidateRevision}</dd>
                 <dt>Repair rounds</dt>
@@ -240,10 +278,11 @@ export function Workflows({ projectId }: { projectId: string }) {
                 <dt>Isolation</dt>
                 <dd>Independence not enforced</dd>
               </dl>
-              {workflow.builder.provider === "codex" &&
-                workflow.reviewer.provider === "codex" && (
-                  <p>{codexPairingNote}</p>
-                )}
+              <PairingNote
+                builder={workflow.builder.provider}
+                reviewer={workflow.reviewer.provider}
+              />
+              <ClaudeStepsRecord steps={workflow.claudeSteps} />
               {workflow.checksStatus.map((check) => (
                 <p key={check.definition}>
                   {check.definition}: {check.result} on{" "}
@@ -289,6 +328,21 @@ export function Workflows({ projectId }: { projectId: string }) {
                     Review and run checks
                   </button>
                 )}
+                {workflow.stage === "awaiting-acceptance" &&
+                  workflow.claudeProvenance.some(
+                    (step) => step.replySource === "owner-paste",
+                  ) && (
+                    <p role="status">
+                      You pasted the reply of this workflow's Claude Code{" "}
+                      {workflow.claudeProvenance
+                        .filter((step) => step.replySource === "owner-paste")
+                        .map((step) => claudeStepNoun[step.role])
+                        .join(" and ")}
+                      . Topsl records it as{" "}
+                      {claudeReplySourceText["owner-paste"]}, not read from
+                      Claude Code.
+                    </p>
+                  )}
                 {workflow.stage === "awaiting-acceptance" && (
                   <button
                     disabled={pending[workflow.id]}
@@ -337,7 +391,24 @@ export function Workflows({ projectId }: { projectId: string }) {
                 </button>
                 {!["accepted", "cancelled"].includes(workflow.stage) && (
                   <button
-                    disabled={pending[workflow.id]}
+                    // An opened Claude Code build or repair may still be
+                    // writing, so cancelling takes the owner's word that it
+                    // stopped, given on its step above.
+                    disabled={
+                      pending[workflow.id] ||
+                      !!cancelWait(
+                        workflow.claudeStep,
+                        workflow.claudeStepTerminalId,
+                        !!stopped[workflow.claudeStep?.id ?? ""],
+                      )
+                    }
+                    title={
+                      cancelWait(
+                        workflow.claudeStep,
+                        workflow.claudeStepTerminalId,
+                        !!stopped[workflow.claudeStep?.id ?? ""],
+                      ) ?? undefined
+                    }
                     onClick={() =>
                       void run(workflow.id, () =>
                         window.topsl.command({
@@ -345,6 +416,9 @@ export function Workflows({ projectId }: { projectId: string }) {
                           requestId: crypto.randomUUID(),
                           id: workflow.id,
                           expectedRevision: workflow.revision,
+                          ...(holdsFolder(workflow.claudeStep)
+                            ? { claudeCodeStopped: true as const }
+                            : {}),
                         }),
                       )
                     }
