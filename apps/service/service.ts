@@ -688,6 +688,20 @@ export class Service {
     if (!value) throw new Error(`The selected ${kind} no longer exists.`);
     return value;
   }
+  /** What a workflow's running turn has asked the owner, for its card. */
+  private awaitingApproval(attemptId: string | null): Approval[] {
+    const runId = attemptId
+      ? this.store.get<ExecutionAttempt>("attempt", attemptId)?.legacyRunId
+      : null;
+    return runId
+      ? this.store.db
+          .prepare(
+            "SELECT body FROM documents WHERE kind='approval' AND json_extract(body,'$.runId')=? ORDER BY rowid",
+          )
+          .all(runId)
+          .map((row) => JSON.parse(row.body))
+      : [];
+  }
   /** Build mutually dependent slices and their watermark in one vault read snapshot. */
   private observed<T extends object>(
     projectId: string,
@@ -1828,6 +1842,7 @@ export class Service {
                 command.projectId,
                 `workflow-specification:${workflow.id}`,
               )?.revisionId ?? workflow.specificationId,
+            approvals: this.awaitingApproval(workflow.activeAttemptId),
           })),
           runtimes: this.store
             .list<Installation>("installation")

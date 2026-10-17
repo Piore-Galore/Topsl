@@ -99,6 +99,11 @@ if (
   (options.preset && !codexChatRun)
 )
   throw new Error(usage);
+// Only for checking a workflow run against the repository's stand-in: the
+// script then also plays the owner on the workflow's card, denying each
+// command Codex asks to run and allowing each file change.
+const ownerStandIn = process.env.TOPSL_LIVE_OWNER_STAND_IN === "1";
+if (ownerStandIn && !options.workflow) throw new Error(usage);
 if (qualifies && process.platform === "win32")
   throw new Error(
     "The runtime qualification uses POSIX shell probes and runs on macOS and Linux only.",
@@ -1283,15 +1288,99 @@ async function approved(dialog, approval, refused) {
   if (answer !== approval) throw new Error(refused);
 }
 
+/** What a request Codex makes during the workflow asks, as its card shows it. */
+const asked = (approval) => ({
+  title: approval.summary?.title ?? "Native approval requested",
+  details: (approval.summary?.details ?? []).map(
+    (detail) =>
+      `${detail.label}: ${withoutHome(String(detail.value)).slice(0, 500)}`,
+  ),
+  answer: null,
+});
+
+/** Records which button on a request's card is pressed, by request. */
+async function watchPresses() {
+  await page.evaluate(() => {
+    window.__liveSessionPresses = [];
+    document.addEventListener(
+      "click",
+      (event) => {
+        const button =
+            event.target instanceof Element
+              ? event.target.closest("button")
+              : null,
+          request = button?.closest("[data-approval]");
+        if (request)
+          window.__liveSessionPresses.push({
+            approval: request.getAttribute("data-approval"),
+            button: button.textContent.trim(),
+          });
+      },
+      true,
+    );
+  });
+}
+
+/**
+ * The owner's answer to a request that is no longer waiting: `allowed` when
+ * they confirmed **Allow once** in Topsl's dialog for it, `denied` when they
+ * pressed **Deny** on its card, and otherwise `unanswered`.
+ */
+async function answerOf(approval) {
+  const [confirmed, presses] = await Promise.all([
+    app.evaluate(
+      (_electron, digest) =>
+        globalThis.__liveSession.dialogs.some(
+          (d) => d.digest === digest && d.answer === "Allow once",
+        ),
+      approval.digest,
+    ),
+    page.evaluate(
+      (id) =>
+        window.__liveSessionPresses
+          .filter((press) => press.approval === id)
+          .map((press) => press.button),
+      approval.id,
+    ),
+  ]);
+  return confirmed
+    ? "allowed"
+    : presses.includes("Deny")
+      ? "denied"
+      : "unanswered";
+}
+
+/** Stand-in runs only: answers a request on the workflow's card as the owner
+ * would, denying a command and allowing a file change. */
+async function answerAsOwner(card, approval) {
+  await card
+    .locator(`[data-approval="${approval.id}"]`)
+    .getByRole("button", {
+      name:
+        approval.method === "item/fileChange/requestApproval"
+          ? "Review & allow once"
+          : "Deny",
+      exact: true,
+    })
+    .click();
+}
+
 /**
  * Build and review with Codex in both roles, through Topsl's own screens: the
  * qualification above, the rest of the guided setup and one approved start,
  * after which Topsl builds and then starts the review itself. The script
- * declines every approval Codex asks for, starts no repair, decides no finding
- * and never accepts, so the run ends at the findings or, after the required
- * check, at acceptance. Whatever Topsl recorded is kept, also when it fails.
+ * answers none of the requests Codex makes during the workflow's turns: each
+ * waits for the owner on the workflow's card, and the report keeps what it
+ * asked and the owner's answer. The script starts no repair, decides no
+ * finding and never accepts, so the run ends at the findings or, after the
+ * required check, at acceptance. Whatever Topsl recorded is kept, also when it
+ * fails.
  */
 async function codexWorkflow(projectId, runtime) {
+  if (ownerStandIn && !String(runtime.version).endsWith("-fixture"))
+    throw new Error(
+      "TOPSL_LIVE_OWNER_STAND_IN plays the owner only for the repository's stand-in, never for a live Codex.",
+    );
   await codexQualification(projectId, runtime);
   const workflow = (report.workflow = {
     project: {
@@ -1418,39 +1507,55 @@ async function codexWorkflow(projectId, runtime) {
       "Approve inputs and start",
       "Topsl's dialog to start the workflow did not name the workflow, folder, runtime and model this script captured, so it was cancelled.",
     );
-    const declined = new Set();
-    await until(
-      "the build and the review",
-      45 * 60000,
-      async () => {
-        const scope = await command({ type: "scope-snapshot", projectId }),
-          tasks = scope.coordination.tasks
-            .filter((t) => t.workflowId === workflow.id)
-            .map((t) => t.id),
-          runs = new Set(
-            scope.coordination.attempts
-              .filter((a) => tasks.includes(a.taskId))
-              .map((a) => a.legacyRunId),
-          );
-        // The script approves nothing: any request Codex makes during the
-        // workflow's turns is declined.
-        for (const approval of scope.approvals.filter(
-          (a) => runs.has(a.runId) && !declined.has(a.id),
-        )) {
-          declined.add(approval.id);
-          workflow.approvals.push(
-            withoutHome(String(approval.description)).slice(0, 200),
-          );
-          await command({
-            type: "approval-decide",
-            id: approval.id,
-            allow: false,
-          });
-        }
-        return settled(await observe());
-      },
-      2000,
-    );
+    // The script answers none of Codex's requests: each waits for the owner
+    // on the workflow's card and is kept with the owner's answer once it is
+    // gone.
+    await watchPresses();
+    const requests = new Map();
+    try {
+      await until(
+        "the build and the review",
+        45 * 60000,
+        async () => {
+          const scope = await command({ type: "scope-snapshot", projectId }),
+            tasks = scope.coordination.tasks
+              .filter((t) => t.workflowId === workflow.id)
+              .map((t) => t.id),
+            runs = new Set(
+              scope.coordination.attempts
+                .filter((a) => tasks.includes(a.taskId))
+                .map((a) => a.legacyRunId),
+            ),
+            waiting = scope.approvals.filter((a) => runs.has(a.runId));
+          for (const approval of waiting)
+            if (!requests.has(approval.id)) {
+              const request = asked(approval);
+              requests.set(approval.id, { approval, request });
+              workflow.approvals.push(request);
+              console.error(
+                `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window.`,
+              );
+              // How the first request looks on the card, before its answer.
+              if (requests.size === 1) {
+                await appear(
+                  "Codex's request on the workflow's card",
+                  card.locator(`[data-approval="${approval.id}"]`),
+                );
+                await screenshot("workflow-request");
+              }
+              if (ownerStandIn) await answerAsOwner(card, approval);
+            }
+          for (const [id, { approval, request }] of requests)
+            if (!request.answer && !waiting.some((a) => a.id === id))
+              request.answer = await answerOf(approval);
+          return settled(await observe());
+        },
+        2000,
+      );
+    } finally {
+      for (const { request } of requests.values())
+        request.answer ??= "unanswered";
+    }
     if (current.stage === "checking") {
       await app.evaluate(
         (_electron, approval) => {
@@ -1722,12 +1827,31 @@ try {
           ? { canceled: false, filePaths: [selected] }
           : { canceled: true, filePaths: [] };
       };
+      const showMessageBox = dialog.showMessageBox;
       dialog.showMessageBox = async (...args) => {
         const { policy, dialogs } = globalThis.__liveSession;
         const value = optionsOf(args),
           message = String(value.message ?? ""),
           detail = String(value.detail ?? ""),
           buttons = (value.buttons ?? []).map(String);
+        // Allowing one of Codex's requests is the owner's answer. The script
+        // shows them Topsl's dialog and keeps the answer with the request's
+        // digest; only the stand-in owner answers it here.
+        if (message === "Allow this native action once?") {
+          const answer = policy.ownerStandIn
+            ? {
+                response: buttons.indexOf("Allow once"),
+                checkboxChecked: false,
+              }
+            : await showMessageBox.apply(dialog, args);
+          dialogs.push({
+            dialog: message,
+            answer: buttons[answer.response] ?? null,
+            by: policy.ownerStandIn ? "owner stand-in" : "owner",
+            digest: /\nDigest: ([a-f0-9]{64})$/.exec(detail)?.[1] ?? null,
+          });
+          return answer;
+        }
         const expected =
           message === "Which runtime are you locating?"
             ? policy.runtimeKind
@@ -1787,6 +1911,7 @@ try {
       qualification: null,
       dispatch: null,
       check: null,
+      ownerStandIn,
     },
   );
 

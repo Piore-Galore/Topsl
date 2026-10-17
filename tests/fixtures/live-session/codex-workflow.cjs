@@ -9,6 +9,9 @@
 // FIXTURE_BUILD=twenty applies twenty percent instead, so the check fails.
 // FIXTURE_BUILD=new-file also adds src/discount.mjs, which nobody approved.
 // FIXTURE_REVIEW=finding returns one finding on src/order.mjs.
+// FIXTURE_BUILD_ASK=1 makes the build ask, as Codex does under the untrusted
+// policy, to run the project's check and then to change src/order.mjs, which
+// it writes only if Topsl allows the change.
 const fs = require("node:fs");
 const path = require("node:path");
 const fixture = require("../codex-qualify.cjs");
@@ -24,6 +27,35 @@ function shown(prompt, file) {
   const rest = prompt.slice(start + header.length),
     end = rest.search(/\n(Path |--- )/);
   return end < 0 ? rest : rest.slice(0, end);
+}
+
+/** Asks Topsl to allow one item, announced and completed as Codex does, and
+ * returns whether it was allowed. */
+async function ask(threadId, turnId, method, item, params) {
+  fixture.send({
+    method: "item/started",
+    params: { threadId, turnId, startedAtMs: Date.now(), item },
+  });
+  const response = await fixture.call(method, {
+      threadId,
+      turnId,
+      itemId: item.id,
+      startedAtMs: Date.now(),
+      ...params,
+    }),
+    allowed = ["accept", "acceptForSession"].includes(
+      response.result?.decision,
+    );
+  fixture.send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: { ...item, status: allowed ? "completed" : "declined" },
+    },
+  });
+  return allowed;
 }
 
 /** Reads a candidate file through Topsl's read_range tool, as a reviewer would. */
@@ -67,10 +99,50 @@ async function read(threadId, turnId, file) {
 fixture.otherTurn = async ({ threadId, turnId, prompt, cwd, tools }) => {
   const role = /^Role: (\w+)$/m.exec(prompt)?.[1];
   if (role === "builder" || role === "repair") {
-    fs.writeFileSync(
-      path.join(cwd, "src", "order.mjs"),
-      order(process.env.FIXTURE_BUILD === "twenty" ? 0.8 : 0.9),
-    );
+    const file = path.join(cwd, "src", "order.mjs"),
+      text = order(process.env.FIXTURE_BUILD === "twenty" ? 0.8 : 0.9);
+    if (process.env.FIXTURE_BUILD_ASK === "1") {
+      await ask(
+        threadId,
+        turnId,
+        "item/commandExecution/requestApproval",
+        {
+          type: "commandExecution",
+          id: `${turnId}-check`,
+          command: "npm run check",
+          cwd,
+          status: "inProgress",
+        },
+        { command: "npm run check", cwd },
+      );
+      const change = {
+        type: "fileChange",
+        id: `${turnId}-change`,
+        status: "inProgress",
+        changes: [
+          {
+            path: file,
+            kind: { type: "update", move_path: null },
+            diff: `@@ -1 +1 @@\n+${text}`,
+          },
+        ],
+      };
+      if (
+        !(await ask(
+          threadId,
+          turnId,
+          "item/fileChange/requestApproval",
+          change,
+          {},
+        ))
+      )
+        return fixture.complete(
+          threadId,
+          turnId,
+          "The change to src/order.mjs was declined, so nothing changed. No model was contacted.",
+        );
+    }
+    fs.writeFileSync(file, text);
     if (process.env.FIXTURE_BUILD === "new-file")
       fs.writeFileSync(
         path.join(cwd, "src", "discount.mjs"),

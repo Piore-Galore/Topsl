@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Installation } from "../../../packages/domain/types";
+import type { Approval, Installation } from "../../../packages/domain/types";
 import type { ProviderCapability } from "../../../packages/providers/contract";
 import type { BuilderReviewerState } from "../../../packages/workflows/builder-reviewer";
 import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
@@ -9,6 +9,7 @@ import { WorkflowEvidence } from "./components/workflow-evidence";
 import { AssistedHandoff } from "./components/assisted-handoff";
 import { SpecificationDraft } from "./components/specification-draft";
 import { WorkflowDispatch } from "./components/workflow-dispatch";
+import { ApprovalCard } from "./components/approval-card";
 import type { CheckPlan } from "../../../packages/workflows/verification";
 type Item = BuilderReviewerState & {
   revision: number;
@@ -20,6 +21,8 @@ type Item = BuilderReviewerState & {
     result: string;
     targetRevision: string;
   }>;
+  /** Requests the running turn waits on, answered here as in its chat. */
+  approvals: Approval[];
 };
 type Snapshot = {
   workflows: Item[];
@@ -195,6 +198,21 @@ export function Workflows({ projectId }: { projectId: string }) {
                 </details>
               )}
               <p>{workflow.detail}</p>
+              {workflow.approvals.map((approval) => (
+                <ApprovalCard
+                  key={approval.id}
+                  approval={approval}
+                  decide={(allow) =>
+                    run(workflow.id, () =>
+                      window.topsl.command({
+                        type: "approval-decide",
+                        id: approval.id,
+                        allow,
+                      }),
+                    )
+                  }
+                />
+              ))}
               <AssistedHandoff
                 projectId={projectId}
                 workflow={workflow}

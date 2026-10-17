@@ -18,6 +18,7 @@ export function ApprovalCard({
       className="approval"
       role="group"
       aria-label={summary?.title ?? "Native approval requested"}
+      data-approval={approval.id}
     >
       <strong>{summary?.title ?? "Native approval requested"}</strong>
       {summary ? (

@@ -125,6 +125,28 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         throw new Error(
           "Fixture requires a pinned candidate revision in the current task input contract.",
         );
+      // An objective ending "[fixture: the build asks first]" makes the build
+      // ask to run a command, as Codex does under the untrusted policy, and
+      // wait for Topsl's answer before it edits.
+      if (
+        !review &&
+        /^Objective: .*\[fixture: the build asks first\]$/m.test(prompt)
+      )
+        await new Promise((resolve) => {
+          waiting.set("ask-command", resolve);
+          send({
+            id: "ask-command",
+            method: "item/commandExecution/requestApproval",
+            params: {
+              threadId: session,
+              turnId: turn,
+              itemId: "ask-command-item",
+              command: "npm test",
+              cwd: process.cwd(),
+              startedAtMs: Date.now(),
+            },
+          });
+        });
       if (!review) fs.writeFileSync("file.ts", "export const value = 2;\n");
       const read =
         review && tools.some((tool) => tool.name === "topsl_candidate")

@@ -372,6 +372,62 @@ test("a review attempt that fails still loses its reader grant", async () => {
   ).toBe("installed-before-dispatch");
   expect(revoked).toHaveBeenCalledWith(reviewer.id);
 });
+test("a workflow lists the requests its running build waits on, and the owner's answer reaches Codex", async () => {
+  const f = await setup(),
+    state = await f.create(false, {
+      objective: "value two [fixture: the build asks first]",
+    }),
+    waiting = async () =>
+      (
+        await f.service.command({
+          type: "builder-reviewer-query",
+          projectId: "p",
+        })
+      ).workflows.find((workflow: { id: string }) => workflow.id === state.id)
+        .approvals;
+  await f.service.command(
+    {
+      type: "builder-reviewer-advance",
+      requestId: uid(),
+      id: state.id,
+      expectedRevision: f.service.store.get<any>("workflow", state.id).revision,
+    },
+    {
+      digest: (f.service.review("workflow-dispatch-inputs", state.id) as any)
+        .digest,
+    },
+  );
+  const request = await vi.waitFor(async () => {
+    const approvals = await waiting();
+    expect(approvals).toHaveLength(1);
+    return approvals[0];
+  });
+  expect(request.summary.title).toBe("Run a command");
+  expect(f.service.store.get<any>("builder-reviewer", state.id).stage).toBe(
+    "building",
+  );
+  // The card decides it as a chat's card does.
+  await f.service.command(
+    { type: "approval-decide", id: request.id, allow: false },
+    { digest: request.digest },
+  );
+  expect(await waiting()).toEqual([]);
+  expect(
+    f
+      .frames()
+      .some(
+        ({ from, frame }) =>
+          from === "topsl" &&
+          frame.id === "ask-command" &&
+          frame.result?.decision === "decline",
+      ),
+  ).toBe(true);
+  await vi.waitFor(() =>
+    expect(f.service.store.get<any>("builder-reviewer", state.id)?.stage).toBe(
+      "checking",
+    ),
+  );
+});
 test("production capability gate refuses before any builder turn and retains native routes", async () => {
   const f = await setup(false),
     state = await f.create();
