@@ -380,16 +380,22 @@ export class BuilderReviewerWorkflow {
       throw error;
     }
   }
+  /** The answer a turn ended with: its last assistant message. Codex and
+   * Claude send progress notes before they answer, and each is a message of
+   * its own in the run's history. */
   private result(attempt: ExecutionAttempt): string {
     if (this.driver.result) return this.driver.result(attempt);
-    return [
-      ...this.repository.store.iterate<Message>("message", {
-        projectId: attempt.projectId,
-      }),
-    ]
-      .filter((m) => m.runId === attempt.legacyRunId && m.role === "assistant")
-      .map((m) => m.text)
-      .join("\n");
+    return (
+      [
+        ...this.repository.store.iterate<Message>("message", {
+          projectId: attempt.projectId,
+        }),
+      ]
+        .filter(
+          (m) => m.runId === attempt.legacyRunId && m.role === "assistant",
+        )
+        .at(-1)?.text ?? ""
+    );
   }
   async advance(
     id: string,
@@ -1236,27 +1242,40 @@ export class BuilderReviewerWorkflow {
       }
     }
     await assertCandidateCurrent(candidate);
-    let result: z.infer<typeof reviewSchema>;
+    let reply: unknown;
     try {
-      result = reviewSchema.parse(
-        JSON.parse(
-          this.result(attempt)
-            .trim()
-            .replace(/^```(?:json)?\s*|\s*```$/g, ""),
-        ),
+      reply = JSON.parse(
+        this.result(attempt)
+          .trim()
+          .replace(/^```(?:json)?\s*|\s*```$/g, ""),
       );
     } catch {
+      reply = undefined;
+    }
+    const parsed = reviewSchema.safeParse(reply);
+    if (!parsed.success)
       return this.save(
         state,
         {
           stage: "blocked",
           activeAttemptId: null,
-          detail:
-            "Reviewer output did not match the required finding schema; review is unverified and cannot be accepted.",
+          // Zod's wording names the field and what it expected, never the
+          // reviewer's own text.
+          detail: `Reviewer output did not match the required finding schema (${
+            reply === undefined
+              ? "its final message is not JSON"
+              : parsed.error.issues
+                  .slice(0, 3)
+                  .map(
+                    (issue) =>
+                      `${issue.path.join(".") || "the reply"}: ${issue.message}`,
+                  )
+                  .join("; ")
+          }); review is unverified and cannot be accepted.`,
         },
         "blocked",
       );
-    }
+    const result = parsed.data;
     if (
       result.candidateRevision !== candidate.revision ||
       result.findings.some(

@@ -10,6 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { fixture } from "./helpers";
+import { createDemoFixture } from "../scripts/round2-demo-fixture.mjs";
 import { now } from "../packages/domain/invariants";
 import { runFile } from "../packages/platform/system";
 import { CoordinationRepository } from "../packages/persistence/repositories/coordination";
@@ -508,6 +509,106 @@ test("common tool caches are ignored; a cache holding a link is still invalid", 
   expect(other.list("p").executions[0].error).toContain(
     "Tool cache contains a link",
   );
+});
+
+test("the live workflow project's check passes with no writable paths, as in every recipe the guided setup offers", async () => {
+  const f = await fixture(),
+    repository = new CoordinationRepository(f.store),
+    runtime = await tools(),
+    checks = CheckExecutions.for(f.store);
+  cleanups.push(async () => {
+    await checks.shutdown();
+    f.store.close();
+    await rm(f.directory, { recursive: true, force: true });
+  });
+  // The same change in each project, then the guided setup's locked offline
+  // recipe and `npm run check`, with the writable paths given.
+  const check = async (id: string, live: boolean, writablePaths: string[]) => {
+    const demo = await createDemoFixture({
+      root: path.join(f.directory, id),
+      live,
+    });
+    await writeFile(
+      path.join(demo.root, "src/order.mjs"),
+      "import { totalCents } from './cart.mjs';\nexport function orderTotal(items) { return Math.round(totalCents(items) * 0.9); }\n",
+    );
+    const project = {
+      id,
+      name: id,
+      path: demo.root,
+      realPath: demo.root,
+      trusted: true,
+      createdAt: now(),
+    };
+    f.store.put("project", project);
+    const workflow = repository.createWorkflow({
+        projectId: id,
+        objective: "Apply a ten percent discount",
+        template: "fixture",
+        templateVersion: "1",
+      }),
+      task = repository.createTask({
+        projectId: id,
+        workflowId: workflow.id,
+        workspaceId: repository.ensureWorkspace(project).id,
+        title: "Check",
+        role: "tester",
+      }),
+      selection = environmentSelection(f.store, {
+        projectId: id,
+        label: "Locked JavaScript / TypeScript · offline",
+        kind: "locked-node",
+        profile: "user-approved-local",
+        nodeExecutable: runtime.node,
+        npmCli: runtime.npm,
+        preparationTimeoutMs: 60_000,
+        writablePaths,
+        hooks: [],
+        values: {},
+      }),
+      candidate = await captureCandidate(f.store, {
+        root: demo.root,
+        projectId: id,
+        workflowId: workflow.id,
+        selectedPaths: demo.paths,
+      }),
+      definition: CheckDefinition = {
+        id: "required-check",
+        label: "Required project check",
+        executable: runtime.node,
+        args: [runtime.npm, "run", "check"],
+        timeoutMs: 30_000,
+        environmentRecipeId: selection.id,
+      };
+    bindCheckInputs(f.store, workflow.id, candidate, [definition]);
+    const plan = await previewCheck(
+      repository,
+      workflow.id,
+      task.id,
+      candidate,
+      definition,
+    );
+    const { result } = await checks.execute(repository, plan, plan.digest),
+      execution = checks.list(id).executions[0];
+    return {
+      result,
+      phase: execution.failurePhase ?? null,
+      error: execution.error ?? null,
+    };
+  };
+  expect(await check("live", true, [])).toEqual({
+    result: "passed",
+    phase: null,
+    error: null,
+  });
+  // The Round 2 project's build writes output/receipt.json, which R2-AT-37/38
+  // allows through the service and the guided setup cannot.
+  expect(await check("round-2", false, [])).toEqual({
+    result: "error",
+    phase: "integrity",
+    error:
+      "Unexpected execution output outside reviewed writable paths: output",
+  });
 });
 
 test("R2-AT-29: concurrent checks have separate database, port, home, cache and output resources", async () => {

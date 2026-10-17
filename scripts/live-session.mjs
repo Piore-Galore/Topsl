@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { randomInt } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { createDemoFixture } from "./round2-demo-fixture.mjs";
 
 // Live acceptance of provider sessions inside Topsl: Claude Code in its native
 // terminal, Codex through the structured chat or in its native terminal, or
@@ -29,16 +30,23 @@ import path from "node:path";
 // expects are approved. The provider keeps the session in its own history, as
 // it does for any native session. With --qualify, Codex instead goes through
 // Topsl's runtime qualification from the guided setup, with Codex in both
-// roles: up to three model turns, approved once and never retried.
+// roles: up to three model turns, approved once and never retried. With
+// --workflow codex-codex, that qualification is followed by Build and review
+// on a small seeded project: one build and one review, up to five model turns
+// in all.
 
 const usage =
-  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--terminal] [--mode id] [--preset id] [--qualify] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --terminal with --codex alone opens Codex in Topsl's native terminal instead of a chat. --mode picks the terminal's mode and --preset the Codex chat's preset. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt.";
+  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--terminal] [--mode id] [--preset id] [--qualify] [--workflow codex-codex] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --terminal with --codex alone opens Codex in Topsl's native terminal instead of a chat. --mode picks the terminal's mode and --preset the Codex chat's preset. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt. --workflow codex-codex with --codex alone runs the qualification, then one build and one review of a seeded project.";
+// The teams --workflow can run. The Claude teams follow once Topsl can run a
+// Claude step in a workflow.
+const workflowTeams = ["codex-codex"];
 const options = {
   executables: {},
   terminal: false,
   mode: null,
   preset: null,
   qualify: false,
+  workflow: null,
   model: null,
   output: null,
   keepProfile: false,
@@ -60,6 +68,7 @@ for (let index = 2; index < process.argv.length; index++) {
   else if (argument === "--mode") options.mode = value();
   else if (argument === "--preset") options.preset = value();
   else if (argument === "--qualify") options.qualify = true;
+  else if (argument === "--workflow") options.workflow = value();
   else if (argument === "--model") options.model = value();
   else if (argument === "--output") options.output = value();
   else if (argument === "--keep-profile") options.keepProfile = true;
@@ -69,19 +78,33 @@ for (let index = 2; index < process.argv.length; index++) {
 const providers = ["claude", "codex"].filter((p) => options.executables[p]);
 const both = providers.length === 2;
 const codexChatRun =
-  !!options.executables.codex && !options.terminal && !options.qualify;
+  !!options.executables.codex &&
+  !options.terminal &&
+  !options.qualify &&
+  !options.workflow;
+// A workflow run starts with the runtime qualification.
+const qualifies = options.qualify || !!options.workflow;
 if (
   !providers.length ||
   providers.some((p) => !path.isAbsolute(options.executables[p])) ||
   (options.model && !options.executables.codex) ||
   (options.model && options.terminal) ||
   (options.qualify && providers.join() !== "codex") ||
-  (options.terminal && (providers.join() !== "codex" || options.qualify)) ||
+  (options.workflow &&
+    (!workflowTeams.includes(options.workflow) ||
+      providers.join() !== "codex" ||
+      options.qualify)) ||
+  (options.terminal && (providers.join() !== "codex" || qualifies)) ||
   (options.mode && !options.executables.claude && !options.terminal) ||
   (options.preset && !codexChatRun)
 )
   throw new Error(usage);
-if (options.qualify && process.platform === "win32")
+// Only for checking a workflow run against the repository's stand-in: the
+// script then also plays the owner on the workflow's card, denying each
+// command Codex asks to run and allowing each file change.
+const ownerStandIn = process.env.TOPSL_LIVE_OWNER_STAND_IN === "1";
+if (ownerStandIn && !options.workflow) throw new Error(usage);
+if (qualifies && process.platform === "win32")
   throw new Error(
     "The runtime qualification uses POSIX shell probes and runs on macOS and Linux only.",
   );
@@ -127,9 +150,31 @@ const git = (...args) => {
 // them. Only the names are reported.
 const billing =
   /^(OPENAI_API_KEY|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|OPENAI_BASE_URL|ANTHROPIC_BASE_URL|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|CLAUDE_CODE_USE_FOUNDRY)$/;
+const caches =
+  process.platform === "darwin"
+    ? path.join(home, "Library", "Caches")
+    : path.join(home, ".cache");
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-live-"));
-const project = path.join(profile, "live-project");
-await mkdir(project);
+// A workflow builds and reviews a small seeded project. Like a user's project,
+// it sits outside the temporary folders, which Codex's workspace-write sandbox
+// leaves writable: in a new topsl-live-* folder in the user's cache folder,
+// which is always deleted afterwards. Other runs use an empty folder in the
+// profile.
+let projectFolder = null,
+  seeded = null;
+if (options.workflow) {
+  await mkdir(caches, { recursive: true });
+  projectFolder = await mkdtemp(path.join(caches, "topsl-live-"));
+  process.on("exit", () =>
+    rmSync(projectFolder, { recursive: true, force: true }),
+  );
+  seeded = await createDemoFixture({
+    root: path.join(projectFolder, "live-project"),
+    live: true,
+  });
+}
+const project = seeded?.root ?? path.join(profile, "live-project");
+if (!seeded) await mkdir(project);
 const canonicalProject = await realpath(project);
 const environment = { ...process.env, TOPSL_TEST_PROFILE: profile };
 delete environment.ELECTRON_RUN_AS_NODE;
@@ -142,11 +187,7 @@ for (const name of removedEnvironment) delete environment[name];
 // topsl-qualify-* folder in the user's cache folder, which is always deleted
 // afterwards.
 let qualificationFolder = null;
-if (options.qualify) {
-  const caches =
-    process.platform === "darwin"
-      ? path.join(home, "Library", "Caches")
-      : path.join(home, ".cache");
+if (qualifies) {
   await mkdir(caches, { recursive: true });
   qualificationFolder = await mkdtemp(path.join(caches, "topsl-qualify-"));
   process.on("exit", () =>
@@ -159,7 +200,7 @@ const output = path.resolve(
     path.join(
       "test-results",
       "live-session",
-      `${options.qualify ? "qualify" : both ? "both" : options.terminal ? "codex-terminal" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+      `${options.workflow ? `workflow-${options.workflow}` : options.qualify ? "qualify" : both ? "both" : options.terminal ? "codex-terminal" : providers[0]}-${new Date().toISOString().replace(/[:.]/g, "-")}`,
     ),
 );
 await mkdir(output, { recursive: true });
@@ -180,16 +221,19 @@ const newStep = (provider) => ({
 // A single-provider report keeps its step at the top level. A run with both
 // keeps one step per provider, in the order they ran, and the conversation
 // they share. A qualification keeps what Topsl recorded and the readiness it
-// gives each role.
+// gives each role, and a workflow run adds what its build and review did.
 const report = {
   schemaVersion: 1,
   kind: "topsl-live-session",
   provider: both ? "both" : providers[0],
-  route: options.qualify
-    ? "runtime-qualification"
-    : both
-      ? "handoff"
-      : routes[providers[0]],
+  route: options.workflow
+    ? "build-and-review"
+    : options.qualify
+      ? "runtime-qualification"
+      : both
+        ? "handoff"
+        : routes[providers[0]],
+  ...(options.workflow ? { team: options.workflow } : {}),
   observedAt: new Date().toISOString(),
   host: `${os.platform()}/${os.arch()} ${os.release()}`,
   topsl: {
@@ -201,12 +245,13 @@ const report = {
   removedEnvironment,
   dialogs: [],
   modelTurns: 0,
-  ...(options.qualify
+  ...(qualifies
     ? {
         executable: { path: tilde(options.executables.codex) },
         session: {},
         qualification: null,
         readiness: null,
+        ...(options.workflow ? { workflow: null } : {}),
       }
     : both
       ? { steps: {}, conversation: null }
@@ -214,11 +259,14 @@ const report = {
   screenshots: [],
   profile: tilde(profile),
   profileDeleted: false,
-  ...(options.qualify
+  ...(qualifies
     ? {
         qualificationFolder: tilde(qualificationFolder),
         qualificationFolderDeleted: false,
       }
+    : {}),
+  ...(projectFolder
+    ? { projectFolder: tilde(projectFolder), projectFolderDeleted: false }
     : {}),
   result: "failed",
   failure: null,
@@ -1197,6 +1245,540 @@ async function codexQualification(projectId, runtime) {
     throw new Error("The guided setup does not show both roles as satisfied.");
 }
 
+// The seeded project's task, as the guided setup's Goal step takes it. It
+// changes one tracked file, so the build adds no file that Topsl holds for an
+// exact-hash review, which the script never gives.
+const workflowGoal = {
+  objective:
+    "Apply a ten percent discount to the order total in src/order.mjs.",
+  criteria: [
+    "orderTotal(catalog) returns 900 cents",
+    "totalCents(catalog) still returns 1000 cents",
+    "Only src/order.mjs changes, and no file is added",
+    "The required check, npm run check, passes on the build",
+  ],
+};
+const offlineRecipe = "Locked JavaScript / TypeScript · offline";
+// The qualification's turns, one build and one review.
+const workflowTurns = qualificationTurns + 2;
+const dispatchDialog = "Approve captured inputs and start?",
+  checkDialog = "Run this required check?";
+/** Whether the build and the review have ended, or Topsl stopped before them. */
+const settled = (workflow) =>
+  [
+    "checking",
+    "ready-repair",
+    "awaiting-acceptance",
+    "blocked",
+    "cancelled",
+  ].includes(workflow.stage) ||
+  (workflow.stage === "ready-review" &&
+    !!workflow.detail?.startsWith("Awaiting output manifest review"));
+
+/** Waits for Topsl to show `dialog`, and fails unless the script approved it. */
+async function approved(dialog, approval, refused) {
+  const answer = await until(`Topsl to ask "${dialog}"`, 60000, () =>
+    app.evaluate(
+      (_electron, dialog) =>
+        globalThis.__liveSession.dialogs.find((d) => d.dialog === dialog)
+          ?.answer ?? null,
+      dialog,
+    ),
+  );
+  if (answer !== approval) throw new Error(refused);
+}
+
+/** How long Topsl takes an answer to one of Codex's requests. */
+const answerWindow = 15 * 60000;
+
+/** What a request Codex makes during the workflow asks, as its card shows it. */
+const asked = (approval) => ({
+  title: approval.summary?.title ?? "Native approval requested",
+  details: (approval.summary?.details ?? []).map(
+    (detail) =>
+      `${detail.label}: ${withoutHome(String(detail.value)).slice(0, 500)}`,
+  ),
+  answer: null,
+});
+
+/** Records which button on a request's card is pressed, by request. */
+async function watchPresses() {
+  await page.evaluate(() => {
+    window.__liveSessionPresses = [];
+    document.addEventListener(
+      "click",
+      (event) => {
+        const button =
+            event.target instanceof Element
+              ? event.target.closest("button")
+              : null,
+          request = button?.closest("[data-approval]");
+        if (request)
+          window.__liveSessionPresses.push({
+            approval: request.getAttribute("data-approval"),
+            button: button.textContent.trim(),
+          });
+      },
+      true,
+    );
+  });
+}
+
+/**
+ * The owner's answer to a request that is no longer waiting: `allowed` when
+ * they confirmed **Allow once** in Topsl's dialog for it, `denied` when they
+ * pressed **Deny** on its card, and otherwise `unanswered`.
+ */
+async function answerOf(approval) {
+  const [confirmed, presses] = await Promise.all([
+    app.evaluate(
+      (_electron, digest) =>
+        globalThis.__liveSession.dialogs.some(
+          (d) => d.digest === digest && d.answer === "Allow once",
+        ),
+      approval.digest,
+    ),
+    page.evaluate(
+      (id) =>
+        window.__liveSessionPresses
+          .filter((press) => press.approval === id)
+          .map((press) => press.button),
+      approval.id,
+    ),
+  ]);
+  return confirmed
+    ? "allowed"
+    : presses.includes("Deny")
+      ? "denied"
+      : "unanswered";
+}
+
+/** Stand-in runs only: answers a request on the workflow's card as the owner
+ * would, denying a command and allowing a file change. */
+async function answerAsOwner(card, approval) {
+  await card
+    .locator(`[data-approval="${approval.id}"]`)
+    .getByRole("button", {
+      name:
+        approval.method === "item/fileChange/requestApproval"
+          ? "Review & allow once"
+          : "Deny",
+      exact: true,
+    })
+    .click();
+}
+
+/**
+ * Build and review with Codex in both roles, through Topsl's own screens: the
+ * qualification above, the rest of the guided setup and one approved start,
+ * after which Topsl builds and then starts the review itself. The script
+ * answers none of the requests Codex makes during the workflow's turns: each
+ * waits for the owner on the workflow's card, and the report keeps what it
+ * asked and the owner's answer. The script starts no repair, decides no
+ * finding and never accepts, so the run ends at the findings or, after the
+ * required check, at acceptance. Whatever Topsl recorded is kept, also when it
+ * fails.
+ */
+async function codexWorkflow(projectId, runtime) {
+  if (ownerStandIn && !String(runtime.version).endsWith("-fixture"))
+    throw new Error(
+      "TOPSL_LIVE_OWNER_STAND_IN plays the owner only for the repository's stand-in, never for a live Codex.",
+    );
+  await codexQualification(projectId, runtime);
+  const workflow = (report.workflow = {
+    project: {
+      baseCommit: seeded.baseCommit,
+      sourceIdentity: seeded.manifest.sourceIdentity,
+      files: seeded.paths.length,
+    },
+    id: null,
+    objective: workflowGoal.objective,
+    check: null,
+    stages: [],
+    stage: null,
+    detail: null,
+    attempts: [],
+    approvals: [],
+    candidate: null,
+    review: null,
+    reviewReply: null,
+    checks: [],
+    record: null,
+    stoppedAt: null,
+  });
+  const setup = page.locator(".guided-workflow");
+  await setup.getByRole("button", { name: "1. Goal", exact: true }).click();
+  await setup
+    .getByRole("textbox", { name: "Objective", exact: true })
+    .fill(workflowGoal.objective);
+  await setup
+    .getByRole("textbox", {
+      name: "Acceptance criteria · one per line",
+      exact: true,
+    })
+    .fill(workflowGoal.criteria.join("\n"));
+  await setup
+    .getByRole("button", { name: "3. Environment", exact: true })
+    .click();
+  const recipes = setup.getByLabel("Preparation and check recipe");
+  await until(
+    "the guided setup to offer the locked offline recipe",
+    30000,
+    async () => {
+      await checkShownErrors();
+      return (
+        (await recipes.locator("option", { hasText: offlineRecipe }).count()) >
+        0
+      );
+    },
+  );
+  await recipes.selectOption({ label: offlineRecipe });
+  await setup.getByLabel("Project check script").selectOption("check");
+  // The exact check, as Topsl's dialog names it before it runs.
+  const recipe = (
+    await command({ type: "environment-detect", projectId })
+  ).suggestions.find((s) => s.label === offlineRecipe);
+  const check = {
+    executable: recipe.nodeExecutable,
+    args: [recipe.npmCli, "run", "check"],
+  };
+  workflow.check = {
+    executable: tilde(check.executable),
+    args: check.args.map(tilde),
+  };
+  // Nothing to fill in under Scope: no change boundaries and no new files.
+  await setup.getByRole("button", { name: "4. Scope", exact: true }).click();
+  await setup
+    .getByRole("button", { name: "5. Review and start", exact: true })
+    .click();
+  const capture = setup.getByRole("button", {
+    name: "Capture coordinated workflow",
+    exact: true,
+  });
+  await expect(capture).toBeEnabled({ timeout: 30000 });
+  await screenshot("workflow-setup");
+  await capture.click();
+  await appear("the captured workflow", setup.getByText(/^Workflow captured/));
+  const workflows = async () =>
+    (await command({ type: "builder-reviewer-query", projectId })).workflows;
+  let current = (await workflows()).find(
+    (w) => w.objective === workflowGoal.objective,
+  );
+  if (!current) throw new Error("Topsl did not capture the workflow.");
+  workflow.id = current.id;
+  // Reads the workflow again and keeps each new stage, in order.
+  const observe = async () => {
+    current = (await workflows()).find((w) => w.id === workflow.id);
+    if (current.stage !== workflow.stages.at(-1))
+      workflow.stages.push(current.stage);
+    await checkShownErrors();
+    return current;
+  };
+  await observe();
+  const card = page.locator(".workflow-card").filter({
+    has: page.getByRole("heading", {
+      name: workflowGoal.objective,
+      exact: true,
+    }),
+  });
+  let failure = null;
+  try {
+    await appear(
+      "the workflow ready to build",
+      card.getByText("ready build", { exact: true }),
+    );
+    // Topsl asks once. The approval covers the captured inputs and both
+    // roles' runtime and model, so it also starts the review after the build.
+    await app.evaluate(
+      (_electron, approval) => {
+        globalThis.__liveSession.policy.dispatch = approval;
+      },
+      {
+        workflowId: workflow.id,
+        workspace: canonicalProject,
+        installationId: runtime.id,
+        model: report.session.model,
+      },
+    );
+    const start = card.getByRole("button", {
+      name: "Approve captured inputs and start",
+      exact: true,
+    });
+    await expect(start).toBeEnabled({ timeout: 30000 });
+    await start.click();
+    await approved(
+      dispatchDialog,
+      "Approve inputs and start",
+      "Topsl's dialog to start the workflow did not name the workflow, folder, runtime and model this script captured, so it was cancelled.",
+    );
+    // The script answers none of Codex's requests: each waits for the owner
+    // on the workflow's card and is kept with the owner's answer once it is
+    // gone.
+    await watchPresses();
+    const requests = new Map();
+    try {
+      await until(
+        "the build and the review",
+        45 * 60000,
+        async () => {
+          const scope = await command({ type: "scope-snapshot", projectId }),
+            tasks = scope.coordination.tasks
+              .filter((t) => t.workflowId === workflow.id)
+              .map((t) => t.id),
+            runs = new Set(
+              scope.coordination.attempts
+                .filter((a) => tasks.includes(a.taskId))
+                .map((a) => a.legacyRunId),
+            ),
+            waiting = scope.approvals.filter((a) => runs.has(a.runId));
+          for (const approval of waiting) {
+            // Topsl takes no answer to a request after 15 minutes, so one
+            // left that long can only hold the run until its time is up.
+            const deadline = Date.parse(approval.createdAt) + answerWindow;
+            if (Date.now() > deadline)
+              throw new Error(
+                `Codex's request "${asked(approval).title}" waited 15 minutes without an answer, and Topsl takes none after that.`,
+              );
+            if (!requests.has(approval.id)) {
+              const request = asked(approval);
+              requests.set(approval.id, { approval, request });
+              workflow.approvals.push(request);
+              console.error(
+                ownerStandIn
+                  ? `Codex asks: ${request.title}. The script answers it as the owner, since this is the stand-in run.`
+                  : `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`,
+              );
+              // How the first request looks on the card, before its answer.
+              if (requests.size === 1) {
+                await appear(
+                  "Codex's request on the workflow's card",
+                  card.locator(`[data-approval="${approval.id}"]`),
+                );
+                await screenshot("workflow-request");
+              }
+              if (ownerStandIn) await answerAsOwner(card, approval);
+            }
+          }
+          for (const [id, { approval, request }] of requests)
+            if (!request.answer && !waiting.some((a) => a.id === id))
+              request.answer = await answerOf(approval);
+          return settled(await observe());
+        },
+        2000,
+      );
+    } finally {
+      for (const { request } of requests.values())
+        request.answer ??= "unanswered";
+    }
+    if (current.stage === "checking") {
+      await app.evaluate(
+        (_electron, approval) => {
+          globalThis.__liveSession.policy.check = approval;
+        },
+        { ...check, candidate: current.candidateRevision },
+      );
+      await card
+        .getByRole("button", { name: "Review and run checks", exact: true })
+        .click();
+      await approved(
+        checkDialog,
+        "Run check",
+        "Topsl's dialog to run the required check did not name the check and build this script expected, so it was cancelled.",
+      );
+      await until(
+        "the required check",
+        10 * 60000,
+        async () => {
+          await observe();
+          return (
+            current.stage !== "checking" ||
+            current.checksStatus.some(
+              (c) =>
+                c.targetRevision === current.candidateRevision &&
+                c.result !== "pending",
+            )
+          );
+        },
+        2000,
+      );
+    }
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await recordWorkflow(projectId, card);
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure) throw failure;
+
+  if (report.modelTurns > workflowTurns)
+    throw new Error(
+      `The run started ${report.modelTurns} model turns, more than the ${workflowTurns} approved.`,
+    );
+  const { stage, candidate, review } = workflow;
+  if (stage === "ready-review" && candidate.pendingOutputs.length)
+    throw new Error(
+      `The build added a file that Topsl holds for an exact-hash review before the review turn: ${candidate.pendingOutputs.join(", ")}. The script approves no file, so no review ran.`,
+    );
+  if (!review)
+    throw new Error(
+      `Topsl stopped the workflow at "${stage.replaceAll("-", " ")}" without a review: ${workflow.detail}`,
+    );
+  if (!review.ofThisBuild)
+    throw new Error("Topsl's review is not of the current build.");
+  if (stage === "ready-repair") workflow.stoppedAt = "findings";
+  else if (stage === "awaiting-acceptance") workflow.stoppedAt = "acceptance";
+  else if (stage === "checking") {
+    const ran = workflow.checks.at(-1),
+      outcome =
+        {
+          failed: "failed",
+          error: "ended in an error",
+          cancelled: "was cancelled",
+        }[ran?.state] ?? `ended ${ran?.state}`;
+    throw new Error(
+      ran
+        ? `The review found nothing, but the required check ${outcome}${ran.failurePhase ? ` in its ${ran.failurePhase} phase` : ""}${ran.error ? `: ${ran.error}` : "."}`
+        : "The review found nothing, but the required check did not run.",
+    );
+  } else
+    throw new Error(
+      `Topsl stopped the workflow at "${stage.replaceAll("-", " ")}": ${workflow.detail}`,
+    );
+}
+
+/**
+ * Keeps what Topsl recorded for the workflow: a summary in the report, and
+ * the whole record, with the home folder written as ~, in workflow.json.
+ */
+async function recordWorkflow(projectId, card) {
+  const workflow = report.workflow;
+  const [inspection, scope] = await Promise.all([
+    command({ type: "builder-reviewer-inspect", id: workflow.id }),
+    command({ type: "scope-snapshot", projectId }),
+  ]);
+  const state = inspection.state,
+    tasks = scope.coordination.tasks.filter(
+      (t) => t.workflowId === workflow.id,
+    );
+  workflow.stage = state.stage;
+  workflow.detail = withoutHome(state.detail);
+  // The model turns: the build, the review and any repair. The required
+  // check is a task too, but it runs no model.
+  workflow.attempts = scope.coordination.attempts
+    .filter((a) => tasks.some((t) => t.id === a.taskId && t.role !== "tester"))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((attempt) => {
+      const task = tasks.find((t) => t.id === attempt.taskId),
+        run = scope.runs.find((r) => r.id === attempt.legacyRunId);
+      return {
+        role:
+          task.role === "reviewer"
+            ? "review"
+            : task.id === state.builderTaskId
+              ? "build"
+              : "repair",
+        state: attempt.state,
+        requestedModel: attempt.requestedModel,
+        reportedModel: attempt.reportedModel,
+        turnStarted: !!run?.nativeTurnId,
+        seconds: attempt.finishedAt
+          ? Math.round(
+              (Date.parse(attempt.finishedAt) - Date.parse(attempt.createdAt)) /
+                100,
+            ) / 10
+          : null,
+        usageRecords: scope.usage.filter((u) => u.runId === run?.id).length,
+        error: withoutHome(attempt.error),
+      };
+    });
+  report.modelTurns =
+    (report.qualification?.turnsStarted ?? 0) +
+    workflow.attempts.filter((a) => a.turnStarted).length;
+  workflow.candidate = {
+    revision: inspection.candidate.revision,
+    changes: (inspection.candidate.changes ?? []).map(
+      (c) => `${c.kind} ${c.path}`,
+    ),
+    pendingOutputs: (inspection.candidate.outputs ?? [])
+      .filter((o) => o.required && o.status !== "approved")
+      .map((o) => `${o.path} (${o.status})`),
+  };
+  const reviewer = tasks.find((t) => t.id === state.reviewerTaskId);
+  workflow.review = state.reviewArtifactId
+    ? {
+        ofThisBuild: state.reviewedCandidateId === state.candidateId,
+        summary: withoutHome(reviewer?.detail ?? null),
+        findings: inspection.findings.map((f) => ({
+          title: f.title,
+          severity: f.severity,
+          file: f.file,
+          line: f.line,
+        })),
+        candidateReads: inspection.candidateRetrievals.total,
+      }
+    : null;
+  // Without a review, the reviewer's own messages show what it answered:
+  // how many it sent and the last, which is the one Topsl reads.
+  const lastReview = scope.coordination.attempts
+      .filter((attempt) => attempt.taskId === state.reviewerTaskId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .at(-1),
+    reviewRun = scope.runs.find((run) => run.id === lastReview?.legacyRunId);
+  workflow.reviewReply = null;
+  if (!workflow.review && reviewRun) {
+    const { items } = await command({
+        type: "history-page",
+        projectId,
+        conversationId: reviewRun.conversationId,
+        limit: 200,
+      }),
+      replies = items.filter(
+        (m) => m.runId === reviewRun.id && m.role === "assistant",
+      );
+    // The page lists the newest message first.
+    workflow.reviewReply = {
+      messages: replies.length,
+      last: replies.length ? withoutHome(replies[0].text.slice(0, 4000)) : null,
+    };
+  }
+  workflow.checks = [];
+  for (const execution of inspection.checkExecutions) {
+    const { logs } = await command({
+      type: "check-execution-inspect",
+      projectId,
+      id: execution.id,
+    });
+    workflow.checks.push({
+      definition: execution.definition.id,
+      state: execution.state,
+      targetRevision: execution.targetRevision,
+      failurePhase: execution.failurePhase ?? null,
+      error: withoutHome(execution.error),
+      outputEnd: withoutHome(
+        logs
+          .map((l) => l.text)
+          .join("")
+          .slice(-600),
+      ),
+    });
+  }
+  const file = path.join(output, "workflow.json");
+  await writeFile(
+    file,
+    withoutHome(JSON.stringify(inspection, null, 2)) + "\n",
+  );
+  workflow.record = tilde(file);
+  // The changes and context Topsl shows for the workflow.
+  await card
+    .getByRole("button", { name: "Inspect changes and context", exact: true })
+    .click({ timeout: 10000 })
+    .catch(() => {});
+  await sleep(1000);
+  await screenshot("workflow");
+}
+
 /** Locates and trusts the provider's executable, as a user would. */
 async function locate(provider, step) {
   const executable = options.executables[provider];
@@ -1241,6 +1823,29 @@ try {
     ({ dialog }, policy) => {
       globalThis.__liveSession = { policy, dialogs: [] };
       const optionsOf = (args) => (args.length > 1 ? args[1] : args[0]) ?? {};
+      // Topsl's dialog to start a workflow shows its captured inputs as JSON
+      // above its explanation. It has to name the workflow, the folder and,
+      // for both roles, the runtime and model the script chose.
+      const startsWorkflow = (detail, expected) => {
+        let inputs = null;
+        try {
+          inputs = JSON.parse(
+            detail.slice(0, detail.indexOf("\n\nThe captured manifest")),
+          );
+        } catch {
+          return false;
+        }
+        return (
+          inputs.workflowId === expected.workflowId &&
+          inputs.workspace === expected.workspace &&
+          ["builder", "reviewer"].every(
+            (role) =>
+              inputs[role]?.provider === "codex" &&
+              inputs[role]?.installationId === expected.installationId &&
+              inputs[role]?.model === expected.model,
+          )
+        );
+      };
       dialog.showOpenDialog = async (...args) => {
         const { policy, dialogs } = globalThis.__liveSession;
         const title = String(optionsOf(args).title ?? "");
@@ -1260,12 +1865,31 @@ try {
           ? { canceled: false, filePaths: [selected] }
           : { canceled: true, filePaths: [] };
       };
+      const showMessageBox = dialog.showMessageBox;
       dialog.showMessageBox = async (...args) => {
         const { policy, dialogs } = globalThis.__liveSession;
         const value = optionsOf(args),
           message = String(value.message ?? ""),
           detail = String(value.detail ?? ""),
           buttons = (value.buttons ?? []).map(String);
+        // Allowing one of Codex's requests is the owner's answer. The script
+        // shows them Topsl's dialog and keeps the answer with the request's
+        // digest; only the stand-in owner answers it here.
+        if (message === "Allow this native action once?") {
+          const answer = policy.ownerStandIn
+            ? {
+                response: buttons.indexOf("Allow once"),
+                checkboxChecked: false,
+              }
+            : await showMessageBox.apply(dialog, args);
+          dialogs.push({
+            dialog: message,
+            answer: buttons[answer.response] ?? null,
+            by: policy.ownerStandIn ? "owner stand-in" : "owner",
+            digest: /\nDigest: ([a-f0-9]{64})$/.exec(detail)?.[1] ?? null,
+          });
+          return answer;
+        }
         const expected =
           message === "Which runtime are you locating?"
             ? policy.runtimeKind
@@ -1292,11 +1916,24 @@ try {
                           `In a disposable folder in ${policy.qualification.folder} it will:`,
                         )
                       ? "Run qualification"
-                      : null;
-        // The handoff approval covers the one message the script sends, and
-        // the qualification approval one qualification.
+                      : message === "Approve captured inputs and start?" &&
+                          policy.dispatch &&
+                          startsWorkflow(detail, policy.dispatch)
+                        ? "Approve inputs and start"
+                        : message === "Run this required check?" &&
+                            policy.check &&
+                            detail.startsWith(
+                              `Required project check\n\nExecutable: ${policy.check.executable}\nArguments: ${JSON.stringify(policy.check.args)}\nCandidate: ${policy.check.candidate}\n`,
+                            )
+                          ? "Run check"
+                          : null;
+        // The handoff approval covers the one message the script sends, the
+        // qualification approval one qualification, and the workflow's
+        // approvals one start and one run of its check.
         if (expected === "Send context") policy.handoff = false;
         if (expected === "Run qualification") policy.qualification = null;
+        if (expected === "Approve inputs and start") policy.dispatch = null;
+        if (expected === "Run check") policy.check = null;
         const response = Math.max(0, buttons.indexOf(expected));
         dialogs.push({ dialog: message, answer: buttons[response] ?? null });
         return { response, checkboxChecked: false };
@@ -1310,6 +1947,9 @@ try {
       transcript: null,
       handoff: false,
       qualification: null,
+      dispatch: null,
+      check: null,
+      ownerStandIn,
     },
   );
 
@@ -1340,6 +1980,7 @@ try {
     }
     await page.locator(".runtime-bar select").first().selectOption(trusted.id);
     if (provider === "claude") handoff = await claudeTerminal(projectId, step);
+    else if (options.workflow) await codexWorkflow(projectId, trusted);
     else if (options.qualify) await codexQualification(projectId, trusted);
     else if (options.terminal) await codexTerminal(projectId, step);
     else await codexChat(projectId, step, both ? handoff : null);
@@ -1361,6 +2002,10 @@ try {
   if (qualificationFolder) {
     await rm(qualificationFolder, { recursive: true, force: true });
     report.qualificationFolderDeleted = true;
+  }
+  if (projectFolder) {
+    await rm(projectFolder, { recursive: true, force: true });
+    report.projectFolderDeleted = true;
   }
   if (report.result === "passed" && !options.keepProfile) {
     await rm(profile, { recursive: true, force: true });

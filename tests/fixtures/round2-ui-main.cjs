@@ -112,6 +112,7 @@ data.workflow = (objective) => ({
     installationId: "fixture",
   },
   checksStatus: [],
+  approvals: [],
 });
 data.execution = () => ({
   id: "execution",

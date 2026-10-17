@@ -12,7 +12,10 @@ export interface DemoFixture {
     logicalBytes: number;
     sourceIdentity: string;
     dependency: { path: string; sha256: string; origin: string };
-    feature: { newPath: string; expectedTotalCents: number };
+    live?: true;
+    feature:
+      | { newPath: string; expectedTotalCents: number }
+      | { path: string; expectedTotalCents: number };
   };
 }
 export function fixtureCommand(
@@ -25,6 +28,7 @@ export function createDemoFixture(options?: {
   seed?: string;
   stress?: boolean;
   gitExecutable?: string;
+  live?: boolean;
 }): Promise<DemoFixture>;
 export function discountSource(defective?: boolean): string;
 export const featureOrderSource: string;

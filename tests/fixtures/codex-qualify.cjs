@@ -22,6 +22,8 @@
 // FIXTURE_LOG appends every frame, in both directions, to that file.
 // It answers --version and lists one model, so the desktop test can register,
 // connect and qualify it through Topsl's own interface.
+// A wrapper answers the turns the suite does not send, such as a workflow's
+// build and review, by setting otherTurn on this module's exports.
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
@@ -282,6 +284,14 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       }, 100);
       return;
     }
+    if (module.exports.otherTurn)
+      return module.exports.otherTurn({
+        threadId,
+        turnId,
+        prompt,
+        cwd: request.params.cwd,
+        tools: !!threads.get(threadId)?.dynamicTools,
+      });
     complete(threadId, turnId, "Done.");
   } else if (request.method === "command/exec" && !process.env.FIXTURE_NO_EXEC)
     reply(exec(request.params.command, request.params.sandboxPolicy));
@@ -301,3 +311,4 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       error: { code: -32601, message: "Unsupported fixture method." },
     });
 });
+module.exports = { call, complete, send, otherTurn: null };
