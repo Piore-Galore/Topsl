@@ -34,6 +34,10 @@ import {
   autoAcceptConfirmation,
   autoAcceptTerminalMode,
 } from "../../packages/domain/auto-accept";
+import {
+  claudeStepMode,
+  type ClaudeStep,
+} from "../../packages/domain/claude-steps";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
@@ -647,6 +651,43 @@ async function dispatch(command: Command): Promise<any> {
           installation.realPath,
           project.realPath,
         );
+      if (
+        !(await confirm(text.message, text.detail, text.affirmative, "warning"))
+      )
+        return null;
+      trusted.confirmedTerminalMode = mode;
+    }
+  }
+  if (command.type === "claude-step-open") {
+    // A build or repair opens in Bypass only under Everything, and Topsl
+    // confirms it each time; a review always opens in Plan.
+    const step: ClaudeStep = await request({
+        kind: "review",
+        recordKind: "claude-step",
+        recordId: command.stepId,
+      }),
+      installation = state.installations.find(
+        (i) => i.id === step.installationId,
+      );
+    let mode;
+    try {
+      mode = claudeStepMode(
+        step.role,
+        state.autoAccept,
+        command.permissionMode,
+      );
+    } catch {
+      // The service refuses this mode with the reason.
+    }
+    if (mode && isBypassMode(mode)) {
+      if (!installation)
+        throw new Error("Refresh Topsl, then open the step again.");
+      const text = bypassConfirmation(
+        "claude",
+        terminalMode("claude", mode),
+        installation.realPath,
+        step.folder,
+      );
       if (
         !(await confirm(text.message, text.detail, text.affirmative, "warning"))
       )

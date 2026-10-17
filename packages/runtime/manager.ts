@@ -1,5 +1,8 @@
 import { round2Features } from "../domain/round2-features";
-import { reviewOutputSchema } from "../workflows/builder-reviewer";
+import {
+  claudeStepHolding,
+  reviewOutputSchema,
+} from "../workflows/builder-reviewer";
 import os from "node:os";
 import {
   RuntimeAcceptanceRegistry,
@@ -681,6 +684,10 @@ export class RuntimeManager {
         throw new Error(
           "An assisted native step still controls this workspace. Confirm external writing stopped before starting a managed writer.",
         );
+      if (mode === "edit" && claudeStepHolding(this.store, project.id))
+        throw new Error(
+          "A workflow's Claude Code step holds this project folder until its reply is handed back or the workflow is cancelled. No managed writer was started.",
+        );
       if (coordinated)
         this.assertReady(
           installation,
@@ -1359,6 +1366,8 @@ export class RuntimeManager {
    * Opens a native terminal. Its permission mode comes only from the fixed
    * table in terminal-modes.ts. A bypass mode also needs `confirmedMode`, which
    * only the owner's answer to Topsl's own dialog supplies, for that mode.
+   * A workflow's Claude Code step also passes the session id Topsl generated,
+   * and a review's step opens in its copy of the build instead of the folder.
    */
   async terminal(
     installation: Installation,
@@ -1367,6 +1376,8 @@ export class RuntimeManager {
       login?: boolean;
       mode?: TerminalModeId;
       confirmedMode?: TerminalModeId;
+      sessionId?: string;
+      workspace?: Workspace;
     } = {},
   ): Promise<string> {
     this.coordinator.ownership.assertOwner();
@@ -1379,7 +1390,28 @@ export class RuntimeManager {
       throw new Error(
         `${mode.label} needs your confirmation in Topsl's own dialog each time.`,
       );
-    const workspaceReservation = this.reserveWorkspace(project);
+    if (
+      options.sessionId !== undefined &&
+      (provider !== "claude" ||
+        login ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          options.sessionId,
+        ))
+    )
+      throw new Error(
+        "Only a Claude Code session takes a session id, which must be a UUID Topsl generated.",
+      );
+    if (options.workspace && options.workspace.projectId !== project.id)
+      throw new Error("The workspace belongs to another project.");
+    // Where the terminal runs and which folder its writer lease covers.
+    const folder = options.workspace
+      ? {
+          ...project,
+          path: options.workspace.root,
+          realPath: options.workspace.canonicalRoot,
+        }
+      : project;
+    const workspaceReservation = this.reserveWorkspace(folder);
     try {
       await this.preflight(installation);
       const id = uid();
@@ -1387,7 +1419,10 @@ export class RuntimeManager {
         ? installation.appId === "openai.codex-cli"
           ? ["login"]
           : ["auth", "login"]
-        : [...mode.args];
+        : [
+            ...mode.args,
+            ...(options.sessionId ? ["--session-id", options.sessionId] : []),
+          ];
       const conversationId = `terminal:${id}`;
       const run: Run = {
         id,
@@ -1402,11 +1437,13 @@ export class RuntimeManager {
         model: "native-controlled",
         mode: "native",
         status: "starting",
-        nativeSessionId: null,
+        nativeSessionId: options.sessionId ?? null,
         nativeTurnId: null,
         error: null,
         createdAt: now(),
-        ...(login ? {} : { permissionMode: mode.id, permissionArgs: args }),
+        ...(login
+          ? {}
+          : { permissionMode: mode.id, permissionArgs: [...mode.args] }),
       };
       const conversation: Conversation = {
         id: conversationId,
@@ -1415,7 +1452,12 @@ export class RuntimeManager {
         nativeSessions: {},
         createdAt: now(),
       };
-      this.coordinator.beginLegacy(run, project, conversation);
+      this.coordinator.beginLegacy(
+        run,
+        project,
+        conversation,
+        options.workspace,
+      );
       this.store.transaction(() => {
         this.store.save("conversation", conversation);
         this.store.save("run", run, "terminal.start-requested");
@@ -1428,7 +1470,7 @@ export class RuntimeManager {
       let terminal: IPty;
       try {
         terminal = spawnPty(installation.path, args, {
-          cwd: login ? os.homedir() : project.realPath,
+          cwd: login ? os.homedir() : folder.realPath,
           env: nativeEnvironment({ TERM: "xterm-256color" }),
           cols: 100,
           rows: 24,

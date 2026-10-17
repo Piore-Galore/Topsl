@@ -45,7 +45,11 @@ export class Coordinator {
         if (
           ["prepared", "starting", "running", "awaiting-approval"].includes(
             attempt.state,
-          )
+          ) &&
+          // A Claude Code step runs nothing under its own attempt: it waits for
+          // the owner, and each terminal it opens is an attempt of its own.
+          this.store.get<{ state: string }>("claude-step", attempt.id)
+            ?.state !== "waiting"
         ) {
           this.repository.transitionAttempt(
             attempt.id,
@@ -82,9 +86,13 @@ export class Coordinator {
     run: Run,
     project: Project,
     conversation: Conversation,
+    /** A prepared workspace of the project, such as a review's copy, instead of its folder. */
+    prepared?: Workspace,
   ): ExecutionAttempt {
     return this.store.transaction(() => {
-      const workspace = this.repository.ensureWorkspace(project);
+      if (prepared && prepared.projectId !== project.id)
+        throw new Error("The workspace belongs to another project.");
+      const workspace = prepared ?? this.repository.ensureWorkspace(project);
       const task = this.repository.createTask({
         projectId: project.id,
         workspaceId: workspace.id,

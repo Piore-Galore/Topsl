@@ -324,8 +324,9 @@ A follow-up to this plan: one setting, **Settings → Auto-accept**, decides who
 | Claude Code terminal | The project's remembered mode | **Sandboxed edits** | **Bypass**, confirmed each time |
 | Codex terminal | The project's remembered mode | **Workspace, never ask** | **Full access**, confirmed each time |
 | Build handoff in a terminal | Nothing passed, as before | **Sandboxed edits** for Claude Code, **Workspace, never ask** for Codex | **Bypass** or **Full access**, confirmed each time |
+| Claude Code build or repair step in a workflow, since the Claude workflows plan's [step 2](Claude_Workflows_Plan.md#step-2-claude-steps-in-the-workflow-17-october-2026) | Nothing passed | **Sandboxed edits** | **Bypass**, confirmed each time |
 
-A terminal's menu starts in the level's mode, and the owner can still pick another one for each terminal. Unchanged at every level: **Read-only review** and **No asking** chats, workflow reviews and the qualification, for which Topsl still declines every request Codex makes, and review handoffs, which keep Plan for Claude Code and pass nothing for Codex.
+A terminal's menu starts in the level's mode, and the owner can still pick another one for each terminal. Unchanged at every level: **Read-only review** and **No asking** chats, workflow reviews and the qualification, for which Topsl still declines every request Codex makes, review handoffs, which keep Plan for Claude Code and pass nothing for Codex, and a workflow's Claude Code review step, which opens only in Plan.
 
 ### Claude Code's Sandboxed edits
 

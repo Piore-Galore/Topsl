@@ -1206,10 +1206,31 @@ export function recordCandidateBinaryReview(
     source: "explicit-user-verification",
   });
 }
+/** Every folder of a materialized copy, the copy itself first. */
+async function copyFolders(root: string): Promise<string[]> {
+  const folders = [root];
+  for (let index = 0; index < folders.length; index++)
+    for (const entry of await readdir(folders[index], { withFileTypes: true }))
+      if (entry.isDirectory())
+        folders.push(path.join(folders[index], entry.name));
+  return folders;
+}
+/** Removes a copy whose folders may be read-only. */
+export async function removeMaterializedCopy(root: string): Promise<void> {
+  try {
+    for (const folder of await copyFolders(root)) await chmod(folder, 0o700);
+  } catch {
+    /* A missing or partly removed copy is removed below as far as it exists. */
+  }
+  await rm(root, { recursive: true, force: true });
+}
 export async function materializeCandidate(
   snapshot: CandidateSnapshot,
   preparedRoot?: string,
   store?: Store,
+  /** readOnlyFolders: no file can be added, removed or renamed in the copy,
+   * whose files are always read-only. */
+  options: { readOnlyFolders?: boolean } = {},
 ): Promise<{
   root: string;
   cleanup: () => Promise<void>;
@@ -1243,13 +1264,18 @@ export async function materializeCandidate(
         await handle.close();
       }
     }
+    if (options.readOnlyFolders)
+      for (const folder of await copyFolders(root)) await chmod(folder, 0o500);
     return {
       root,
-      cleanup: () => rm(root, { recursive: true, force: true }),
+      cleanup: () =>
+        options.readOnlyFolders
+          ? removeMaterializedCopy(root)
+          : rm(root, { recursive: true, force: true }),
       assertUnchanged: () => assertMaterializedCandidate(snapshot, root),
     };
   } catch (error) {
-    if (!preparedRoot) await rm(root, { recursive: true, force: true });
+    if (!preparedRoot) await removeMaterializedCopy(root);
     throw error;
   }
 }
