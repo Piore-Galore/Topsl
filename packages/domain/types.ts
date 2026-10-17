@@ -1,4 +1,5 @@
 import type { TerminalModeId } from "./terminal-modes";
+import type { ChatPresetBlock, CodexApprovalPolicy } from "./chat-presets";
 export type Provider = "codex" | "claude";
 export type Theme = "paper" | "night" | "system";
 export type AppId =
@@ -205,6 +206,22 @@ export interface Run {
   /** A native terminal's permission mode, and exactly the arguments Topsl passed for it. */
   permissionMode?: TerminalModeId;
   permissionArgs?: string[];
+  /** The approval policy Topsl asked Codex for. Runs recorded before the chat presets asked for `untrusted`. */
+  approvalPolicy?: CodexApprovalPolicy;
+  /** What Codex reported it adopted when the run's thread started or resumed. */
+  reportedPermissions?: ReportedPermissions;
+}
+/**
+ * The permissions Codex reported in its answer to `thread/start` or
+ * `thread/resume`. A value Topsl does not know is kept as reported, cut to 200
+ * characters; Codex's granular approval policy is recorded as `granular`, and
+ * a field Codex left out as null.
+ */
+export interface ReportedPermissions {
+  approvalPolicy: string | null;
+  approvalsReviewer: string | null;
+  /** Codex's sandbox policy type, such as `readOnly` or `workspaceWrite`. */
+  sandbox: string | null;
 }
 /** The last ordinary terminal mode the owner chose in a project, per provider. Never a bypass mode. */
 export interface TerminalModePreference {
@@ -307,6 +324,8 @@ export interface AppState {
     permissionMode: TerminalModeId | null;
   }>;
   terminalModes: TerminalModePreference[];
+  /** Codex chat presets that a runtime cannot use now, each with the reason. */
+  chatPresetBlocks: ChatPresetBlock[];
 }
 export interface ServiceEvent {
   type:

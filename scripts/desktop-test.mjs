@@ -1012,13 +1012,32 @@ try {
     await page
       .getByRole("combobox", { name: "Model", exact: true })
       .selectOption("fixture-model");
-    await page
-      .getByRole("combobox", { name: "Permissions", exact: true })
-      .selectOption("edit");
+    const permissions = page.getByRole("combobox", {
+      name: "Permissions",
+      exact: true,
+    });
     const message = page.getByRole("textbox", { name: "Message", exact: true });
     const send = page.getByRole("button", { name: /^Send to Codex/ });
     const chat = page.getByRole("region", { name: "Conversation transcript" });
+    const presetNote = page.locator(".chat-preset-note");
+    // Nothing has qualified the stand-in, so No asking is offered but cannot
+    // be sent, and the composer says why.
+    await expect(permissions.locator("option")).toHaveText([
+      "Read-only review",
+      "Workspace edits · ask",
+      "Workspace edits · ask when needed",
+      "Workspace edits · no asking (unavailable)",
+    ]);
     await message.fill("approval");
+    await permissions.selectOption("edit-never");
+    await expect(presetNote).toContainText(
+      "Not available for this runtime. Qualify this runtime first",
+    );
+    await expect(send).toBeDisabled();
+    await permissions.selectOption("edit");
+    await expect(presetNote).toHaveText(
+      "Commands write only in the workspace, without network. You decide, before any command outside Codex's known-safe list.",
+    );
     await send.click();
     const command = page.getByRole("group", {
       name: "Run a command",
@@ -1031,6 +1050,14 @@ try {
     await command.getByRole("button", { name: "Deny", exact: true }).click();
     await expect(command).toHaveCount(0, committed);
     await expect(chat).toContainText("decline", committed);
+    // The run names its preset and what Codex reported when its thread started.
+    const runLine = page.locator(".run-status").first();
+    await expect(runLine).toContainText(
+      "fixture-model · Workspace edits · ask",
+    );
+    await expect(runLine).toContainText(
+      "Codex reported approval policy untrusted, sandbox workspace-write, approvals reviewer user.",
+    );
     // The next chat turn waits until the first has released the workspace.
     await expect
       .poll(
@@ -1266,7 +1293,7 @@ try {
   }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat approval cards for a denied command and an allowed file change against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in (macOS/Linux).",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {

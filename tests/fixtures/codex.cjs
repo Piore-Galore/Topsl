@@ -1,13 +1,16 @@
 const readline = require("node:readline");
 const fs = require("node:fs");
 const path = require("node:path");
+const { threadResponse } = require("./codex-thread.cjs");
 // It answers --version, so the desktop test can register it as Codex.
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.163.0-fixture");
   process.exit(0);
 }
 // FIXTURE_LOG records every frame in both directions, so tests can check them
-// against the schema Codex generates.
+// against the schema Codex generates. Its answers to thread/start and
+// thread/resume come from codex-thread.cjs, which can also report permissions
+// other than those Topsl asked for.
 const log = (from, frame) =>
   process.env.FIXTURE_LOG &&
   fs.appendFileSync(
@@ -118,7 +121,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       },
     });
   else if (["thread/start", "thread/resume"].includes(request.method))
-    reply({ thread: { id: "thread-fixture" } });
+    reply(threadResponse(request.params, "thread-fixture"));
   else if (request.method === "turn/start") {
     const prompt = request.params.input[0].text;
     if (prompt === "crash") {

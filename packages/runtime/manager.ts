@@ -34,6 +34,14 @@ import type {
 } from "../providers/contract";
 import { answerToolCall } from "../providers/tool-calls";
 import { terminalMode, type TerminalModeId } from "../domain/terminal-modes";
+import {
+  chatPresetFor,
+  chatPresets,
+  noAskingBlocked,
+  type ChatPreset,
+  type ChatPresetBlock,
+  type CodexApprovalPolicy,
+} from "../domain/chat-presets";
 import type { Workspace } from "../domain/workflow";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
 import { Store } from "../persistence/store";
@@ -167,6 +175,37 @@ export class RuntimeManager {
       ...qualified,
       ...declared.filter((c) => !qualified.some((q) => q.name === c.name)),
     ];
+  }
+  /** Why a Codex chat preset is unavailable on this runtime now, or null
+   * when it can be used. No asking needs the runtime's current qualification
+   * to have passed workspace-write, which an isolated fixture never has. */
+  chatPresetBlocked(
+    installation: Installation,
+    preset: ChatPreset,
+  ): string | null {
+    if (
+      !preset.needsQualifiedSandbox ||
+      this.capabilities(installation).some((c) =>
+        capabilitySatisfies(c, "workspace-write"),
+      )
+    )
+      return null;
+    const { state } = this.acceptance.resolve(
+      this.binding(installation),
+      installation,
+    ).freshness;
+    return state === "current"
+      ? noAskingBlocked.failed
+      : noAskingBlocked[state];
+  }
+  /** The chat presets this runtime cannot use now, each with the reason. */
+  chatPresetBlocks(installation: Installation): ChatPresetBlock[] {
+    return chatPresets.flatMap((preset) => {
+      const reason = this.chatPresetBlocked(installation, preset);
+      return reason
+        ? [{ installationId: installation.id, preset: preset.id, reason }]
+        : [];
+    });
   }
   readiness(
     installation: Installation,
@@ -510,6 +549,7 @@ export class RuntimeManager {
     model: string,
     mode: "review" | "edit",
     execution?: RuntimeExecution,
+    approvalPolicy: CodexApprovalPolicy = "untrusted",
   ): Promise<Run> {
     if (this.closing)
       return Promise.reject(
@@ -523,6 +563,7 @@ export class RuntimeManager {
       model,
       mode,
       execution,
+      approvalPolicy,
     );
     this.operations.add(operation);
     void operation.then(
@@ -538,7 +579,8 @@ export class RuntimeManager {
     prompt: string,
     model: string,
     mode: "review" | "edit",
-    execution?: RuntimeExecution,
+    execution: RuntimeExecution | undefined,
+    approvalPolicy: CodexApprovalPolicy,
   ): Promise<Run> {
     this.coordinator.ownership.assertOwner();
     const workspaceReservation = this.reserveWorkspace(project);
@@ -564,6 +606,20 @@ export class RuntimeManager {
       )
         throw new Error(
           "Topsl's tools are installed only on a fresh review session of a runtime that can call them. No provider turn was dispatched.",
+        );
+      const preset = chatPresetFor(mode, approvalPolicy);
+      if (!preset)
+        throw new Error(
+          `Topsl has no Codex chat preset with a ${mode === "review" ? "read-only" : "workspace"} sandbox and approval policy ${approvalPolicy}. No provider turn was dispatched.`,
+        );
+      if (approvalPolicy !== "untrusted" && (provider !== "codex" || execution))
+        throw new Error(
+          `Only a Codex chat can use approval policy ${approvalPolicy}; workflow roles keep the profiles they were qualified with. No provider turn was dispatched.`,
+        );
+      const blocked = this.chatPresetBlocked(installation, preset);
+      if (blocked)
+        throw new Error(
+          `${preset.label} is not available for this runtime. ${blocked} No provider turn was dispatched.`,
         );
       const requestedSettings = execution
         ? this.store.get<{ effort: string | null }>(
@@ -615,6 +671,7 @@ export class RuntimeManager {
         managementUnitId: installation.managementUnitId,
         model,
         mode,
+        ...(provider === "codex" ? { approvalPolicy } : {}),
         status: "starting",
         nativeSessionId: execution?.freshSession
           ? null
@@ -731,6 +788,13 @@ export class RuntimeManager {
         await client.initialize();
         const account = await adapter.account(client, installation);
         if (!this.fixtureMode) this.observeAccount(installation, account);
+        // A changed account or profile is a new binding, which the
+        // qualification may not cover.
+        const stillBlocked = this.chatPresetBlocked(installation, preset);
+        if (stillBlocked)
+          throw new Error(
+            `${preset.label} is not available for this runtime. ${stillBlocked}`,
+          );
         if (coordinated) {
           this.assertReady(
             installation,
@@ -791,6 +855,7 @@ export class RuntimeManager {
             : {}),
           ...(execution?.tools ? { toolset: execution.tools.toolset } : {}),
           mode,
+          approvalPolicy,
           contextPackageId: attempt.contextPackageId,
           attemptId: attempt.id,
           workspaceIdentity: workspace.filesystemIdentity!,
@@ -801,6 +866,8 @@ export class RuntimeManager {
           run.nativeSessionId,
         );
         run.nativeSessionId = thread.nativeSessionId;
+        if (thread.permissions)
+          run.reportedPermissions = thread.permissions.reported;
         this.store.immutable("runtime-turn-metadata", {
           id: attempt.id,
           projectId: project.id,
@@ -813,9 +880,16 @@ export class RuntimeManager {
           nativeThreadId: thread.nativeThreadId ?? thread.nativeSessionId,
           providerSessionId: thread.providerSessionId ?? null,
           instructionSources: thread.instructionSources ?? [],
+          permissions: thread.permissions ?? null,
           observedAt: now(),
           source: "runtime-reported",
         });
+        // Managed requirements or Codex's own configuration can change what
+        // a thread adopts; the run then never gets its prompt.
+        if (thread.permissions?.differences.length)
+          throw new Error(
+            `Codex did not adopt the permissions Topsl asked for (${thread.permissions.differences.join("; ")}). Topsl stopped before sending the prompt.`,
+          );
         if (
           coordinated &&
           thread.reportedModel &&
@@ -1044,8 +1118,9 @@ export class RuntimeManager {
       return;
     }
     if (!active.run.nativeTurnId) active.run.nativeTurnId = request.turnId;
-    // Review mode never grants escalation or file writes, even if a native runtime asks.
-    if (active.run.mode === "review") {
+    // Review mode never grants escalation or file writes, and a chat with no
+    // asking asks nobody, even if a native runtime asks.
+    if (active.run.mode === "review" || active.run.approvalPolicy === "never") {
       active.client.reply(requestId, { decision: "decline" });
       return;
     }

@@ -5,7 +5,8 @@ import { realpathSync } from "node:fs";
 import { nativeEnvironment } from "../platform/system";
 import { RpcPeer } from "../runtime/rpc";
 import { hash, safeError, stable } from "../domain/invariants";
-import type { Installation } from "../domain/types";
+import type { Installation, ReportedPermissions } from "../domain/types";
+import { sandboxName } from "../domain/chat-presets";
 import type {
   PreparedTurn,
   ProviderAdapter,
@@ -16,6 +17,7 @@ import type {
   ProviderModel,
   ProviderToolCall,
   ProviderToolResult,
+  SessionPermissions,
   StartedItem,
 } from "./contract";
 import {
@@ -41,6 +43,10 @@ const sessionSchema = z.object({
   model: string.optional(),
   reasoningEffort: string.nullable().optional(),
   instructionSources: z.array(string).optional(),
+  // Read by reportedPermissions, whatever their shape.
+  approvalPolicy: z.unknown().optional(),
+  approvalsReviewer: z.unknown().optional(),
+  sandbox: z.unknown().optional(),
 });
 const turnSchema = z.object({
   reasoningEffort: string.nullable().optional(),
@@ -69,6 +75,64 @@ export const sandboxPolicy = (mode: "review" | "edit", cwd: string) =>
   mode === "review"
     ? { type: "readOnly" }
     : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false };
+/** Reported text, cut to the length Topsl records. */
+const reportedText = (value: unknown) =>
+  (typeof value === "string" ? value : JSON.stringify(value)).slice(0, 200);
+/**
+ * What Codex reported it adopted in its answer to `thread/start` or
+ * `thread/resume`: the approval policy, the approvals reviewer and the type of
+ * the sandbox policy. Codex 0.163.0's schema requires all three.
+ */
+export function reportedPermissions(result: {
+  approvalPolicy?: unknown;
+  approvalsReviewer?: unknown;
+  sandbox?: unknown;
+}): ReportedPermissions {
+  const { approvalPolicy: policy, approvalsReviewer: reviewer } = result,
+    sandbox = result.sandbox as { type?: unknown } | null | undefined;
+  return {
+    approvalPolicy:
+      policy == null
+        ? null
+        : typeof policy === "object" && "granular" in policy
+          ? "granular"
+          : reportedText(policy),
+    approvalsReviewer: reviewer == null ? null : reportedText(reviewer),
+    sandbox:
+      sandbox == null
+        ? null
+        : reportedText(
+            typeof sandbox === "object" && typeof sandbox.type === "string"
+              ? sandbox.type
+              : sandbox,
+          ),
+  };
+}
+/** The sandbox policy type Codex reports for each sandbox Topsl asks for. */
+const sandboxTypes: Record<string, string> = {
+  "read-only": "readOnly",
+  "workspace-write": "workspaceWrite",
+};
+/** Each way Codex's report differs from what Topsl asked for, in words. */
+export function permissionDifferences(
+  requested: SessionPermissions["requested"],
+  reported: ReportedPermissions,
+): string[] {
+  const differences: string[] = [];
+  if (reported.approvalPolicy !== requested.approvalPolicy)
+    differences.push(
+      `approval policy: Topsl asked for ${requested.approvalPolicy}, Codex reported ${reported.approvalPolicy ?? "nothing"}`,
+    );
+  if (reported.approvalsReviewer !== requested.approvalsReviewer)
+    differences.push(
+      `approvals reviewer: Topsl asked for ${requested.approvalsReviewer}, Codex reported ${reported.approvalsReviewer ?? "nothing"}`,
+    );
+  if (reported.sandbox !== sandboxTypes[requested.sandbox])
+    differences.push(
+      `sandbox: Topsl asked for ${requested.sandbox}, Codex reported ${reported.sandbox === null ? "nothing" : sandboxName(reported.sandbox)}`,
+    );
+  return differences;
+}
 export class CodexAdapter implements ProviderAdapter {
   readonly provider = "codex" as const;
   constructor(
@@ -234,11 +298,17 @@ export class CodexAdapter implements ProviderAdapter {
       throw new Error(
         "Topsl declares its tools only when a fresh review thread starts.",
       );
+    const requested = {
+      approvalPolicy: turn.approvalPolicy ?? "untrusted",
+      // Approval requests come to Topsl, which asks the owner or declines
+      // them, never to Codex's automatic reviewer.
+      approvalsReviewer: "user",
+      sandbox: turn.mode === "review" ? "read-only" : "workspace-write",
+    };
     const params = {
       cwd: turn.cwd,
       model: turn.requestedModel,
-      approvalPolicy: "untrusted",
-      sandbox: turn.mode === "review" ? "read-only" : "workspace-write",
+      ...requested,
       // Codex's experimental dynamic tools; the connection opts in when it
       // initializes.
       ...(turn.toolset
@@ -265,7 +335,13 @@ export class CodexAdapter implements ProviderAdapter {
         nativeSessionId ? { ...params, threadId: nativeSessionId } : params,
       ),
     );
+    const reported = reportedPermissions(result);
     return {
+      permissions: {
+        requested,
+        reported,
+        differences: permissionDifferences(requested, reported),
+      },
       nativeSessionId: result.thread.id,
       nativeThreadId: result.thread.id,
       providerSessionId: result.thread.sessionId ?? null,
@@ -300,7 +376,8 @@ export class CodexAdapter implements ProviderAdapter {
         model: turn.requestedModel,
         ...(turn.requestedEffort ? { effort: turn.requestedEffort } : {}),
         ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
-        approvalPolicy: "untrusted",
+        approvalPolicy: turn.approvalPolicy ?? "untrusted",
+        approvalsReviewer: "user",
         sandboxPolicy: sandboxPolicy(turn.mode, turn.cwd),
       }),
     );

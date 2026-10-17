@@ -18,12 +18,14 @@
 // from FIXTURE_READER_MARKER; FIXTURE_READER=dropped reads the file, then
 // reports the call with no content items and does not quote it.
 // FIXTURE_REFUSE_TOOLS=1 refuses a thread/start that declares tools.
+// FIXTURE_ACCOUNT_ID reports another ChatGPT account.
 // FIXTURE_LOG appends every frame, in both directions, to that file.
 // It answers --version and lists one model, so the desktop test can register,
 // connect and qualify it through Topsl's own interface.
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
+const { threadResponse } = require("./codex-thread.cjs");
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.163.0-qualify-fixture");
   process.exit(0);
@@ -225,7 +227,7 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
         type: "chatgpt",
         email: "fixture@example.test",
         planType: "fixture",
-        chatgptAccountId: "fixture-account",
+        chatgptAccountId: process.env.FIXTURE_ACCOUNT_ID || "fixture-account",
       },
     });
   else if (request.method === "thread/start") {
@@ -240,7 +242,7 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       });
     const id = `thread-${++threadCount}`;
     threads.set(id, request.params);
-    reply({ thread: { id }, model: request.params.model });
+    reply(threadResponse(request.params, id));
   } else if (request.method === "turn/start") {
     const { threadId } = request.params,
       prompt = request.params.input[0].text,

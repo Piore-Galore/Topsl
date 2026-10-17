@@ -76,6 +76,7 @@ let state: AppState = {
   approvals: [],
   terminals: [],
   terminalModes: [],
+  chatPresetBlocks: [],
   serviceError: null,
   configurationWrites: [],
 };
