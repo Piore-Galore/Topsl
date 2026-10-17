@@ -48,10 +48,16 @@ export function WorkflowDispatch({
     };
   }, [projectId, workflow.id, workflow.revision, workflow.stage]);
   if (["accepted", "cancelled"].includes(workflow.stage)) return null;
+  // The rollout gate covers structured routes; a team of Claude Code steps
+  // runs no structured turn.
+  const gated =
+    [workflow.builder, workflow.reviewer].some(
+      (role: any) => role.route !== "terminal",
+    ) && !allowed;
   return (
     <section aria-label="Workflow route readiness">
       <p>
-        {readiness?.runnable && allowed
+        {readiness?.runnable && !gated
           ? "Selected coordinated roles currently satisfy recorded readiness."
           : "Coordinated dispatch is blocked; a protected draft or assisted handoff remains separate."}
         {readiness && ` Observed ${readiness.observedAt}.`}
@@ -64,7 +70,7 @@ export function WorkflowDispatch({
           </p>
         )),
       )}
-      {!allowed && readiness && (
+      {gated && readiness && (
         <p>
           The service has disabled qualified structured dispatch for this
           rollout.
@@ -75,7 +81,7 @@ export function WorkflowDispatch({
         workflow.stage,
       ) && (
         <button
-          disabled={pending || !fresh || !allowed || !readiness?.runnable}
+          disabled={pending || !fresh || gated || !readiness?.runnable}
           onClick={() => void advance()}
         >
           {workflow.stage === "ready-review"

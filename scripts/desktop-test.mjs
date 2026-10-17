@@ -12,6 +12,7 @@ import { rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-desktop-"));
 const desktopEnvironment = { ...process.env, TOPSL_TEST_PROFILE: profile };
 delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
@@ -30,6 +31,29 @@ if (process.platform !== "win32") {
 const project = path.join(profile, "fixture-project");
 await mkdir(project);
 const canonicalProject = await realpath(project);
+// The four workflow teams below each change their own module, which a
+// required check expects to export 2.
+const teams = [
+  ["codex", "codex"],
+  ["claude", "codex"],
+  ["codex", "claude"],
+  ["claude", "claude"],
+];
+for (const [builder, reviewer] of teams) {
+  await writeFile(
+    path.join(project, `${builder}-${reviewer}.mjs`),
+    "export const value = 1;\n",
+  );
+  await writeFile(
+    path.join(project, `${builder}-${reviewer}.test.mjs`),
+    `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { value } from "./${builder}-${reviewer}.mjs";\ntest("the value is two", () => assert.equal(value, 2));\n`,
+  );
+}
+// Claude Code's configuration folder for this profile, where the transcript
+// a workflow step's reply is read from is written.
+const claudeConfig = path.join(profile, "claude-config");
+await mkdir(path.join(claudeConfig, "projects"), { recursive: true });
+desktopEnvironment.CLAUDE_CONFIG_DIR = claudeConfig;
 const nativeHome = path.join(profile, "native-home");
 const nativeCodex = path.join(nativeHome, ".codex");
 await mkdir(nativeCodex, { recursive: true });
@@ -914,15 +938,18 @@ try {
     page.getByRole("dialog", { name: "Command palette" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  // The Codex runtime the workflow teams below run, once it is qualified.
+  let qualifiedCodex = null;
   if (qualificationDirectory) {
     // A Codex-only team through the guided setup: the scripted qualification
-    // stand-in is registered, connected and qualified as a user would, so no
-    // model is contacted. Native shell wrapper is a test fixture only.
+    // stand-in, which also builds and reviews the team files, is registered,
+    // connected and qualified as a user would, so no model is contacted.
+    // Native shell wrapper is a test fixture only.
     const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
     const qualifyFixture = path.join(profile, "codex-qualify-fixture");
     await writeFile(
       qualifyFixture,
-      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex-qualify.cjs"))} "$@"\n`,
+      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex-desktop-workflow.cjs"))} "$@"\n`,
     );
     await chmod(qualifyFixture, 0o700);
     await app.evaluate(({ dialog }, selected) => {
@@ -953,7 +980,7 @@ try {
     await setup.locator("summary").first().click();
     await setup
       .getByRole("textbox", { name: "Objective", exact: true })
-      .fill("Codex builds and Codex reviews");
+      .fill("Codex builds and Codex reviews codex-codex.mjs");
     await setup
       .getByRole("textbox", {
         name: "Acceptance criteria · one per line",
@@ -1024,7 +1051,7 @@ try {
         name: "Change boundaries · relative paths, one per line",
         exact: true,
       })
-      .fill("AGENTS.md");
+      .fill("codex-codex.mjs\ncodex-codex.test.mjs");
     await setup
       .getByRole("button", { name: "5. Review and start", exact: true })
       .click();
@@ -1038,7 +1065,7 @@ try {
     await expect(setup.getByText(/^Workflow captured/)).toBeVisible();
     const card = page.locator(".workflow-card").filter({
       has: page.getByRole("heading", {
-        name: "Codex builds and Codex reviews",
+        name: "Codex builds and Codex reviews codex-codex.mjs",
         exact: true,
       }),
     });
@@ -1050,6 +1077,7 @@ try {
       path: "test-results/codex-team-workflow.png",
       fullPage: true,
     });
+    qualifiedCodex = runtime;
   }
   if (process.platform !== "win32") {
     // A direct Codex chat with the protocol stand-in: a command approval is
@@ -1524,10 +1552,634 @@ try {
       committed,
     );
     expect(await confirmations()).toBe(beforeTranscripts + 1);
+    // All four teams through the setup screen and the workflow page, each to
+    // acceptance, against the Codex stand-in qualified above and the Claude
+    // Code stand-in. A Claude role is a Claude Code step: the test plays
+    // Claude by changing the team's module while the stand-in runs, exits it
+    // as the owner would, and hands back Claude's reply, pasted or read from
+    // a fixture transcript in this profile's CLAUDE_CONFIG_DIR.
+    expect(qualifiedCodex).not.toBeNull();
+    await app.evaluate(({ dialog }) => {
+      globalThis.topslConfirmations = [];
+      dialog.showMessageBox = async (...args) => {
+        const options = args.at(-1);
+        globalThis.topslConfirmations.push({
+          message: options.message,
+          detail: options.detail ?? "",
+        });
+        // The affirmative button, unless the test declines this message.
+        return {
+          response: globalThis.topslDeclined?.includes(options.message) ? 0 : 1,
+          checkboxChecked: false,
+        };
+      };
+    });
+    /** The latest confirmation Topsl asked with this message. */
+    const confirmed = (message) =>
+      app.evaluate(
+        (_, message) =>
+          globalThis.topslConfirmations.findLast(
+            (confirmation) => confirmation.message === message,
+          ),
+        message,
+      );
+    const claudeVersion = `Claude Code ${
+      (
+        await page.evaluate(() => window.topsl.command({ type: "state" }))
+      ).installations.find((i) => i.id === claude.id).version ??
+      "version unknown"
+    }`;
+    const providerName = { codex: "Codex", claude: "Claude" };
+    const teamName = (builder, reviewer) =>
+      `${providerName[builder]} builds and ${providerName[reviewer]} reviews ${builder}-${reviewer}.mjs`;
+    const claudePairing =
+      "Claude reviews Claude in a fresh Claude Code session. This is not an independent second model.";
+    const workflowSetup = page.locator(".guided-workflow");
+    const workflowCard = (name) =>
+      page.locator(".workflow-card").filter({
+        has: page.getByRole("heading", { name, exact: true }),
+      });
+    // A build, review or check commits and syncs several records each.
+    const working = { timeout: 120000 };
+    const stage = (card, text) =>
+      expect(card.getByText(text, { exact: true })).toBeVisible(working);
+    const activity = async () => {
+      await page.getByRole("button", { name: "Activity", exact: true }).click();
+      await expect(workflowSetup).toBeVisible(committed);
+    };
+    const settings = () =>
+      page.getByRole("button", { name: "Settings", exact: true }).click();
+    /** Sets up one team on the setup screen and captures its workflow. */
+    const captureTeam = async (builder, reviewer) => {
+      const name = teamName(builder, reviewer),
+        module = `${builder}-${reviewer}`,
+        pair = builder === "claude" && reviewer === "claude";
+      if ((await workflowSetup.getAttribute("open")) === null)
+        await workflowSetup.locator("summary").first().click();
+      await workflowSetup
+        .getByRole("button", { name: "1. Goal", exact: true })
+        .click();
+      await workflowSetup
+        .getByRole("textbox", { name: "Objective", exact: true })
+        .fill(name);
+      await workflowSetup
+        .getByRole("textbox", {
+          name: "Acceptance criteria · one per line",
+          exact: true,
+        })
+        .fill("The fixture check passes");
+      await workflowSetup
+        .getByRole("button", { name: "2. Team", exact: true })
+        .click();
+      await workflowSetup
+        .getByLabel("Team preset")
+        .selectOption(`${builder}:${reviewer}`);
+      const note = workflowSetup.getByText(claudePairing, { exact: true });
+      await expect(note).toHaveCount(pair ? 1 : 0);
+      for (const [role, chosen] of [
+        ["builder", builder],
+        ["reviewer", reviewer],
+      ]) {
+        await workflowSetup
+          .getByLabel(`Selected ${role} runtime`)
+          .selectOption(chosen === "codex" ? qualifiedCodex.id : claude.id);
+        const model = workflowSetup.getByLabel(`Requested ${role} model`);
+        if (chosen === "claude") {
+          // A Claude Code step names no model or effort.
+          await expect(model).toHaveCount(0);
+          continue;
+        }
+        if (!(await model.locator('option[value="fixture-model"]').count()))
+          await workflowSetup
+            .getByRole("button", {
+              name: `Discover ${role} models`,
+              exact: true,
+            })
+            .click();
+        await model.selectOption("fixture-model");
+      }
+      await expect(
+        workflowSetup.getByText(
+          "Topsl passes it no model or effort, so Claude Code's own settings decide. Claude's structured route stays gated.",
+        ),
+      ).toHaveCount([builder, reviewer].filter((p) => p === "claude").length);
+      await expect(
+        workflowSetup.getByText(/^Role requirements currently satisfied/),
+      ).toHaveCount(2, committed);
+      await workflowSetup
+        .getByRole("button", { name: "3. Environment", exact: true })
+        .click();
+      await workflowSetup
+        .getByLabel("Preparation and check recipe")
+        .selectOption({ label: "Self-contained command" });
+      await workflowSetup
+        .getByRole("button", { name: "4. Scope", exact: true })
+        .click();
+      await workflowSetup
+        .getByRole("textbox", {
+          name: "Change boundaries · relative paths, one per line",
+          exact: true,
+        })
+        .fill(`${module}.mjs\n${module}.test.mjs`);
+      await workflowSetup
+        .getByRole("button", { name: "5. Review and start", exact: true })
+        .click();
+      await expect(note).toHaveCount(pair ? 1 : 0);
+      const capture = workflowSetup.getByRole("button", {
+        name: "Capture coordinated workflow",
+        exact: true,
+      });
+      await expect(capture).toBeEnabled(committed);
+      await capture.click();
+      const card = workflowCard(name);
+      await expect(card.getByText("ready build", { exact: true })).toBeVisible(
+        committed,
+      );
+      await expect(card.getByText(claudePairing, { exact: true })).toHaveCount(
+        pair ? 1 : 0,
+      );
+      return card;
+    };
+    /** Approves a captured workflow's inputs and starts it. */
+    const start = async (card) => {
+      const button = card.getByRole("button", {
+        name: "Approve captured inputs and start",
+        exact: true,
+      });
+      await expect(button).toBeEnabled(committed);
+      const asked = await confirmations();
+      await button.click();
+      await expect.poll(confirmations).toBe(asked + 1);
+      expect(
+        await confirmed("Approve captured inputs and start?"),
+      ).toBeTruthy();
+    };
+    /** Runs a workflow's required check once its review is in. */
+    const check = async (card) => {
+      await stage(card, "checking");
+      await card
+        .getByRole("button", { name: "Review and run checks", exact: true })
+        .click();
+      await stage(card, "awaiting acceptance");
+    };
+    /** Accepts a checked workflow and returns Topsl's acceptance dialog. */
+    const accept = async (card, module) => {
+      await card
+        .getByRole("button", { name: "Review final acceptance", exact: true })
+        .click();
+      await stage(card, "accepted");
+      expect(await readFile(path.join(project, module), "utf8")).toBe(
+        "export const value = 2;\n",
+      );
+      const acceptance = await confirmed("Accept this reviewed candidate?");
+      expect(acceptance.detail).toContain('"result":"passed"');
+      return acceptance;
+    };
+    const stepPanel = (card, noun) =>
+      card.getByRole("region", { name: `Claude Code ${noun}`, exact: true });
+    const stepRecord = (card) =>
+      card.getByRole("region", { name: "Claude Code steps", exact: true });
+    const stopped = (panel) =>
+      panel.getByRole("checkbox", { name: /^Claude Code has stopped/ });
+    const sessions = (panel) =>
+      panel.getByRole("list", { name: "Claude Code sessions", exact: true });
+    const stepTerminal = (panel) =>
+      panel.getByRole("region", { name: "Native terminal", exact: true });
+    // The terminal's rows joined, so a wrapped line reads whole.
+    const stepScreen = (panel) =>
+      stepTerminal(panel)
+        .locator(".xterm-rows")
+        .innerText()
+        .then((text) =>
+          text.replaceAll(String.fromCharCode(160), " ").replaceAll("\n", ""),
+        )
+        .catch(() => "");
+    /**
+     * Opens the step in Claude Code, as the owner's button does, and returns
+     * its session id, its instructions, and the step as the service has it.
+     */
+    const openStep = async (name, panel, args) => {
+      const before = await sessions(panel).locator("li").count();
+      await panel
+        .getByRole("button", { name: "Open in Claude Code", exact: true })
+        .click();
+      await expect(sessions(panel).locator("li")).toHaveCount(
+        before + 1,
+        committed,
+      );
+      const sessionId = /^Session ([0-9a-f-]{36}) · /.exec(
+        await sessions(panel).locator("li").last().innerText(),
+      )[1];
+      // Topsl passes the mode's arguments and the session id, and nothing else.
+      await expect
+        .poll(() => stepScreen(panel), committed)
+        .toContain(
+          `Stand-in arguments: ${JSON.stringify([...args, "--session-id", sessionId])}`,
+        );
+      expect(
+        (await scope()).runs.find((run) => run.nativeSessionId === sessionId)
+          .permissionArgs,
+      ).toEqual(args);
+      await expect(panel.locator("details pre")).toHaveCount(1);
+      const instructions = await panel.locator("details pre").textContent();
+      // Topsl copies the instructions for the owner to paste into Claude Code.
+      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+        instructions,
+      );
+      const step = await page.evaluate(
+        async ({ projectId, name }) =>
+          (
+            await window.topsl.command({
+              type: "builder-reviewer-query",
+              projectId,
+            })
+          ).workflows.find((workflow) => workflow.objective === name)
+            .claudeStep,
+        { projectId: projectIds[0], name },
+      );
+      expect(step.opens.at(-1).sessionId).toBe(sessionId);
+      return { sessionId, instructions, step };
+    };
+    /** Exits the stand-in from its terminal, as the owner exits Claude Code. */
+    const exitStep = async (panel) => {
+      await stepTerminal(panel).locator("textarea").focus();
+      // The terminal passes a line on at Enter.
+      await page.keyboard.type("q");
+      await page.keyboard.press("Enter");
+      await expect
+        .poll(async () => (await scope()).terminals.length, committed)
+        .toBe(0);
+      await expect(stepTerminal(panel)).toHaveCount(0, committed);
+    };
+    const handBack = async (panel, reply) => {
+      await panel
+        .getByRole("textbox", { name: "Claude's final reply", exact: true })
+        .fill(reply);
+      await panel
+        .getByRole("button", { name: "Hand back reply", exact: true })
+        .click();
+    };
+    const reviewReply = (instructions) =>
+      JSON.stringify({
+        candidateRevision: /"candidateRevision":"([a-f0-9]{64})"/.exec(
+          instructions,
+        )[1],
+        summary: "Reviewed in the stand-in.",
+        findings: [],
+      });
+    await activity();
+
+    // Codex builds and Codex reviews: the team captured above.
+    const codexTeam = workflowCard(teamName("codex", "codex"));
+    await start(codexTeam);
+    await check(codexTeam);
+    // No Claude Code step ran, so acceptance names none.
+    await expect(stepRecord(codexTeam)).toHaveCount(0);
+    expect((await accept(codexTeam, "codex-codex.mjs")).detail).not.toContain(
+      "Claude Code",
+    );
+
+    // Claude builds and Codex reviews: the build is a Claude Code step whose
+    // reply the owner pastes.
+    const claudeBuilds = await captureTeam("claude", "codex");
+    await expect(claudeBuilds).toContainText(
+      "Claude Code · a step you run in Topsl's terminal · model and effort set in Claude Code",
+    );
+    await start(claudeBuilds);
+    await stage(claudeBuilds, "building");
+    const build = stepPanel(claudeBuilds, "build");
+    // The step says what it needs.
+    await expect(claudeBuilds).toContainText(
+      "Waiting for Claude Code. Open the build in Claude Code in the project folder, paste the instructions Topsl copies, and after Claude Code exits, hand back Claude's final reply.",
+    );
+    await expect(build.getByRole("status")).toHaveText(
+      "Waiting for the owner to open Claude Code.",
+    );
+    const buildMode = build.getByRole("combobox", {
+      name: "Claude Code mode for this build",
+      exact: true,
+    });
+    // A build opens in the ordinary modes, and in Bypass only while
+    // auto-accept is Everything, which then starts the menu in Bypass.
+    await expect(buildMode).toHaveValue("provider-default");
+    await expect(buildMode.locator('option[value="bypass"]')).toHaveCount(0);
+    await settings();
+    await level("Everything").click();
+    await expect(level("Everything")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    await activity();
+    await expect(buildMode).toHaveValue("bypass", committed);
+    await expect(
+      buildMode.locator('optgroup[label="Advanced"] option'),
+    ).toHaveText(["Bypass"]);
+    await expect(build.locator(".terminal-mode-note")).toContainText(
+      "Topsl asks you to confirm every time",
+    );
+    // Opening in Bypass takes Topsl's own confirmation, naming the step's
+    // folder, and declining it opens nothing and copies nothing.
+    const bypassQuestion = "Start Claude Code with permission checks bypassed?";
+    await app.evaluate((_, message) => {
+      globalThis.topslDeclined = [message];
+    }, bypassQuestion);
+    const clipboardBefore = await app.evaluate(({ clipboard }) =>
+      clipboard.readText(),
+    );
+    const openBuild = build.getByRole("button", {
+      name: "Open in Claude Code",
+      exact: true,
+    });
+    await openBuild.click();
+    await expect.poll(() => confirmed(bypassQuestion), committed).toBeTruthy();
+    await expect(openBuild).toBeEnabled(committed);
+    const waitingBuild = await page.evaluate(
+      async ({ projectId, name }) =>
+        (
+          await window.topsl.command({
+            type: "builder-reviewer-query",
+            projectId,
+          })
+        ).workflows.find((workflow) => workflow.objective === name).claudeStep,
+      { projectId: projectIds[0], name: teamName("claude", "codex") },
+    );
+    expect((await confirmed(bypassQuestion)).detail).toContain(
+      `Folder: ${waitingBuild.folder}\nTopsl passes: --permission-mode bypassPermissions`,
+    );
+    expect(waitingBuild.opens).toEqual([]);
+    await expect(sessions(build)).toHaveCount(0);
+    await expect(stepTerminal(build)).toHaveCount(0);
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+      clipboardBefore,
+    );
+    await app.evaluate(() => {
+      globalThis.topslDeclined = [];
+    });
+    await settings();
+    await level("Off").click();
+    await expect(level("Off")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    await activity();
+    await expect(buildMode).toHaveValue("provider-default", committed);
+    await expect(buildMode.locator('option[value="bypass"]')).toHaveCount(0);
+    const built = await openStep(teamName("claude", "codex"), build, []);
+    expect(built.instructions).toContain("Role: builder");
+    expect(built.instructions).toContain(
+      `Objective: ${teamName("claude", "codex")}`,
+    );
+    await expect(sessions(build)).toHaveText([
+      `Session ${built.sessionId} · Provider default (no arguments) · ${claudeVersion} · opened`,
+    ]);
+    await expect(build.getByRole("status")).toHaveText(
+      "Claude Code is open in Topsl's terminal. After it exits, confirm it stopped and hand back Claude's final reply.",
+    );
+    // While Claude Code runs, Topsl takes neither its reply nor a cancel.
+    const cancel = claudeBuilds.getByRole("button", {
+      name: "Cancel",
+      exact: true,
+    });
+    await expect(cancel).toBeDisabled();
+    await expect(cancel).toHaveAttribute(
+      "title",
+      "Exit Claude Code in Topsl's terminal, then cancel.",
+    );
+    await expect(build).toContainText(
+      "Claude Code is still running in Topsl's terminal.",
+    );
+    await expect(
+      build.getByRole("button", { name: "Hand back reply", exact: true }),
+    ).toBeDisabled();
+    await build.screenshot({ path: "test-results/claude-step.png" });
+    // Claude changes the team's module, and the owner exits Claude Code.
+    await writeFile(
+      path.join(project, "claude-codex.mjs"),
+      "export const value = 2;\n",
+    );
+    await exitStep(build);
+    // An opened build may have kept writing, so cancelling, like handing
+    // back, takes the owner's word that Claude Code stopped.
+    await expect(cancel).toBeDisabled();
+    await expect(cancel).toHaveAttribute(
+      "title",
+      "Confirm on the Claude Code step that Claude Code has stopped, then cancel.",
+    );
+    await stopped(build).check();
+    await expect(cancel).toBeEnabled();
+    await handBack(build, "Set the value in claude-codex.mjs to 2.");
+    await expect(build).toHaveCount(0, committed);
+    // Codex reviewed the build Topsl captured from the folder.
+    await check(claudeBuilds);
+    const buildSteps = stepRecord(claudeBuilds);
+    await expect(buildSteps).toContainText(
+      "Each ran in Claude Code in Topsl's terminal, under your control.",
+    );
+    await expect(buildSteps.locator("ol > li")).toHaveCount(1);
+    await expect(buildSteps.locator("ol > li").first()).toContainText(
+      "Build · reply taken · reply pasted by you",
+    );
+    await expect(buildSteps).toContainText(
+      `Session ${built.sessionId} · Provider default (no arguments) · ${claudeVersion} · opened`,
+    );
+    await expect(buildSteps).toContainText(
+      "Taken · reply pasted by you: Topsl took Claude's reply and captures the project folder as the build's result.",
+    );
+    await expect(claudeBuilds.getByRole("status")).toContainText([
+      "You pasted the reply of this workflow's Claude Code build. Topsl records it as pasted by you, not read from Claude Code.",
+    ]);
+    expect((await accept(claudeBuilds, "claude-codex.mjs")).detail).toContain(
+      `\n\nClaude Code steps, each run in Claude Code's terminal under your control:\nClaude Code build: reply pasted by you · session ${built.sessionId} · Provider default · ${claudeVersion}\nA reply you pasted is recorded as supplied by you; Topsl did not read it from Claude Code.\n\n`,
+    );
+
+    // Codex builds and Claude reviews: the review opens in Plan in a
+    // read-only copy, and a reply that is not a review of the build waits.
+    const claudeReviews = await captureTeam("codex", "claude");
+    await start(claudeReviews);
+    const review = stepPanel(claudeReviews, "review");
+    await expect(review).toBeVisible(working);
+    await expect(review).toContainText(
+      "Opens in Plan, in a read-only copy of the build.",
+    );
+    await expect(review.getByRole("combobox")).toHaveCount(0);
+    const reviewed = await openStep(teamName("codex", "claude"), review, [
+      "--permission-mode",
+      "plan",
+    ]);
+    expect(reviewed.instructions).toContain("Role: reviewer");
+    expect(await realpath(reviewed.step.folder)).not.toBe(canonicalProject);
+    await expect(sessions(review)).toHaveText([
+      `Session ${reviewed.sessionId} · Plan (--permission-mode plan) · ${claudeVersion} · opened`,
+    ]);
+    await review
+      .getByRole("button", { name: "Close session", exact: true })
+      .click();
+    await expect(stepTerminal(review)).toHaveCount(0, committed);
+    await stopped(review).check();
+    await handBack(review, "The build looks right.");
+    await expect(review.getByRole("status")).toContainText(
+      "Topsl did not take this reply: it is not one JSON object",
+      committed,
+    );
+    await expect(review.getByRole("status")).toContainText(
+      "The step keeps waiting",
+    );
+    const reviewSteps = stepRecord(claudeReviews);
+    await expect(reviewSteps.locator("ol > li").first()).toContainText(
+      "Review · waiting for you",
+    );
+    await expect(reviewSteps).toContainText(
+      "Not taken · reply pasted by you: Topsl did not take this reply: it is not one JSON object",
+    );
+    await handBack(review, reviewReply(reviewed.instructions));
+    await expect(review).toHaveCount(0, committed);
+    await check(claudeReviews);
+    await expect(reviewSteps.locator("ol > li").first()).toContainText(
+      "Review · reply taken · reply pasted by you",
+    );
+    await expect(reviewSteps).toContainText(
+      "Taken · reply pasted by you: Topsl took Claude's review.",
+    );
+    await expect(claudeReviews.getByRole("status")).toContainText([
+      "You pasted the reply of this workflow's Claude Code review. Topsl records it as pasted by you, not read from Claude Code.",
+    ]);
+    expect((await accept(claudeReviews, "codex-claude.mjs")).detail).toContain(
+      `\nClaude Code review: reply pasted by you · session ${reviewed.sessionId} · Plan · ${claudeVersion}\nA reply you pasted is recorded as supplied by you;`,
+    );
+
+    // Claude builds and Claude reviews: the build's reply comes from its
+    // session's transcript, once that is turned on and Claude Code wrote it.
+    const claudeTeam = await captureTeam("claude", "claude");
+    await start(claudeTeam);
+    await stage(claudeTeam, "building");
+    const pairBuild = stepPanel(claudeTeam, "build");
+    await pairBuild
+      .getByRole("combobox", {
+        name: "Claude Code mode for this build",
+        exact: true,
+      })
+      .selectOption("accept-edits");
+    await expect(pairBuild.locator(".terminal-mode-note")).toContainText(
+      "Passes --permission-mode acceptEdits.",
+    );
+    const pairBuilt = await openStep(teamName("claude", "claude"), pairBuild, [
+      "--permission-mode",
+      "acceptEdits",
+    ]);
+    await writeFile(
+      path.join(project, "claude-claude.mjs"),
+      "export const value = 2;\n",
+    );
+    await exitStep(pairBuild);
+    await expect(
+      pairBuild.getByRole("button", { name: "Take reply from transcript" }),
+    ).toHaveCount(0);
+    await expect(pairBuild).toContainText(
+      "Turn on Settings → Claude Code transcripts to take the reply from the session's transcript",
+    );
+    await settings();
+    await reading("On").click();
+    await expect(reading("On")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    await activity();
+    const fromTranscript = pairBuild.getByRole("button", {
+      name: "Take reply from transcript",
+      exact: true,
+    });
+    await expect(fromTranscript).toBeDisabled(committed);
+    await stopped(pairBuild).check();
+    // Claude Code has not written the session's transcript yet, so Topsl
+    // takes no reply and says why.
+    await fromTranscript.click();
+    await expect(pairBuild.getByRole("status")).toContainText(
+      `Topsl took no reply from the session's transcript: Claude Code has no transcript for session ${pairBuilt.sessionId}`,
+      committed,
+    );
+    // Claude Code's transcript of the session, in the record shapes Topsl
+    // recognizes: the pasted instructions, Claude's reply, and the /exit.
+    const transcriptFolder = path.join(
+      claudeConfig,
+      "projects",
+      pairBuilt.step.folder.replace(/[^a-zA-Z0-9]/g, "-"),
+    );
+    const transcriptRecord = (type, content) =>
+      JSON.stringify({
+        parentUuid: null,
+        isSidechain: false,
+        userType: "external",
+        cwd: pairBuilt.step.folder,
+        sessionId: pairBuilt.sessionId,
+        version: "2.1.300",
+        type,
+        message: { role: type, content },
+        uuid: randomUUID(),
+        timestamp: new Date().toISOString(),
+      }) + "\n";
+    await mkdir(transcriptFolder, { recursive: true });
+    await writeFile(
+      path.join(transcriptFolder, `${pairBuilt.sessionId}.jsonl`),
+      transcriptRecord("user", pairBuilt.instructions) +
+        transcriptRecord("assistant", [
+          { type: "text", text: "Set the value in claude-claude.mjs to 2." },
+        ]) +
+        transcriptRecord("user", "<command-name>/exit</command-name>"),
+    );
+    await fromTranscript.click();
+    await expect(pairBuild).toHaveCount(0, committed);
+    const pairReview = stepPanel(claudeTeam, "review");
+    await expect(pairReview).toBeVisible(working);
+    const pairReviewed = await openStep(
+      teamName("claude", "claude"),
+      pairReview,
+      ["--permission-mode", "plan"],
+    );
+    expect(pairReviewed.sessionId).not.toBe(pairBuilt.sessionId);
+    await pairReview
+      .getByRole("button", { name: "Close session", exact: true })
+      .click();
+    await expect(stepTerminal(pairReview)).toHaveCount(0, committed);
+    await stopped(pairReview).check();
+    await handBack(pairReview, reviewReply(pairReviewed.instructions));
+    await expect(pairReview).toHaveCount(0, committed);
+    await check(claudeTeam);
+    const pairSteps = stepRecord(claudeTeam);
+    await expect(pairSteps.locator("ol > li")).toHaveCount(2);
+    await expect(pairSteps.locator("ol > li").first()).toContainText(
+      "Build · reply taken · reply read from its session's transcript",
+    );
+    await expect(pairSteps.locator("ol > li").first()).toContainText(
+      `Session ${pairBuilt.sessionId} · Accept edits (--permission-mode acceptEdits) · ${claudeVersion} · opened`,
+    );
+    await expect(pairSteps.locator("ol > li").first()).toContainText(
+      "Taken · reply read from its session's transcript: Topsl took Claude's reply",
+    );
+    await expect(pairSteps.locator("ol > li").nth(1)).toContainText(
+      "Review · reply taken · reply pasted by you",
+    );
+    await expect(claudeTeam.getByRole("status")).toContainText([
+      "You pasted the reply of this workflow's Claude Code review. Topsl records it as pasted by you, not read from Claude Code.",
+    ]);
+    await page.screenshot({
+      path: "test-results/claude-team-workflow.png",
+      fullPage: true,
+    });
+    expect((await accept(claudeTeam, "claude-claude.mjs")).detail).toContain(
+      `\n\nClaude Code steps, each run in Claude Code's terminal under your control:\nClaude Code build: reply read from its session's transcript · session ${pairBuilt.sessionId} · Accept edits · ${claudeVersion}\nClaude Code review: reply pasted by you · session ${pairReviewed.sessionId} · Plan · ${claudeVersion}\nA reply you pasted is recorded as supplied by you; Topsl did not read it from Claude Code.\n\n`,
+    );
+    // The project still remembers only the ordinary terminal's last mode.
+    expect(
+      (await page.evaluate(() => window.topsl.command({ type: "state" })))
+        .terminalModes,
+    ).toEqual([expect.objectContaining({ id: projectIds[0], claude: "plan" })]);
   }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode, and the Claude Code transcript read turned on only through Topsl's confirmation (macOS/Linux).",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode, the Claude Code transcript read turned on only through Topsl's confirmation, and all four teams (Codex and Codex, Claude and Codex, Codex and Claude, Claude and Claude) set up, run and accepted through the screens against stand-ins, with Claude Code steps opened in Topsl's terminal and handed back by paste and from a fixture transcript (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {

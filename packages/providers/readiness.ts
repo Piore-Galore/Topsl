@@ -1,4 +1,5 @@
 import type { Installation, Provider } from "../domain/types";
+import { claudeStepModel } from "../domain/claude-steps";
 import type { ProviderCapability, ProviderModel } from "./contract";
 export type RuntimeRole = "implementer" | "reviewer" | "independent-reviewer";
 export interface RuntimeSelection {
@@ -6,6 +7,8 @@ export interface RuntimeSelection {
   provider: Provider;
   model: string;
   effort?: string;
+  /** A Claude Code step the owner runs in Topsl's terminal. */
+  route?: "terminal";
 }
 export interface RoleReadiness {
   role: RuntimeRole;
@@ -136,5 +139,58 @@ export function evaluateRoleReadiness(input: {
       ]),
     ],
     models,
+  };
+}
+
+/**
+ * The readiness of a Claude Code step, which the owner runs in Claude Code in
+ * Topsl's terminal under their own login: its installation must be Claude Code
+ * and trusted, and the role names no model or effort, so Claude Code's own
+ * settings decide. No structured capability, account or model catalog is
+ * checked, because Topsl starts no turn for it.
+ */
+export function evaluateStepReadiness(input: {
+  role: RuntimeRole;
+  selection: RuntimeSelection;
+  installation: Installation;
+}): RoleReadiness {
+  const blockers: RoleReadiness["blockers"] = [];
+  if (
+    input.selection.provider !== "claude" ||
+    input.installation.appId !== "anthropic.claude-code-cli"
+  )
+    blockers.push({
+      code: "terminal-route-claude-only",
+      detail:
+        "Only Claude Code runs as a step in Topsl's terminal; Codex runs inside Topsl.",
+      action: "select-runtime",
+    });
+  if (!input.installation.trusted)
+    blockers.push({
+      code: "executable-untrusted",
+      detail:
+        "Trust this Claude Code executable in Applications before its step can open.",
+      action: "review-executable",
+    });
+  if (input.selection.model !== claudeStepModel || input.selection.effort)
+    blockers.push({
+      code: "unsupported-model-setting",
+      detail:
+        "Topsl passes a Claude Code step no model or effort, so Claude Code's own settings decide.",
+      action: "inspect-runtime",
+    });
+  return {
+    role: input.role,
+    mode: "coordinated",
+    ready: blockers.length === 0,
+    blockers,
+    warnings: [
+      "Claude Code runs this step in Topsl's terminal under your login. Signing in, its permission prompts and its billing stay in Claude Code.",
+    ],
+    capabilitiesUsed: [],
+    // A step records no qualification, so there is no binding to keep fresh.
+    freshness: { state: "missing", bindingId: null },
+    nextActions: [...new Set(blockers.map((b) => b.action))],
+    models: [],
   };
 }

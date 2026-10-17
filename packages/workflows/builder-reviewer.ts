@@ -10,8 +10,10 @@ import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type { Installation, Message, Project, Provider } from "../domain/types";
 import {
   claudeStepModel,
+  claudeStepNoun,
   type ClaudeStep,
   type ClaudeStepOpen,
+  type ClaudeStepProvenance,
   type ClaudeStepReply,
   type ClaudeStepReplySource,
   type ClaudeStepRole,
@@ -122,6 +124,15 @@ export interface BuilderReviewerState {
   isolation: "not-enforced";
   updatedAt: string;
 }
+/**
+ * A Claude Code step as the workflow page shows it: the step and each reply
+ * handed back for it, oldest first, without the reply's text.
+ */
+export type ClaudeStepView = ClaudeStep & {
+  replies: Array<
+    Pick<ClaudeStepReply, "id" | "source" | "outcome" | "detail" | "receivedAt">
+  >;
+};
 export interface WorkflowDispatch {
   attempt: ExecutionAttempt;
   task: Task;
@@ -176,8 +187,6 @@ const stepStage = {
   reviewer: "reviewing",
   repair: "repairing",
 } as const satisfies Record<ClaudeStepRole, BuilderReviewerState["stage"]>;
-const stepNoun = { builder: "build", reviewer: "review", repair: "repair" };
-
 /**
  * The Claude Code build or repair step that holds this project's folder, if
  * one does: from when its workflow stops for it until the owner hands back its
@@ -208,6 +217,42 @@ function latestOpened(step: ClaudeStep): ClaudeStepOpen | undefined {
     .filter((open) => open.state === "opened")
     .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
     .at(-1);
+}
+
+/**
+ * The steps whose replies Topsl took for the build under acceptance, oldest
+ * first, each with the session its reply came from: every build and repair
+ * since the workflow's baseline was captured, because a repair keeps the build
+ * it repairs and only a restart starts again from a new baseline, and the
+ * review of that build, because an earlier review no longer counts.
+ */
+function claudeStepProvenance(
+  state: BuilderReviewerState,
+  steps: ClaudeStep[],
+  baselineAt: string,
+): ClaudeStepProvenance[] {
+  return steps
+    .filter(
+      (step) =>
+        step.workflowId === state.id &&
+        step.state === "returned" &&
+        !!step.replySource &&
+        (step.role === "reviewer"
+          ? !state.supersededTaskIds.includes(step.taskId)
+          : step.createdAt >= baselineAt),
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((step) => {
+      // A step takes no opening after its reply, so its latest is the reply's.
+      const open = latestOpened(step);
+      return {
+        role: step.role,
+        replySource: step.replySource!,
+        sessionId: open?.sessionId ?? null,
+        mode: open?.mode ?? null,
+        runtimeVersion: open?.runtimeVersion ?? null,
+      };
+    });
 }
 
 /** Why a reply is not a review of this build, or null when it is one. */
@@ -705,7 +750,7 @@ export class BuilderReviewerWorkflow {
       : claudeStepHolding(this.repository.store, state.projectId);
     if (holding && holding.workflowId !== state.id)
       return this.save(state, {
-        detail: `Waiting for capacity: another workflow's Claude Code ${stepNoun[holding.role]} holds this project folder until its reply is handed back or that workflow is cancelled.`,
+        detail: `Waiting for capacity: another workflow's Claude Code ${claudeStepNoun[holding.role]} holds this project folder until its reply is handed back or that workflow is cancelled.`,
       });
     const capacity = step
       ? undefined
@@ -1086,7 +1131,7 @@ export class BuilderReviewerWorkflow {
     },
   ): BuilderReviewerState {
     const at = now(),
-      noun = stepNoun[input.role],
+      noun = claudeStepNoun[input.role],
       detail =
         input.role === "reviewer"
           ? "Waiting for Claude Code. Open the review in Claude Code, which starts in Plan in a read-only copy of the build, paste the instructions Topsl copies, and after Claude Code exits, hand back Claude's final reply."
@@ -1402,7 +1447,7 @@ export class BuilderReviewerWorkflow {
         )?.revisionId ?? state.specificationId;
       let changed =
         head !== step.specificationId
-          ? `The specification changed during this Claude Code ${stepNoun[step.role]}.`
+          ? `The specification changed during this Claude Code ${claudeStepNoun[step.role]}.`
           : null;
       if (!changed && step.role === "reviewer")
         try {
@@ -1450,7 +1495,7 @@ export class BuilderReviewerWorkflow {
       const detail =
         step.role === "reviewer"
           ? "Topsl took Claude's review. It still checks that the copy is unchanged before reading the findings."
-          : `Topsl took Claude's reply and captures the project folder as the ${stepNoun[step.role]}'s result.`;
+          : `Topsl took Claude's reply and captures the project folder as the ${claudeStepNoun[step.role]}'s result.`;
       this.repository.store.transaction(() => {
         // Cancelling takes no lock, so check nothing moved meanwhile.
         const latest = this.state(id);
@@ -1921,7 +1966,10 @@ export class BuilderReviewerWorkflow {
     }
     const at = now(),
       reviewId = uid(),
-      text = stable(result);
+      text = stable(result),
+      // A Claude Code step's review is the reply the owner handed back, not
+      // a provider's own report, and is labelled by where that reply came from.
+      step = this.repository.store.get<ClaudeStep>("claude-step", attempt.id);
     this.repository.store.immutable("protected-review", {
       id: reviewId,
       projectId: state.projectId,
@@ -1939,13 +1987,29 @@ export class BuilderReviewerWorkflow {
       targetRevision: candidate.revision,
       protectedContentRef: reviewId,
       confidentiality: "project",
-      provenance: {
-        level: "provider-ack",
-        source: attempt.provider,
-        observedAt: at,
-        detail:
-          "Fresh-session review of pinned inputs; independent filesystem isolation is not enforced.",
-      },
+      provenance: step
+        ? step.replySource === "claude-transcript"
+          ? {
+              level: "source-observation",
+              source: "claude-code-terminal:transcript",
+              observedAt: at,
+              detail:
+                "Claude Code review in Topsl's terminal under the owner's control, in Plan in a read-only copy of the build. Topsl read Claude's final reply from the session's transcript. Independent filesystem isolation is not enforced.",
+            }
+          : {
+              level: "user-confirmation",
+              source: "claude-code-terminal:owner-paste",
+              observedAt: at,
+              detail:
+                "Claude Code review in Topsl's terminal under the owner's control, in Plan in a read-only copy of the build. The owner pasted Claude's final reply. Independent filesystem isolation is not enforced.",
+            }
+        : {
+            level: "provider-ack",
+            source: attempt.provider,
+            observedAt: at,
+            detail:
+              "Fresh-session review of pinned inputs; independent filesystem isolation is not enforced.",
+          },
       revision: 1,
       createdAt: at,
       updatedAt: at,
@@ -2594,6 +2658,19 @@ export class BuilderReviewerWorkflow {
       });
     }
   }
+  /** The Claude Code steps behind the build under acceptance, and where each reply came from. */
+  claudeStepProvenance(id: string): ClaudeStepProvenance[] {
+    const state = this.state(id);
+    return claudeStepProvenance(
+      state,
+      [
+        ...this.repository.store.iterate<ClaudeStep>("claude-step", {
+          projectId: state.projectId,
+        }),
+      ],
+      this.candidate(state.baselineId).createdAt,
+    );
+  }
   list(projectId: string): Array<
     BuilderReviewerState & {
       revision: number;
@@ -2601,8 +2678,39 @@ export class BuilderReviewerWorkflow {
       acceptanceDigest: string;
       checksStatus: unknown[];
       claudeStep: ClaudeStep | null;
+      claudeSteps: ClaudeStepView[];
+      claudeProvenance: ClaudeStepProvenance[];
     }
   > {
+    const replies = new Map<string, ClaudeStepView["replies"]>(),
+      steps = new Map<string, ClaudeStepView[]>();
+    for (const reply of this.repository.store.iterate<ClaudeStepReply>(
+      "claude-step-reply",
+      { projectId },
+    ))
+      replies.set(reply.stepId, [
+        ...(replies.get(reply.stepId) ?? []),
+        {
+          id: reply.id,
+          source: reply.source,
+          outcome: reply.outcome,
+          detail: reply.detail,
+          receivedAt: reply.receivedAt,
+        },
+      ]);
+    for (const step of this.repository.store.iterate<ClaudeStep>(
+      "claude-step",
+      { projectId },
+    ))
+      steps.set(step.workflowId, [
+        ...(steps.get(step.workflowId) ?? []),
+        {
+          ...step,
+          replies: (replies.get(step.id) ?? []).sort((a, b) =>
+            a.receivedAt.localeCompare(b.receivedAt),
+          ),
+        },
+      ]);
     return this.repository
       .all<BuilderReviewerState>("builder-reviewer", { projectId })
       .map((state) => ({
@@ -2620,6 +2728,14 @@ export class BuilderReviewerWorkflow {
               state.activeAttemptId,
             )) ||
           null,
+        claudeSteps: (steps.get(state.id) ?? []).sort((a, b) =>
+          a.createdAt.localeCompare(b.createdAt),
+        ),
+        claudeProvenance: claudeStepProvenance(
+          state,
+          steps.get(state.id) ?? [],
+          this.candidate(state.baselineId).createdAt,
+        ),
       }));
   }
   close(): void {

@@ -54,21 +54,26 @@ export function terminalModeText(mode: TerminalMode): string {
 
 /**
  * The provider's own permission modes for a native terminal. Bypass modes sit
- * under Advanced; Topsl asks the owner to confirm them in its own dialog.
+ * under Advanced, unless `advanced` is false; Topsl asks the owner to confirm
+ * them in its own dialog.
  */
 export function TerminalModeSelect({
   provider,
   value,
   onChange,
+  label = "Terminal mode",
+  advanced = true,
 }: {
   provider: Provider;
   value: TerminalModeId;
   onChange: (mode: TerminalModeId) => void;
+  label?: string;
+  advanced?: boolean;
 }) {
   const modes = terminalModes[provider];
   return (
     <label className="terminal-mode">
-      Terminal mode
+      {label}
       <select
         value={(findTerminalMode(provider, value) ?? modes[0]).id}
         onChange={(event) => onChange(event.target.value as TerminalModeId)}
@@ -80,15 +85,17 @@ export function TerminalModeSelect({
               {mode.label}
             </option>
           ))}
-        <optgroup label="Advanced">
-          {modes
-            .filter((mode) => mode.warning)
-            .map((mode) => (
-              <option key={mode.id} value={mode.id}>
-                {mode.label}
-              </option>
-            ))}
-        </optgroup>
+        {advanced && (
+          <optgroup label="Advanced">
+            {modes
+              .filter((mode) => mode.warning)
+              .map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.label}
+                </option>
+              ))}
+          </optgroup>
+        )}
       </select>
     </label>
   );

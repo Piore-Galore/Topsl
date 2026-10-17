@@ -36,8 +36,10 @@ import {
 } from "../../packages/domain/auto-accept";
 import {
   claudeStepMode,
+  claudeStepProvenanceText,
   claudeTranscriptConfirmation,
   type ClaudeStep,
+  type ClaudeStepProvenance,
 } from "../../packages/domain/claude-steps";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
@@ -570,10 +572,16 @@ async function dispatch(command: Command): Promise<any> {
       recordKind: "workflow-acceptance",
       recordId: command.id,
     });
+    // Each Claude Code step names where its reply came from, so a reply the
+    // owner pasted reads as theirs.
+    const steps: ClaudeStepProvenance[] = review.claudeSteps ?? [];
+    const claudeSteps = steps.length
+      ? `\n\nClaude Code steps, each run in Claude Code's terminal under your control:\n${steps.map(claudeStepProvenanceText).join("\n")}${steps.some((step) => step.replySource === "owner-paste") ? "\nA reply you pasted is recorded as supplied by you; Topsl did not read it from Claude Code." : ""}`
+      : "";
     if (
       !(await confirm(
         "Accept this reviewed candidate?",
-        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nChecks: ${JSON.stringify(review.checks?.map((check: any) => ({ definition: check.definition, result: check.result, targetRevision: check.targetRevision })))}\nFindings: ${JSON.stringify(review.findings?.map((finding: any) => ({ title: finding.title, disposition: finding.disposition })))}\n\nIndependent filesystem isolation: ${review.isolation}\nAcceptance does not deploy or commit changes. External changes invalidate this confirmation.`,
+        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nChecks: ${JSON.stringify(review.checks?.map((check: any) => ({ definition: check.definition, result: check.result, targetRevision: check.targetRevision })))}\nFindings: ${JSON.stringify(review.findings?.map((finding: any) => ({ title: finding.title, disposition: finding.disposition })))}${claudeSteps}\n\nIndependent filesystem isolation: ${review.isolation}\nAcceptance does not deploy or commit changes. External changes invalidate this confirmation.`,
         "Accept candidate",
       ))
     )
@@ -826,6 +834,9 @@ async function dispatch(command: Command): Promise<any> {
     clipboard.writeText(result.copyProjectPath);
     return;
   }
+  // The owner pastes the step's instructions into Claude Code.
+  if (command.type === "claude-step-open" && result?.instructions)
+    clipboard.writeText(result.instructions);
   if (command.type === "project-open") {
     const opened = result as ProjectOpenResult;
     if (opened.applicationPath) {
