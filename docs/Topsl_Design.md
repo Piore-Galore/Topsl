@@ -30,7 +30,7 @@ This is a complete revision of the supplied v2.0 design. It retains the native-r
 | Extensions | Skills, plugins, marketplaces, MCP, hooks, subagents, native commands, and other supported components. |
 | Permissions | Native rule management, effective-policy inspection, managed restrictions, approvals, and actual sandbox enforcement. |
 | Settings | Preserve existing configuration; preview, apply, reconcile, and track whether running sessions loaded changes. |
-| Interface | Quiet monospaced graphical interface; warm light default; optional dark and system modes. |
+| Interface | Quiet monospaced graphical interface; follows the computer's light or dark appearance by default, with warm light and dark themes as explicit choices. |
 | Existing requirements | All accessible supported model routes, shared projects/history/context, token/quota/cost tracking, and delegated native login management remain in scope. |
 
 **Core boundary:** Topsl integrates supported native interfaces rather than extracting subscription credentials, rewriting proprietary session stores, or promising identical functionality on every surface. “All functionality” means complete discoverable coverage with an honest access path and status for the actual installed version; it does not create an API that a provider has not exposed.
@@ -132,7 +132,7 @@ A cloud connector may be added later only when its actual supported interface, e
 | Use what is installed | Discover existing installations; let the user choose the executable, profile, host, and surface. Do not require both providers or force replacement installations. |
 | Acquire and maintain applications | Download, install, inspect eligible updates, and update through an approved official or existing installation-owner route. An installed application need not have a Topsl runtime adapter. |
 | Cross-platform application | Share the same project model and workflows across macOS, Windows, and Linux; isolate host-specific execution and storage behind adapters. |
-| Simple presentation | A restrained retro-terminal-inspired graphical interface, with a warm light default, optional dark mode, and an optional system-following setting. |
+| Simple presentation | A restrained retro-terminal-inspired graphical interface with a warm light theme and a dark theme. By default it follows the computer's light or dark appearance; an explicit theme choice is kept. |
 | Preserve native specificity | Offer common controls where meanings align, plus complete provider-specific controls and explicit native fallbacks. |
 | Safe coexistence | Observe external changes, preserve unmanaged settings, respect organization policy, and distinguish saved configuration from what a running session loaded. |
 
@@ -1838,7 +1838,9 @@ Avoid scanlines, flicker, glow, phosphor trails, distortion, noisy textures, dec
 
 ### 20.2 Themes and color tokens
 
-Ship **Paper** as the default light theme. Offer **Night** as an optional dark mode and **Follow system** as a third setting. A toolbar or command-palette action can change the theme without a restart.
+Ship **Paper**, the warm light theme, and **Night**, the dark theme. The default setting, **System**, follows the computer's light or dark appearance: it draws exactly Paper on a light computer and exactly Night on a dark one, and changes while Topsl is open when the computer's appearance changes. It is not a third palette. A chosen Paper or Night is stored and kept, whatever the computer's appearance, until the user changes it. A toolbar or command-palette action can change the theme without a restart.
+
+Decided 17 October 2026, when the owner asked for automatic, system-based dark mode: **System** replaces Paper as the default, so Topsl matches the computer without setup. A profile with no stored choice gets System, and a stored Paper or Night choice is kept. The choice is stored in the encrypted vault, so until the vault opens, the window and the lock screen follow the computer's appearance; a stored Paper or Night choice applies once the vault opens.
 
 | Token | Paper | Night | Purpose |
 |---|---|---|---|
@@ -2838,7 +2840,7 @@ Block unsupported platform and production claims independently of pilot function
 | Missing data | Unknown/partial with provenance |
 | Cloud synchronization | Not required; optional encrypted application-state replication later |
 | Interface | Simple retro-terminal-inspired GUI; mouse and keyboard first-class |
-| Default theme | Paper light theme; Night and Follow system optional |
+| Default theme | System, following the computer's light or dark appearance; an explicit Paper (light) or Night (dark) choice is kept |
 | Full feature access | Structured or documented native route per capability; unsupported states visible |
 | Extension management | Native lifecycle operations with source/trust review |
 | Configuration ownership | Adopt existing state; modify only approved fields/entries |

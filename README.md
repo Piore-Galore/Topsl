@@ -63,6 +63,8 @@ Installers remain subject to native OS publisher checks and elevation. macOS, Wi
 
 ## Configuration and context
 
+Topsl follows the computer's light or dark appearance by default. **Settings → Appearance** offers **Paper** (light), **Night** (dark) and **System**, the default; a theme you choose is kept until you change it. Until the vault opens, Topsl follows the computer's appearance.
+
 Settings exposes full native settings/instruction files with before/after previews, source-hash checks, an encrypted backup, and a trusted native approval dialog. JSON and TOML syntax are validated. Active sessions block writes. Topsl reports a written file separately from whether a native runtime loaded it. Symlinked settings require the native editor.
 
 The optional project context connection only searches one approved project's history. Its grant expires when Topsl closes. It has no API for updates, configuration writes, run execution, or approvals. With a locally installed Node.js runtime, configure a native MCP client using:
