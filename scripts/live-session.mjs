@@ -595,6 +595,8 @@ async function claudeTerminal(projectId, step) {
   const expectedShown = {
     plan: "plan mode on",
     "accept-edits": "accept edits on",
+    // Accept edits with Claude Code's sandbox turned on.
+    sandboxed: "accept edits on",
     auto: "auto mode on",
   }[session.mode.chosen];
   if (expectedShown && session.mode.shown !== expectedShown)

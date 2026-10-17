@@ -1312,6 +1312,7 @@ try {
       "Manual",
       "Plan",
       "Accept edits",
+      "Sandboxed edits",
       "Auto",
       "Don't ask",
       "Bypass",
@@ -1412,10 +1413,73 @@ try {
       (await page.evaluate(() => window.topsl.command({ type: "state" })))
         .terminalModes,
     ).toEqual([expect.objectContaining({ id: projectIds[0], claude: "plan" })]);
+    // Auto-accept in Settings: turning it on takes Topsl's own confirmation,
+    // and while it is on, the terminal menu starts in its mode.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const autoAccept = page.getByRole("region", { name: "Auto-accept" });
+    const level = (name) =>
+      autoAccept.getByRole("button", { name, exact: true });
+    await expect(level("Off")).toHaveAttribute("aria-pressed", "true");
+    await expect(autoAccept.getByRole("note")).toContainText(
+      "You answer each request Codex makes",
+    );
+    const beforeAutoAccept = await confirmations();
+    await level("Sandboxed").click();
+    await expect(level("Sandboxed")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    expect(await confirmations()).toBe(beforeAutoAccept + 1);
+    expect(
+      await app.evaluate(() => globalThis.topslConfirmations.at(-1)),
+    ).toMatchObject({
+      message: "Turn on auto-accept for work inside the sandbox?",
+      type: "question",
+      buttons: ["Cancel", "Turn on Sandboxed"],
+    });
+    await expect(autoAccept.getByRole("note")).toContainText(
+      "Nobody is asked about work inside the sandbox.",
+    );
+    // Everything, declined in its warning, leaves Sandboxed on.
+    await app.evaluate(() => {
+      globalThis.topslBypassAnswer = 0;
+    });
+    await level("Everything").click();
+    await expect.poll(confirmations).toBe(beforeAutoAccept + 2);
+    const everything = await app.evaluate(() =>
+      globalThis.topslConfirmations.at(-1),
+    );
+    expect(everything).toMatchObject({
+      message: "Let Topsl allow everything Codex and Claude Code ask for?",
+      type: "warning",
+      buttons: ["Cancel", "Allow everything"],
+    });
+    expect(everything.detail).toContain("EXTREMELY DANGEROUS");
+    expect(everything.detail).toContain(
+      "Only use this mode in isolated environments",
+    );
+    await expect(level("Sandboxed")).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await expect(modeSelect).toHaveValue("sandboxed", committed);
+    await expect(modeNote).toContainText(
+      "Passes --permission-mode acceptEdits --settings",
+    );
+    // Turning it off takes no confirmation, and the menu returns to Plan.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await level("Off").click();
+    await expect(level("Off")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    expect(await confirmations()).toBe(beforeAutoAccept + 2);
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await expect(modeSelect).toHaveValue("plan", committed);
   }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in (macOS/Linux).",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, and auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {

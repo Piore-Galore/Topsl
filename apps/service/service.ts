@@ -35,8 +35,14 @@ import type { Command } from "../../packages/domain/commands";
 import {
   handoffTerminalMode,
   isBypassMode,
+  terminalMode,
   type TerminalModeId,
 } from "../../packages/domain/terminal-modes";
+import {
+  autoAcceptPreferenceId,
+  autoAcceptTerminalMode,
+  type AutoAcceptLevel,
+} from "../../packages/domain/auto-accept";
 import type { Observed } from "../../packages/domain/read-model";
 import { round2Features } from "../../packages/domain/round2-features";
 import { catalog, capabilities } from "../../packages/domain/catalog";
@@ -123,6 +129,8 @@ export interface TrustedInput {
   approved?: boolean;
   /** Set only after the owner confirms a bypass mode in Topsl's own dialog. */
   confirmedTerminalMode?: TerminalModeId;
+  /** Set only after the owner confirms turning auto-accept on at this level. */
+  confirmedAutoAccept?: AutoAcceptLevel;
 }
 export class Service {
   readonly store: Store;
@@ -514,15 +522,20 @@ export class Service {
         .filter((i) => i.appId === "openai.codex-cli")
         .flatMap((i) => this.runtime.chatPresetBlocks(i)),
       configurationWrites: this.store.list("configuration-write"),
+      autoAccept: this.runtime.autoAccept(),
     };
   }
-  /** Remembers the owner's last ordinary terminal mode for this project and provider, never a bypass mode. */
+  /**
+   * Remembers the owner's last ordinary terminal mode for this project and
+   * provider, never a bypass mode. While auto-accept is on, terminals start in
+   * its mode instead, and the remembered one is kept for when it is off.
+   */
   private rememberTerminalMode(
     projectId: string,
     installation: Installation,
     mode: TerminalModeId,
   ): void {
-    if (isBypassMode(mode)) return;
+    if (isBypassMode(mode) || this.runtime.autoAccept() !== "off") return;
     const provider = installation.appId.includes("claude") ? "claude" : "codex",
       current = this.store.get<TerminalModePreference>(
         "terminal-mode-preference",
@@ -579,11 +592,30 @@ export class Service {
     this.changed();
     return result;
   }
-  async openAssistedHandoff(input: { projectId: string; id: string }) {
+  async openAssistedHandoff(
+    input: { projectId: string; id: string },
+    confirmedMode?: TerminalModeId,
+  ) {
     this.replication.assertLocalOwner(input.projectId);
     const handoff = this.assisted.get(input.projectId, input.id),
       project = await this.project(input.projectId),
       installation = this.installation(handoff.installationId);
+    const provider = installation.appId.includes("claude") ? "claude" : "codex",
+      // A build handoff opens in auto-accept's mode while it is on; a review
+      // handoff keeps its own.
+      mode =
+        (handoff.role === "builder" &&
+          autoAcceptTerminalMode(this.runtime.autoAccept(), provider)) ||
+        handoffTerminalMode(provider, handoff.role);
+    // Checked before the opening is recorded, which cannot be requested twice.
+    if (
+      installation.appId.endsWith("cli") &&
+      isBypassMode(mode) &&
+      confirmedMode !== mode
+    )
+      throw new Error(
+        `${terminalMode(provider, mode).label} needs your confirmation in Topsl's own dialog each time.`,
+      );
     if (
       this.runtime.isProjectBusy(project.id) ||
       [
@@ -603,10 +635,8 @@ export class Service {
       const result: ProjectOpenResult = installation.appId.endsWith("cli")
         ? {
             terminalId: await this.runtime.terminal(installation, project, {
-              mode: handoffTerminalMode(
-                installation.appId.includes("claude") ? "claude" : "codex",
-                handoff.role,
-              ),
+              mode,
+              confirmedMode,
             }),
             projectPath: project.realPath,
             route: "terminal",
@@ -854,7 +884,8 @@ export class Service {
       | "replication-conflict"
       | "workflow-dispatch-inputs"
       | "candidate-review-plan"
-      | "advanced-review-plan",
+      | "advanced-review-plan"
+      | "assisted-handoff",
     id: string,
   ): LifecyclePlan | ConfigurationPlan | Approval | CheckPlan | unknown {
     if (kind === "workflow-dispatch-inputs") {
@@ -1144,7 +1175,7 @@ export class Service {
       case "assisted-handoff-prepare":
         return this.prepareAssistedHandoff(command);
       case "assisted-handoff-open":
-        return this.openAssistedHandoff(command);
+        return this.openAssistedHandoff(command, trusted.confirmedTerminalMode);
       case "assisted-handoff-import":
         return this.importAssistedHandoff(command);
       case "assisted-handoff-query":
@@ -2301,6 +2332,25 @@ export class Service {
         this.store.put("preference", { id: "theme", value: command.theme });
         this.changed();
         return;
+      case "auto-accept-set":
+        // Turning it on takes the owner's confirmation in Topsl's own dialog,
+        // which the window cannot answer; turning it off takes none.
+        if (
+          command.level !== "off" &&
+          trusted.confirmedAutoAccept !== command.level
+        )
+          throw new Error(
+            "Turning on auto-accept needs your confirmation in Topsl's own dialog.",
+          );
+        this.store.transaction(() => {
+          this.store.put("preference", {
+            id: autoAcceptPreferenceId,
+            value: command.level,
+          });
+          this.store.event("auto-accept.set", { level: command.level });
+        });
+        this.changed();
+        return { level: command.level };
       case "discover":
         return this.discover();
       case "select-runtime": {

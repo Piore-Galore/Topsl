@@ -11,6 +11,7 @@ export const terminalModeIds = [
   "manual",
   "plan",
   "accept-edits",
+  "sandboxed",
   "auto",
   "dont-ask",
   "bypass",
@@ -31,12 +32,14 @@ export interface TerminalMode {
   effect: string;
   /**
    * Set for a bypass mode: offered under Advanced, confirmed in Topsl's own
-   * dialog every time, and never remembered or chosen by Topsl.
+   * dialog every time, and never remembered for a project. Topsl preselects
+   * one only while the owner has set auto-accept to Everything.
    */
   warning?: string;
 }
 
-// Claude Code: https://code.claude.com/docs/en/permission-modes, read on 16 October 2026.
+// Claude Code: https://code.claude.com/docs/en/permission-modes, read on 16 October 2026,
+// and https://code.claude.com/docs/en/sandboxing, read on 17 October 2026.
 // Codex CLI 0.163.0: `codex --help`.
 export const terminalModes: Readonly<
   Record<Provider, readonly TerminalMode[]>
@@ -69,6 +72,26 @@ export const terminalModes: Readonly<
       args: ["--permission-mode", "acceptEdits"],
       effect:
         "Accepts file edits and common file commands such as mkdir and mv in its working folders, and asks for the rest.",
+    },
+    {
+      id: "sandboxed",
+      label: "Sandboxed edits",
+      args: [
+        "--permission-mode",
+        "acceptEdits",
+        "--settings",
+        JSON.stringify({
+          sandbox: {
+            enabled: true,
+            autoAllowBashIfSandboxed: true,
+            allowUnsandboxedCommands: false,
+            failIfUnavailable: true,
+            network: { strictAllowlist: true },
+          },
+        }),
+      ],
+      effect:
+        "Accept edits with Claude Code's sandbox turned on. Edits in its working folders, and shell commands that run in the sandbox, go ahead without asking. Sandboxed commands write only in those folders and the temporary folder and reach only hosts its settings allow, and a command the sandbox blocks is not retried outside it. If the sandbox cannot start, Claude Code exits. Everything else, such as web fetches, MCP tools and edits elsewhere, still asks.",
     },
     {
       id: "auto",
@@ -192,7 +215,7 @@ export function bypassConfirmation(
       "",
       mode.warning,
       "",
-      `Topsl asks every time and does not remember this mode. If managed settings turn it off, the terminal shows ${providerName(provider)}'s own message, and Topsl does not try another mode.`,
+      `Topsl asks every time and does not remember this mode for a project. If managed settings turn it off, the terminal shows ${providerName(provider)}'s own message, and Topsl does not try another mode.`,
     ].join("\n"),
     affirmative: `Start in ${mode.label}`,
   };

@@ -7,6 +7,7 @@ import {
 } from "./advanced-inputs";
 import { terminalModeIds } from "./terminal-modes";
 import { codexApprovalPolicies } from "./chat-presets";
+import { autoAcceptLevels } from "./auto-accept";
 import {
   deviceIdentitySchema,
   portableContentSchema,
@@ -727,6 +728,10 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("theme"),
     theme: z.enum(["paper", "night", "system"]),
+  }),
+  z.object({
+    type: z.literal("auto-accept-set"),
+    level: z.enum(autoAcceptLevels),
   }),
   z.object({ type: z.literal("discover") }),
   z.object({ type: z.literal("trust-installation"), id }),

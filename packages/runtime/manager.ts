@@ -35,6 +35,7 @@ import type {
 import { answerToolCall } from "../providers/tool-calls";
 import { terminalMode, type TerminalModeId } from "../domain/terminal-modes";
 import {
+  chatPreset,
   chatPresetFor,
   chatPresets,
   noAskingBlocked,
@@ -42,6 +43,13 @@ import {
   type ChatPresetBlock,
   type CodexApprovalPolicy,
 } from "../domain/chat-presets";
+import {
+  autoAcceptLevel,
+  autoAcceptPolicy,
+  autoAcceptPreferenceId,
+  type AutoAcceptLevel,
+} from "../domain/auto-accept";
+import { approvalText } from "../domain/approval-text";
 import type { Workspace } from "../domain/workflow";
 import { canonicalWorkspaceIdentity } from "../workspace/ownership";
 import { Store } from "../persistence/store";
@@ -175,6 +183,13 @@ export class RuntimeManager {
       ...qualified,
       ...declared.filter((c) => !qualified.some((q) => q.name === c.name)),
     ];
+  }
+  /** The owner's auto-accept setting, off until they turn it on in Settings. */
+  autoAccept(): AutoAcceptLevel {
+    return autoAcceptLevel(
+      this.store.get<{ value: unknown }>("preference", autoAcceptPreferenceId)
+        ?.value,
+    );
   }
   /** Why a Codex chat preset is unavailable on this runtime now, or null
    * when it can be used. No asking needs the runtime's current qualification
@@ -621,6 +636,26 @@ export class RuntimeManager {
         throw new Error(
           `${preset.label} is not available for this runtime. ${blocked} No provider turn was dispatched.`,
         );
+      // Auto-accept changes only Codex's edit turns. Sandboxed sends them with
+      // no asking where the runtime can use it: a chat's runtime needs the
+      // qualification No asking needs, and a workflow role's readiness already
+      // requires the same workspace-write evidence.
+      const autoAccept =
+          provider === "codex" && mode === "edit" ? this.autoAccept() : "off",
+        sent = chatPresetFor(
+          mode,
+          autoAcceptPolicy(
+            autoAccept,
+            mode,
+            approvalPolicy,
+            autoAccept === "sandboxed" &&
+              (!!execution ||
+                !this.chatPresetBlocked(
+                  installation,
+                  chatPreset("edit-never"),
+                )),
+          ),
+        )!;
       const requestedSettings = execution
         ? this.store.get<{ effort: string | null }>(
             "attempt-runtime-settings",
@@ -671,7 +706,13 @@ export class RuntimeManager {
         managementUnitId: installation.managementUnitId,
         model,
         mode,
-        ...(provider === "codex" ? { approvalPolicy } : {}),
+        ...(provider === "codex"
+          ? { approvalPolicy: sent.approvalPolicy }
+          : {}),
+        ...((autoAccept === "everything" && sent.approvalPolicy !== "never") ||
+        (autoAccept === "sandboxed" && sent !== preset)
+          ? { autoAccept }
+          : {}),
         status: "starting",
         nativeSessionId: execution?.freshSession
           ? null
@@ -789,11 +830,16 @@ export class RuntimeManager {
         const account = await adapter.account(client, installation);
         if (!this.fixtureMode) this.observeAccount(installation, account);
         // A changed account or profile is a new binding, which the
-        // qualification may not cover.
-        const stillBlocked = this.chatPresetBlocked(installation, preset);
+        // qualification may not cover. A workflow role's readiness is checked
+        // again below.
+        const stillBlocked = execution
+          ? null
+          : this.chatPresetBlocked(installation, sent);
         if (stillBlocked)
           throw new Error(
-            `${preset.label} is not available for this runtime. ${stillBlocked}`,
+            sent === preset
+              ? `${preset.label} is not available for this runtime. ${stillBlocked}`
+              : `Auto-accept sends this chat with no asking, which this runtime cannot use now. ${stillBlocked} Codex asks you as before when you send it again.`,
           );
         if (coordinated) {
           this.assertReady(
@@ -855,7 +901,7 @@ export class RuntimeManager {
             : {}),
           ...(execution?.tools ? { toolset: execution.tools.toolset } : {}),
           mode,
-          approvalPolicy,
+          approvalPolicy: sent.approvalPolicy,
           contextPackageId: attempt.contextPackageId,
           attemptId: attempt.id,
           workspaceIdentity: workspace.filesystemIdentity!,
@@ -1146,6 +1192,15 @@ export class RuntimeManager {
       requestId,
       createdAt: now(),
     };
+    // Everything allows a request only for a run it applied to when the run
+    // started, and only while the owner keeps the setting there.
+    if (
+      active.run.autoAccept === "everything" &&
+      this.autoAccept() === "everything"
+    ) {
+      this.autoAllow(active, approval);
+      return;
+    }
     active.approvals.set(approval.id, { approval, params });
     active.run.status = "awaiting-approval";
     this.store.transaction(() => {
@@ -1153,6 +1208,34 @@ export class RuntimeManager {
       this.store.save("run", active.run);
       this.coordinator.syncRun(active.run);
     });
+    this.changed();
+  }
+  /** Allows a request for the owner under auto-accept, and notes it in the
+   * run's conversation where its card would have been. */
+  private autoAllow(active: Active, approval: Approval): void {
+    const { run } = active;
+    run.autoAllowed = (run.autoAllowed ?? 0) + 1;
+    this.store.transaction(() => {
+      this.store.event("approval.auto-accepted", {
+        id: approval.id,
+        digest: approval.digest,
+        method: approval.method,
+        runId: run.id,
+      });
+      this.store.message({
+        id: uid(),
+        conversationId: run.conversationId,
+        projectId: run.projectId,
+        role: "system",
+        provider: run.provider,
+        text: `Auto-accept allowed this request.\n\n${approvalText(approval)}`,
+        runId: run.id,
+        nativeId: null,
+        createdAt: now(),
+      });
+      this.store.save("run", run);
+    });
+    active.client.reply(approval.requestId, { decision: "accept" });
     this.changed();
   }
   decide(id: string, digest: string, allow: boolean): void {
