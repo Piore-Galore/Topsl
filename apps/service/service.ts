@@ -45,8 +45,14 @@ import {
 } from "../../packages/domain/auto-accept";
 import {
   claudeStepMode,
+  claudeTranscriptPreferenceId,
   type ClaudeStep,
+  type ClaudeStepReplySource,
 } from "../../packages/domain/claude-steps";
+import {
+  claudeConfigDirectory,
+  readClaudeStepReply,
+} from "../../packages/history/claude-transcript";
 import type { Observed } from "../../packages/domain/read-model";
 import { round2Features } from "../../packages/domain/round2-features";
 import { catalog, capabilities } from "../../packages/domain/catalog";
@@ -138,6 +144,8 @@ export interface TrustedInput {
   confirmedTerminalMode?: TerminalModeId;
   /** Set only after the owner confirms turning auto-accept on at this level. */
   confirmedAutoAccept?: AutoAcceptLevel;
+  /** Set only after the owner confirms turning on the transcript read. */
+  confirmedTranscriptRead?: boolean;
 }
 export class Service {
   readonly store: Store;
@@ -532,6 +540,7 @@ export class Service {
         .flatMap((i) => this.runtime.chatPresetBlocks(i)),
       configurationWrites: this.store.list("configuration-write"),
       autoAccept: this.runtime.autoAccept(),
+      claudeTranscriptRead: this.claudeTranscriptRead(),
     };
   }
   /**
@@ -771,13 +780,27 @@ export class Service {
         "Claude Code is still running in Topsl's terminal for this step. Exit it, then confirm that it stopped.",
       );
   }
-  /** The owner hands back Claude's final reply after confirming Claude Code stopped. */
+  /** Whether the owner turned on reading a step's reply from its session's transcript. */
+  private claudeTranscriptRead(): boolean {
+    return (
+      this.store.get<{ value: unknown }>(
+        "preference",
+        claudeTranscriptPreferenceId,
+      )?.value === true
+    );
+  }
+  /**
+   * The owner hands back Claude's final reply after confirming Claude Code
+   * stopped: the text they pasted, or, with the transcript read on, the reply
+   * Topsl reads from the step's latest session. A transcript Topsl cannot
+   * take a reply from leaves the step waiting and says why.
+   */
   async returnClaudeStep(input: {
     projectId: string;
     workflowId: string;
     stepId: string;
-    reply: string;
-    source: "owner-paste";
+    reply?: string;
+    source: ClaudeStepReplySource;
     claudeCodeStopped: true;
   }) {
     this.replication.assertLocalOwner(input.projectId);
@@ -786,7 +809,58 @@ export class Service {
         "Confirm that Claude Code has stopped before handing back its reply.",
       );
     this.assertClaudeStepExited(input.stepId);
-    const result = await this.workflows.returnClaudeStep(input);
+    const ids = {
+      projectId: input.projectId,
+      workflowId: input.workflowId,
+      stepId: input.stepId,
+    };
+    let result;
+    if (input.source === "owner-paste") {
+      if (!input.reply)
+        throw new Error("Paste Claude's final reply to hand it back.");
+      result = await this.workflows.returnClaudeStep({
+        ...ids,
+        reply: input.reply,
+        source: "owner-paste",
+      });
+    } else {
+      if (input.reply !== undefined)
+        throw new Error(
+          "A reply Topsl reads from the transcript comes without pasted text.",
+        );
+      if (!this.claudeTranscriptRead())
+        throw new Error(
+          "Turn on reading Claude Code's transcripts in Settings, or paste Claude's final reply.",
+        );
+      const { step, open } = this.workflows.claudeStepSession(
+        input.projectId,
+        input.workflowId,
+        input.stepId,
+      );
+      const read = await readClaudeStepReply({
+        configDirectory: claudeConfigDirectory(),
+        sessionId: open.sessionId,
+        folder: step.folder,
+        openedAt: open.requestedAt,
+      });
+      // Claude Code must not have opened again while Topsl read.
+      this.assertClaudeStepExited(input.stepId);
+      result = read.ok
+        ? await this.workflows.returnClaudeStep({
+            ...ids,
+            reply: read.text,
+            source: "claude-transcript",
+            transcript: read.source,
+          })
+        : {
+            outcome: "unread" as const,
+            detail: this.workflows.claudeStepUnread(step.id, read.reason),
+            state: this.require<BuilderReviewerState>(
+              "builder-reviewer",
+              input.workflowId,
+            ),
+          };
+    }
     this.changed();
     return result;
   }
@@ -2501,6 +2575,24 @@ export class Service {
         });
         this.changed();
         return { level: command.level };
+      case "claude-transcript-read-set":
+        // Turning it on takes the owner's confirmation in Topsl's own dialog,
+        // which the window cannot answer; turning it off takes none.
+        if (command.enabled && trusted.confirmedTranscriptRead !== true)
+          throw new Error(
+            "Turning on the transcript read needs your confirmation in Topsl's own dialog.",
+          );
+        this.store.transaction(() => {
+          this.store.put("preference", {
+            id: claudeTranscriptPreferenceId,
+            value: command.enabled,
+          });
+          this.store.event("claude-transcript-read.set", {
+            enabled: command.enabled,
+          });
+        });
+        this.changed();
+        return { enabled: command.enabled };
       case "discover":
         return this.discover();
       case "select-runtime": {

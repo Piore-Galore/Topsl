@@ -672,8 +672,9 @@ export const commandSchema = z.discriminatedUnion("type", [
     projectId: id,
     workflowId: id,
     stepId: id,
-    reply: z.string().min(1).max(1000000),
-    source: z.literal("owner-paste"),
+    /** Claude's final reply as the owner pasted it, or none when Topsl reads it from the session's transcript. */
+    reply: z.string().min(1).max(1000000).optional(),
+    source: z.enum(["owner-paste", "claude-transcript"]),
     claudeCodeStopped: z.literal(true),
   }),
   z.object({ type: z.literal("coordination-query"), projectId: id }),
@@ -753,6 +754,10 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("auto-accept-set"),
     level: z.enum(autoAcceptLevels),
+  }),
+  z.object({
+    type: z.literal("claude-transcript-read-set"),
+    enabled: z.boolean(),
   }),
   z.object({ type: z.literal("discover") }),
   z.object({ type: z.literal("trust-installation"), id }),
