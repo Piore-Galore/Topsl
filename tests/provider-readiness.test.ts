@@ -1,6 +1,6 @@
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
-import { rm, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { fixture } from "./helpers";
 import {
   RuntimeAcceptanceRegistry,
@@ -198,6 +198,40 @@ describe("R2-AT-09/10/11: trusted role readiness", () => {
     );
     expect(f.registry.history(f.installation.id)).toHaveLength(2);
     expect(runtimeBindingId(f.binding)).toBe(record.bindingId);
+  });
+  test("Codex's own folder entries leave the policy fingerprint unchanged; any other setting changes it", async () => {
+    const f = await setup(),
+      home = path.join(f.directory, "codex-home"),
+      policy = async (text: string) => {
+        await writeFile(path.join(home, "config.toml"), text);
+        return runtimeBinding(f.installation, {
+          accountKey: "account",
+          profileId: "profile",
+          billingRoute: "native-subscription",
+        }).policyHash;
+      };
+    await mkdir(home);
+    vi.stubEnv("CODEX_HOME", home);
+    cleanup.push(async () => {
+      vi.unstubAllEnvs();
+    });
+    const settings = 'model = "chosen"\napproval_policy = "untrusted"\n',
+      // Codex adds an entry like this the first time it works in a folder.
+      entry = '\n[projects."/work/new-project"]\ntrust_level = "trusted"\n',
+      before = await policy(settings);
+    expect(await policy(settings + entry)).toBe(before);
+    for (const changed of [
+      'model = "other"\napproval_policy = "untrusted"\n',
+      'model = "chosen"\napproval_policy = "never"\n',
+      settings + 'sandbox_mode = "danger-full-access"\n',
+    ])
+      expect(await policy(changed + entry)).not.toBe(before);
+    expect(await policy(settings + "model_context_window = 1\n")).not.toBe(
+      await policy(settings + "model_context_window = 1.0\n"),
+    );
+    // A file that does not parse is compared byte for byte.
+    const broken = await policy(settings + "[projects\n");
+    expect(await policy(settings + "[projects\n\n")).not.toBe(broken);
   });
   test("trusted executable alone remains blocked, unsupported effort blocks broker readiness, and rollout disable cannot promote a route", async () => {
     const f = await setup(),
