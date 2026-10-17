@@ -94,7 +94,20 @@ export const discountSource = (defective = false) =>
   `// New module required by the approved feature.\nexport function applyDiscount(cents) { return Math.round(cents * ${defective ? "0.8" : "0.9"}); }\n`;
 export const featureOrderSource = `import { totalCents } from './cart.mjs';\nimport { applyDiscount } from './discount.mjs';\nexport function orderTotal(items) { return applyDiscount(totalCents(items)); }\n`;
 
-/** Creates only a new disposable directory. It never mutates the Topsl index. */
+// The live workflow run's task changes one tracked file, so its build adds no
+// file that needs an exact-hash output review.
+const liveTask =
+  "Apply a ten percent discount to the order total in src/order.mjs. Change only that file and add no new files. Preserve original cart totals, tracked logo, build script and original checks. Acceptance is a workflow decision, separate from applying or publishing.\n";
+
+/**
+ * Creates only a new disposable directory. It never mutates the Topsl index.
+ * With `live`, it creates the small project that `scripts/live-session.mjs
+ * --workflow` seeds: the same dependency, binary asset and check, a one-line
+ * reference source, and a task that changes src/order.mjs instead of adding
+ * src/discount.mjs. Its build prints the receipt rather than writing
+ * output/receipt.json, because a check set up through Topsl's guided setup has
+ * no writable paths, and the check reads that printed receipt.
+ */
 export async function createDemoFixture(options = {}) {
   const root = options.root
     ? path.resolve(options.root)
@@ -179,7 +192,9 @@ export async function createDemoFixture(options = {}) {
   await add(
     "src/reference.ts",
     referenceLine.repeat(
-      Math.ceil(1_200_000 / Buffer.byteLength(referenceLine)),
+      options.live
+        ? 1
+        : Math.ceil(1_200_000 / Buffer.byteLength(referenceLine)),
     ),
   );
   await add(
@@ -191,15 +206,21 @@ export async function createDemoFixture(options = {}) {
   );
   await add(
     "build/receipt.mjs",
-    "import { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport { catalog } from '../src/catalog.mjs';\nimport { orderTotal } from '../src/order.mjs';\nawait mkdir('output', { recursive: true });\nawait writeFile('output/receipt.json', JSON.stringify({ totalCents: orderTotal(catalog), logoBytes: (await readFile('assets/logo.png')).length }));\nconsole.log('receipt-build-complete');\n",
+    options.live
+      ? "import { readFile } from 'node:fs/promises';\nimport { catalog } from '../src/catalog.mjs';\nimport { orderTotal } from '../src/order.mjs';\nconsole.log(JSON.stringify({ totalCents: orderTotal(catalog), logoBytes: (await readFile('assets/logo.png')).length }));\n"
+      : "import { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport { catalog } from '../src/catalog.mjs';\nimport { orderTotal } from '../src/order.mjs';\nawait mkdir('output', { recursive: true });\nawait writeFile('output/receipt.json', JSON.stringify({ totalCents: orderTotal(catalog), logoBytes: (await readFile('assets/logo.png')).length }));\nconsole.log('receipt-build-complete');\n",
   );
   await add(
     "tests/check.mjs",
-    "import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nimport { spawnSync } from 'node:child_process';\nimport { catalog } from '../src/catalog.mjs';\nimport { totalCents } from '../src/cart.mjs';\nimport { orderTotal } from '../src/order.mjs';\nassert.equal(totalCents(catalog), 1000, 'original cart acceptance remains mandatory');\nassert.equal(orderTotal(catalog), 900, 'approved ten percent feature discount');\nassert.equal(orderTotal([]), 0, 'empty order');\nconst build = spawnSync(process.execPath, ['build/receipt.mjs'], { encoding: 'utf8' });\nprocess.stdout.write(build.stdout ?? ''); process.stderr.write(build.stderr ?? '');\nassert.equal(build.status, 0, 'tracked build script must succeed');\nconst receipt = JSON.parse(await readFile('output/receipt.json', 'utf8'));\nassert.equal(receipt.totalCents, 900); assert(receipt.logoBytes > 0);\nassert(!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.CODEX_HOME, 'provider credentials are not inherited');\nconsole.log('receipt-check-passed');\n",
+    options.live
+      ? "import assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\nimport { catalog } from '../src/catalog.mjs';\nimport { totalCents } from '../src/cart.mjs';\nimport { orderTotal } from '../src/order.mjs';\nassert.equal(totalCents(catalog), 1000, 'original cart acceptance remains mandatory');\nassert.equal(orderTotal(catalog), 900, 'approved ten percent feature discount');\nassert.equal(orderTotal([]), 0, 'empty order');\nconst build = spawnSync(process.execPath, ['build/receipt.mjs'], { encoding: 'utf8' });\nprocess.stdout.write(build.stdout ?? ''); process.stderr.write(build.stderr ?? '');\nassert.equal(build.status, 0, 'tracked build script must succeed');\nconst receipt = JSON.parse(build.stdout);\nassert.equal(receipt.totalCents, 900); assert(receipt.logoBytes > 0);\nassert(!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.CODEX_HOME, 'provider credentials are not inherited');\nconsole.log('receipt-check-passed');\n"
+      : "import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nimport { spawnSync } from 'node:child_process';\nimport { catalog } from '../src/catalog.mjs';\nimport { totalCents } from '../src/cart.mjs';\nimport { orderTotal } from '../src/order.mjs';\nassert.equal(totalCents(catalog), 1000, 'original cart acceptance remains mandatory');\nassert.equal(orderTotal(catalog), 900, 'approved ten percent feature discount');\nassert.equal(orderTotal([]), 0, 'empty order');\nconst build = spawnSync(process.execPath, ['build/receipt.mjs'], { encoding: 'utf8' });\nprocess.stdout.write(build.stdout ?? ''); process.stderr.write(build.stderr ?? '');\nassert.equal(build.status, 0, 'tracked build script must succeed');\nconst receipt = JSON.parse(await readFile('output/receipt.json', 'utf8'));\nassert.equal(receipt.totalCents, 900); assert(receipt.logoBytes > 0);\nassert(!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.CODEX_HOME, 'provider credentials are not inherited');\nconsole.log('receipt-check-passed');\n",
   );
   await add(
     "TASK.md",
-    "Implement a ten percent order discount in a new src/discount.mjs module and call it from src/order.mjs. Preserve original cart totals, tracked logo, build script and original checks. Approve the exact new-file hash before review/checks. Acceptance is a workflow decision, separate from applying or publishing.\n",
+    options.live
+      ? liveTask
+      : "Implement a ten percent order discount in a new src/discount.mjs module and call it from src/order.mjs. Preserve original cart totals, tracked logo, build script and original checks. Approve the exact new-file hash before review/checks. Acceptance is a workflow decision, separate from applying or publishing.\n",
   );
   if (options.stress) {
     // 10,000 source files at 10 KiB plus four 1 MiB binary inputs exceeds
@@ -230,6 +251,7 @@ export async function createDemoFixture(options = {}) {
     evidenceClass: "deterministic-generated-fixture",
     seed,
     stress: !!options.stress,
+    ...(options.live ? { live: true } : {}),
     sourceFiles,
     logicalBytes: sourceFiles.reduce((sum, file) => sum + file.bytes, 0),
     dependency: {
@@ -237,7 +259,9 @@ export async function createDemoFixture(options = {}) {
       sha256: digest(dependency),
       origin: "generated local archive; no registry fetch; no install hooks",
     },
-    feature: { newPath: "src/discount.mjs", expectedTotalCents: 900 },
+    feature: options.live
+      ? { path: "src/order.mjs", expectedTotalCents: 900 }
+      : { newPath: "src/discount.mjs", expectedTotalCents: 900 },
     sourceIdentity: digest(JSON.stringify(sourceFiles)),
   };
   await add(
