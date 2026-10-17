@@ -372,6 +372,54 @@ test("a review attempt that fails still loses its reader grant", async () => {
   ).toBe("installed-before-dispatch");
   expect(revoked).toHaveBeenCalledWith(reviewer.id);
 });
+test("a Codex review's progress note before its answer leaves the answer readable", async () => {
+  const f = await setup(),
+    reviewed = await runTurns(
+      f,
+      await f.create(false, {
+        codexReviewer: true,
+        objective: "value two [fixture: the review narrates]",
+      }),
+    );
+  expect(reviewed.stage, reviewed.detail).toBe("checking");
+  const [, reviewer] = [
+    ...f.service.store.iterate<any>("attempt", { projectId: "p" }),
+  ];
+  // The note stays in the run's history ahead of the answer.
+  const replies = [
+    ...f.service.store.iterate<any>("message", { projectId: "p" }),
+  ]
+    .filter(
+      (message) =>
+        message.runId === reviewer.legacyRunId && message.role === "assistant",
+    )
+    .map((message) => message.text);
+  expect(replies).toHaveLength(2);
+  expect(replies[0]).toBe("Reading the captured build before I review it.");
+});
+test.each([
+  ["is prose", "its final message is not JSON"],
+  [
+    "breaks the schema",
+    'findings.0.severity: Invalid option: expected one of "high"|"medium"|"low"; findings.0.line: Too small: expected number to be >0',
+  ],
+])(
+  "a review that %s blocks the workflow and says why",
+  async (marker, reason) => {
+    const f = await setup(),
+      blocked = await runTurns(
+        f,
+        await f.create(false, {
+          codexReviewer: true,
+          objective: `value two [fixture: the review ${marker}]`,
+        }),
+      );
+    expect(blocked.stage).toBe("blocked");
+    expect(blocked.detail).toBe(
+      `Reviewer output did not match the required finding schema (${reason}); review is unverified and cannot be accepted.`,
+    );
+  },
+);
 test("a workflow lists the requests its running build waits on, and the owner's answer reaches Codex", async () => {
   const f = await setup(),
     state = await f.create(false, {

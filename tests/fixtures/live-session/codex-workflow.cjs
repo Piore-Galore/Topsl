@@ -3,9 +3,9 @@
 // qualification suite's scripted app-server (codex-qualify.cjs), which here
 // also builds and reviews the project the script seeds. No model or account is
 // contacted. A build applies the ten percent discount in src/order.mjs. A
-// review reads that file in the task input, or through Topsl's candidate reader
-// when the input leaves it out, and returns no findings for the pinned
-// candidate.
+// review sends a progress note first, as Codex does, then reads that file in
+// the task input, or through Topsl's candidate reader when the input leaves it
+// out, and returns no findings for the pinned candidate.
 // FIXTURE_BUILD=twenty applies twenty percent instead, so the check fails.
 // FIXTURE_BUILD=new-file also adds src/discount.mjs, which nobody approved.
 // FIXTURE_REVIEW=finding returns one finding on src/order.mjs.
@@ -164,6 +164,21 @@ fixture.otherTurn = async ({ threadId, turnId, prompt, cwd, tools }) => {
       turnId,
       "The task input names no pinned candidate revision.",
     );
+  // Codex sends a progress note before it reads and answers, which its
+  // protocol marks as commentary. Topsl reads only the answer.
+  fixture.send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        id: `${turnId}-note`,
+        type: "agentMessage",
+        text: "Reading src/order.mjs before I review it.",
+        phase: "commentary",
+      },
+    },
+  });
   const inInput = shown(prompt, "src/order.mjs"),
     source =
       inInput ?? (tools ? await read(threadId, turnId, "src/order.mjs") : null),

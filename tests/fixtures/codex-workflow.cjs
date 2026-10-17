@@ -148,17 +148,57 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           });
         });
       if (!review) fs.writeFileSync("file.ts", "export const value = 2;\n");
+      // An objective ending "[fixture: the review narrates]" makes the review
+      // send a progress note before it reads and answers, as Codex does; its
+      // protocol marks such a message as commentary.
+      if (
+        review &&
+        /^Objective: .*\[fixture: the review narrates\]$/m.test(prompt)
+      )
+        send({
+          method: "item/completed",
+          params: {
+            threadId: session,
+            turnId: turn,
+            item: {
+              type: "agentMessage",
+              id: "fixture-commentary",
+              text: "Reading the captured build before I review it.",
+              phase: "commentary",
+            },
+          },
+        });
       const read =
         review && tools.some((tool) => tool.name === "topsl_candidate")
           ? `; read ${await readCandidate(turn, prompt)}`
           : "";
-      const text = review
-        ? JSON.stringify({
-            candidateRevision: candidate,
-            summary: `no substantiated findings${read}`,
-            findings: [],
-          })
-        : "Fixture changed value; no model was contacted.";
+      // An objective ending "[fixture: the review is prose]" makes the review
+      // answer in words instead of the JSON it was asked for, and one ending
+      // "[fixture: the review breaks the schema]" rates a finding outside the
+      // schema's severities, on line 0.
+      const text = !review
+        ? "Fixture changed value; no model was contacted."
+        : /^Objective: .*\[fixture: the review is prose\]$/m.test(prompt)
+          ? `The build looks right to me${read}.`
+          : JSON.stringify({
+              candidateRevision: candidate,
+              summary: `no substantiated findings${read}`,
+              findings:
+                /^Objective: .*\[fixture: the review breaks the schema\]$/m.test(
+                  prompt,
+                )
+                  ? [
+                      {
+                        title: "Value is wrong",
+                        severity: "critical",
+                        file: "file.ts",
+                        line: 0,
+                        behavior: "The value is not two.",
+                        evidence: "Fixture finding; no model was contacted.",
+                      },
+                    ]
+                  : [],
+            });
       send({
         method: "item/completed",
         params: {

@@ -1288,6 +1288,9 @@ async function approved(dialog, approval, refused) {
   if (answer !== approval) throw new Error(refused);
 }
 
+/** How long Topsl takes an answer to one of Codex's requests. */
+const answerWindow = 15 * 60000;
+
 /** What a request Codex makes during the workflow asks, as its card shows it. */
 const asked = (approval) => ({
   title: approval.summary?.title ?? "Native approval requested",
@@ -1398,6 +1401,7 @@ async function codexWorkflow(projectId, runtime) {
     approvals: [],
     candidate: null,
     review: null,
+    reviewReply: null,
     checks: [],
     record: null,
     stoppedAt: null,
@@ -1527,13 +1531,22 @@ async function codexWorkflow(projectId, runtime) {
                 .map((a) => a.legacyRunId),
             ),
             waiting = scope.approvals.filter((a) => runs.has(a.runId));
-          for (const approval of waiting)
+          for (const approval of waiting) {
+            // Topsl takes no answer to a request after 15 minutes, so one
+            // left that long can only hold the run until its time is up.
+            const deadline = Date.parse(approval.createdAt) + answerWindow;
+            if (Date.now() > deadline)
+              throw new Error(
+                `Codex's request "${asked(approval).title}" waited 15 minutes without an answer, and Topsl takes none after that.`,
+              );
             if (!requests.has(approval.id)) {
               const request = asked(approval);
               requests.set(approval.id, { approval, request });
               workflow.approvals.push(request);
               console.error(
-                `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window.`,
+                ownerStandIn
+                  ? `Codex asks: ${request.title}. The script answers it as the owner, since this is the stand-in run.`
+                  : `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`,
               );
               // How the first request looks on the card, before its answer.
               if (requests.size === 1) {
@@ -1545,6 +1558,7 @@ async function codexWorkflow(projectId, runtime) {
               }
               if (ownerStandIn) await answerAsOwner(card, approval);
             }
+          }
           for (const [id, { approval, request }] of requests)
             if (!request.answer && !waiting.some((a) => a.id === id))
               request.answer = await answerOf(approval);
@@ -1705,6 +1719,30 @@ async function recordWorkflow(projectId, card) {
         candidateReads: inspection.candidateRetrievals.total,
       }
     : null;
+  // Without a review, the reviewer's own messages show what it answered:
+  // how many it sent and the last, which is the one Topsl reads.
+  const lastReview = scope.coordination.attempts
+      .filter((attempt) => attempt.taskId === state.reviewerTaskId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .at(-1),
+    reviewRun = scope.runs.find((run) => run.id === lastReview?.legacyRunId);
+  workflow.reviewReply = null;
+  if (!workflow.review && reviewRun) {
+    const { items } = await command({
+        type: "history-page",
+        projectId,
+        conversationId: reviewRun.conversationId,
+        limit: 200,
+      }),
+      replies = items.filter(
+        (m) => m.runId === reviewRun.id && m.role === "assistant",
+      );
+    // The page lists the newest message first.
+    workflow.reviewReply = {
+      messages: replies.length,
+      last: replies.length ? withoutHome(replies[0].text.slice(0, 4000)) : null,
+    };
+  }
   workflow.checks = [];
   for (const execution of inspection.checkExecutions) {
     const { logs } = await command({
