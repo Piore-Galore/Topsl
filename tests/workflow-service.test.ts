@@ -11,7 +11,7 @@ import {
 import { CodexAdapter } from "../packages/providers/codex";
 import { RpcPeer } from "../packages/runtime/rpc";
 import { nativeEnvironment } from "../packages/platform/system";
-import type { Installation } from "../packages/domain/types";
+import type { Installation, Run } from "../packages/domain/types";
 import { now, uid } from "../packages/domain/invariants";
 import { fixture } from "./helpers";
 class FixtureCodex extends CodexAdapter {
@@ -476,6 +476,53 @@ test("a workflow lists the requests its running build waits on, and the owner's 
     ),
   );
 });
+test.each([
+  ["sandboxed", "never", "decline", {}],
+  ["everything", "untrusted", "accept", { autoAllowed: 1 }],
+] as const)(
+  "under auto-accept %s nobody is asked during a workflow's build, and its review is sent as before",
+  async (level, approvalPolicy, decision, allowed) => {
+    const f = await setup();
+    f.service.store.put("preference", { id: "auto-accept", value: level });
+    const done = await runTurns(
+      f,
+      await f.create(false, {
+        codexReviewer: true,
+        objective: "value two [fixture: the build asks first]",
+      }),
+    );
+    expect(done.stage, done.detail).toBe("checking");
+    const [builder, reviewer] = [
+        ...f.service.store.iterate<any>("attempt", { projectId: "p" }),
+      ],
+      run = (attempt: any) =>
+        f.service.store.get<Run>("run", attempt.legacyRunId)!;
+    expect(run(builder)).toMatchObject({
+      mode: "edit",
+      approvalPolicy,
+      autoAccept: level,
+      ...allowed,
+    });
+    expect(run(reviewer)).toMatchObject({
+      mode: "review",
+      approvalPolicy: "untrusted",
+    });
+    expect(run(reviewer)).not.toHaveProperty("autoAccept");
+    // The stand-in asks either way; Topsl answered it, and no card waited.
+    expect(f.service.store.list("approval")).toEqual([]);
+    const sent = f.frames().filter(({ from }) => from === "topsl");
+    expect(
+      sent
+        .filter(({ frame }) => frame.id === "ask-command")
+        .map(({ frame }) => frame.result),
+    ).toEqual([{ decision }]);
+    expect(
+      sent
+        .filter(({ frame }) => frame.method === "thread/start")
+        .map(({ frame }) => frame.params.approvalPolicy),
+    ).toEqual([approvalPolicy, "untrusted"]);
+  },
+);
 test("production capability gate refuses before any builder turn and retains native routes", async () => {
   const f = await setup(false),
     state = await f.create();

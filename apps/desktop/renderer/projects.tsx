@@ -1,6 +1,6 @@
 import { ActionButton } from "./components/action-button";
 import {
-  rememberedTerminalMode,
+  startingTerminalMode,
   terminalProvider,
   TerminalModeNote,
   TerminalModeSelect,
@@ -27,7 +27,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
   const { state, busy, act, selectProject, openTerminal } = props;
   const [installationId, setInstallationId] = useState("");
   const [opened, setOpened] = useState<ProjectOpenResult | null>(null);
-  /** A mode picked for the next terminal; otherwise the project's remembered one. */
+  /** A mode picked for the next terminal; otherwise auto-accept's or the project's remembered one. */
   const [modeChoice, setModeChoice] = useState<TerminalModeId | null>(null);
   const available =
     !project.availability || project.availability === "available";
@@ -49,8 +49,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
     ? terminalProvider(selectedInstallation)
     : null;
   const mode: TerminalModeId = terminal
-    ? (modeChoice ??
-      rememberedTerminalMode(state.terminalModes, project.id, terminal))
+    ? (modeChoice ?? startingTerminalMode(state, project.id, terminal))
     : "provider-default";
   return (
     <article className="project-card" aria-label={project.name}>

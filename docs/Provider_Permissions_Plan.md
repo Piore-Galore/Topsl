@@ -41,6 +41,7 @@ Claude Code, through `--permission-mode` ([CLI reference](https://code.claude.co
 | Manual | `--permission-mode default` | Asks on the first use of each tool |
 | Plan | `--permission-mode plan` | Reads and plans; edits stay blocked until the plan is approved |
 | Accept edits | `--permission-mode acceptEdits` | Accepts file edits and common file commands in the working folders, and asks for the rest |
+| Sandboxed edits (added 17 October 2026) | `--permission-mode acceptEdits` with sandbox settings in `--settings`, listed under [Claude Code's Sandboxed edits](#claude-codes-sandboxed-edits) | Accept edits with Claude Code's sandbox turned on: shell commands that run in the sandbox go ahead without asking, and one the sandbox blocks is not retried outside it |
 | Auto | `--permission-mode auto` | Runs without routine prompts; a classifier reviews each action first. Needs a supported plan and model, and an admin can turn it off |
 | Don't ask | `--permission-mode dontAsk` | Refuses anything that would prompt; only pre-approved tools and reads run |
 | Bypass (advanced) | `--permission-mode bypassPermissions` | Skips prompts. Its docs say to use it only in isolated environments, and that it offers no protection against prompt injection |
@@ -93,12 +94,15 @@ Claude Code's **Bypass** and Codex's **Full access** are offered only for termin
 - No code path picks one after a failure, a refusal or a safety check. Design section 11.3 says an advanced option "must not be chosen automatically to overcome an integration failure". A test checks that only the owner's choice plus a confirmation produces these flags.
 - If managed settings disable the mode, the provider refuses it in the terminal, and Topsl leaves it at that.
 
+**Since 17 October 2026**, the owner's [auto-accept](#auto-accept-17-october-2026) setting at **Everything** starts terminals in these modes and opens build handoffs in them, each still confirmed in Topsl's own dialog. They are still never remembered for a project, never written into a handoff or task file, and never chosen after a failure.
+
 ## What Topsl will still not claim
 
 - A mode Topsl asked for is not proof of the policy in force. For terminals, Topsl reports only what it passed; Claude Code shows its mode in its own status bar. Managed settings can override either provider.
 - Plan, Manual, Don't ask and Accept edits are Claude Code's permission rules, not an operating-system sandbox. Claude Code's own sandbox is off by default and covers only shell commands ([sandboxing](https://code.claude.com/docs/en/sandboxing)).
 - A Codex qualification with suite v4 shows Codex's sandbox blocking a write Topsl ran through it, not a model's own command.
 - Nothing here changes how workflows are qualified, and none of it is a way around a provider's safety checks.
+- Auto-accept's **Sandboxed** level relies on each provider's own sandbox. The qualification has seen Codex's block writes that Topsl ran through it. No Topsl test or live run has checked Claude Code's.
 
 ## Build steps
 
@@ -118,6 +122,8 @@ Approved on 16 October 2026, each with the recommended option:
 3. **Remembering the choice:** each project remembers its last ordinary mode per provider, never a bypass mode. Not chosen: every terminal starting at Provider default.
 4. **Workflows:** they keep their qualified profiles, and Claude review handoffs open in Plan. Not chosen: a mode per role, which needs a qualification per profile.
 5. **Live check:** three short prompts on the owner's Mac, started by the owner in Terminal, after step 3. Not chosen: stand-ins only.
+
+On 17 October 2026, the owner's [auto-accept](#auto-accept-17-october-2026) decision changed decisions 3 and 4 while the setting is on: terminals start in its mode and no mode is remembered, and under **Sandboxed** a Codex workflow build runs with no asking.
 
 ## Delivery record
 
@@ -302,3 +308,88 @@ Twice, the owner ran the Claude stand-in in **Plan** and then Claude Code in **P
 - Second rerun: **passed**. Topsl started Claude Code 2.1.300 with `--permission-mode plan` and recorded **Plan** on the run. Claude Code asked no question besides folder trust, showed `plan mode on` below its input and answered with the sum after 4.6 seconds. `/exit` ended the session with code 0, the run was `completed`, and the imported transcript had the reply.
 
 All three of the live check's runs have now passed: Codex's terminal in **Read-only** and a Codex chat in **Ask when needed** at `69f7867`, and Claude Code in **Plan** at `72e3d37`. Each pass covers that Mac, those provider versions and one prompt. The prompt asks for a sum, which needs no tool, so no run tested what a mode or preset allows or blocks ([What a pass does not establish](Live_Provider_Sessions.md#what-a-pass-does-not-establish)).
+
+## Auto-accept (17 October 2026)
+
+A follow-up to this plan: one setting, **Settings → Auto-accept**, decides who answers when Codex or Claude Code would ask for permission in a session Topsl starts for editing. It is off until the owner turns it on.
+
+**The owner's decision.** After the Claude workflows plan's second live run, in which the owner allowed Codex's 9 requests one at a time on the workflow's card ([that run](Claude_Workflows_Plan.md#step-1-follow-up-the-second-live-run-17-october-2026)), the owner asked for a setting that accepts everything. Offered **Sandboxed**, the recommendation, or **Everything**, the owner chose Sandboxed with Everything as an override they set explicitly, and then asked for the same two levels for Claude Code.
+
+### What each level does
+
+| Session Topsl starts | Off | Sandboxed | Everything |
+| --- | --- | --- | --- |
+| Codex chat in **Workspace edits · ask** or **· ask when needed** | The owner decides each request, as before | Sent as **No asking** on a runtime that can use it. Elsewhere it asks as before, and the composer says why | Sent as chosen. Topsl allows each request and notes it in the chat |
+| Codex workflow build or repair | `untrusted`: each request waits on the workflow's card | `never`: nobody is asked, and a command the sandbox blocks fails | `untrusted`. Topsl allows each request and notes it in the build attempt's own conversation |
+| Claude Code terminal | The project's remembered mode | **Sandboxed edits** | **Bypass**, confirmed each time |
+| Codex terminal | The project's remembered mode | **Workspace, never ask** | **Full access**, confirmed each time |
+| Build handoff in a terminal | Nothing passed, as before | **Sandboxed edits** for Claude Code, **Workspace, never ask** for Codex | **Bypass** or **Full access**, confirmed each time |
+
+A terminal's menu starts in the level's mode, and the owner can still pick another one for each terminal. Unchanged at every level: **Read-only review** and **No asking** chats, workflow reviews and the qualification, for which Topsl still declines every request Codex makes, and review handoffs, which keep Plan for Claude Code and pass nothing for Codex.
+
+### Claude Code's Sandboxed edits
+
+A new Claude Code mode, also offered on its own in **Terminal mode**. Topsl passes:
+
+```
+--permission-mode acceptEdits --settings {"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false,"failIfUnavailable":true,"network":{"strictAllowlist":true}}}
+```
+
+What Claude Code does with it, per its [sandboxing](https://code.claude.com/docs/en/sandboxing), [permission modes](https://code.claude.com/docs/en/permission-modes) and [settings](https://code.claude.com/docs/en/settings#settings-precedence) pages, read on 17 October 2026:
+
+- Accept edits approves edits and common file commands in its working folders.
+- With the sandbox on, shell commands that run in it go ahead without asking, apart from those the owner's own rules ask about or deny and a few that the docs say still ask, such as removing a critical folder. They can write only in the working folders and the temporary folder, and with `strictAllowlist` (Claude Code 2.1.219 or later) they reach only the hosts the owner's settings allow, and other hosts are refused instead of asked about. The sandbox does not limit reads.
+- A command the sandbox blocks is not retried outside it, and if the sandbox cannot start, Claude Code exits. Claude Code's docs say native Windows has no sandbox, so there this mode exits at start; on Linux it needs bubblewrap and socat.
+- Web fetches, MCP tools, edits outside the working folders and edits to protected paths still follow Claude Code's rules for Accept edits: they ask unless the owner's own rules allow them.
+- `--settings` ranks above the owner's user, project and local settings files and below managed settings. Lists merge across those files, so commands the owner's own settings exclude from the sandbox, and folders they add to it, still apply.
+
+### What stays the same
+
+- Turning auto-accept on takes the owner's confirmation in Topsl's own dialog, which says what the level allows. Everything's is a warning that quotes both providers' warnings for **Full access** and **Bypass**. The window cannot answer it: the service turns a level on only with the main process's confirmation of that exact level. Turning it off takes no confirmation.
+- **Bypass** and **Full access** still sit under **Advanced**, are confirmed for each terminal and each handoff, and are never remembered for a project. Only the owner's Everything setting starts a terminal in one. No level is chosen or changed after a failure, a refusal or a safety check ([design section 11.3](Topsl_Design.md#113-task-presets)).
+- Topsl answers none of Claude Code's prompts or questions. Under Everything, Claude Code asks its own question about Bypass the first time.
+- Everything applies to a Codex run only if it was on when the run started, and only while it stays on. A request made after the owner moves the setting to Sandboxed or Off goes to the owner, and a request already waiting when Everything is turned on stays for the owner.
+- For each request it allows, Topsl records the run, the request's method and the digest an approval would have been bound to, as `approval.auto-accepted`, and puts the request's plain-words description in the conversation where its card would have been. The run's line shows the level and how many requests it allowed.
+- Managed settings can override either provider.
+- The qualification and the runtime binding are unchanged. As for **No asking** chats, a Sandboxed build runs in the sandbox the qualification's workspace-write probe tested, and the binding still describes the `untrusted` profile.
+- [`scripts/live-session.mjs`](../scripts/live-session.mjs) never sets auto-accept, and its disposable profiles start with it off.
+
+### Defaults chosen while building it
+
+The owner's decision left these open. Each takes the more cautious option where there was one:
+
+1. Everything's terminals are still confirmed each time, as [decision 1](#decisions) requires.
+2. On a runtime that cannot use **No asking**, a Sandboxed chat asks as before instead of being refused. A Sandboxed workflow build needs no separate check, because a Codex runtime is ready for the builder role only when its current qualification passed `workspace-write`, the same evidence **No asking** needs.
+3. Everything keeps the chat's or build's sandbox and approval policy and has Topsl allow each request, so each one is recorded. It does not switch Codex's structured sessions to full access.
+4. Reviews are unchanged at every level.
+5. While auto-accept is on, a terminal's mode is not remembered for the project, and the remembered mode returns when it is off.
+6. A Codex terminal under Sandboxed opens in **Workspace, never ask**, Codex's terminal mode closest to a **No asking** chat.
+
+### Delivery (17 October 2026)
+
+Built on the Claude workflows plan's step 1 branch at `8990899`, so it merges after that pull request.
+
+**What changed**
+
+- [auto-accept.ts](../packages/domain/auto-accept.ts) holds the levels, the text Settings shows for each, the terminal mode each level starts each provider in, the rule for Sandboxed's approval policy, the composer's note and both confirmations.
+- Settings has an **Auto-accept** card with **Off**, **Sandboxed** and **Everything**, and says what the current level does ([main.tsx](../apps/desktop/renderer/main.tsx)). Choosing Sandboxed or Everything opens Topsl's confirmation in the main process ([main.ts](../apps/desktop/main.ts)). The service stores the level as the `auto-accept` preference and records `auto-accept.set`, and it refuses to turn a level on without that confirmation ([service.ts](../apps/service/service.ts)).
+- For a Codex edit turn under Sandboxed, the runtime manager sends `never` on `thread/start`, `thread/resume` and `turn/start`, records it on the run with `autoAccept`, and checks what Codex reports against it, as for any preset. For a chat, it checks again once Codex has reported its account, and if the runtime can no longer use **No asking**, the run fails and the next one asks as before. Under Everything, it answers each request with `accept` instead of creating an approval and counts it in the run's `autoAllowed` ([manager.ts](../packages/runtime/manager.ts)).
+- The terminal menus on the Workspace page and under Projects start in the level's mode ([terminal-mode.tsx](../apps/desktop/renderer/components/terminal-mode.tsx)), and the service remembers no mode while a level is on.
+- A build handoff opens in the level's mode. Under Everything, the main process asks for the bypass confirmation before the service records the opening, and the service refuses the opening without it.
+- [terminal-modes.ts](../packages/domain/terminal-modes.ts) adds Claude Code's **Sandboxed edits**.
+- The composer says what auto-accept does to the selected preset, and the run's line adds `auto-accept` with the level and the number of requests it allowed.
+- In **Sandboxed edits**, the live script checks that Claude Code shows `accept edits on` below its input, as in **Accept edits**. That Claude Code shows that line with its sandbox on is inferred from the mode Topsl passes.
+- The chat stand-in ([codex.cjs](../tests/fixtures/codex.cjs)) can hold its command request until a file exists (`FIXTURE_APPROVAL_GATE`), so a test can change the setting while a turn runs.
+
+**Validation** (17 October 2026, Linux x64 container, `8990899` plus this change)
+
+- `env -u ANTHROPIC_BASE_URL npm run check` passed: typecheck, 42 test files with 410 tests passed and the 4 opt-in tests skipped (the two native Codex probes, the Round 2 stress run and the coordination benchmark), the release tests and the build.
+- New and changed tests:
+  - [auto-accept.test.ts](../tests/auto-accept.test.ts), 6 tests: the levels and their names in Settings; the terminal modes for each level, where Sandboxed's keep a sandbox, only Everything's are bypass modes, and **Sandboxed edits** passes exactly the settings above; the rule for Sandboxed's approval policy; the composer's notes; both confirmations; and, through the service, a level turns on only with the confirmation of that level, not with a generic approval or another level's confirmation, Off takes none, and each change is recorded.
+  - [chat-presets.test.ts](../tests/chat-presets.test.ts), 6 tests through the chat stand-ins. Sandboxed sends `never` on `thread/start` and `turn/start` once the qualification stand-in, launched as an executable, has passed. It leaves a chat on an unqualified runtime at `untrusted` and changes no review. Everything answers the stand-in's command request with `accept`, creates no approval, records the event, and adds the note before the reply. A request already waiting when Everything is turned on keeps waiting for the owner, and so does a request made after Everything is turned down in a run that started under it. A review's request is still declined.
+  - [workflow-service.test.ts](../tests/workflow-service.test.ts), under each level: a workflow's build is sent with `never` under Sandboxed or `untrusted` under Everything, Topsl declines or accepts the stand-in's request, no approval waits on the card, and the review is sent with `untrusted` and no auto-accept.
+  - [terminal-modes.test.ts](../tests/terminal-modes.test.ts): **Sandboxed edits**' exact arguments in the table. With the terminal stand-in as both providers, terminals start in the level's mode, a terminal opened while a level is on is not remembered, **Full access** still needs its confirmation under Everything, and the remembered mode returns after Off. A build handoff opens in **Sandboxed edits**, or in **Bypass** after its confirmation, a review handoff keeps Plan, and **Bypass** without its confirmation is refused before the opening is recorded.
+- Mutation check, each change made alone and reverted: without the service's confirmation check, 1 test failed; without the auto-allow, 2; with Everything still allowing after it was turned down, none at first, so the test for a request made after it was turned down was added, and it then failed; with auto-accept applied to reviews, 2; with Sandboxed chats sent with no asking whatever the qualification, 1; with a bypass handoff opened without its confirmation, 1; with modes remembered while a level is on, 1; with build handoffs ignoring the level, 1; and with the terminal menus ignoring the level, 1.
+- `env -u ANTHROPIC_BASE_URL xvfb-run --auto-servernum npm run test:desktop` passed, in 59 seconds, including encrypted restart persistence. Through Topsl's screens, after the terminal steps: Claude Code's **Terminal mode** menu lists **Sandboxed edits** after **Accept edits**. In Settings, **Off** is selected; **Sandboxed** turns on only after Topsl's confirmation, `Turn on auto-accept for work inside the sandbox?` with **Cancel** and **Turn on Sandboxed**; and **Everything**, declined in its warning, which quotes Codex's and Claude Code's own warnings, leaves Sandboxed on. The Workspace page's menu then starts at **Sandboxed edits**. **Off** takes no confirmation, and the menu returns to Plan.
+- After `npm run build`, the live script with the Claude stand-in and `--mode sandboxed`, under `xvfb-run --auto-servernum` with Node 22, passed: Topsl recorded `sandboxed` with the arguments above, the stand-in showed `accept edits on`, the sum came back, and `/exit` ended the session with code 0. With the stand-in showing the shortcuts hint instead, as if Claude Code's settings had overridden the mode, the script stopped before the prompt: `Claude Code showed "? for shortcuts" below its input instead of "accept edits on", so no prompt was sent.`
+- No model requests were sent, and no real Claude Code or Codex was started. Not established: how a live Codex treats `never` in a build, or the requests Topsl allows under Everything; whether Claude Code's sandbox starts on the owner's Mac with these settings, and what Claude Code shows below its input then; and Windows, where the service and terminal tests that start a stand-in through a shell wrapper do not run. The workflow's card does not show the requests auto-accept allowed for a build; they are in the build attempt's own conversation. macOS and Windows depend on CI.

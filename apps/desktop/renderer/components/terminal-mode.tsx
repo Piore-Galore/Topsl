@@ -3,7 +3,9 @@ import {
   type TerminalMode,
   type TerminalModeId,
 } from "../../../../packages/domain/terminal-modes";
+import { autoAcceptTerminalMode } from "../../../../packages/domain/auto-accept";
 import type {
+  AppState,
   Installation,
   Provider,
   TerminalModePreference,
@@ -32,6 +34,16 @@ export function rememberedTerminalMode(
   );
   return mode && !mode.warning ? mode.id : "provider-default";
 }
+
+/** The mode a terminal's menu starts at: auto-accept's while it is on,
+ * otherwise the project's remembered one. */
+export const startingTerminalMode = (
+  state: Pick<AppState, "terminalModes" | "autoAccept">,
+  projectId: string,
+  provider: Provider,
+): TerminalModeId =>
+  autoAcceptTerminalMode(state.autoAccept, provider) ??
+  rememberedTerminalMode(state.terminalModes, projectId, provider);
 
 /** How a terminal's mode reads in Topsl: its name and the arguments passed. */
 export function terminalModeText(mode: TerminalMode): string {

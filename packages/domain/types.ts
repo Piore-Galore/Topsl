@@ -1,5 +1,6 @@
 import type { TerminalModeId } from "./terminal-modes";
 import type { ChatPresetBlock, CodexApprovalPolicy } from "./chat-presets";
+import type { AutoAcceptLevel } from "./auto-accept";
 export type Provider = "codex" | "claude";
 export type Theme = "paper" | "night" | "system";
 export type AppId =
@@ -210,6 +211,14 @@ export interface Run {
   approvalPolicy?: CodexApprovalPolicy;
   /** What Codex reported it adopted when the run's thread started or resumed. */
   reportedPermissions?: ReportedPermissions;
+  /**
+   * The auto-accept level Topsl applied to this Codex turn when it started:
+   * Sandboxed sent it with no asking, and Everything lets Topsl allow its
+   * requests while the setting stays at Everything. Absent when it applied none.
+   */
+  autoAccept?: "sandboxed" | "everything";
+  /** How many requests auto-accept allowed for this run. */
+  autoAllowed?: number;
 }
 /**
  * The permissions Codex reported in its answer to `thread/start` or
@@ -326,6 +335,8 @@ export interface AppState {
   terminalModes: TerminalModePreference[];
   /** Codex chat presets that a runtime cannot use now, each with the reason. */
   chatPresetBlocks: ChatPresetBlock[];
+  /** The owner's auto-accept setting, off until they turn it on. */
+  autoAccept: AutoAcceptLevel;
 }
 export interface ServiceEvent {
   type:

@@ -21,6 +21,7 @@ import type {
 } from "../packages/domain/types";
 import { captureCandidate } from "../packages/workflows/candidates";
 import { AssistedWorkflows } from "../packages/workflows/assisted";
+import { startingTerminalMode } from "../apps/desktop/renderer/components/terminal-mode";
 import { fixture } from "./helpers";
 
 /** The line in which the terminal stand-in reports the arguments it received. */
@@ -37,6 +38,8 @@ describe("terminal modes", () => {
       manual: "--permission-mode default",
       plan: "--permission-mode plan",
       "accept-edits": "--permission-mode acceptEdits",
+      sandboxed:
+        '--permission-mode acceptEdits --settings {"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false,"failIfUnavailable":true,"network":{"strictAllowlist":true}}}',
       auto: "--permission-mode auto",
       "dont-ask": "--permission-mode dontAsk",
       bypass: "--permission-mode bypassPermissions",
@@ -227,6 +230,39 @@ async function setup() {
   };
   const remembered = () =>
     service.state().terminalModes.find((entry) => entry.id === "p");
+  /** A Claude Code handoff for the role, prepared over a pinned file. */
+  const handoff = async (role: "builder" | "reviewer") => {
+    await writeFile(path.join(f.directory, "source.ts"), "one\n");
+    const candidate = await captureCandidate(service.store, {
+      root: f.directory,
+      projectId: "p",
+      workflowId: "w",
+      selectedPaths: ["source.ts"],
+    });
+    service.store.put("builder-reviewer", {
+      id: "w",
+      projectId: "p",
+      candidateId: candidate.id,
+      specificationId: "spec",
+    });
+    service.store.put("workflow-specification", {
+      id: "spec",
+      objective: "Review the pinned file",
+    });
+    return new AssistedWorkflows(service.store).prepare({
+      projectId: "p",
+      workflowId: "w",
+      installationId: "claude",
+      role,
+      exportApproved: true,
+    });
+  };
+  /** Turns auto-accept to the level, confirmed as Topsl's own dialog does. */
+  const autoAccept = (level: "off" | "sandboxed" | "everything") =>
+    service.command(
+      { type: "auto-accept-set", level },
+      level === "off" ? {} : { confirmedAutoAccept: level },
+    );
   return {
     ...f,
     service,
@@ -236,6 +272,8 @@ async function setup() {
     released,
     open,
     remembered,
+    handoff,
+    autoAccept,
   };
 }
 
@@ -396,30 +434,7 @@ describe.skipIf(process.platform === "win32")(
     test("a Claude review handoff opens in Plan, and a build handoff passes nothing", async () => {
       for (const role of ["reviewer", "builder"] as const) {
         const f = await setup();
-        await writeFile(path.join(f.directory, "source.ts"), "one\n");
-        const candidate = await captureCandidate(f.service.store, {
-          root: f.directory,
-          projectId: "p",
-          workflowId: "w",
-          selectedPaths: ["source.ts"],
-        });
-        f.service.store.put("builder-reviewer", {
-          id: "w",
-          projectId: "p",
-          candidateId: candidate.id,
-          specificationId: "spec",
-        });
-        f.service.store.put("workflow-specification", {
-          id: "spec",
-          objective: "Review the pinned file",
-        });
-        const handoff = await new AssistedWorkflows(f.service.store).prepare({
-          projectId: "p",
-          workflowId: "w",
-          installationId: "claude",
-          role,
-          exportApproved: true,
-        });
+        const handoff = await f.handoff(role);
         const opened = await f.service.openAssistedHandoff({
           projectId: "p",
           id: handoff.id,
@@ -441,6 +456,80 @@ describe.skipIf(process.platform === "win32")(
         });
         await f.released();
         expect(f.remembered()).toBeUndefined();
+      }
+    });
+    test("while auto-accept is on, terminals start in its mode, and the project's remembered mode waits for it to be off", async () => {
+      const f = await setup();
+      const starting = (provider: Provider) =>
+        startingTerminalMode(f.service.state(), "p", provider);
+      await f.open("claude", "plan");
+      expect(starting("claude")).toBe("plan");
+      await f.autoAccept("sandboxed");
+      expect(starting("claude")).toBe("sandboxed");
+      expect(starting("codex")).toBe("workspace-never");
+      const sandboxed = await f.open("claude", "sandboxed");
+      expect(sandboxed.args).toEqual(terminalMode("claude", "sandboxed").args);
+      expect(sandboxed.run).toMatchObject({ permissionMode: "sandboxed" });
+      // The owner can still pick another mode, which is not remembered now.
+      await f.open("codex", "read-only");
+      expect(f.remembered()).toMatchObject({ claude: "plan" });
+      expect(f.remembered()).not.toHaveProperty("codex");
+      await f.autoAccept("everything");
+      expect(starting("claude")).toBe("bypass");
+      expect(starting("codex")).toBe("full-access");
+      // Everything preselects a bypass mode; each terminal is still confirmed.
+      await expect(
+        f.service.command({
+          type: "terminal-open",
+          projectId: "p",
+          installationId: "codex",
+          login: false,
+          permissionMode: "full-access",
+        }),
+      ).rejects.toThrow("Full access needs your confirmation");
+      const bypassed = await f.open("codex", "full-access", "full-access");
+      expect(bypassed.args).toEqual([
+        "--dangerously-bypass-approvals-and-sandbox",
+      ]);
+      await f.autoAccept("off");
+      expect(starting("claude")).toBe("plan");
+      expect(starting("codex")).toBe("provider-default");
+    });
+    test("under auto-accept a build handoff opens in its mode, a review handoff keeps Plan, and Everything's bypass is confirmed first", async () => {
+      for (const [level, role, args] of [
+        ["sandboxed", "builder", terminalMode("claude", "sandboxed").args],
+        ["sandboxed", "reviewer", ["--permission-mode", "plan"]],
+        ["everything", "reviewer", ["--permission-mode", "plan"]],
+        ["everything", "builder", ["--permission-mode", "bypassPermissions"]],
+      ] as const) {
+        const f = await setup();
+        await f.autoAccept(level);
+        const handoff = await f.handoff(role);
+        const bypass = level === "everything" && role === "builder";
+        if (bypass) {
+          // Refused before Topsl records the opening, so the owner can
+          // still open it once confirmed.
+          await expect(
+            f.service.openAssistedHandoff({ projectId: "p", id: handoff.id }),
+          ).rejects.toThrow(
+            "Bypass needs your confirmation in Topsl's own dialog each time.",
+          );
+          expect(f.service.store.list<Run>("run")).toEqual([]);
+        }
+        const opened = await f.service.openAssistedHandoff(
+          { projectId: "p", id: handoff.id },
+          bypass ? "bypass" : undefined,
+        );
+        const text = await f.read(opened.terminalId!, argumentsLine);
+        expect(
+          JSON.parse(argumentsLine.exec(text)![1]),
+          `${level} ${role}`,
+        ).toEqual(args);
+        await f.service.command({
+          type: "terminal-close",
+          id: opened.terminalId!,
+        });
+        await f.released();
       }
     });
   },

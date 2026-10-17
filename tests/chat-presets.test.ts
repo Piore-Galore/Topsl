@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { z } from "zod";
@@ -15,7 +16,12 @@ import {
   type ChatPresetId,
 } from "../packages/domain/chat-presets";
 import { now } from "../packages/domain/invariants";
-import type { Installation, Run } from "../packages/domain/types";
+import type {
+  Approval,
+  Installation,
+  Message,
+  Run,
+} from "../packages/domain/types";
 import { identity, nativeEnvironment } from "../packages/platform/system";
 import {
   permissionDifferences,
@@ -23,6 +29,7 @@ import {
   sandboxPolicy,
 } from "../packages/providers/codex";
 import type { RuntimeExecution } from "../packages/runtime/coordinator";
+import type { Store } from "../packages/persistence/store";
 import { RuntimeManager } from "../packages/runtime/manager";
 import { RpcPeer } from "../packages/runtime/rpc";
 import { fixture } from "./helpers";
@@ -719,6 +726,186 @@ describe("No asking and the runtime qualification", () => {
       expect(existsSync(path.join(f.workspace, "asked.txt"))).toBe(false);
     },
   );
+});
+
+describe("auto-accept and Codex chats", () => {
+  const autoAccept = (
+    f: { store: Store },
+    level: "off" | "sandboxed" | "everything",
+  ) => f.store.put("preference", { id: "auto-accept", value: level });
+
+  test.skipIf(process.platform === "win32")(
+    "Sandboxed sends an edit chat with no asking on a runtime whose qualification passed workspace-write",
+    async () => {
+      const f = await launched();
+      await f.qualify();
+      autoAccept(f, "sandboxed");
+      const run = await f.runtime.start(
+        f.installation,
+        f.store.get<any>("conversation", "c"),
+        f.store.get<any>("project", "p"),
+        "hello",
+        "fixture-model",
+        "edit",
+        undefined,
+        "untrusted",
+      );
+      await vi.waitFor(
+        () => expect(f.store.get<Run>("run", run.id)?.status).toBe("completed"),
+        settled,
+      );
+      const chat = (method: string) =>
+        exchanges(f.frames(), method).filter(
+          (e) => e.params.cwd === f.workspace,
+        );
+      expect(chat("thread/start")[0].params).toMatchObject({
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+      });
+      expect(chat("turn/start")[0].params).toMatchObject({
+        approvalPolicy: "never",
+        sandboxPolicy: sandboxPolicy("edit", f.workspace),
+      });
+      expect(f.store.get<Run>("run", run.id)).toMatchObject({
+        approvalPolicy: "never",
+        autoAccept: "sandboxed",
+        reportedPermissions: { approvalPolicy: "never" },
+      });
+    },
+  );
+
+  test("Sandboxed leaves a chat asking where No asking is unavailable, and changes no review", async () => {
+    const f = await injected();
+    autoAccept(f, "sandboxed");
+    for (const presetId of ["edit", "review"] as const) {
+      const run = await f.start(presetId);
+      await f.finished(run.id);
+      const saved = f.store.get<Run>("run", run.id)!;
+      expect(saved).toMatchObject({ approvalPolicy: "untrusted" });
+      expect(saved).not.toHaveProperty("autoAccept");
+    }
+    expect(
+      exchanges(f.frames(), "turn/start").map((e) => e.params.approvalPolicy),
+    ).toEqual(["untrusted", "untrusted"]);
+  });
+
+  test("Everything lets Topsl allow a chat's request for the owner, and notes it in the chat", async () => {
+    const f = await injected();
+    autoAccept(f, "everything");
+    const run = await f.start("edit", "approval");
+    await f.finished(run.id);
+    expect(f.store.list("approval")).toEqual([]);
+    expect(
+      f
+        .frames()
+        .filter((e) => e.from === "topsl" && e.frame.id === "approval-fixture")
+        .map((e) => e.frame.result),
+    ).toEqual([{ decision: "accept" }]);
+    expect(f.store.get<Run>("run", run.id)).toMatchObject({
+      status: "completed",
+      approvalPolicy: "untrusted",
+      autoAccept: "everything",
+      autoAllowed: 1,
+    });
+    // In the order they were saved.
+    const messages = [
+      ...f.store.iterate<Message>("message", { projectId: "p" }),
+    ].filter((m) => m.runId === run.id);
+    expect(messages.map((m) => [m.role, m.text.split("\n")[0]])).toEqual([
+      ["user", "approval"],
+      ["system", "Auto-accept allowed this request."],
+      ["assistant", "accept"],
+    ]);
+    expect(messages[1].text).toContain("Command: fixture read command");
+    expect(
+      f.store.db
+        .prepare(
+          "SELECT body FROM events WHERE kind = 'approval.auto-accepted'",
+        )
+        .all()
+        .map((row: any) => JSON.parse(row.body)),
+    ).toEqual([
+      expect.objectContaining({
+        runId: run.id,
+        method: "item/commandExecution/requestApproval",
+      }),
+    ]);
+  });
+
+  test("a request already waiting when Everything is turned on still waits for the owner", async () => {
+    const f = await injected();
+    const run = await f.start("edit", "approval");
+    const [waiting] = await vi.waitFor(() => {
+      const approvals = f.store.list<Approval>("approval");
+      expect(approvals).toHaveLength(1);
+      return approvals;
+    }, settled);
+    autoAccept(f, "everything");
+    expect(f.store.get<Run>("run", run.id)).toMatchObject({
+      status: "awaiting-approval",
+    });
+    expect(f.store.get<Run>("run", run.id)).not.toHaveProperty("autoAccept");
+    f.runtime.decide(waiting.id, waiting.digest, false);
+    await f.finished(run.id);
+    expect(
+      [...f.store.iterate<Message>("message", { projectId: "p" })]
+        .filter((m) => m.runId === run.id)
+        .map((m) => m.role),
+    ).toEqual(["user", "assistant"]);
+  });
+
+  test("a request made after Everything is turned down waits for the owner, though the run started under it", async () => {
+    const gate = path.join(
+      await mkdtemp(path.join(tmpdir(), "topsl-gate-")),
+      "ask",
+    );
+    cleanup.push(() =>
+      rm(path.dirname(gate), { recursive: true, force: true }),
+    );
+    const f = await injected({ FIXTURE_APPROVAL_GATE: gate });
+    autoAccept(f, "everything");
+    const run = await f.start("edit", "approval");
+    await vi.waitFor(
+      () =>
+        expect(
+          exchanges(f.frames(), "turn/start").map((e) => e.params.threadId),
+        ).toEqual(["thread-fixture"]),
+      settled,
+    );
+    expect(f.store.get<Run>("run", run.id)).toMatchObject({
+      autoAccept: "everything",
+    });
+    autoAccept(f, "sandboxed");
+    await writeFile(gate, "");
+    const [waiting] = await vi.waitFor(() => {
+      const approvals = f.store.list<Approval>("approval");
+      expect(approvals).toHaveLength(1);
+      return approvals;
+    }, settled);
+    f.runtime.decide(waiting.id, waiting.digest, false);
+    await f.finished(run.id);
+    expect(f.store.get<Run>("run", run.id)).not.toHaveProperty("autoAllowed");
+    expect(
+      f
+        .frames()
+        .filter((e) => e.from === "topsl" && e.frame.id === "approval-fixture")
+        .map((e) => e.frame.result),
+    ).toEqual([{ decision: "decline" }]);
+  });
+
+  test("Everything does not answer a review's request", async () => {
+    const f = await injected();
+    autoAccept(f, "everything");
+    const run = await f.start("review", "approval");
+    await f.finished(run.id);
+    expect(
+      f
+        .frames()
+        .filter((e) => e.from === "topsl" && e.frame.id === "approval-fixture")
+        .map((e) => e.frame.result),
+    ).toEqual([{ decision: "decline" }]);
+    expect(f.store.get<Run>("run", run.id)).not.toHaveProperty("autoAccept");
+  });
 });
 
 describe("chat presets in the service", () => {

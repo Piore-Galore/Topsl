@@ -202,21 +202,33 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       } else if (prompt.includes("approval")) {
         pendingApproval = true;
-        send({
-          id: "approval-fixture",
-          method: "item/commandExecution/requestApproval",
-          params: {
-            threadId:
-              prompt === "wrong-thread-approval"
-                ? "another-thread"
-                : "thread-fixture",
-            turnId: turn,
-            itemId: "command-fixture",
-            startedAtMs: Date.now(),
-            command: "fixture read command",
-            cwd: process.cwd(),
-          },
-        });
+        const ask = () =>
+          send({
+            id: "approval-fixture",
+            method: "item/commandExecution/requestApproval",
+            params: {
+              threadId:
+                prompt === "wrong-thread-approval"
+                  ? "another-thread"
+                  : "thread-fixture",
+              turnId: turn,
+              itemId: "command-fixture",
+              startedAtMs: Date.now(),
+              command: "fixture read command",
+              cwd: process.cwd(),
+            },
+          });
+        // FIXTURE_APPROVAL_GATE holds the request until that file exists, so
+        // a test can change something while the turn runs.
+        const gate = process.env.FIXTURE_APPROVAL_GATE;
+        if (!gate) ask();
+        else {
+          const wait = setInterval(() => {
+            if (!fs.existsSync(gate)) return;
+            clearInterval(wait);
+            ask();
+          }, 20);
+        }
       } else done("Fixture response, no model was contacted.");
     }, 20);
   } else if (request.method === "turn/interrupt") {

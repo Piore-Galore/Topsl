@@ -23,7 +23,7 @@ import { Transcript } from "./components/transcript";
 import { ApprovalCard } from "./components/approval-card";
 import {
   findTerminalMode,
-  rememberedTerminalMode,
+  startingTerminalMode,
   terminalModeText,
   terminalProvider,
   TerminalModeNote,
@@ -38,6 +38,10 @@ import {
   reportedPermissionsText,
   type ChatPresetId,
 } from "../../../packages/domain/chat-presets";
+import {
+  autoAcceptChatNote,
+  autoAcceptOptions,
+} from "../../../packages/domain/auto-accept";
 import { useScopedRefresh } from "./state/scoped";
 import { summarizeUsage } from "../../../packages/domain/usage";
 
@@ -228,7 +232,7 @@ function App() {
   );
   const [passphrase, setPassphrase] = useState("");
   const [terminalId, setTerminalId] = useState("");
-  /** A mode picked for the next terminal; otherwise the project's remembered one. */
+  /** A mode picked for the next terminal; otherwise auto-accept's or the project's remembered one. */
   const [terminalModeChoice, setTerminalModeChoice] =
     useState<TerminalModeId | null>(null);
   useEffect(() => setTerminalModeChoice(null), [projectId, installationId]);
@@ -344,24 +348,30 @@ function App() {
   const terminalModeValue: TerminalModeId =
     terminalModeChoice ??
     (installation && state
-      ? rememberedTerminalMode(
-          state.terminalModes,
-          projectId,
-          terminalProvider(installation),
-        )
+      ? startingTerminalMode(state, projectId, terminalProvider(installation))
       : "provider-default");
   /** The permission mode Topsl asked for when it opened a terminal, if any. */
   const openedMode = (runtimeId: string, mode: string | null | undefined) => {
     const runtime = state?.installations.find((i) => i.id === runtimeId);
     return runtime && findTerminalMode(terminalProvider(runtime), mode);
   };
-  /** A run's requested terminal mode or chat preset, as it reads after the run's model. */
+  /** A run's requested terminal mode or chat preset, and any auto-accept it
+   * ran under, as it reads after the run's model. */
   const requestedMode = (run: Run) => {
     const mode = findTerminalMode(run.provider, run.permissionMode);
     if (mode) return ` · ${terminalModeText(mode)}`;
     const preset =
-      run.provider === "codex" && chatPresetFor(run.mode, run.approvalPolicy);
-    return preset ? ` · ${preset.label}` : "";
+        run.provider === "codex" && chatPresetFor(run.mode, run.approvalPolicy),
+      auto = autoAcceptOptions.find((o) => o.level === run.autoAccept);
+    return `${preset ? ` · ${preset.label}` : ""}${
+      auto
+        ? ` · auto-accept ${auto.label}${
+            run.autoAllowed
+              ? `, ${run.autoAllowed} ${run.autoAllowed === 1 ? "request" : "requests"} allowed`
+              : ""
+          }`
+        : ""
+    }`;
   };
   const selectedPreset = chatPreset(chatPresetId);
   /** Why each chat preset is unavailable on the selected runtime. */
@@ -371,6 +381,14 @@ function App() {
       .map((block) => [block.preset, block.reason]),
   );
   const presetBlocked = presetBlocks.get(chatPresetId);
+  /** What auto-accept does to the selected preset, if anything. */
+  const autoAcceptNote =
+    state &&
+    autoAcceptChatNote(
+      state.autoAccept,
+      selectedPreset,
+      presetBlocks.get("edit-never"),
+    );
   /** An open terminal's mode, as it reads on the button that shows it. */
   const openedLabel = (terminal: AppState["terminals"][number]) => {
     const mode = openedMode(terminal.installationId, terminal.permissionMode);
@@ -1417,7 +1435,7 @@ function App() {
                       <p className="tiny chat-preset-note" role="note">
                         {presetBlocked
                           ? `Not available for this runtime. ${presetBlocked}`
-                          : chatPresetNote(selectedPreset)}
+                          : (autoAcceptNote ?? chatPresetNote(selectedPreset))}
                       </p>
                       <p className="tiny muted">
                         Codex uses an experimental local stdio adapter. Claude
@@ -1639,6 +1657,41 @@ function App() {
                       </ActionButton>
                     ))}
                   </div>
+                </section>
+                <section className="settings-card" aria-label="Auto-accept">
+                  <h2>Auto-accept</h2>
+                  <p>
+                    Who answers when Codex or Claude Code would ask for
+                    permission in a session Topsl starts for editing. Reviews
+                    stay read-only, and managed settings can override either
+                    provider.
+                  </p>
+                  <div className="actions">
+                    {autoAcceptOptions.map((option) => (
+                      <ActionButton
+                        key={option.level}
+                        className={
+                          state.autoAccept === option.level ? "primary" : ""
+                        }
+                        aria-pressed={state.autoAccept === option.level}
+                        onClick={() =>
+                          void act({
+                            type: "auto-accept-set",
+                            level: option.level,
+                          })
+                        }
+                      >
+                        {option.label}
+                      </ActionButton>
+                    ))}
+                  </div>
+                  <p className="tiny" role="note">
+                    {
+                      autoAcceptOptions.find(
+                        (option) => option.level === state.autoAccept,
+                      )!.effect
+                    }
+                  </p>
                 </section>
                 <section className="settings-card">
                   <div className="section-heading">

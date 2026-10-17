@@ -30,6 +30,10 @@ import {
   isBypassMode,
   terminalMode,
 } from "../../packages/domain/terminal-modes";
+import {
+  autoAcceptConfirmation,
+  autoAcceptTerminalMode,
+} from "../../packages/domain/auto-accept";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
@@ -79,6 +83,8 @@ let state: AppState = {
   terminals: [],
   terminalModes: [],
   chatPresetBlocks: [],
+  // The setting is stored in the vault too; until it opens, nothing runs.
+  autoAccept: "off",
   serviceError: null,
   configurationWrites: [],
 };
@@ -612,6 +618,55 @@ async function dispatch(command: Command): Promise<any> {
         return null;
       trusted.confirmedTerminalMode = command.permissionMode;
     }
+  }
+  if (
+    command.type === "assisted-handoff-open" &&
+    state.autoAccept === "everything"
+  ) {
+    // A build handoff then opens in a bypass mode, which Topsl confirms like
+    // any other; a review handoff keeps its own mode.
+    const handoff: { role: string; installationId: string } = await request({
+        kind: "review",
+        recordKind: "assisted-handoff",
+        recordId: command.id,
+      }),
+      installation = state.installations.find(
+        (i) => i.id === handoff.installationId,
+      ),
+      project = state.projects.find((p) => p.id === command.projectId);
+    if (handoff.role === "builder" && installation?.appId.endsWith("cli")) {
+      if (!project)
+        throw new Error("Refresh Topsl, then open the handoff again.");
+      const provider = installation.appId.includes("claude")
+          ? "claude"
+          : "codex",
+        mode = autoAcceptTerminalMode("everything", provider)!,
+        text = bypassConfirmation(
+          provider,
+          terminalMode(provider, mode),
+          installation.realPath,
+          project.realPath,
+        );
+      if (
+        !(await confirm(text.message, text.detail, text.affirmative, "warning"))
+      )
+        return null;
+      trusted.confirmedTerminalMode = mode;
+    }
+  }
+  if (command.type === "auto-accept-set" && command.level !== "off") {
+    // Asked before the service sees the request; the renderer cannot answer it.
+    const text = autoAcceptConfirmation(command.level);
+    if (
+      !(await confirm(
+        text.message,
+        text.detail,
+        text.affirmative,
+        command.level === "everything" ? "warning" : "question",
+      ))
+    )
+      return null;
+    trusted.confirmedAutoAccept = command.level;
   }
   if (command.type === "approval-decide") {
     const approval: Approval = await request({
