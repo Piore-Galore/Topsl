@@ -242,7 +242,30 @@ describe("Claude's reply from a step's session transcript", () => {
     expect(result.ok && result.text).toBe('{"findings":[]}');
     await unread(
       f.read(),
-      /Line 1 of the transcript names a folder other than the step's\./,
+      /Line 1 of the transcript names a folder outside the step's\./,
+    );
+  });
+
+  test("a record in a folder inside the step's, as after Claude changes into it, still counts", async () => {
+    const f = await setup(),
+      inside = path.join(f.folder, "packages", "app"),
+      // A sibling whose name starts with the folder's is outside it.
+      beside = f.folder + "-other";
+    await mkdir(inside, { recursive: true });
+    await mkdir(beside);
+    await f.write(f.user("Role: builder"), {
+      ...f.assistant([f.text("Built it.")]),
+      cwd: inside,
+    });
+    const result = await f.read();
+    expect(result.ok && result.text).toBe("Built it.");
+    await f.write(f.user("Role: builder"), {
+      ...f.assistant([f.text("Built it.")]),
+      cwd: beside,
+    });
+    await unread(
+      f.read(),
+      /Line 2 of the transcript names a folder outside the step's\./,
     );
   });
 
@@ -282,7 +305,7 @@ describe("Claude's reply from a step's session transcript", () => {
     await f.write(...records.slice(0, 2), { ...records[2], cwd: os.tmpdir() });
     await unread(
       f.read(),
-      /Line 3 of the transcript names a folder other than the step's\./,
+      /Line 3 of the transcript names a folder outside the step's\./,
     );
     const { sessionId: _session, ...unnamed } = records[1] as Record<
       string,

@@ -1148,7 +1148,7 @@ describe.skipIf(process.platform === "win32")(
       let result = await f.fromTranscript(id);
       expect(result.outcome).toBe("unread");
       expect(result.detail).toContain(
-        "Line 1 of the transcript names a folder other than the step's.",
+        "Line 1 of the transcript names a folder outside the step's.",
       );
       await rm(outside);
       // In the copy, a finding on a line the build does not have is invalid.

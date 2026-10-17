@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { hash } from "../domain/invariants";
 import type { ClaudeTranscriptSource } from "../domain/claude-steps";
-import { nativeEnvironment } from "../platform/system";
+import { isWithin, nativeEnvironment } from "../platform/system";
 
 /**
  * The record shapes Topsl recognizes in a Claude Code session transcript, as
@@ -65,8 +65,8 @@ export function claudeConfigDirectory(): string {
 /**
  * Claude's final reply in the session Topsl opened for a workflow's step, read
  * from `<config>/projects/<folder>/<session id>.jsonl` and from nothing else.
- * Every conversation record must name that session and the step's folder, and
- * every record must have a shape Topsl recognizes. The reply is the text of
+ * Every conversation record must name that session and the step's folder or a
+ * folder inside it, and every record must have a shape Topsl recognizes. The reply is the text of
  * Claude's last message after the owner's last prompt, which must end the
  * turn: no tool call, interruption or API error. When Claude Code wrote
  * another session in the same folder after Topsl opened this one, as after
@@ -203,11 +203,13 @@ export async function readClaudeStepReply(input: {
     );
   }
   const folders = new Map<string, string | null>();
-  const sameFolder = async (cwd: unknown) => {
+  // Claude Code records the folder it is in, which follows a `cd` into a subfolder.
+  const inFolder = async (cwd: unknown) => {
     if (typeof cwd !== "string" || !path.isAbsolute(cwd)) return false;
     if (!folders.has(cwd))
       folders.set(cwd, await realpath(cwd).catch(() => null));
-    return folders.get(cwd) === folder;
+    const real = folders.get(cwd);
+    return !!real && isWithin(folder, real);
   };
   for (const { line, value } of lines) {
     const where = `Line ${line} of the transcript`,
@@ -221,8 +223,8 @@ export async function readClaudeStepReply(input: {
     if (metadataTypes.has(type)) {
       if (value.sessionId !== undefined && value.sessionId !== input.sessionId)
         return fail(`${where} names another session.`);
-      if (value.cwd !== undefined && !(await sameFolder(value.cwd)))
-        return fail(`${where} names a folder other than the step's.`);
+      if (value.cwd !== undefined && !(await inFolder(value.cwd)))
+        return fail(`${where} names a folder outside the step's.`);
       continue;
     }
     if (type !== "user" && type !== "assistant" && type !== "system")
@@ -233,9 +235,9 @@ export async function readClaudeStepReply(input: {
       return fail(
         `${where} ${value.sessionId === undefined ? "names no session" : "names another session"}.`,
       );
-    if (!(await sameFolder(value.cwd)))
+    if (!(await inFolder(value.cwd)))
       return fail(
-        `${where} ${value.cwd === undefined ? "names no folder" : "names a folder other than the step's"}.`,
+        `${where} ${value.cwd === undefined ? "names no folder" : "names a folder outside the step's"}.`,
       );
     if (type === "system") continue;
     if (typeof value.uuid !== "string" || !value.uuid)

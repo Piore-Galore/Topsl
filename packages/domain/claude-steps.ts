@@ -164,7 +164,7 @@ export function claudeTranscriptConfirmation(): {
     detail: [
       "When you hand back a workflow's Claude Code step without pasting a reply, Topsl reads that session's transcript in Claude Code's projects folder and takes Claude's final reply from it.",
       "",
-      "Topsl reads only the file named by the session id it passed when it opened Claude Code, and takes a reply only if every record names that session and the step's folder. Anything else falls back to your paste, including a reply that went to another session after /clear or /branch.",
+      "Topsl reads only the file named by the session id it passed when it opened Claude Code, and takes a reply only if every record names that session and the step's folder, or a folder inside it. Anything else falls back to your paste, including a reply that went to another session after /clear or /branch.",
       "",
       "Claude Code describes its transcript format as internal, and it changes between versions, so Topsl recognizes only the record shapes it was tested with. A review read from a transcript must still be a valid review of the build.",
     ].join("\n"),
