@@ -107,3 +107,18 @@ test("stream updates emit bounded metadata and scoped previews, never bulk globa
   expect(catalog.approvals).toEqual([]);
   expect(catalog.conversations).toEqual([]);
 });
+test("the theme is System until the owner picks one, and a picked theme is kept", async () => {
+  const f = await fixture();
+  f.store.close();
+  const open = () => new Service(f.directory, f.key, () => {}, true);
+  const current = { service: open(), directory: f.directory };
+  opened.push(current);
+  expect(current.service.state().theme).toBe("system");
+  for (const theme of ["paper", "night"] as const) {
+    await current.service.command({ type: "theme", theme });
+    expect(current.service.state().theme).toBe(theme);
+    await current.service.close();
+    current.service = open();
+    expect(current.service.state().theme).toBe(theme);
+  }
+});

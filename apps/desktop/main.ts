@@ -5,6 +5,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeTheme,
   shell,
   utilityProcess,
   type UtilityProcess,
@@ -50,7 +51,8 @@ let state: AppState = {
   lockReason: "Unlocking the local vault…",
   platform: `${process.platform}/${process.arch}`,
   version: app.getVersion(),
-  theme: "paper",
+  // The owner's theme is stored in the vault, so until it opens Topsl follows the computer.
+  theme: "system",
   applications: catalog,
   capabilities,
   installations: [],
@@ -89,6 +91,22 @@ const pending = new Map<
   }
 >();
 const rendererFile = path.join(__dirname, "renderer", "index.html");
+let windowBackground = "";
+/** The paper color (style.css) of the theme on screen: Night's, or System's
+ * on a dark computer, else Paper's. */
+function themeBackground(): string {
+  return state.theme === "night" ||
+    (state.theme === "system" && nativeTheme.shouldUseDarkColors)
+    ? "#1e2521"
+    : "#f5f3ed";
+}
+/** Repaints the window behind the page after the theme or the computer's appearance changes. */
+function updateWindowBackground(): void {
+  const color = themeBackground();
+  if (!window || window.isDestroyed() || color === windowBackground) return;
+  windowBackground = color;
+  window.setBackgroundColor(color);
+}
 function publish(event: unknown): void {
   if (window && !window.isDestroyed())
     window.webContents.send("topsl:event", event);
@@ -140,6 +158,7 @@ async function unlock(passphrase?: string): Promise<AppState> {
       if (message.event) {
         if (message.event.type === "state") {
           state = message.event.data;
+          updateWindowBackground();
           publish(message.event);
         } else if (message.event.type === "native-open") {
           const target = message.event.data?.target;
@@ -203,6 +222,7 @@ async function unlock(passphrase?: string): Promise<AppState> {
       isolatedTest,
       qualificationDirectory: testProfile?.qualificationDirectory ?? null,
     });
+    updateWindowBackground();
     publish({ type: "state", data: state });
     return state;
   } catch (e) {
@@ -784,13 +804,14 @@ app.whenReady().then(async () => {
       { role: "windowMenu" },
     ]),
   );
+  windowBackground = themeBackground();
   window = new BrowserWindow({
     width: 1280,
     height: 880,
     minWidth: 780,
     minHeight: 600,
     title: "Topsl",
-    backgroundColor: "#f4f1e8",
+    backgroundColor: windowBackground,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -801,6 +822,7 @@ app.whenReady().then(async () => {
       devTools: !app.isPackaged,
     },
   });
+  nativeTheme.on("updated", updateWindowBackground);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler(
