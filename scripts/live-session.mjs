@@ -448,6 +448,7 @@ async function claudeTerminal(projectId, step) {
     folderTrust: "not shown",
     folderTrustReadFrom: null,
     folderTrustDefault: null,
+    startupQuestion: null,
     apiError: null,
     exit: null,
     run: null,
@@ -493,13 +494,25 @@ async function claudeTerminal(projectId, step) {
       "Claude Code's folder trust prompt did not show its answers on the screen.",
     );
   }
+  // Besides folder trust, Claude Code can ask at startup whether to change its
+  // default permission mode, as 2.1.300 did in a live run in Plan. It saves the
+  // answer in its own settings, so the script answers none of these questions
+  // and stops before the prompt instead.
+  const startupQuestions = [
+    [
+      /your default permission mode\?/i,
+      "whether to change its default permission mode",
+    ],
+  ];
   // Below the input, Claude Code shows the shortcuts hint or, in place of it,
-  // the permission mode.
+  // the permission mode. Only the screen counts: the raw output still holds
+  // that line after a question has replaced it.
   const inputReady =
     /for shortcuts|accept edits on|plan mode on|auto mode on|bypass permissions on/i;
   await until("Claude Code to accept a prompt", 120000, async () => {
     const output = plain(await terminalOutput()),
-      text = `${output}\n${await terminalScreen()}`;
+      screen = await terminalScreen(),
+      text = `${output}\n${screen}`;
     if (signIn.test(text))
       throw new Error(
         "Claude Code is not signed in. Sign in with `claude` in a terminal, then run this again.",
@@ -514,7 +527,15 @@ async function claudeTerminal(projectId, step) {
       session.folderTrust = "accepted";
       return null;
     }
-    return inputReady.test(text);
+    const asked = startupQuestions.find(([pattern]) => pattern.test(text));
+    if (asked) {
+      session.startupQuestion = asked[1];
+      await screenshot("claude-question");
+      throw new Error(
+        `Claude Code asked ${asked[1]} before accepting a prompt. The script answers none of Claude Code's startup questions except folder trust, so no prompt was sent.`,
+      );
+    }
+    return inputReady.test(screen);
   });
   // A mode that Claude Code shows below its input has to be the one Topsl
   // passed, or the prompt is not sent.

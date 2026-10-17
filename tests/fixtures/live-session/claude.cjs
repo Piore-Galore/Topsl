@@ -13,6 +13,12 @@
 // of the shortcuts hint, as Claude Code does; a stand-in-mode file there names
 // another mode to show, as if Claude Code's settings had overridden the one
 // passed.
+// A stand-in-question file there makes it ask, once the folder is trusted,
+// whether to make auto mode the default permission mode, as Claude Code 2.1.300
+// did in a live run. It first draws the input and the line below it, with
+// spaces, then replaces them with the question, so that line stays in the raw
+// output but leaves the screen. An answer is saved to stand-in-question-answer
+// there, as Claude Code saves it in its settings.
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -77,6 +83,20 @@ const trustPrompt = () =>
       )
       .join("")}\r\n Enter to confirm · Esc to cancel\r\n`,
   );
+const choices = [
+  "Yes, set auto mode as my default permission mode",
+  "No, keep my current default",
+];
+let choice = 0;
+let asking = fs.existsSync(
+  path.join(process.env.CLAUDE_CONFIG_DIR, "stand-in-question"),
+);
+const question = () =>
+  out(
+    `\x1b[2J\x1b[HMake auto mode your default permission mode?\r\n\r\n Auto mode lets Claude handle permission prompts automatically.\r\n\r\n${choices
+      .map((text, index) => ` ${index === choice ? "❯" : " "} ${text}\r\n`)
+      .join("")}`,
+  );
 let trusted = false;
 let line = "";
 let interrupts = 0;
@@ -91,6 +111,25 @@ process.stdin.on("data", (chunk) => {
     } else if (input.includes("\r")) {
       if (answers[selected] === "No, exit") process.exit(1);
       trusted = true;
+      if (asking) {
+        process.stdout.write(`\r\n────────\r\n> \r\n────────\r\n  ${hint}\r\n`);
+        question();
+      } else prompt();
+    }
+    return;
+  }
+  if (asking) {
+    // Other keys are ignored while the question is shown.
+    if (/\x1b[[O][AB]/.test(input)) {
+      choice = 1 - choice;
+      question();
+    } else if (input.includes("\r")) {
+      fs.writeFileSync(
+        path.join(process.env.CLAUDE_CONFIG_DIR, "stand-in-question-answer"),
+        choices[choice],
+      );
+      asking = false;
+      out("\x1b[2J\x1b[H");
       prompt();
     }
     return;
