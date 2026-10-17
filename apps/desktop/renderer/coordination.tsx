@@ -83,13 +83,15 @@ export function Coordination({
     pendingInspections = useRef(new Map<string, number>()),
     taskTrigger = useRef<HTMLButtonElement | null>(null),
     dialog = useRef<HTMLDialogElement>(null);
-  async function readInspection(taskId: string) {
+  async function readInspection(taskId: string, background = false) {
     const scopeTicket = generation.current,
       ticket = ++inspectionGeneration.current,
       readTicket = inspectionReads.current.begin(),
       key = `inspect:${taskId}`;
-    pendingInspections.current.set(key, ticket);
-    setPending((current) => ({ ...current, [key]: true }));
+    if (!background) {
+      pendingInspections.current.set(key, ticket);
+      setPending((current) => ({ ...current, [key]: true }));
+    }
     try {
       const value = await window.topsl.command({
         type: "task-inspect",
@@ -135,7 +137,7 @@ export function Coordination({
           (task: Task) => task.id === selectedTask.current,
         )
       )
-        await readInspection(selectedTask.current);
+        await readInspection(selectedTask.current, true);
     }
   }
   useEffect(() => {

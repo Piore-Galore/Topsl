@@ -588,6 +588,57 @@ try {
   await expect(
     page.getByRole("complementary", { name: "Task inspector" }),
   ).toContainText("fixture-project");
+  // A refresh re-reads the selected task. Its button stays enabled meanwhile,
+  // because a click that lands on a disabled button is lost. The button is
+  // disabled only while the click's own read is pending.
+  await expect(
+    page.getByRole("button", { name: /Inspect Unicode 项目/ }),
+  ).toBeEnabled();
+  const disabledDuringRefresh = await page.evaluate(
+    async ({ projectId, workspaceId, workflowId }) => {
+      const selected = document.querySelector(
+        'button.coordination-task[aria-pressed="true"]',
+      );
+      let disabled = selected.disabled;
+      const watch = new MutationObserver(() => {
+        disabled ||= selected.disabled;
+      });
+      watch.observe(selected, {
+        attributes: true,
+        attributeFilter: ["disabled"],
+      });
+      const title = "Task created while another is selected";
+      await window.topsl.command({
+        type: "task-create",
+        requestId: crypto.randomUUID(),
+        projectId,
+        workspaceId,
+        workflowId,
+        title,
+        role: "tester",
+        acceptanceCriteria: ["The selected task stays enabled"],
+      });
+      const deadline = performance.now() + 10000;
+      while (
+        ![...document.querySelectorAll("button.coordination-task")].some(
+          (button) => button.textContent.includes(title),
+        )
+      ) {
+        if (performance.now() > deadline)
+          throw new Error("The new task did not appear after a refresh");
+        await new Promise(requestAnimationFrame);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      watch.disconnect();
+      return disabled;
+    },
+    {
+      projectId: projectIds[0],
+      workspaceId: coordination.workspaces[0].id,
+      workflowId: workflow.id,
+    },
+  );
+  expect(disabledDuringRefresh).toBe(false);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.screenshot({
     path: "test-results/coordination-standard.png",
