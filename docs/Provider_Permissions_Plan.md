@@ -166,6 +166,14 @@ Built from `main` at `4b9f93e` while the Codex workflows plan's last three pull 
 - Fix: before the chat steps, the test waits up to 180 seconds until the service has published every change record through the current one, and the **+ New chat** steps also allow 30 seconds ([desktop-test.mjs](../scripts/desktop-test.mjs)). The desktop test then passed at normal speed, with a 13-second wait and the heading after 273 ms; with every sync slowed by 800 ms from the first turn, deciding both turns in 54 seconds; and once more through `npm run test:desktop`.
 - Not fixed here: after any large import, Topsl's project views fall behind in the same way until the service has published the backlog, at about 4,500 records a second in the Linux container. A separate change could publish the next page at once while more remain, or publish larger pages.
 
+**Follow-up: views no longer wait for the backlog** (17 October 2026)
+
+- The same wait failed the macOS Intel desktop test twice more, in the history benchmark, which has no such wait: `Late stream 0` was missing 5 seconds after its reconciliation at `0ce3f13` ([job](https://github.com/Piore-Galore/Topsl/actions/runs/38998561162/job/117296660229)), and `Selected fixture update 2` at `429eb84`, on the Claude workflows plan's step 1 branch ([job](https://github.com/Piore-Galore/Topsl/actions/runs/39010335214/job/117331345885)).
+- Reproduced in the Linux container by holding the test until the service had published past record 25,300, early in the other project's first stream: the unchanged code then failed with the CI error, at `Selected fixture update 0`.
+- Fix: every page the service publishes names the newest record in the log. A project's view now also refreshes from a snapshot when that record is past the last one it has replayed, whether the page arrives between refreshes or during one ([scoped-controller.ts](../apps/desktop/renderer/state/scoped-controller.ts)). A test in [scoped-ui.test.ts](../tests/scoped-ui.test.ts) covers both cases and fails without the change. With the same hold, `Late stream 0` and each selected update appeared within 50 ms of their reconciliation.
+- Unchanged: the service still publishes the backlog at the same rate, and the test's wait before the chat steps stays.
+- Validation (17 October 2026, Linux x64 container, `main` at `d05cc9c` with this change): `npm run typecheck` passed, `npm test` passed 41 test files with 388 tests and skipped the 4 opt-in tests, and `xvfb-run --auto-servernum npm run test:desktop` passed in 58 seconds.
+
 ### Step 2: terminal modes (16 October 2026)
 
 Built on step 1's branch, `claude/provider-permissions` at `a049284` (`main` at `c5d0700` merged in), because both steps change the same files, and step 1's branch at `795ddb1` was merged in later. It merges after step 1.
