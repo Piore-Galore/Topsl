@@ -285,4 +285,12 @@ The Claude Code run showed a flaw in the script. It took Claude Code as ready on
 - The step's other stand-in runs, listed in the validation above, gave the same results as at `d4b0a63`, and the eight option combinations the script does not take stopped with its usage message.
 - `npm run check` passed on `85d0c09`: typecheck, 386 tests passed and 4 skipped in 44 files, the release tests and the build.
 
-Claude Code in **Plan** has not passed a live run yet. The question is about the owner's own Claude Code settings, so neither Topsl nor the script answers it; once it no longer appears, the Claude Code command under [Run it](Live_Provider_Sessions.md#run-it) can run again.
+**Live reruns of Claude Code in Plan** (17 October 2026, the owner's Mac, macOS on Apple silicon `darwin/arm64 27.0.0`, at `72e3d37`)
+
+Twice, the owner ran the Claude stand-in in **Plan** and then Claude Code in **Plan** once, in Terminal. The stand-in passed both times. [Live provider sessions](Live_Provider_Sessions.md#results) has each run's details.
+
+- First rerun: **stopped before the prompt**, as `85d0c09` intends. After the folder trust prompt, Claude Code asked about its default permission mode again. The script stopped with the message above, and the report's `startupQuestion` named the question. Nothing answered it, and no model turn was counted.
+- The question is about the owner's own Claude Code settings, so neither Topsl nor the script answers it. The owner answered it in Claude Code in Terminal, outside Topsl. Claude Code keeps the answer in its own settings, and this record does not keep it.
+- Second rerun: **passed**. Topsl started Claude Code 2.1.300 with `--permission-mode plan` and recorded **Plan** on the run. Claude Code asked no question besides folder trust, showed `plan mode on` below its input and answered with the sum after 4.6 seconds. `/exit` ended the session with code 0, the run was `completed`, and the imported transcript had the reply.
+
+All three of the live check's runs have now passed: Codex's terminal in **Read-only** and a Codex chat in **Ask when needed** at `69f7867`, and Claude Code in **Plan** at `72e3d37`. Each pass covers that Mac, those provider versions and one prompt. The prompt asks for a sum, which needs no tool, so no run tested what a mode or preset allows or blocks ([What a pass does not establish](Live_Provider_Sessions.md#what-a-pass-does-not-establish)).
