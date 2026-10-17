@@ -101,6 +101,12 @@ try {
   ).toBeVisible({ timeout: 45000 });
   await expect(page.getByText("You approve every Topsl update.")).toBeVisible();
   await expect(page.locator(".application-card")).toHaveCount(4);
+  // A test profile never searches for applications, and says so.
+  await expect(page.getByText("This is a test profile.")).toBeVisible();
+  await expect(
+    page.locator(".application-card .badge", { hasText: "Not searched" }),
+  ).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "↻ Discover" })).toBeDisabled();
   // A new profile has no stored theme, so Topsl follows the computer.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
   await mkdir("test-results", { recursive: true });

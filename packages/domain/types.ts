@@ -337,6 +337,8 @@ export interface AppState {
   chatPresetBlocks: ChatPresetBlock[];
   /** The owner's auto-accept setting, off until they turn it on. */
   autoAccept: AutoAcceptLevel;
+  /** A development test profile, which never searches for applications. */
+  testProfile: boolean;
 }
 export interface ServiceEvent {
   type:

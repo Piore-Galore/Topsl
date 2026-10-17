@@ -699,12 +699,27 @@ function App() {
                       Locate a runtime
                     </ActionButton>
                     <ActionButton
+                      disabled={state.testProfile}
                       onClick={() => void act({ type: "discover" })}
                     >
                       ↻ Discover
                     </ActionButton>
                   </div>
                 </div>
+                {state.testProfile && (
+                  <div className="info-strip">
+                    <span className="status-dot notice" />
+                    <div>
+                      <strong>This is a test profile.</strong>
+                      <span>
+                        {" "}
+                        Topsl doesn't search for applications here, so it lists
+                        only the ones the test set up. Your usual profile still
+                        finds what's installed.
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <div className="info-strip">
                   <span className="status-dot" />
                   <div>
@@ -741,9 +756,11 @@ function App() {
                           <Badge tone={installations.length ? "good" : ""}>
                             {installations.length
                               ? "Installed"
-                              : supported
-                                ? "Not found"
-                                : "Native app unavailable"}
+                              : !supported
+                                ? "Native app unavailable"
+                                : state.testProfile
+                                  ? "Not searched"
+                                  : "Not found"}
                           </Badge>
                         </div>
                         <p className="description">{app.description}</p>
@@ -1136,7 +1153,13 @@ function App() {
                             ))}
                           {!state.installations.some((i) =>
                             i.appId.endsWith("cli"),
-                          ) && <option value="">No runtime found</option>}
+                          ) && (
+                            <option value="">
+                              {state.testProfile
+                                ? "No runtime in this test profile"
+                                : "No runtime found"}
+                            </option>
+                          )}
                         </select>
                       </label>
                       {installation && (
@@ -2014,6 +2037,7 @@ function App() {
                 Add trusted project →
               </ActionButton>
               <ActionButton
+                disabled={state.testProfile}
                 onClick={() => {
                   setPalette(false);
                   void act({ type: "discover" });

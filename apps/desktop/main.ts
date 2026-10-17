@@ -87,6 +87,7 @@ let state: AppState = {
   autoAccept: "off",
   serviceError: null,
   configurationWrites: [],
+  testProfile: isolatedTest,
 };
 const pending = new Map<
   number,
