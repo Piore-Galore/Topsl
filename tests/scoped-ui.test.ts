@@ -217,6 +217,54 @@ test("R2-AT-33 epoch mismatch during replay resnapshots before publishing restor
   });
   stop();
 });
+test("a backlog of another project's records does not hold back this project's newer change", async () => {
+  vi.useFakeTimers();
+  const pending = deferred<any>();
+  let notify!: (page: ChangePage) => void;
+  const transport: ScopeTransport = {
+    snapshot: vi
+      .fn()
+      .mockResolvedValueOnce(snapshot(100))
+      .mockResolvedValueOnce(snapshot(110))
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(snapshot(120)),
+    replay: vi.fn(async (after) => page(after)),
+    subscribe: vi.fn((callback) => {
+      notify = callback;
+      return () => {};
+    }),
+  };
+  // The service is still publishing an earlier import into another project,
+  // so its pages are old and name no record of this project.
+  const behind = (after: number, head: number): ChangePage => ({
+    ...page(after, after + 20),
+    headSequence: head,
+    hasMore: true,
+  });
+  const controller = new ScopedRefreshController("project", transport),
+    stop = controller.subscribe(() => {});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(controller.state.observation?.sequence).toBe(100);
+  notify(behind(20, 100));
+  await vi.advanceTimersByTimeAsync(80);
+  expect(transport.snapshot).toHaveBeenCalledTimes(1);
+  // This project changed at 110, behind the backlog.
+  notify(behind(40, 110));
+  await vi.advanceTimersByTimeAsync(80);
+  expect(transport.snapshot).toHaveBeenCalledTimes(2);
+  expect(controller.state.observation?.sequence).toBe(110);
+  // A change at 120 lands while a refresh is reading 115.
+  void controller.refresh();
+  notify(behind(60, 120));
+  pending.resolve(snapshot(115));
+  await vi.advanceTimersByTimeAsync(80);
+  expect(transport.snapshot).toHaveBeenCalledTimes(4);
+  expect(controller.state).toMatchObject({
+    status: "current",
+    observation: { sequence: 120 },
+  });
+  stop();
+});
 test("multiple consumers share one active subscription and pending refreshes coalesce", async () => {
   vi.useFakeTimers();
   const pending = deferred<any>(),

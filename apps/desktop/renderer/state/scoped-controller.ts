@@ -192,7 +192,11 @@ export class ScopedRefreshController {
       return;
     }
     this.cursor = next.sequence;
-    if (this.relevant(page)) this.schedule();
+    // The service publishes its change log in order, a bounded page at a
+    // time. Behind a backlog, such as a large import, this project's newer
+    // changes wait until other projects' records drain, so a head past this
+    // view's cursor refreshes from a snapshot instead.
+    if (this.relevant(page) || page.headSequence > this.cursor) this.schedule();
   }
   refresh = (resynchronizing = false): Promise<void> => {
     if (this.stopped) return Promise.resolve();
@@ -237,8 +241,9 @@ export class ScopedRefreshController {
         for (const page of this.buffered) {
           if (page.epoch !== observation.epoch) epochChanged = true;
           else if (
-            page.throughSequence > observation.sequence &&
-            this.relevant(page)
+            (page.throughSequence > observation.sequence &&
+              this.relevant(page)) ||
+            page.headSequence > cursor
           )
             needsAnother = true;
         }
