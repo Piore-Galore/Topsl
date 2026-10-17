@@ -20,7 +20,7 @@ import {
   TerminalModeNote,
   TerminalModeSelect,
 } from "./terminal-mode";
-import { TerminalPanel, terminalOutput } from "./terminal-panel";
+import { TerminalPanel } from "./terminal-panel";
 
 type StepView = ClaudeStep & {
   replies: Array<
@@ -272,7 +272,6 @@ export function ClaudeStepPanel({
         <TerminalPanel
           key={terminalId}
           id={terminalId}
-          initial={terminalOutput(terminalId)}
           mode={running ? terminalModeText(running) : null}
           close={() =>
             void run(() =>

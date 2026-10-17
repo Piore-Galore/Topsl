@@ -21,7 +21,6 @@ import { ApprovalCard } from "./components/approval-card";
 import {
   recordTerminalOutput,
   TerminalPanel,
-  terminalOutput,
 } from "./components/terminal-panel";
 import {
   findTerminalMode,
@@ -1185,7 +1184,6 @@ function App() {
                       <TerminalPanel
                         key={terminalId}
                         id={terminalId}
-                        initial={terminalOutput(terminalId)}
                         mode={(() => {
                           const open = (
                             scopedData?.terminals ?? state.terminals
