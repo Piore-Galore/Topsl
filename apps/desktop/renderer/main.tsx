@@ -42,6 +42,7 @@ import {
   autoAcceptChatNote,
   autoAcceptOptions,
 } from "../../../packages/domain/auto-accept";
+import { claudeTranscriptOptions } from "../../../packages/domain/claude-steps";
 import { useScopedRefresh } from "./state/scoped";
 import { summarizeUsage } from "../../../packages/domain/usage";
 
@@ -1712,6 +1713,48 @@ function App() {
                     {
                       autoAcceptOptions.find(
                         (option) => option.level === state.autoAccept,
+                      )!.effect
+                    }
+                  </p>
+                </section>
+                <section
+                  className="settings-card"
+                  aria-label="Claude Code transcripts"
+                >
+                  <h2>Claude Code transcripts</h2>
+                  <p>
+                    Whether Topsl may take Claude's final reply from a workflow
+                    step's session transcript, which Claude Code keeps in its
+                    own folder, instead of your paste.
+                  </p>
+                  <div className="actions">
+                    {claudeTranscriptOptions.map((option) => (
+                      <ActionButton
+                        key={option.label}
+                        className={
+                          state.claudeTranscriptRead === option.enabled
+                            ? "primary"
+                            : ""
+                        }
+                        aria-pressed={
+                          state.claudeTranscriptRead === option.enabled
+                        }
+                        onClick={() =>
+                          void act({
+                            type: "claude-transcript-read-set",
+                            enabled: option.enabled,
+                          })
+                        }
+                      >
+                        {option.label}
+                      </ActionButton>
+                    ))}
+                  </div>
+                  <p className="tiny" role="note">
+                    {
+                      claudeTranscriptOptions.find(
+                        (option) =>
+                          option.enabled === state.claudeTranscriptRead,
                       )!.effect
                     }
                   </p>

@@ -757,6 +757,8 @@ Maintain two presentation modes:
 
 Use the SDK's documented local session-inspection helpers for read-only listing and message retrieval when compatible. These helpers do not turn native subscription inference into an SDK-authenticated product. Treat inference and local history inspection as separate adapter responsibilities. [S11]
 
+Decided 17 October 2026 in the [Claude workflows plan](Claude_Workflows_Plan.md#how-a-claude-step-runs): until the structured route has an approved authentication and billing route, a Claude role in Build and review runs as a step in the native terminal. Topsl opens the unmodified Claude Code under the owner's login with a `--session-id` it generates for each opening, in the project folder for a build or repair, or in Plan in a read-only copy of the build for a review, and records the step as that stage's turn. The step ends when the owner confirms that Claude Code has stopped and hands back Claude's final reply. Topsl answers none of Claude Code's prompts. The service runs such a step since the plan's step 2, and since step 3 it can take the reply from the session's transcript instead, where the owner turned that on as section 14.3 requires; the screens for it remain planned.
+
 ### 8.3 Optional API adapters
 
 Implement OpenAI API and Anthropic API routes as separate adapters. An Anthropic Agent SDK adapter may provide a richer coding loop for an API-authenticated route; it is not a substitute for the native-subscription adapter. [S5]
@@ -1338,6 +1340,8 @@ Use this order:
 
 Claude exposes local session readers and lifecycle hooks. Its transcript format is explicitly described as internal in monitoring documentation, so direct parsers require compatibility fixtures. [S11][S15][S16]
 
+Decided 17 October 2026 in the [Claude workflows plan](Claude_Workflows_Plan.md#how-a-claude-step-runs): a workflow's Claude Code step may take Claude's reply from its own session's transcript, read-only, only after the owner turns that on in Settings and confirms it, and only from the one file named by the session id Topsl passed. Because Claude Code changes the format between versions, Topsl pins the record shapes its fixtures cover rather than a version, and anything else falls back to the owner's paste. Implemented in the plan's [step 3](Claude_Workflows_Plan.md#step-3-transcript-read-17-october-2026), with shapes inferred until a live run reads a real transcript.
+
 A hook should enqueue a small notification, not block the native application while searching history or generating a summary. Resolve supplied paths against approved roots; hook input is not authority to read an arbitrary file.
 
 ### 14.4 Incremental reconciliation algorithm
@@ -1754,6 +1758,8 @@ External native applications do not necessarily honor Topsl locks. Thus:
 - **Unobserved mode:** no claim of concurrency protection.
 
 When unmanaged activity appears, warn or pause application-controlled edits. Do not claim that file watching can prevent every race.
+
+A workflow's Claude Code build or repair step holds its folder from when the workflow stops for it until Topsl takes its reply or the workflow is cancelled, not only while its terminal runs, because a Claude Code session moved to the background can keep editing after its terminal closes ([Claude workflows plan](Claude_Workflows_Plan.md#how-a-claude-step-runs)).
 
 ### 18.4 Approvals
 

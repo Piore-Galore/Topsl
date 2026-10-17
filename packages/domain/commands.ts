@@ -22,6 +22,8 @@ const roleAssignment = z.object({
   installationId: id,
   model: z.string().min(1).max(200),
   effort: z.string().min(1).max(100).optional(),
+  /** A Claude Code step the owner runs in Topsl's terminal, instead of a turn Topsl runs. */
+  route: z.literal("terminal").optional(),
 });
 const requiredCheck = z.object({
   id,
@@ -654,6 +656,26 @@ export const commandSchema = z.discriminatedUnion("type", [
     requestId: id,
     id,
     expectedRevision: z.number().int().positive(),
+    /** Required while a Claude Code build or repair step the owner opened holds the folder. */
+    claudeCodeStopped: z.literal(true).optional(),
+  }),
+  z.object({
+    type: z.literal("claude-step-open"),
+    projectId: id,
+    workflowId: id,
+    stepId: id,
+    /** A build or repair's mode; a review always opens in Plan. */
+    permissionMode: z.enum(terminalModeIds).optional(),
+  }),
+  z.object({
+    type: z.literal("claude-step-return"),
+    projectId: id,
+    workflowId: id,
+    stepId: id,
+    /** Claude's final reply as the owner pasted it, or none when Topsl reads it from the session's transcript. */
+    reply: z.string().min(1).max(1000000).optional(),
+    source: z.enum(["owner-paste", "claude-transcript"]),
+    claudeCodeStopped: z.literal(true),
   }),
   z.object({ type: z.literal("coordination-query"), projectId: id }),
   z.object({
@@ -732,6 +754,10 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("auto-accept-set"),
     level: z.enum(autoAcceptLevels),
+  }),
+  z.object({
+    type: z.literal("claude-transcript-read-set"),
+    enabled: z.boolean(),
   }),
   z.object({ type: z.literal("discover") }),
   z.object({ type: z.literal("trust-installation"), id }),

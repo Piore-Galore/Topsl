@@ -339,6 +339,8 @@ export interface AppState {
   autoAccept: AutoAcceptLevel;
   /** A development test profile, which never searches for applications. */
   testProfile: boolean;
+  /** Whether a Claude Code step's reply may be read from its session's transcript. */
+  claudeTranscriptRead: boolean;
 }
 export interface ServiceEvent {
   type:

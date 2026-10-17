@@ -1490,10 +1490,44 @@ try {
     expect(await confirmations()).toBe(beforeAutoAccept + 2);
     await page.getByRole("button", { name: "Workspace", exact: true }).click();
     await expect(modeSelect).toHaveValue("plan", committed);
+    // The transcript read in Settings: turning it on takes Topsl's own
+    // confirmation, and turning it off takes none.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const transcripts = page.getByRole("region", {
+      name: "Claude Code transcripts",
+    });
+    const reading = (name) =>
+      transcripts.getByRole("button", { name, exact: true });
+    await expect(reading("Off")).toHaveAttribute("aria-pressed", "true");
+    const beforeTranscripts = await confirmations();
+    await reading("On").click();
+    await expect(reading("On")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    expect(await confirmations()).toBe(beforeTranscripts + 1);
+    expect(
+      await app.evaluate(() => globalThis.topslConfirmations.at(-1)),
+    ).toMatchObject({
+      message: "Let Topsl read Claude Code's transcripts for workflow steps?",
+      type: "question",
+      buttons: ["Cancel", "Read transcripts"],
+    });
+    await expect(transcripts.getByRole("note")).toContainText(
+      "Topsl takes Claude's final reply from that session's transcript",
+    );
+    await reading("Off").click();
+    await expect(reading("Off")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    expect(await confirmations()).toBe(beforeTranscripts + 1);
   }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, and auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode (macOS/Linux).",
+    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode, and the Claude Code transcript read turned on only through Topsl's confirmation (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {

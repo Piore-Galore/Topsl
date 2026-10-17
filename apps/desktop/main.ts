@@ -34,6 +34,11 @@ import {
   autoAcceptConfirmation,
   autoAcceptTerminalMode,
 } from "../../packages/domain/auto-accept";
+import {
+  claudeStepMode,
+  claudeTranscriptConfirmation,
+  type ClaudeStep,
+} from "../../packages/domain/claude-steps";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
@@ -83,8 +88,9 @@ let state: AppState = {
   terminals: [],
   terminalModes: [],
   chatPresetBlocks: [],
-  // The setting is stored in the vault too; until it opens, nothing runs.
+  // The settings are stored in the vault too; until it opens, nothing runs.
   autoAccept: "off",
+  claudeTranscriptRead: false,
   serviceError: null,
   configurationWrites: [],
   testProfile: isolatedTest,
@@ -655,6 +661,43 @@ async function dispatch(command: Command): Promise<any> {
       trusted.confirmedTerminalMode = mode;
     }
   }
+  if (command.type === "claude-step-open") {
+    // A build or repair opens in Bypass only under Everything, and Topsl
+    // confirms it each time; a review always opens in Plan.
+    const step: ClaudeStep = await request({
+        kind: "review",
+        recordKind: "claude-step",
+        recordId: command.stepId,
+      }),
+      installation = state.installations.find(
+        (i) => i.id === step.installationId,
+      );
+    let mode;
+    try {
+      mode = claudeStepMode(
+        step.role,
+        state.autoAccept,
+        command.permissionMode,
+      );
+    } catch {
+      // The service refuses this mode with the reason.
+    }
+    if (mode && isBypassMode(mode)) {
+      if (!installation)
+        throw new Error("Refresh Topsl, then open the step again.");
+      const text = bypassConfirmation(
+        "claude",
+        terminalMode("claude", mode),
+        installation.realPath,
+        step.folder,
+      );
+      if (
+        !(await confirm(text.message, text.detail, text.affirmative, "warning"))
+      )
+        return null;
+      trusted.confirmedTerminalMode = mode;
+    }
+  }
   if (command.type === "auto-accept-set" && command.level !== "off") {
     // Asked before the service sees the request; the renderer cannot answer it.
     const text = autoAcceptConfirmation(command.level);
@@ -668,6 +711,13 @@ async function dispatch(command: Command): Promise<any> {
     )
       return null;
     trusted.confirmedAutoAccept = command.level;
+  }
+  if (command.type === "claude-transcript-read-set" && command.enabled) {
+    // Asked before the service sees the request; the renderer cannot answer it.
+    const text = claudeTranscriptConfirmation();
+    if (!(await confirm(text.message, text.detail, text.affirmative)))
+      return null;
+    trusted.confirmedTranscriptRead = true;
   }
   if (command.type === "approval-decide") {
     const approval: Approval = await request({

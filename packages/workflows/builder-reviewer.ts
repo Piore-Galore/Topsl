@@ -1,3 +1,5 @@
+import path from "node:path";
+import os from "node:os";
 import { z } from "zod";
 import { bindCheckInputs } from "./check-inputs";
 import {
@@ -6,6 +8,16 @@ import {
 } from "./candidate-reviews";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type { Installation, Message, Project, Provider } from "../domain/types";
+import {
+  claudeStepModel,
+  type ClaudeStep,
+  type ClaudeStepOpen,
+  type ClaudeStepReply,
+  type ClaudeStepReplySource,
+  type ClaudeStepRole,
+  type ClaudeTranscriptSource,
+} from "../domain/claude-steps";
+import type { Store } from "../persistence/store";
 import type {
   Artifact,
   ExecutionAttempt,
@@ -31,6 +43,7 @@ import {
   assertCandidateOutputCoverage,
   candidateHasTextLine,
   materializeCandidate,
+  removeMaterializedCopy,
   type CandidateSelection,
   type CandidateSnapshot,
 } from "./candidates";
@@ -53,6 +66,8 @@ export interface RoleAssignment {
   installationId: string;
   model: string;
   effort?: string;
+  /** terminal: a Claude Code step the owner runs in Topsl's terminal, not a turn Topsl runs. */
+  route?: "terminal";
 }
 export interface WorkflowFinding {
   id: string;
@@ -154,6 +169,87 @@ export const reviewSchema = z.object({
 });
 
 export const reviewOutputSchema = z.toJSONSchema(reviewSchema);
+
+/** The stage a Claude Code step of this role is the turn of. */
+const stepStage = {
+  builder: "building",
+  reviewer: "reviewing",
+  repair: "repairing",
+} as const satisfies Record<ClaudeStepRole, BuilderReviewerState["stage"]>;
+const stepNoun = { builder: "build", reviewer: "review", repair: "repair" };
+
+/**
+ * The Claude Code build or repair step that holds this project's folder, if
+ * one does: from when its workflow stops for it until the owner hands back its
+ * reply or cancels the workflow. No Topsl-run writer starts in the folder
+ * meanwhile, because a Claude Code session moved to the background keeps
+ * editing after its terminal closes.
+ */
+export function claudeStepHolding(
+  store: Store,
+  projectId: string,
+  exceptStepId?: string,
+): ClaudeStep | undefined {
+  for (const step of store.iterate<ClaudeStep>("claude-step", { projectId }))
+    if (
+      step.id !== exceptStepId &&
+      step.role !== "reviewer" &&
+      step.state === "waiting" &&
+      store.get<BuilderReviewerState>("builder-reviewer", step.workflowId)
+        ?.activeAttemptId === step.attemptId
+    )
+      return step;
+  return undefined;
+}
+
+/** The step's latest opening that started Claude Code. */
+function latestOpened(step: ClaudeStep): ClaudeStepOpen | undefined {
+  return step.opens
+    .filter((open) => open.state === "opened")
+    .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
+    .at(-1);
+}
+
+/** Why a reply is not a review of this build, or null when it is one. */
+function reviewReplyProblem(
+  text: string,
+  candidate: CandidateSnapshot,
+  store: Store,
+): string | null {
+  let reply: unknown;
+  try {
+    reply = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ""));
+  } catch {
+    return "it is not one JSON object in the review format.";
+  }
+  const parsed = reviewSchema.safeParse(reply);
+  if (!parsed.success)
+    return `it does not match the review format (${parsed.error.issues
+      .slice(0, 3)
+      .map(
+        (issue) => `${issue.path.join(".") || "the reply"}: ${issue.message}`,
+      )
+      .join("; ")}).`;
+  if (parsed.data.candidateRevision !== candidate.revision)
+    return `it names candidate revision ${JSON.stringify(parsed.data.candidateRevision.slice(0, 80))}, not this build's ${candidate.revision}.`;
+  const index = parsed.data.findings.findIndex((finding) => {
+    try {
+      return !candidateHasTextLine(
+        candidate,
+        finding.file,
+        finding.line,
+        store,
+      );
+    } catch {
+      return true;
+    }
+  });
+  if (index >= 0) {
+    const finding = parsed.data.findings[index];
+    return `finding ${index + 1} names ${JSON.stringify(finding.file.slice(0, 200))} line ${finding.line}, which is not a text line of this build. Name each file by its path relative to the review's folder.`;
+  }
+  return null;
+}
 
 /** One request, immutable evidence, deterministic scheduling. Provider completion alone never accepts work. */
 export class BuilderReviewerWorkflow {
@@ -281,6 +377,17 @@ export class BuilderReviewerWorkflow {
         throw new Error(
           "Each role needs its selected trusted provider runtime and requested model.",
         );
+      if (assignment.route === "terminal" && assignment.provider !== "claude")
+        throw new Error(
+          "Only Claude Code runs as a step in Topsl's terminal; Codex runs inside Topsl.",
+        );
+      if (
+        assignment.route === "terminal" &&
+        (assignment.model !== claudeStepModel || assignment.effort)
+      )
+        throw new Error(
+          `Topsl passes a Claude Code step no model or effort, so Claude Code's own settings decide. Name the model "${claudeStepModel}" and no effort.`,
+        );
     }
     const workspace = this.repository.ensureWorkspace(project),
       workflow = this.repository.createWorkflow({
@@ -384,6 +491,18 @@ export class BuilderReviewerWorkflow {
    * Claude send progress notes before they answer, and each is a message of
    * its own in the run's history. */
   private result(attempt: ExecutionAttempt): string {
+    // A Claude Code step's answer is the reply the owner handed back.
+    const step = this.repository.store.get<ClaudeStep>(
+      "claude-step",
+      attempt.id,
+    );
+    if (step)
+      return step.replyId
+        ? this.repository.require<ClaudeStepReply>(
+            "claude-step-reply",
+            step.replyId,
+          ).text
+        : "";
     if (this.driver.result) return this.driver.result(attempt);
     return (
       [
@@ -406,69 +525,73 @@ export class BuilderReviewerWorkflow {
     this.locks.add(id);
     try {
       this.expect(id, expectedRevision);
-      let state = this.state(id);
-      if (["accepted", "cancelled", "blocked"].includes(state.stage))
-        throw new Error(state.detail || "Workflow is not runnable.");
-      const candidate = this.candidate(state.candidateId);
-      try {
-        await assertCandidateCurrent(candidate);
-      } catch (error) {
-        // During an authorized builder turn the live workspace is expected to change.
-        if (!["building", "repairing"].includes(state.stage)) {
-          this.repository.invalidateCandidate(candidate.id, safeError(error));
-          return this.save(state, {
-            stage: "blocked",
-            detail: safeError(error),
-          });
-        }
-      }
-      if (state.activeAttemptId) {
-        const attempt = this.repository.require<ExecutionAttempt>(
-          "attempt",
-          state.activeAttemptId,
-        );
-        if (
-          ["prepared", "starting", "running", "awaiting-approval"].includes(
-            attempt.state,
-          )
-        )
-          return state;
-        if (attempt.state !== "completed") {
-          // The attempt has ended, so its reader grant goes with it.
-          this.contextServer?.revokeAttempt(attempt.id);
-          return this.save(
-            state,
-            {
-              stage: "blocked",
-              detail: `Attempt ${attempt.state}: ${attempt.error ?? "reconcile before replacement; nothing was retried"}`,
-            },
-            "blocked",
-          );
-        }
-        const outstandingLease = this.repository.store.db
-          .prepare(
-            "SELECT state FROM workspace_leases WHERE attempt_id=? AND state!='released'",
-          )
-          .get(attempt.id);
-        if (outstandingLease) {
-          const detail =
-            "Provider turn completed; waiting for confirmed process exit before freezing its output.";
-          return state.detail === detail ? state : this.save(state, { detail });
-        }
-        this.contextServer?.revokeAttempt(attempt.id);
-        if (state.stage === "reviewing") {
-          state = await this.completeReview(state, attempt);
-          // A finding is a proposal. Leave time for explicit adjudication before
-          // the next bounded repair dispatch (including the background observer).
-          if (state.stage === "ready-repair") return state;
-        } else state = await this.completeBuild(state, attempt);
-      }
-      if (["ready-build", "ready-review", "ready-repair"].includes(state.stage))
-        return await this.dispatch(state);
-      return state;
+      return await this.advanceLocked(id);
     } finally {
       this.locks.delete(id);
     }
+  }
+  /** advance() once it holds the workflow's lock. */
+  private async advanceLocked(id: string): Promise<BuilderReviewerState> {
+    let state = this.state(id);
+    if (["accepted", "cancelled", "blocked"].includes(state.stage))
+      throw new Error(state.detail || "Workflow is not runnable.");
+    const candidate = this.candidate(state.candidateId);
+    try {
+      await assertCandidateCurrent(candidate);
+    } catch (error) {
+      // During an authorized builder turn the live workspace is expected to change.
+      if (!["building", "repairing"].includes(state.stage)) {
+        this.repository.invalidateCandidate(candidate.id, safeError(error));
+        return this.save(state, {
+          stage: "blocked",
+          detail: safeError(error),
+        });
+      }
+    }
+    if (state.activeAttemptId) {
+      const attempt = this.repository.require<ExecutionAttempt>(
+        "attempt",
+        state.activeAttemptId,
+      );
+      if (
+        ["prepared", "starting", "running", "awaiting-approval"].includes(
+          attempt.state,
+        )
+      )
+        return state;
+      if (attempt.state !== "completed") {
+        // The attempt has ended, so its reader grant goes with it.
+        this.contextServer?.revokeAttempt(attempt.id);
+        return this.save(
+          state,
+          {
+            stage: "blocked",
+            detail: `Attempt ${attempt.state}: ${attempt.error ?? "reconcile before replacement; nothing was retried"}`,
+          },
+          "blocked",
+        );
+      }
+      const outstandingLease = this.repository.store.db
+        .prepare(
+          "SELECT state FROM workspace_leases WHERE attempt_id=? AND state!='released'",
+        )
+        .get(attempt.id);
+      if (outstandingLease) {
+        const detail =
+          "Provider turn completed; waiting for confirmed process exit before freezing its output.";
+        return state.detail === detail ? state : this.save(state, { detail });
+      }
+      this.contextServer?.revokeAttempt(attempt.id);
+      if (state.stage === "reviewing") {
+        state = await this.completeReview(state, attempt);
+        // A finding is a proposal. Leave time for explicit adjudication before
+        // the next bounded repair dispatch (including the background observer).
+        if (state.stage === "ready-repair") return state;
+      } else state = await this.completeBuild(state, attempt);
+    }
+    if (["ready-build", "ready-review", "ready-repair"].includes(state.stage))
+      return await this.dispatch(state);
+    return state;
   }
   private async dispatch(
     state: BuilderReviewerState,
@@ -526,11 +649,26 @@ export class BuilderReviewerWorkflow {
           "installation",
           assignment.installationId,
         ),
-        capability = this.driver.capabilities(
-          assignment,
-          installation,
-          assignment === state.reviewer ? "reviewer" : "implementer",
-        );
+        // A Claude Code step is ready when its installation is trusted; the
+        // owner signs in and runs it in Claude Code.
+        capability =
+          assignment.route === "terminal"
+            ? installation.appId === "anthropic.claude-code-cli" &&
+              installation.trusted
+              ? {
+                  supported: true,
+                  detail: "Claude Code runs this step in Topsl's terminal.",
+                }
+              : {
+                  supported: false,
+                  detail:
+                    "Trust this Claude Code executable in Applications before its step can open.",
+                }
+            : this.driver.capabilities(
+                assignment,
+                installation,
+                assignment === state.reviewer ? "reviewer" : "implementer",
+              );
       if (!capability.supported)
         return this.save(
           state,
@@ -556,8 +694,22 @@ export class BuilderReviewerWorkflow {
         "installation",
         assignment.installationId,
       ),
-      candidate = this.candidate(state.candidateId);
-    const capacity = this.driver.capacity?.(assignment, state.id);
+      candidate = this.candidate(state.candidateId),
+      // The owner runs this stage in Claude Code; Topsl starts no turn.
+      step = assignment.route === "terminal",
+      delivery = step ? ("terminal" as const) : undefined;
+    // One writer at a time: a build or repair waits while another workflow's
+    // Claude Code step holds the project folder.
+    const holding = review
+      ? undefined
+      : claudeStepHolding(this.repository.store, state.projectId);
+    if (holding && holding.workflowId !== state.id)
+      return this.save(state, {
+        detail: `Waiting for capacity: another workflow's Claude Code ${stepNoun[holding.role]} holds this project folder until its reply is handed back or that workflow is cancelled.`,
+      });
+    const capacity = step
+      ? undefined
+      : this.driver.capacity?.(assignment, state.id);
     if (capacity && !capacity.available)
       return this.save(state, {
         detail: `Waiting for capacity: ${capacity.detail}`,
@@ -587,6 +739,7 @@ export class BuilderReviewerWorkflow {
       taskId: state.builderTaskId,
       role,
       findings,
+      delivery,
       persist: false,
     });
     if (
@@ -602,7 +755,11 @@ export class BuilderReviewerWorkflow {
         state.workspaceId,
       );
     if (review) {
-      const copy = await materializeCandidate(candidate),
+      // Claude Code's Plan is not a sandbox, so its copy cannot gain, lose or
+      // rename a file either.
+      const copy = await materializeCandidate(candidate, undefined, undefined, {
+          readOnlyFolders: step,
+        }),
         at = now(),
         identity = canonicalWorkspaceIdentity(copy.root);
       workspace = {
@@ -679,6 +836,7 @@ export class BuilderReviewerWorkflow {
       taskId: task.id,
       role,
       findings,
+      delivery,
     });
     // Generic domain projection retains original content/hash, never reclassifies it as provider-loaded.
     this.repository.store.immutable("context-package", {
@@ -701,7 +859,8 @@ export class BuilderReviewerWorkflow {
       taskId: task.id,
       expectedRevision: task.revision,
       provider: assignment.provider,
-      requestedModel: assignment.model,
+      // Topsl passes a Claude Code step no model; its own setting decides.
+      requestedModel: step ? null : assignment.model,
       freshSession: true,
       runtimeRevision: installation.revisionId,
       executableIdentity: installation.identity,
@@ -741,7 +900,8 @@ export class BuilderReviewerWorkflow {
       state.projectId,
     );
     try {
-      if (this.contextServer) {
+      // Claude Code reads its folder, so a step gets no reader grant.
+      if (this.contextServer && !step) {
         const grant = this.contextServer.grant(project, {
           visibility: { messageIds: [] },
           candidates: [
@@ -813,6 +973,16 @@ export class BuilderReviewerWorkflow {
       attempt.id,
       "prepared",
     );
+    if (step)
+      return this.prepareClaudeStep(state, {
+        attempt,
+        task,
+        installation,
+        workspace,
+        candidate,
+        context,
+        role,
+      });
     state = this.save(
       state,
       {
@@ -900,6 +1070,436 @@ export class BuilderReviewerWorkflow {
         { stage: "blocked", detail: safeError(error) },
         "blocked",
       );
+    }
+  }
+  /** Records a prepared stage as a Claude Code step that waits for the owner. */
+  private prepareClaudeStep(
+    state: BuilderReviewerState,
+    input: {
+      attempt: ExecutionAttempt;
+      task: Task;
+      installation: Installation;
+      workspace: Workspace;
+      candidate: CandidateSnapshot;
+      context: TaskContextPackage;
+      role: ClaudeStepRole;
+    },
+  ): BuilderReviewerState {
+    const at = now(),
+      noun = stepNoun[input.role],
+      detail =
+        input.role === "reviewer"
+          ? "Waiting for Claude Code. Open the review in Claude Code, which starts in Plan in a read-only copy of the build, paste the instructions Topsl copies, and after Claude Code exits, hand back Claude's final reply."
+          : `Waiting for Claude Code. Open the ${noun} in Claude Code in the project folder, paste the instructions Topsl copies, and after Claude Code exits, hand back Claude's final reply. Until then no other Topsl writer starts in this folder.`,
+      step: ClaudeStep = {
+        id: input.attempt.id,
+        projectId: state.projectId,
+        workflowId: state.id,
+        attemptId: input.attempt.id,
+        taskId: input.task.id,
+        role: input.role,
+        installationId: input.installation.id,
+        candidateId: input.candidate.id,
+        candidateRevision: input.candidate.revision,
+        specificationId: state.specificationId,
+        contextPackageId: input.context.id,
+        instructionsHash: input.context.contentHash,
+        workspaceId: input.workspace.id,
+        folder: input.workspace.root,
+        state: "waiting",
+        opens: [],
+        replyId: null,
+        replySource: null,
+        stoppedAt: null,
+        detail: "Waiting for the owner to open Claude Code.",
+        createdAt: at,
+        updatedAt: at,
+      };
+    return this.repository.store.transaction(() => {
+      this.repository.store.save("claude-step", step, "claude-step.prepared");
+      return this.save(
+        state,
+        {
+          activeAttemptId: input.attempt.id,
+          stage: stepStage[input.role],
+          detail,
+        },
+        "running",
+      );
+    });
+  }
+  /** The workflow's step with this id, in this project. */
+  private step(projectId: string, workflowId: string, stepId: string) {
+    const step = this.repository.store.get<ClaudeStep>("claude-step", stepId);
+    if (!step || step.projectId !== projectId || step.workflowId !== workflowId)
+      throw new Error(
+        "This Claude Code step belongs to another workflow or no longer exists.",
+      );
+    return step;
+  }
+  /** The step the workflow waits on now, or an error saying why there is none. */
+  claudeStep(projectId: string, workflowId: string, stepId: string) {
+    const step = this.step(projectId, workflowId, stepId),
+      state = this.state(workflowId);
+    if (
+      step.state !== "waiting" ||
+      state.activeAttemptId !== step.attemptId ||
+      state.stage !== stepStage[step.role]
+    )
+      throw new Error(
+        "This Claude Code step has ended, or the workflow no longer waits on it.",
+      );
+    return {
+      step,
+      workspace: this.repository.require<Workspace>(
+        "workspace",
+        step.workspaceId,
+      ),
+      instructions: this.repository.require<TaskContextPackage>(
+        "task-context-package",
+        step.contextPackageId,
+      ).content,
+    };
+  }
+  /** The step's latest session that opened, whose transcript a hand-back reads. */
+  claudeStepSession(
+    projectId: string,
+    workflowId: string,
+    stepId: string,
+  ): { step: ClaudeStep; open: ClaudeStepOpen } {
+    const step = this.step(projectId, workflowId, stepId);
+    if (step.state !== "waiting")
+      throw new Error("This Claude Code step has already ended.");
+    const open = latestOpened(step);
+    if (!open)
+      throw new Error(
+        "Open Claude Code for this step in Topsl's terminal before handing back its reply.",
+      );
+    return { step, open };
+  }
+  /** Says why Topsl took no reply from the transcript. The step keeps waiting. */
+  claudeStepUnread(stepId: string, reason: string): string {
+    const detail = `Topsl took no reply from the session's transcript: ${reason} Paste Claude's final reply instead, or open Claude Code again.`;
+    this.repository.store.transaction(() => {
+      const step = this.repository.require<ClaudeStep>("claude-step", stepId);
+      if (step.state !== "waiting")
+        throw new Error("This Claude Code step has already ended.");
+      this.repository.store.save(
+        "claude-step",
+        { ...step, detail, updatedAt: now() },
+        "claude-step.transcript-unread",
+      );
+    });
+    this.changed();
+    return detail;
+  }
+  /** Records an opening before Claude Code starts, so its session id is kept either way. */
+  claudeStepOpening(
+    stepId: string,
+    open: Omit<ClaudeStepOpen, "terminalId" | "state" | "error">,
+  ): void {
+    this.repository.store.transaction(() => {
+      const step = this.repository.require<ClaudeStep>("claude-step", stepId);
+      if (step.state !== "waiting")
+        throw new Error("This Claude Code step has ended.");
+      this.repository.store.save(
+        "claude-step",
+        {
+          ...step,
+          opens: [
+            ...step.opens,
+            { ...open, terminalId: null, state: "requested", error: null },
+          ],
+          updatedAt: now(),
+        },
+        "claude-step.open-requested",
+      );
+    });
+    this.changed();
+  }
+  /** Records how an opening went: the terminal Topsl opened, or why it did not. */
+  claudeStepOpened(
+    stepId: string,
+    sessionId: string,
+    result: { terminalId: string } | { error: string },
+  ): void {
+    this.repository.store.transaction(() => {
+      const step = this.repository.require<ClaudeStep>("claude-step", stepId),
+        first = !step.opens.some((open) => open.state === "opened");
+      this.repository.store.save(
+        "claude-step",
+        {
+          ...step,
+          opens: step.opens.map((open) =>
+            open.sessionId !== sessionId
+              ? open
+              : "terminalId" in result
+                ? { ...open, terminalId: result.terminalId, state: "opened" }
+                : { ...open, state: "failed", error: result.error },
+          ),
+          detail:
+            "terminalId" in result
+              ? "Claude Code is open in Topsl's terminal. After it exits, confirm it stopped and hand back Claude's final reply."
+              : `Claude Code did not open: ${result.error}`,
+          updatedAt: now(),
+        },
+        "claude-step.opened",
+      );
+      // Topsl copied the instructions; whether the owner pasted them is not observed.
+      if ("terminalId" in result && first)
+        recordContextDelivery(
+          this.repository.store,
+          this.repository.require<TaskContextPackage>(
+            "task-context-package",
+            step.contextPackageId,
+          ),
+          step.attemptId,
+          "unknown",
+        );
+    });
+    this.changed();
+  }
+  /** Ends a step that Topsl took no reply from, and the attempt it is. */
+  private async endClaudeStep(
+    step: ClaudeStep,
+    outcome: "stale" | "cancelled",
+    detail: string,
+    stopped: boolean,
+    reply: ClaudeStepReply | null = null,
+  ): Promise<void> {
+    this.repository.store.transaction(() => {
+      this.repository.store.save(
+        "claude-step",
+        {
+          ...step,
+          state: outcome,
+          replyId: reply?.id ?? null,
+          replySource: reply?.source ?? null,
+          stoppedAt: stopped ? now() : null,
+          detail,
+          updatedAt: now(),
+        },
+        `claude-step.${outcome}`,
+      );
+      const attempt = this.repository.require<ExecutionAttempt>(
+        "attempt",
+        step.attemptId,
+      );
+      if (attempt.state === "prepared")
+        this.repository.transitionAttempt(
+          attempt.id,
+          attempt.revision,
+          "interrupted",
+          { error: detail },
+        );
+      const task = this.repository.require<Task>("task", step.taskId);
+      if (task.state === "active")
+        this.repository.transitionTask(
+          task.id,
+          task.revision,
+          outcome === "cancelled" ? "cancelled" : "blocked",
+          detail,
+        );
+    });
+    if (step.role === "reviewer") await this.removeStepCopy(step);
+  }
+  /** Removes a review step's copy of the build, which only Topsl created. */
+  private async removeStepCopy(step: ClaudeStep): Promise<void> {
+    const copy = this.reviews.get(step.workflowId);
+    if (copy && path.resolve(copy.root) === path.resolve(step.folder)) {
+      await copy.cleanup();
+      this.reviews.delete(step.workflowId);
+    } else if (
+      // After a restart only the record names it.
+      path.dirname(path.resolve(step.folder)) === path.resolve(os.tmpdir()) &&
+      path.basename(step.folder).startsWith("topsl-candidate-")
+    )
+      await removeMaterializedCopy(step.folder);
+  }
+  /**
+   * The owner hands back Claude's final reply, having confirmed that Claude
+   * Code stopped: pasted, or read from the latest session's transcript. A
+   * review's reply must name this build, and each finding a text line in it;
+   * otherwise the step keeps waiting and says why. A reply that comes after
+   * the specification or the build changed, or after the workflow moved on,
+   * is kept as evidence only.
+   */
+  async returnClaudeStep(input: {
+    projectId: string;
+    workflowId: string;
+    stepId: string;
+    reply: string;
+    source: ClaudeStepReplySource;
+    /** The transcript a reply from one was read from. */
+    transcript?: ClaudeTranscriptSource;
+  }): Promise<{
+    outcome: ClaudeStepReply["outcome"];
+    detail: string;
+    state: BuilderReviewerState;
+  }> {
+    const id = input.workflowId;
+    if (this.locks.has(id))
+      throw new Error("This workflow action is already pending.");
+    this.locks.add(id);
+    try {
+      const step = this.step(input.projectId, id, input.stepId);
+      if (step.state !== "waiting")
+        throw new Error("This Claude Code step has already ended.");
+      // Each stage records the session it ran in.
+      const latest = latestOpened(step);
+      if (!latest)
+        throw new Error(
+          "Open Claude Code for this step in Topsl's terminal before handing back its reply.",
+        );
+      if ((input.source === "claude-transcript") !== !!input.transcript)
+        throw new Error(
+          "A reply from the transcript comes with the transcript Topsl read, and only then.",
+        );
+      if (input.transcript && input.transcript.sessionId !== latest.sessionId)
+        throw new Error(
+          "Claude Code opened again for this step while Topsl read the transcript. Hand the reply back again.",
+        );
+      let state = this.state(id);
+      const record = (
+        outcome: ClaudeStepReply["outcome"],
+        detail: string,
+      ): ClaudeStepReply => {
+        const reply: ClaudeStepReply = {
+          id: uid(),
+          projectId: input.projectId,
+          workflowId: id,
+          stepId: step.id,
+          source: input.source,
+          ...(input.transcript ? { transcript: input.transcript } : {}),
+          text: input.reply,
+          hash: hash(input.reply),
+          outcome,
+          detail,
+          receivedAt: now(),
+        };
+        this.repository.store.immutable("claude-step-reply", reply);
+        return reply;
+      };
+      if (
+        state.activeAttemptId !== step.attemptId ||
+        state.stage !== stepStage[step.role]
+      ) {
+        const detail = `The workflow no longer waits on this step (${state.stage}): ${state.detail} The reply is kept as evidence and was not used.`;
+        await this.endClaudeStep(
+          step,
+          "stale",
+          detail,
+          true,
+          record("stale", detail),
+        );
+        this.changed();
+        return { outcome: "stale", detail, state };
+      }
+      const head =
+        new RevisionRepository(this.repository.store).head(
+          state.projectId,
+          `workflow-specification:${id}`,
+        )?.revisionId ?? state.specificationId;
+      let changed =
+        head !== step.specificationId
+          ? `The specification changed during this Claude Code ${stepNoun[step.role]}.`
+          : null;
+      if (!changed && step.role === "reviewer")
+        try {
+          await assertCandidateCurrent(this.candidate(step.candidateId));
+        } catch (error) {
+          changed = `The project folder no longer matches the build under review: ${safeError(error)}`;
+        }
+      if (changed) {
+        const detail = `${changed} Claude's reply is kept as evidence and was not used. Restart the workflow to continue.`;
+        await this.endClaudeStep(
+          step,
+          "stale",
+          detail,
+          true,
+          record("stale", detail),
+        );
+        state = this.save(
+          state,
+          { stage: "blocked", activeAttemptId: null, detail },
+          "blocked",
+        );
+        return { outcome: "stale", detail, state };
+      }
+      const problem =
+        step.role === "reviewer"
+          ? reviewReplyProblem(
+              input.reply,
+              this.candidate(step.candidateId),
+              this.repository.store,
+            )
+          : null;
+      if (problem) {
+        const detail = `Topsl did not take this reply: ${problem} The step keeps waiting: open Claude Code again, or hand back another reply.`;
+        this.repository.store.transaction(() => {
+          record("invalid", detail);
+          this.repository.store.save(
+            "claude-step",
+            { ...step, detail, updatedAt: now() },
+            "claude-step.reply-invalid",
+          );
+        });
+        this.changed();
+        return { outcome: "invalid", detail, state };
+      }
+      const detail =
+        step.role === "reviewer"
+          ? "Topsl took Claude's review. It still checks that the copy is unchanged before reading the findings."
+          : `Topsl took Claude's reply and captures the project folder as the ${stepNoun[step.role]}'s result.`;
+      this.repository.store.transaction(() => {
+        // Cancelling takes no lock, so check nothing moved meanwhile.
+        const latest = this.state(id);
+        if (
+          this.repository.require<ClaudeStep>("claude-step", step.id).state !==
+            "waiting" ||
+          latest.activeAttemptId !== step.attemptId ||
+          latest.stage !== stepStage[step.role]
+        )
+          throw new Error(
+            "The workflow changed while Topsl was taking this reply, so it took nothing.",
+          );
+        const reply = record("taken", detail);
+        this.repository.store.save(
+          "claude-step",
+          {
+            ...step,
+            state: "returned",
+            replyId: reply.id,
+            replySource: reply.source,
+            stoppedAt: now(),
+            detail,
+            updatedAt: now(),
+          },
+          "claude-step.returned",
+        );
+        // The step is the stage's turn, which ends with the owner's reply.
+        let attempt = this.repository.require<ExecutionAttempt>(
+          "attempt",
+          step.attemptId,
+        );
+        attempt = this.repository.transitionAttempt(
+          attempt.id,
+          attempt.revision,
+          "starting",
+        );
+        this.repository.transitionAttempt(
+          attempt.id,
+          attempt.revision,
+          "completed",
+        );
+      });
+      return {
+        outcome: "taken",
+        detail,
+        state: await this.advanceLocked(id),
+      };
+    } finally {
+      this.locks.delete(id);
     }
   }
   /** Native approved capture of stopped output. No model attempt is created or
@@ -1236,7 +1836,12 @@ export class BuilderReviewerWorkflow {
         "blocked",
       );
     } finally {
-      if (copy) {
+      const step = this.repository.store.get<ClaudeStep>(
+        "claude-step",
+        attempt.id,
+      );
+      if (step) await this.removeStepCopy(step);
+      else if (copy) {
         await copy.cleanup();
         this.reviews.delete(state.id);
       }
@@ -1697,9 +2302,28 @@ export class BuilderReviewerWorkflow {
   async cancel(
     id: string,
     expectedRevision: number,
+    confirmation: { claudeCodeStopped?: boolean } = {},
   ): Promise<BuilderReviewerState> {
     this.expect(id, expectedRevision);
-    const state = this.state(id);
+    const state = this.state(id),
+      step = state.activeAttemptId
+        ? this.repository.store.get<ClaudeStep>(
+            "claude-step",
+            state.activeAttemptId,
+          )
+        : undefined,
+      waiting = step?.state === "waiting" ? step : undefined;
+    // An opened build or repair may still be writing, so its hold on the
+    // folder ends only with the owner's word.
+    if (
+      waiting &&
+      waiting.role !== "reviewer" &&
+      waiting.opens.length &&
+      !confirmation.claudeCodeStopped
+    )
+      throw new Error(
+        "Claude Code may still be changing the project folder. Confirm that it has stopped to cancel this workflow.",
+      );
     const cancelled = this.save(
       state,
       {
@@ -1709,7 +2333,14 @@ export class BuilderReviewerWorkflow {
       },
       "cancelled",
     );
-    if (state.activeAttemptId && this.driver.interrupt)
+    if (waiting)
+      await this.endClaudeStep(
+        waiting,
+        "cancelled",
+        "The workflow was cancelled during this Claude Code step.",
+        !!confirmation.claudeCodeStopped,
+      );
+    else if (state.activeAttemptId && this.driver.interrupt)
       await this.driver.interrupt(
         this.repository.require<ExecutionAttempt>(
           "attempt",
@@ -1790,6 +2421,13 @@ export class BuilderReviewerWorkflow {
           "attempt",
           state.activeAttemptId,
         );
+        if (
+          this.repository.store.get<ClaudeStep>("claude-step", attempt.id)
+            ?.state === "waiting"
+        )
+          throw new Error(
+            "Hand back this Claude Code step's reply, or cancel the workflow, before restarting it.",
+          );
         if (attempt.state === "uncertain")
           throw new Error(
             "Reconcile the uncertain attempt before any replacement; no work was replayed.",
@@ -1962,6 +2600,7 @@ export class BuilderReviewerWorkflow {
       candidateRevision: string;
       acceptanceDigest: string;
       checksStatus: unknown[];
+      claudeStep: ClaudeStep | null;
     }
   > {
     return this.repository
@@ -1973,6 +2612,14 @@ export class BuilderReviewerWorkflow {
         candidateRevision: this.candidate(state.candidateId).revision,
         acceptanceDigest: this.acceptanceDigest(state.id),
         checksStatus: [...this.currentChecks(state).values()],
+        // The step the workflow waits on, if its stage is a Claude Code step.
+        claudeStep:
+          (state.activeAttemptId &&
+            this.repository.store.get<ClaudeStep>(
+              "claude-step",
+              state.activeAttemptId,
+            )) ||
+          null,
       }));
   }
   close(): void {
