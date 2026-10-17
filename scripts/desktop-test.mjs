@@ -101,6 +101,8 @@ try {
   ).toBeVisible({ timeout: 45000 });
   await expect(page.getByText("You approve every Topsl update.")).toBeVisible();
   await expect(page.locator(".application-card")).toHaveCount(4);
+  // A new profile has no stored theme, so Topsl follows the computer.
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
   await mkdir("test-results", { recursive: true });
   await page.screenshot({
     path: "test-results/applications.png",
@@ -644,6 +646,55 @@ try {
     path: "test-results/coordination-standard.png",
     fullPage: true,
   });
+  // The colors a theme draws: every palette color on the root, the root and
+  // body, and probes with the component classes, so the comparison does not
+  // depend on which controls this page shows.
+  const themeColors = () =>
+    page.evaluate(() => {
+      const probe = (tag, className) =>
+        document.body.appendChild(
+          Object.assign(document.createElement(tag), { className }),
+        );
+      const probes = [
+        probe("button", "primary"),
+        probe("span", "badge good"),
+        probe("span", "badge warm"),
+      ];
+      try {
+        const colors = (element) => {
+          const { color, backgroundColor, borderColor, colorScheme } =
+            getComputedStyle(element);
+          return { color, backgroundColor, borderColor, colorScheme };
+        };
+        const root = getComputedStyle(document.documentElement);
+        return {
+          palette: Object.fromEntries(
+            Array.from(root)
+              .filter((name) => name.startsWith("--"))
+              .map((name) => [name, root.getPropertyValue(name)]),
+          ),
+          root: colors(document.documentElement),
+          body: colors(document.body),
+          primary: colors(probes[0]),
+          good: colors(probes[1]),
+          warm: colors(probes[2]),
+        };
+      } finally {
+        for (const element of probes) element.remove();
+      }
+    });
+  // The window behind the page is painted in the page's paper color. Under
+  // System it follows the computer itself, which emulateMedia does not change.
+  const windowBackground = () =>
+    app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase(),
+    );
+  const paperColor = (colors) =>
+    "#" +
+    colors.root.backgroundColor
+      .match(/\d+/g)
+      .map((channel) => Number(channel).toString(16).padStart(2, "0"))
+      .join("");
   await page.evaluate(() =>
     window.topsl.command({ type: "theme", theme: "night" }),
   );
@@ -652,6 +703,8 @@ try {
     path: "test-results/coordination-night.png",
     fullPage: true,
   });
+  const night = await themeColors();
+  expect(await windowBackground()).toBe(paperColor(night));
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.evaluate(() =>
     window.topsl.command({ type: "theme", theme: "system" }),
@@ -661,10 +714,25 @@ try {
     path: "test-results/coordination-system-dark.png",
     fullPage: true,
   });
+  // System draws exactly what Night draws on a dark computer, and what Paper
+  // draws on a light one.
+  expect(await themeColors()).toEqual(night);
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  const systemLight = await themeColors();
+  expect(systemLight).not.toEqual(night);
+  const computerIsDark = await app.evaluate(
+    ({ nativeTheme }) => nativeTheme.shouldUseDarkColors,
+  );
+  expect(await windowBackground()).toBe(
+    paperColor(computerIsDark ? night : systemLight),
+  );
   await page.evaluate(() =>
     window.topsl.command({ type: "theme", theme: "paper" }),
   );
   await expect(page.locator("html")).toHaveAttribute("data-theme", "paper");
+  const paper = await themeColors();
+  expect(paper).toEqual(systemLight);
+  expect(await windowBackground()).toBe(paperColor(paper));
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5),
   );
@@ -767,6 +835,9 @@ try {
     JSON.stringify(desktopBenchmark, null, 2),
   );
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(
+    page.getByText("System follows the computer’s light or dark appearance."),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Night", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "night");
   await page
@@ -1372,6 +1443,8 @@ try {
     window.topsl.command({ type: "state" }),
   );
   expect(state.projects).toHaveLength(3);
+  // Paper, picked last in Settings, is kept rather than replaced by System.
+  expect(state.theme).toBe("paper");
   expect(state.projectSync.enabled).toBe(true);
   expect(
     state.projects.find((project) => project.realPath === canonicalDiscovered)

@@ -1627,6 +1627,7 @@ function App() {
                 </div>
                 <section className="settings-card">
                   <h2>Appearance</h2>
+                  <p>System follows the computer’s light or dark appearance.</p>
                   <div className="actions">
                     {(["paper", "night", "system"] as const).map((theme) => (
                       <ActionButton

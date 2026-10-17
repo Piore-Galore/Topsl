@@ -482,7 +482,8 @@ export class Service {
       lockReason: null,
       platform: `${process.platform}/${process.arch}`,
       version: "0.1.2",
-      theme: this.store.get<any>("preference", "theme")?.value ?? "paper",
+      // Follow the computer until the owner picks a theme; a pick is kept.
+      theme: this.store.get<any>("preference", "theme")?.value ?? "system",
       applications: catalog,
       capabilities,
       serviceError: null,
