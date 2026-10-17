@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { randomInt } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { createDemoFixture } from "./round2-demo-fixture.mjs";
@@ -31,15 +31,44 @@ import { createDemoFixture } from "./round2-demo-fixture.mjs";
 // it does for any native session. With --qualify, Codex instead goes through
 // Topsl's runtime qualification from the guided setup, with Codex in both
 // roles: up to three model turns, approved once and never retried. With
-// --workflow codex-codex, that qualification is followed by Build and review
-// on a small seeded project: one build and one review, up to five model turns
-// in all.
+// --workflow and a team, Build and review runs on a small seeded project: one
+// build and one review, with no repair. A team with Codex starts with that
+// qualification. A Claude role is a Claude Code step on the workflow's card,
+// which the script runs as the owner would: it opens Claude Code, pastes the
+// instructions Topsl copied once, exits Claude Code after Claude's reply and
+// hands the reply back from the session's transcript.
 
 const usage =
-  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--terminal] [--mode id] [--preset id] [--qualify] [--workflow codex-codex] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --terminal with --codex alone opens Codex in Topsl's native terminal instead of a chat. --mode picks the terminal's mode and --preset the Codex chat's preset. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt. --workflow codex-codex with --codex alone runs the qualification, then one build and one review of a seeded project.";
-// The teams --workflow can run. The Claude teams follow with the Claude
-// workflows plan's step 5.
-const workflowTeams = ["codex-codex"];
+  "Usage: node scripts/live-session.mjs [--claude /absolute/path/to/claude] [--codex /absolute/path/to/codex] [--terminal] [--mode id] [--preset id] [--qualify] [--workflow codex-codex|claude-codex|codex-claude|claude-claude] [--model id] [--output directory] [--keep-profile]\nGive --claude, --codex, or both for a handoff from Claude Code to Codex. --terminal with --codex alone opens Codex in Topsl's native terminal instead of a chat. --mode picks the terminal's mode and --preset the Codex chat's preset. --qualify with --codex alone runs Topsl's runtime qualification instead of a prompt. --workflow runs one build and one review of a seeded project with that team, builder first: give --codex for codex-codex, --claude for claude-claude, and both for the others. A team with Codex starts with the qualification.";
+// The teams --workflow runs, builder first, with the most each run may start
+// as the Claude workflows plan's run table gives it: Codex turns, counting the
+// qualification's, and Claude Code sessions, one for each Claude step.
+const workflowTeams = {
+  "codex-codex": {
+    builder: "codex",
+    reviewer: "codex",
+    codexTurns: 5,
+    claudeSessions: 0,
+  },
+  "claude-codex": {
+    builder: "claude",
+    reviewer: "codex",
+    codexTurns: 4,
+    claudeSessions: 1,
+  },
+  "codex-claude": {
+    builder: "codex",
+    reviewer: "claude",
+    codexTurns: 4,
+    claudeSessions: 1,
+  },
+  "claude-claude": {
+    builder: "claude",
+    reviewer: "claude",
+    codexTurns: 0,
+    claudeSessions: 2,
+  },
+};
 const options = {
   executables: {},
   terminal: false,
@@ -77,13 +106,21 @@ for (let index = 2; index < process.argv.length; index++) {
 // Claude Code runs first, so that Codex can continue its conversation.
 const providers = ["claude", "codex"].filter((p) => options.executables[p]);
 const both = providers.length === 2;
+const team =
+  options.workflow && Object.hasOwn(workflowTeams, options.workflow)
+    ? workflowTeams[options.workflow]
+    : null;
+// The providers the team needs, in the order of `providers`.
+const teamProviders = team
+  ? ["claude", "codex"].filter((p) => [team.builder, team.reviewer].includes(p))
+  : [];
 const codexChatRun =
   !!options.executables.codex &&
   !options.terminal &&
   !options.qualify &&
   !options.workflow;
-// A workflow run starts with the runtime qualification.
-const qualifies = options.qualify || !!options.workflow;
+// A workflow run with Codex starts with the runtime qualification.
+const qualifies = options.qualify || teamProviders.includes("codex");
 if (
   !providers.length ||
   providers.some((p) => !path.isAbsolute(options.executables[p])) ||
@@ -91,11 +128,11 @@ if (
   (options.model && options.terminal) ||
   (options.qualify && providers.join() !== "codex") ||
   (options.workflow &&
-    (!workflowTeams.includes(options.workflow) ||
-      providers.join() !== "codex" ||
-      options.qualify)) ||
+    (!team || providers.join() !== teamProviders.join() || options.qualify)) ||
   (options.terminal && (providers.join() !== "codex" || qualifies)) ||
-  (options.mode && !options.executables.claude && !options.terminal) ||
+  (options.mode &&
+    (!options.executables.claude || options.workflow) &&
+    !options.terminal) ||
   (options.preset && !codexChatRun)
 )
   throw new Error(usage);
@@ -103,11 +140,13 @@ if (
 // script then also plays the owner on the workflow's card, denying each
 // command Codex asks to run and allowing each file change.
 const ownerStandIn = process.env.TOPSL_LIVE_OWNER_STAND_IN === "1";
-if (ownerStandIn && !options.workflow) throw new Error(usage);
+if (ownerStandIn && !teamProviders.includes("codex")) throw new Error(usage);
 if (qualifies && process.platform === "win32")
   throw new Error(
     "The runtime qualification uses POSIX shell probes and runs on macOS and Linux only.",
   );
+if (options.workflow && process.platform === "win32")
+  throw new Error("The workflow runs on macOS and Linux only.");
 try {
   await stat("dist/main.cjs");
 } catch {
@@ -221,7 +260,9 @@ const newStep = (provider) => ({
 // A single-provider report keeps its step at the top level. A run with both
 // keeps one step per provider, in the order they ran, and the conversation
 // they share. A qualification keeps what Topsl recorded and the readiness it
-// gives each role, and a workflow run adds what its build and review did.
+// gives each role, and a workflow run adds what its build and review did:
+// `modelTurns` counts Codex's turns and `claudeCodeSessions` the Claude Code
+// sessions its steps opened.
 const report = {
   schemaVersion: 1,
   kind: "topsl-live-session",
@@ -245,13 +286,27 @@ const report = {
   removedEnvironment,
   dialogs: [],
   modelTurns: 0,
-  ...(qualifies
+  ...(options.qualify || options.workflow
     ? {
-        executable: { path: tilde(options.executables.codex) },
-        session: {},
-        qualification: null,
+        ...(qualifies
+          ? {
+              executable: { path: tilde(options.executables.codex) },
+              session: {},
+              qualification: null,
+            }
+          : {}),
+        // Claude Code's executable, and the transcript read the run turns on
+        // in its profile.
+        ...(teamProviders.includes("claude")
+          ? {
+              claudeCode: {
+                executable: { path: tilde(options.executables.claude) },
+                transcriptRead: null,
+              },
+            }
+          : {}),
         readiness: null,
-        ...(options.workflow ? { workflow: null } : {}),
+        ...(options.workflow ? { workflow: null, claudeCodeSessions: 0 } : {}),
       }
     : both
       ? { steps: {}, conversation: null }
@@ -486,6 +541,192 @@ function checkTerminalEnd(session) {
     );
 }
 
+// Claude Code asks once whether to trust a new folder. A sign-in screen stops
+// the procedure before any prompt is sent. Once escape sequences are removed,
+// Claude Code's words can run together in its raw output (it can move the
+// cursor over blank cells instead of writing spaces), so its prompts are
+// matched against the terminal screen as well.
+const signIn =
+  /select login method|please run \/login|not logged in|invalid api key/i;
+const trustPrompt = /trust (the files in )?this folder|do you trust/i;
+// The answer the prompt has selected follows its pointer on the screen.
+const trustAnswer = /[❯>]\s*(?:\d+\.\s*)?(yes, i trust this folder|no, exit)/i;
+// Besides folder trust, Claude Code can ask at startup whether to change its
+// default permission mode, as 2.1.300 did in a live run in Plan, or, started
+// in bypass permissions, whether to accept that mode. It saves the answer in
+// its own settings, so the script answers none of these questions and stops
+// before the prompt instead.
+const startupQuestions = [
+  [
+    /your default permission mode\?/i,
+    "whether to change its default permission mode",
+  ],
+  [
+    /running in bypass permissions mode/i,
+    "whether to accept bypass permissions mode",
+  ],
+];
+// Below the input, Claude Code shows the shortcuts hint or, in place of it,
+// the permission mode. Only the screen counts: the raw output still holds
+// that line after a question has replaced it.
+const inputReady =
+  /for shortcuts|accept edits on|plan mode on|auto mode on|bypass permissions on/i;
+const shownMode =
+  /(plan mode on|accept edits on|auto mode on|bypass permissions on|\? for shortcuts)/i;
+// Each choice Claude Code asks for is a list, with the selected answer after
+// its pointer and, in most, a number before each answer.
+/** The answer on a line of a choice, without its pointer and number. */
+const answerText = (line) =>
+  line
+    .replace(/^\s*[│|]?\s*(?:[❯>]\s*)?(?:\d+\.\s*)?/, "")
+    .replace(/\s*[│|]\s*$/, "")
+    .trim();
+
+/**
+ * Moves the selection of a choice Claude Code shows to the line `wanted`
+ * matches, and confirms it only once the screen shows it selected. `pointer`
+ * matches the selected line. A choice is drawn below anything else on the
+ * screen, so the lowest matching lines count. Returns the answer selected
+ * first and the one confirmed.
+ */
+async function choose(view, label, wanted, pointer) {
+  let first = null;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const lines = (await view.screen()).split("\n"),
+      target = lines.findLastIndex((l) => wanted.test(l)),
+      selected = lines.findLastIndex((l) => pointer.test(l));
+    if (selected >= 0) first ??= answerText(lines[selected]);
+    if (target >= 0 && selected === target) {
+      await view.press("Enter");
+      return { first, chosen: answerText(lines[target]) };
+    }
+    if (target >= 0 && selected >= 0) {
+      await view.press(selected < target ? "ArrowDown" : "ArrowUp");
+      await until(
+        `Claude Code's ${label} to move its selection`,
+        5000,
+        async () =>
+          (await view.screen())
+            .split("\n")
+            .findLastIndex((l) => pointer.test(l)) !== selected,
+      );
+    } else await sleep(500);
+  }
+  throw new Error(
+    `Claude Code's ${label} did not show its answers on the screen.`,
+  );
+}
+// Claude Code 2.1.183 selects "Yes, I trust this folder" first, but 2.1.300
+// lists and selects "No, exit" first. The selection is moved to the answer
+// that trusts the folder, which is confirmed only once the screen shows it.
+const trustFolder = async (view) =>
+  (
+    await choose(
+      view,
+      "folder trust prompt",
+      /yes, i trust this folder/i,
+      trustAnswer,
+    )
+  ).first;
+// While Claude works, Claude Code can stop for an answer: a permission
+// prompt, an offer to approve a plan, or a question of Claude's. Each is a
+// choice whose answers are numbered, with the selected one after the pointer.
+const numberedAnswer = /^\s*[│|]?\s*❯\s*\d+\.\s*\S/;
+/** The numbered answer of a choice that starts with `start`. */
+const answerNumbered = (start) =>
+  new RegExp(String.raw`^\s*[│|]?\s*(?:❯\s*)?\d+\.\s*${start}`, "i");
+const keepPlanning = answerNumbered("no, keep planning");
+const declinePermission = answerNumbered(String.raw`no\b`);
+/**
+ * The choice Claude Code shows during a step, if any: an offer to approve a
+ * plan, which the script declines with **No, keep planning**, a permission
+ * prompt ("Do you want to …?"), which it declines with its No, or any other
+ * question, which it does not answer.
+ */
+function claudeChoice(screen) {
+  const lines = screen.split("\n"),
+    selected = lines.findLastIndex((l) => numberedAnswer.test(l));
+  if (selected < 0) return null;
+  // The question is the last line above the selected answer that ends with a
+  // question mark; the answers follow it.
+  const trimmed = lines.map((l) => l.replace(/^[\s│|]+|[\s│|]+$/g, "")),
+    asked = trimmed.slice(0, selected).findLastIndex((l) => l.endsWith("?")),
+    question = asked >= 0 ? trimmed[asked] : null,
+    answers = lines.slice(asked + 1);
+  if (answers.some((l) => keepPlanning.test(l)))
+    return { kind: "plan", question, answer: keepPlanning };
+  if (
+    /^do you want to /i.test(question ?? "") &&
+    answers.some((l) => declinePermission.test(l))
+  )
+    return { kind: "permission", question, answer: declinePermission };
+  return { kind: "question", question };
+}
+// Signs that Claude Code waits for an answer, also when the script cannot
+// read the choice: its footer, or answers numbered after a pointer.
+const choiceSigns =
+  /esc to cancel|enter to (confirm|select)|^\s*[│|]?\s*[❯>›]\s*\d+\.\s/im;
+/**
+ * The screen below the folder trust prompt, which Claude Code can leave on
+ * the screen after it was answered; anything it asks next is drawn below.
+ * The prompt ends with its answers and, just below them, its footer.
+ */
+function belowTrust(screen) {
+  const lines = screen.split("\n"),
+    answers = lines.findLastIndex(
+      (l) =>
+        trustPrompt.test(l) || /yes, i trust this folder|no, exit/i.test(l),
+    ),
+    footer = lines.findIndex(
+      (l, index) =>
+        index > answers && index <= answers + 3 && /enter to confirm/i.test(l),
+    );
+  return answers < 0
+    ? screen
+    : lines.slice(Math.max(answers, footer) + 1).join("\n");
+}
+
+/**
+ * Keeps each native terminal's output by terminal from now on, as a workflow
+ * opens a terminal for each Claude Code step.
+ */
+async function watchTerminals() {
+  await page.evaluate(() => {
+    window.__liveTerminal = { output: "", byId: {} };
+    window.topsl.subscribe((event) => {
+      if (event.type !== "terminal") return;
+      const { id, data } = event.data;
+      window.__liveTerminal.output += data;
+      window.__liveTerminal.byId[id] =
+        (window.__liveTerminal.byId[id] ?? "") + data;
+    });
+  });
+}
+/** The terminal a Claude Code step's panel shows: its output, screen and keys. */
+function stepTerminal(panel, id) {
+  const region = panel.getByRole("region", {
+      name: "Native terminal",
+      exact: true,
+    }),
+    focus = () => region.locator("textarea.xterm-helper-textarea").focus();
+  return {
+    region,
+    output: () =>
+      page.evaluate((id) => window.__liveTerminal.byId[id] ?? "", id),
+    screen: () =>
+      region
+        .locator(".xterm-rows")
+        .innerText()
+        .then((text) => text.replace(/ /g, " "))
+        .catch(() => ""),
+    focus,
+    press: async (key) => {
+      await focus();
+      await page.keyboard.press(key);
+    },
+  };
+}
+
 /**
  * Claude Code in Topsl's native terminal, then the import of its transcript.
  * Returns the imported conversation and the number Claude Code replied with.
@@ -504,59 +745,6 @@ async function claudeTerminal(projectId, step) {
     history: null,
   });
   await openTerminal(projectId, session);
-
-  // Claude Code asks once whether to trust a new folder. A sign-in screen stops
-  // the procedure before any prompt is sent. Once escape sequences are removed,
-  // Claude Code's words can run together in its raw output (it can move the
-  // cursor over blank cells instead of writing spaces), so its prompts are
-  // matched against the terminal screen as well.
-  const signIn =
-    /select login method|please run \/login|not logged in|invalid api key/i;
-  const trustPrompt = /trust (the files in )?this folder|do you trust/i;
-  // The answer the prompt has selected follows its pointer on the screen.
-  const trustAnswer =
-    /[❯>]\s*(?:\d+\.\s*)?(yes, i trust this folder|no, exit)/i;
-  const selectedLine = (lines) => lines.findIndex((l) => trustAnswer.test(l));
-  // Claude Code 2.1.183 selects "Yes, I trust this folder" first, but 2.1.300
-  // lists and selects "No, exit" first. The selection is moved to the answer
-  // that trusts the folder, which is confirmed only once the screen shows it.
-  async function trustFolder() {
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const lines = (await terminalScreen()).split("\n"),
-        yes = lines.findIndex((l) => /yes, i trust this folder/i.test(l)),
-        selected = selectedLine(lines);
-      if (selected >= 0)
-        session.folderTrustDefault ??= trustAnswer.exec(lines[selected])[1];
-      if (yes >= 0 && selected === yes) return press("Enter");
-      if (yes >= 0 && selected >= 0) {
-        await press(selected < yes ? "ArrowDown" : "ArrowUp");
-        await until(
-          "Claude Code's folder trust prompt to move its selection",
-          5000,
-          async () =>
-            selectedLine((await terminalScreen()).split("\n")) !== selected,
-        );
-      } else await sleep(500);
-    }
-    throw new Error(
-      "Claude Code's folder trust prompt did not show its answers on the screen.",
-    );
-  }
-  // Besides folder trust, Claude Code can ask at startup whether to change its
-  // default permission mode, as 2.1.300 did in a live run in Plan. It saves the
-  // answer in its own settings, so the script answers none of these questions
-  // and stops before the prompt instead.
-  const startupQuestions = [
-    [
-      /your default permission mode\?/i,
-      "whether to change its default permission mode",
-    ],
-  ];
-  // Below the input, Claude Code shows the shortcuts hint or, in place of it,
-  // the permission mode. Only the screen counts: the raw output still holds
-  // that line after a question has replaced it.
-  const inputReady =
-    /for shortcuts|accept edits on|plan mode on|auto mode on|bypass permissions on/i;
   await until("Claude Code to accept a prompt", 120000, async () => {
     const output = plain(await terminalOutput()),
       screen = await terminalScreen(),
@@ -571,7 +759,10 @@ async function claudeTerminal(projectId, step) {
       session.folderTrustReadFrom = trustPrompt.test(output)
         ? "output"
         : "screen";
-      await trustFolder();
+      session.folderTrustDefault = await trustFolder({
+        screen: terminalScreen,
+        press,
+      });
       session.folderTrust = "accepted";
       return null;
     }
@@ -588,9 +779,7 @@ async function claudeTerminal(projectId, step) {
   // A mode that Claude Code shows below its input has to be the one Topsl
   // passed, or the prompt is not sent.
   session.mode.shown =
-    /(plan mode on|accept edits on|auto mode on|bypass permissions on|\? for shortcuts)/i
-      .exec(await terminalScreen())?.[1]
-      .toLowerCase() ?? null;
+    shownMode.exec(await terminalScreen())?.[1].toLowerCase() ?? null;
   await screenshot("claude-ready");
   const expectedShown = {
     plan: "plan mode on",
@@ -1055,11 +1244,72 @@ const withoutHome = (text) =>
     : text;
 
 /**
+ * A role as the guided setup captures it: Codex with the model, or Claude
+ * Code, to which Topsl passes no model, as a step the owner runs in its
+ * terminal.
+ */
+const roleOf = (provider, runtimes, model) =>
+  provider === "claude"
+    ? {
+        provider,
+        installationId: runtimes.claude.id,
+        model: "set-in-claude-code",
+        route: "terminal",
+      }
+    : { provider, installationId: runtimes.codex.id, model };
+
+/** Opens the guided setup in the project's Activity at its Team step. */
+async function openTeamStep() {
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  const setup = page.locator(".guided-workflow");
+  await appear("the guided setup", setup.locator("summary").first());
+  if ((await setup.getAttribute("open")) === null)
+    await setup.locator("summary").first().click();
+  await setup.getByRole("button", { name: "2. Team", exact: true }).click();
+  return setup;
+}
+
+/**
+ * Keeps the readiness Topsl gives each role of the selection, and how many
+ * roles the guided setup shows as satisfied, in `session`.
+ */
+async function recordReadiness(projectId, setup, selection, session) {
+  const readiness = await command({
+    type: "workflow-readiness-query",
+    projectId,
+    ...selection,
+  });
+  report.readiness = {};
+  for (const role of ["builder", "reviewer"]) {
+    const value = readiness.roles?.[role];
+    report.readiness[role] = {
+      provider: selection[role].provider,
+      ready: !!value?.ready,
+      freshness: value?.freshness?.state ?? null,
+      blockers: (value?.blockers ?? []).map((b) => b.code),
+    };
+  }
+  const shownReady = setup.getByText(/^Role requirements currently satisfied/);
+  if (report.readiness.builder.ready && report.readiness.reviewer.ready)
+    await until(
+      "the guided setup to show both roles as satisfied",
+      15000,
+      async () => (await shownReady.count()) === 2,
+    ).catch(() => {});
+  session.rolesShownReady = await shownReady.count();
+}
+
+/**
  * Topsl's runtime qualification from the guided setup, with Codex in both
- * roles. It is approved once and not retried. Whatever Topsl recorded is
+ * roles, or in the Codex role of a workflow's team, with Claude Code in the
+ * other. It is approved once and not retried. Whatever Topsl recorded is
  * kept, also when the qualification fails.
  */
-async function codexQualification(projectId, runtime) {
+async function codexQualification(projectId, runtimes) {
+  const runtime = runtimes.codex,
+    // The team the guided setup is given: --workflow's, or Codex in both roles.
+    roles = team ?? { builder: "codex", reviewer: "codex" },
+    codexRoles = ["builder", "reviewer"].filter((r) => roles[r] === "codex");
   const session = (report.session = {
     account: null,
     model: null,
@@ -1068,28 +1318,31 @@ async function codexQualification(projectId, runtime) {
     rolesShownReady: null,
   });
   const model = await codexConnection(session);
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
-  const setup = page.locator(".guided-workflow");
-  await appear("the guided setup", setup.locator("summary").first());
-  await setup.locator("summary").first().click();
-  await setup.getByRole("button", { name: "2. Team", exact: true }).click();
-  await setup.getByLabel("Team preset").selectOption("codex:codex");
-  for (const role of ["builder", "reviewer"])
-    await setup.getByLabel(`Selected ${role} runtime`).selectOption(runtime.id);
+  const setup = await openTeamStep();
   await setup
-    .getByRole("button", { name: "Discover builder models", exact: true })
+    .getByLabel("Team preset")
+    .selectOption(`${roles.builder}:${roles.reviewer}`);
+  for (const role of ["builder", "reviewer"])
+    await setup
+      .getByLabel(`Selected ${role} runtime`)
+      .selectOption(runtimes[roles[role]].id);
+  await setup
+    .getByRole("button", {
+      name: `Discover ${codexRoles[0]} models`,
+      exact: true,
+    })
     .click();
   const listed = setup
-    .getByLabel("Requested reviewer model")
+    .getByLabel(`Requested ${codexRoles.at(-1)} model`)
     .locator(`option[value=${JSON.stringify(model)}]`);
   await until("the guided setup to list Codex's models", 60000, async () => {
     await checkShownErrors();
     return (await listed.count()) > 0;
   });
-  for (const role of ["builder", "reviewer"])
+  for (const role of codexRoles)
     await setup.getByLabel(`Requested ${role} model`).selectOption(model);
   const qualify = setup.getByRole("button", {
-    name: "Qualify builder runtime",
+    name: `Qualify ${codexRoles[0]} runtime`,
     exact: true,
   });
   await expect(qualify).toBeEnabled();
@@ -1183,34 +1436,17 @@ async function codexQualification(projectId, runtime) {
           expiresAt: recorded.expiresAt,
         }
       : null;
-    const selection = { provider: "codex", installationId: runtime.id, model };
-    const readiness = await command({
-      type: "workflow-readiness-query",
-      projectId,
-      builder: selection,
-      reviewer: selection,
-    });
-    report.readiness = {};
-    for (const role of ["builder", "reviewer"]) {
-      const value = readiness.roles?.[role];
-      report.readiness[role] = {
-        ready: !!value?.ready,
-        freshness: value?.freshness?.state ?? null,
-        blockers: (value?.blockers ?? []).map((b) => b.code),
-      };
-    }
     if (await summary.isVisible())
       session.summary = withoutHome(await summary.innerText());
-    const shownReady = setup.getByText(
-      /^Role requirements currently satisfied/,
+    await recordReadiness(
+      projectId,
+      setup,
+      {
+        builder: roleOf(roles.builder, runtimes, model),
+        reviewer: roleOf(roles.reviewer, runtimes, model),
+      },
+      session,
     );
-    if (report.readiness.builder.ready && report.readiness.reviewer.ready)
-      await until(
-        "the guided setup to show both roles as satisfied",
-        15000,
-        async () => (await shownReady.count()) === 2,
-      ).catch(() => {});
-    session.rolesShownReady = await shownReady.count();
     await screenshot("qualification");
   } catch (error) {
     failure ??= error;
@@ -1241,7 +1477,7 @@ async function codexQualification(projectId, runtime) {
   );
   if (blocked.length)
     throw new Error(
-      `The qualification left the ${blocked.join(" and ")} role blocked.`,
+      `The ${blocked.join(" and ")} role stayed blocked after the qualification.`,
     );
   if (session.rolesShownReady !== 2)
     throw new Error("The guided setup does not show both roles as satisfied.");
@@ -1261,10 +1497,10 @@ const workflowGoal = {
   ],
 };
 const offlineRecipe = "Locked JavaScript / TypeScript · offline";
-// The qualification's turns, one build and one review.
-const workflowTurns = qualificationTurns + 2;
 const dispatchDialog = "Approve captured inputs and start?",
-  checkDialog = "Run this required check?";
+  checkDialog = "Run this required check?",
+  transcriptDialog =
+    "Let Topsl read Claude Code's transcripts for workflow steps?";
 /** Whether the build and the review have ended, or Topsl stopped before them. */
 const settled = (workflow) =>
   [
@@ -1371,22 +1607,545 @@ async function answerAsOwner(card, approval) {
 }
 
 /**
- * Build and review with Codex in both roles, through Topsl's own screens: the
- * qualification above, the rest of the guided setup and one approved start,
- * after which Topsl builds and then starts the review itself. The script
- * answers none of the requests Codex makes during the workflow's turns: each
- * waits for the owner on the workflow's card, and the report keeps what it
- * asked and the owner's answer. The script starts no repair, decides no
- * finding and never accepts, so the run ends at the findings or, after the
- * required check, at acceptance. Whatever Topsl recorded is kept, also when it
- * fails.
+ * Turns on Settings → Claude Code transcripts in the run's profile, through
+ * Topsl's own confirmation, so that Topsl takes each Claude step's reply from
+ * its session's transcript.
  */
-async function codexWorkflow(projectId, runtime) {
-  if (ownerStandIn && !String(runtime.version).endsWith("-fixture"))
+async function claudeTranscripts() {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const setting = page.getByRole("region", {
+    name: "Claude Code transcripts",
+    exact: true,
+  });
+  await appear("Settings → Claude Code transcripts", setting);
+  const turn = (name) => setting.getByRole("button", { name, exact: true });
+  await app.evaluate(() => {
+    globalThis.__liveSession.policy.transcriptRead = true;
+  });
+  await turn("On").click();
+  await approved(
+    transcriptDialog,
+    "Read transcripts",
+    "Topsl's confirmation to read Claude Code's transcripts was not the one this script expected, so it was cancelled.",
+  );
+  await expect(turn("On")).toHaveAttribute("aria-pressed", "true", {
+    timeout: 15000,
+  });
+  report.claudeCode.transcriptRead = "on";
+  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+}
+
+/**
+ * The guided setup's Team step with Claude Code in both roles. A Claude Code
+ * step needs no model and no qualification, only a trusted Claude Code and
+ * project, so nothing runs before the workflow.
+ */
+async function claudeTeam(projectId, runtimes) {
+  const setup = await openTeamStep();
+  await setup.getByLabel("Team preset").selectOption("claude:claude");
+  for (const role of ["builder", "reviewer"])
+    await setup
+      .getByLabel(`Selected ${role} runtime`)
+      .selectOption(runtimes.claude.id);
+  const selection = {
+    builder: roleOf("claude", runtimes),
+    reviewer: roleOf("claude", runtimes),
+  };
+  await recordReadiness(projectId, setup, selection, report.claudeCode);
+  // The setup says plainly that Claude reviews Claude.
+  report.claudeCode.pairingNoteShown =
+    (await setup
+      .getByText(
+        "Claude reviews Claude in a fresh Claude Code session. This is not an independent second model.",
+        { exact: true },
+      )
+      .count()) === 1;
+  await screenshot("team");
+  const blocked = ["builder", "reviewer"].filter(
+    (role) => !report.readiness[role].ready,
+  );
+  if (blocked.length)
+    throw new Error(
+      `Topsl shows the ${blocked.join(" and ")} role blocked: ${blocked.map((role) => report.readiness[role].blockers.join(", ") || "no reason given").join("; ")}.`,
+    );
+  if (report.claudeCode.rolesShownReady !== 2)
+    throw new Error("The guided setup does not show both roles as satisfied.");
+  if (!report.claudeCode.pairingNoteShown)
+    throw new Error(
+      "The guided setup does not say that Claude reviewing Claude is not an independent second model.",
+    );
+}
+
+/**
+ * Fails unless Claude Code opens for the step in one of the run's folders,
+ * whose trust question the script answers: the seeded project for a build,
+ * or, for a review, a new read-only copy of the build in the temporary folder.
+ */
+async function runFolder(step, noun) {
+  const folder = await realpath(step.folder).catch(() => null);
+  if (step.role !== "reviewer") {
+    if (folder !== canonicalProject)
+      throw new Error(
+        `Topsl opens the ${noun} in ${withoutHome(step.folder)}, not in the seeded project, so the script opened nothing.`,
+      );
+    return folder;
+  }
+  const mode = folder ? (await stat(folder)).mode : null;
+  if (
+    !folder ||
+    path.dirname(folder) !== (await realpath(os.tmpdir())) ||
+    !path.basename(folder).startsWith("topsl-candidate-") ||
+    mode & 0o222
+  )
+    throw new Error(
+      `Topsl opens the review in ${withoutHome(step.folder)}, which is not a new read-only copy of the build in the temporary folder, so the script opened nothing.`,
+    );
+  return folder;
+}
+
+// The mode each Claude step opens in: a build or repair in Accept edits,
+// which the script picks on the step's mode menu, and a review in Plan, the
+// only mode Topsl opens it in. Claude Code shows each below its input.
+const stepModes = {
+  build: {
+    id: "accept-edits",
+    args: ["--permission-mode", "acceptEdits"],
+    shown: "accept edits on",
+  },
+  review: {
+    id: "plan",
+    args: ["--permission-mode", "plan"],
+    shown: "plan mode on",
+  },
+};
+/** How long a Claude step may take, from the instructions to Claude's reply. */
+const stepWindow = 30 * 60000;
+
+/**
+ * Runs the Claude Code step the workflow waits on from its card, as the
+ * owner would: it opens Claude Code for the step, answers the folder trust
+ * question for the run's folder, and pastes the instructions Topsl copied
+ * once. During Claude's turn, it declines every permission prompt and every
+ * offer to approve a plan; any other question stops the run. After Claude's
+ * reply it exits Claude Code, confirms that Claude Code stopped and hands the
+ * reply back from the session's transcript, which Topsl must take.
+ */
+async function claudeStep(projectId, card, step, workflowOf) {
+  const noun = { builder: "build", reviewer: "review", repair: "repair" }[
+      step.role
+    ],
+    mode = step.role === "reviewer" ? stepModes.review : stepModes.build;
+  const record = {
+    role: step.role,
+    stepId: step.id,
+    folder: withoutHome(step.folder),
+    sessionId: null,
+    runtimeVersion: null,
+    mode: { chosen: mode.id, recorded: null, args: null, shown: null },
+    folderTrust: { asked: false, selectedFirst: null, namesFolder: null },
+    startupQuestion: null,
+    bracketedPaste: null,
+    instructions: null,
+    pasted: false,
+    replySeconds: null,
+    declined: [],
+    question: null,
+    apiError: null,
+    exit: null,
+    stopped: false,
+    handBack: null,
+    topsl: null,
+  };
+  report.workflow.claudeSteps.push(record);
+  const panel = card.getByRole("region", {
+    name: `Claude Code ${noun}`,
+    exact: true,
+  });
+  await appear(`the Claude Code ${noun} on the workflow's card`, panel);
+  const folder = await runFolder(step, noun);
+  const menu = panel.getByRole("combobox", {
+    name: `Claude Code mode for this ${noun}`,
+    exact: true,
+  });
+  if (step.role === "reviewer") {
+    if (await menu.count())
+      throw new Error(
+        "The Claude Code review offers a mode menu, but a review opens only in Plan.",
+      );
+  } else {
+    const offered = await menu
+      .locator("option")
+      .evaluateAll((list) => list.map((option) => option.value));
+    if (!offered.includes(mode.id))
+      throw new Error(
+        `The ${noun}'s mode menu offers ${offered.join(", ")}, not ${mode.id}.`,
+      );
+    await menu.selectOption(mode.id);
+  }
+  await screenshot(`claude-${noun}-step`);
+
+  try {
+    await panel
+      .getByRole("button", { name: "Open in Claude Code", exact: true })
+      .click();
+    const open = await until(
+      `Claude Code to open for the ${noun}`,
+      60000,
+      async () => {
+        await checkShownErrors();
+        const latest = (await workflowOf()).claudeSteps
+          .find((s) => s.id === step.id)
+          ?.opens.at(-1);
+        if (latest?.state === "failed")
+          throw new Error(
+            `Claude Code did not open for the ${noun}: ${withoutHome(latest.error)}`,
+          );
+        return latest?.state === "opened" ? latest : null;
+      },
+    );
+    record.sessionId = open.sessionId;
+    record.runtimeVersion = open.runtimeVersion;
+    record.mode.recorded = open.mode;
+    record.mode.args =
+      (await command({ type: "scope-snapshot", projectId })).runs.find(
+        (run) => run.nativeSessionId === open.sessionId,
+      )?.permissionArgs ?? null;
+    if (
+      open.mode !== mode.id ||
+      JSON.stringify(record.mode.args) !== JSON.stringify(mode.args)
+    )
+      throw new Error(
+        `Topsl opened the ${noun} in ${open.mode} with ${JSON.stringify(record.mode.args)}, not ${mode.id} with ${JSON.stringify(mode.args)}.`,
+      );
+    // The instructions Topsl shows on the step, which it copied for the owner.
+    const shown = panel.locator("details pre");
+    const instructions = await until(
+      "the instructions Topsl copied",
+      15000,
+      async () => ((await shown.count()) ? shown.textContent() : null),
+    );
+    const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+    record.instructions = {
+      characters: instructions.length,
+      lines: instructions.split("\n").length,
+      sha256: createHash("sha256").update(instructions).digest("hex"),
+      copied: copied === instructions,
+    };
+    record.instructions.matchStep =
+      record.instructions.sha256 === step.instructionsHash;
+    if (!record.instructions.copied)
+      throw new Error(
+        "The clipboard does not hold the instructions Topsl shows for the step, so nothing was pasted.",
+      );
+    if (
+      !record.instructions.matchStep ||
+      !instructions.startsWith(`# Topsl task input\nRole: ${step.role}\n`) ||
+      (step.role === "reviewer" &&
+        !instructions.includes(
+          `"candidateRevision":"${step.candidateRevision}"`,
+        ))
+    )
+      throw new Error(
+        `The instructions Topsl copied are not the ${noun}'s, so nothing was pasted.`,
+      );
+
+    const view = stepTerminal(panel, open.terminalId);
+    await appear(`Claude Code's terminal for the ${noun}`, view.region);
+    await until(
+      `Claude Code to accept the ${noun}'s instructions`,
+      120000,
+      async () => {
+        const output = plain(await view.output()),
+          screen = await view.screen(),
+          text = `${output}\n${screen}`;
+        if (signIn.test(text))
+          throw new Error(
+            "Claude Code is not signed in. Sign in with `claude` in a terminal, then run this again.",
+          );
+        if (exitPattern.test(output))
+          throw new Error(
+            `Claude Code exited before accepting the ${noun}'s instructions.`,
+          );
+        // Claude Code asks whether to trust each new folder, as this run's
+        // are.
+        if (!record.folderTrust.asked && trustPrompt.test(screen)) {
+          record.folderTrust.asked = true;
+          const flat = screen.replace(/\s+/g, "");
+          record.folderTrust.namesFolder = [
+            folder,
+            step.folder,
+            tilde(folder),
+            tilde(step.folder),
+          ].some((name) => flat.includes(name.replace(/\s+/g, "")));
+          record.folderTrust.selectedFirst = await trustFolder(view);
+          return null;
+        }
+        const shown = belowTrust(screen);
+        const asked = startupQuestions.find(([pattern]) => pattern.test(text));
+        if (asked) {
+          record.startupQuestion = asked[1];
+          await screenshot(`claude-${noun}-question`);
+          throw new Error(
+            `Claude Code asked ${asked[1]} before accepting the ${noun}'s instructions. The script answers none of Claude Code's startup questions except folder trust, so nothing was pasted.`,
+          );
+        }
+        if (claudeChoice(shown) || choiceSigns.test(shown)) {
+          record.question = claudeChoice(shown)?.question ?? null;
+          await screenshot(`claude-${noun}-question`);
+          throw new Error(
+            `Claude Code asked ${record.question ? `"${record.question}"` : "a question"} before accepting the ${noun}'s instructions. The script answers none of Claude Code's startup questions except folder trust, so nothing was pasted.`,
+          );
+        }
+        return inputReady.test(shown);
+      },
+    );
+    // The mode Claude Code shows below its input has to be the one Topsl
+    // passed, or nothing is pasted.
+    record.mode.shown =
+      shownMode.exec(await view.screen())?.[1].toLowerCase() ?? null;
+    await screenshot(`claude-${noun}-ready`);
+    if (record.mode.shown !== mode.shown)
+      throw new Error(
+        `Claude Code showed ${record.mode.shown ? `"${record.mode.shown}"` : "no permission mode"} below its input instead of "${mode.shown}", so nothing was pasted.`,
+      );
+    // Without bracketed paste, each line of the instructions would reach
+    // Claude Code as if typed, and the first would be sent alone.
+    const raw = await view.output();
+    record.bracketedPaste =
+      raw.lastIndexOf("\x1b[?2004h") > raw.lastIndexOf("\x1b[?2004l");
+    if (!record.bracketedPaste)
+      throw new Error(
+        "Claude Code has not turned on bracketed paste, so a paste would send the instructions line by line. Nothing was pasted.",
+      );
+
+    // One paste, with Topsl's Edit → Paste, which is what Cmd+V does in
+    // Topsl on a Mac, into Claude Code's input; then Enter sends it.
+    const before = raw.length;
+    await view.focus();
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.paste(),
+    );
+    record.pasted = true;
+    await until(
+      `Claude Code to show the pasted instructions`,
+      15000,
+      async () =>
+        /\[Pasted text #\d+/.test(await view.screen()) ||
+        (await view.screen()).includes("# Topsl task input"),
+    );
+    await sleep(500);
+    const sentAt = Date.now();
+    await view.press("Enter");
+
+    // Claude's turn, until Claude Code waits for the owner again with
+    // nothing on its screen changing for 5 seconds.
+    let last = null,
+      steadySince = Date.now();
+    await until(
+      `Claude's reply in the ${noun}`,
+      stepWindow,
+      async () => {
+        const output = plain((await view.output()).slice(before)),
+          screen = belowTrust(await view.screen());
+        if (screen !== last) {
+          last = screen;
+          steadySince = Date.now();
+        }
+        const steady = Date.now() - steadySince >= 5000;
+        // An API error Claude Code has given up on stays on screen; while it
+        // retries one, it says so.
+        const apiError = /API Error: (\d{3})/.exec(screen);
+        if (apiError && !/Retrying in/i.test(screen)) {
+          record.apiError = Number(apiError[1]);
+          throw new Error(
+            `Claude Code reported API error ${apiError[1]} instead of replying.`,
+          );
+        }
+        if (signIn.test(`${output}\n${screen}`))
+          throw new Error("Claude Code asked to sign in instead of replying.");
+        if (exitPattern.test(output))
+          throw new Error(
+            `Claude Code exited before Claude replied in the ${noun}.`,
+          );
+        const choice = claudeChoice(screen);
+        if (choice?.kind === "plan" || choice?.kind === "permission") {
+          await screenshot(`claude-${noun}-${choice.kind}`);
+          const { first, chosen } = await choose(
+            view,
+            choice.kind === "plan"
+              ? "offer to approve the plan"
+              : "permission prompt",
+            choice.answer,
+            numberedAnswer,
+          );
+          record.declined.push({
+            kind: choice.kind,
+            question: choice.question,
+            selectedFirst: first,
+            answered: chosen,
+          });
+          await until(
+            "Claude Code to take the answer",
+            15000,
+            async () =>
+              !(await view.screen())
+                .split("\n")
+                .some((l) => choice.answer.test(l)),
+          );
+          return false;
+        }
+        if (choice || (choiceSigns.test(screen) && steady)) {
+          record.question = choice?.question ?? null;
+          await screenshot(`claude-${noun}-question`);
+          throw new Error(
+            `Claude Code asked ${record.question ? `"${record.question}"` : "a question the script cannot read"} during the ${noun}. The script answers no question there but permission prompts and plan approvals, which it declines, so it stopped.`,
+          );
+        }
+        const working =
+          /esc\s*to\s*interrupt/i.test(output) || output.includes("⏺");
+        if (!working && Date.now() - sentAt > 120000)
+          throw new Error(
+            `Claude Code showed no sign of working on the ${noun}'s instructions within 2 minutes.`,
+          );
+        return (
+          working &&
+          steady &&
+          inputReady.test(screen) &&
+          !/esc\s*to\s*interrupt/i.test(screen)
+        );
+      },
+      1000,
+    );
+    record.replySeconds = Math.round((steadySince - sentAt) / 100) / 10;
+    await screenshot(`claude-${noun}-reply`);
+
+    // Claude Code's own exit, then if needed Ctrl+C twice and Close session.
+    record.exit = { method: "/exit", code: null };
+    if (choiceSigns.test(belowTrust(await view.screen())))
+      throw new Error(
+        "Claude Code shows a choice, so the script typed nothing to exit it.",
+      );
+    await view.focus();
+    await page.keyboard.type("/exit", { delay: 20 });
+    await sleep(500);
+    await page.keyboard.press("Enter");
+    const exited = (timeoutMs) =>
+      until("Claude Code to exit", timeoutMs, async () =>
+        exitPattern.exec(plain(await view.output())),
+      ).catch(() => null);
+    let ended = await exited(30000);
+    if (!ended) {
+      record.exit.method = "Ctrl+C twice";
+      await view.press("Control+C");
+      await sleep(500);
+      await view.press("Control+C");
+      ended = await exited(20000);
+    }
+    if (!ended) {
+      record.exit.method = "Close session";
+      await panel
+        .getByRole("button", { name: "Close session", exact: true })
+        .click();
+      ended = await exited(20000);
+    }
+    record.exit.code = ended ? Number(ended[1]) : null;
+    await until(
+      "Topsl to see Claude Code exit",
+      20000,
+      async () => !(await workflowOf()).claudeStepTerminalId,
+    );
+  } finally {
+    // A run that stops while Claude Code runs keeps its screen, then closes
+    // its session.
+    const running = await command({ type: "builder-reviewer-query", projectId })
+      .then(
+        ({ workflows }) =>
+          workflows.find((w) => w.id === step.workflowId)?.claudeStepTerminalId,
+      )
+      .catch(() => null);
+    if (running) {
+      await screenshot(`claude-${noun}-stopped`).catch(() => {});
+      await panel
+        .getByRole("button", { name: "Close session", exact: true })
+        .click({ timeout: 5000 })
+        .catch(() => {});
+      record.exit ??= { method: "Close session", code: null };
+    }
+  }
+
+  // The owner's confirmation, then the reply from the session's transcript.
+  await panel
+    .getByRole("checkbox", { name: /^Claude Code has stopped/ })
+    .check();
+  record.stopped = true;
+  const handed = (await workflowOf()).claudeSteps.find((s) => s.id === step.id);
+  await panel
+    .getByRole("button", { name: "Take reply from transcript", exact: true })
+    .click();
+  record.handBack = await until(
+    "Topsl to take Claude's reply",
+    60000,
+    async () => {
+      await checkShownErrors();
+      const current = (await workflowOf()).claudeSteps.find(
+          (s) => s.id === step.id,
+        ),
+        reply =
+          current.replies.length > handed.replies.length
+            ? current.replies.at(-1)
+            : null;
+      if (reply)
+        return {
+          source: reply.source,
+          outcome: reply.outcome,
+          detail: withoutHome(reply.detail),
+        };
+      if (
+        current.updatedAt !== handed.updatedAt &&
+        current.detail.startsWith("Topsl took no reply")
+      )
+        return {
+          source: "claude-transcript",
+          outcome: "unread",
+          detail: withoutHome(current.detail),
+        };
+      return null;
+    },
+  );
+  if (record.handBack.outcome !== "taken")
+    throw new Error(
+      record.handBack.outcome === "unread"
+        ? record.handBack.detail
+        : `Topsl did not take the ${noun}'s reply from the transcript: ${record.handBack.detail}`,
+    );
+  if (record.handBack.source !== "claude-transcript")
+    throw new Error(
+      `Topsl took the ${noun}'s reply as ${record.handBack.source}, not from the transcript.`,
+    );
+}
+
+/**
+ * Build and review with the team --workflow names, through Topsl's own
+ * screens: Codex's qualification, or the Team step for Claude in both roles,
+ * then the rest of the guided setup and one approved start, after which
+ * Topsl builds and then starts the review itself. A Claude role is a Claude
+ * Code step on the workflow's card, which the script runs as claudeStep
+ * says. The script answers none of the requests Codex makes during the
+ * workflow's turns: each waits for the owner on the workflow's card, and the
+ * report keeps what it asked and the owner's answer. The script starts no
+ * repair, decides no finding and never accepts, so the run ends at the
+ * findings or, after the required check, at acceptance. Whatever Topsl
+ * recorded is kept, also when it fails.
+ */
+async function teamWorkflow(projectId, runtimes) {
+  if (ownerStandIn && !String(runtimes.codex.version).endsWith("-fixture"))
     throw new Error(
       "TOPSL_LIVE_OWNER_STAND_IN plays the owner only for the repository's stand-in, never for a live Codex.",
     );
-  await codexQualification(projectId, runtime);
+  await watchTerminals();
+  if (runtimes.claude) await claudeTranscripts();
+  if (runtimes.codex) await codexQualification(projectId, runtimes);
+  else await claudeTeam(projectId, runtimes);
   const workflow = (report.workflow = {
     project: {
       baseCommit: seeded.baseCommit,
@@ -1405,6 +2164,8 @@ async function codexWorkflow(projectId, runtime) {
     review: null,
     reviewReply: null,
     checks: [],
+    claudeSteps: [],
+    claudeProvenance: [],
     record: null,
     stoppedAt: null,
   });
@@ -1498,8 +2259,8 @@ async function codexWorkflow(projectId, runtime) {
       {
         workflowId: workflow.id,
         workspace: canonicalProject,
-        installationId: runtime.id,
-        model: report.session.model,
+        builder: roleOf(team.builder, runtimes, report.session?.model),
+        reviewer: roleOf(team.reviewer, runtimes, report.session?.model),
       },
     );
     const start = card.getByRole("button", {
@@ -1515,59 +2276,72 @@ async function codexWorkflow(projectId, runtime) {
     );
     // The script answers none of Codex's requests: each waits for the owner
     // on the workflow's card and is kept with the owner's answer once it is
-    // gone.
+    // gone. A Claude step the workflow waits on is run once, as the owner
+    // would, after which Topsl goes on by itself.
     await watchPresses();
-    const requests = new Map();
+    const requests = new Map(),
+      handled = new Set(),
+      workflowOf = observe;
     try {
-      await until(
-        "the build and the review",
-        45 * 60000,
-        async () => {
-          const scope = await command({ type: "scope-snapshot", projectId }),
-            tasks = scope.coordination.tasks
-              .filter((t) => t.workflowId === workflow.id)
-              .map((t) => t.id),
-            runs = new Set(
-              scope.coordination.attempts
-                .filter((a) => tasks.includes(a.taskId))
-                .map((a) => a.legacyRunId),
-            ),
-            waiting = scope.approvals.filter((a) => runs.has(a.runId));
-          for (const approval of waiting) {
-            // Topsl takes no answer to a request after 15 minutes, so one
-            // left that long can only hold the run until its time is up.
-            const deadline = Date.parse(approval.createdAt) + answerWindow;
-            if (Date.now() > deadline)
-              throw new Error(
-                `Codex's request "${asked(approval).title}" waited 15 minutes without an answer, and Topsl takes none after that.`,
-              );
-            if (!requests.has(approval.id)) {
-              const request = asked(approval);
-              requests.set(approval.id, { approval, request });
-              workflow.approvals.push(request);
-              console.error(
-                ownerStandIn
-                  ? `Codex asks: ${request.title}. The script answers it as the owner, since this is the stand-in run.`
-                  : `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`,
-              );
-              // How the first request looks on the card, before its answer.
-              if (requests.size === 1) {
-                await appear(
-                  "Codex's request on the workflow's card",
-                  card.locator(`[data-approval="${approval.id}"]`),
+      for (;;) {
+        let waitingStep = null;
+        await until(
+          "the build and the review",
+          45 * 60000,
+          async () => {
+            const scope = await command({ type: "scope-snapshot", projectId }),
+              tasks = scope.coordination.tasks
+                .filter((t) => t.workflowId === workflow.id)
+                .map((t) => t.id),
+              runs = new Set(
+                scope.coordination.attempts
+                  .filter((a) => tasks.includes(a.taskId))
+                  .map((a) => a.legacyRunId),
+              ),
+              waiting = scope.approvals.filter((a) => runs.has(a.runId));
+            for (const approval of waiting) {
+              // Topsl takes no answer to a request after 15 minutes, so one
+              // left that long can only hold the run until its time is up.
+              const deadline = Date.parse(approval.createdAt) + answerWindow;
+              if (Date.now() > deadline)
+                throw new Error(
+                  `Codex's request "${asked(approval).title}" waited 15 minutes without an answer, and Topsl takes none after that.`,
                 );
-                await screenshot("workflow-request");
+              if (!requests.has(approval.id)) {
+                const request = asked(approval);
+                requests.set(approval.id, { approval, request });
+                workflow.approvals.push(request);
+                console.error(
+                  ownerStandIn
+                    ? `Codex asks: ${request.title}. The script answers it as the owner, since this is the stand-in run.`
+                    : `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`,
+                );
+                // How the first request looks on the card, before its answer.
+                if (requests.size === 1) {
+                  await appear(
+                    "Codex's request on the workflow's card",
+                    card.locator(`[data-approval="${approval.id}"]`),
+                  );
+                  await screenshot("workflow-request");
+                }
+                if (ownerStandIn) await answerAsOwner(card, approval);
               }
-              if (ownerStandIn) await answerAsOwner(card, approval);
             }
-          }
-          for (const [id, { approval, request }] of requests)
-            if (!request.answer && !waiting.some((a) => a.id === id))
-              request.answer = await answerOf(approval);
-          return settled(await observe());
-        },
-        2000,
-      );
+            for (const [id, { approval, request }] of requests)
+              if (!request.answer && !waiting.some((a) => a.id === id))
+                request.answer = await answerOf(approval);
+            const observed = await observe(),
+              step = observed.claudeStep;
+            if (step?.state === "waiting" && !handled.has(step.id))
+              waitingStep = step;
+            return waitingStep || settled(observed);
+          },
+          2000,
+        );
+        if (!waitingStep) break;
+        handled.add(waitingStep.id);
+        await claudeStep(projectId, card, waitingStep, workflowOf);
+      }
     } finally {
       for (const { request } of requests.values())
         request.answer ??= "unanswered";
@@ -1614,9 +2388,13 @@ async function codexWorkflow(projectId, runtime) {
   }
   if (failure) throw failure;
 
-  if (report.modelTurns > workflowTurns)
+  if (report.modelTurns > team.codexTurns)
     throw new Error(
-      `The run started ${report.modelTurns} model turns, more than the ${workflowTurns} approved.`,
+      `The run started ${report.modelTurns} model turns, more than the ${team.codexTurns} approved.`,
+    );
+  if (report.claudeCodeSessions > team.claudeSessions)
+    throw new Error(
+      `The run opened ${report.claudeCodeSessions} Claude Code sessions, more than the ${team.claudeSessions} approved.`,
     );
   const { stage, candidate, review } = workflow;
   if (stage === "ready-review" && candidate.pendingOutputs.length)
@@ -1666,8 +2444,9 @@ async function recordWorkflow(projectId, card) {
     );
   workflow.stage = state.stage;
   workflow.detail = withoutHome(state.detail);
-  // The model turns: the build, the review and any repair. The required
-  // check is a task too, but it runs no model.
+  // The stages: the build, the review and any repair, each a Codex turn or
+  // a Claude Code step. The required check is a task too, but it runs no
+  // model.
   workflow.attempts = scope.coordination.attempts
     .filter((a) => tasks.some((t) => t.id === a.taskId && t.role !== "tester"))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1681,6 +2460,8 @@ async function recordWorkflow(projectId, card) {
             : task.id === state.builderTaskId
               ? "build"
               : "repair",
+        provider: (task.role === "reviewer" ? state.reviewer : state.builder)
+          .provider,
         state: attempt.state,
         requestedModel: attempt.requestedModel,
         reportedModel: attempt.reportedModel,
@@ -1697,7 +2478,42 @@ async function recordWorkflow(projectId, card) {
     });
   report.modelTurns =
     (report.qualification?.turnsStarted ?? 0) +
-    workflow.attempts.filter((a) => a.turnStarted).length;
+    workflow.attempts.filter((a) => a.provider === "codex" && a.turnStarted)
+      .length;
+  // What Topsl recorded for each Claude Code step: its sessions, with the
+  // mode and Claude Code version, and each reply handed back.
+  const listed = (
+    await command({ type: "builder-reviewer-query", projectId })
+  ).workflows.find((w) => w.id === workflow.id);
+  for (const step of listed?.claudeSteps ?? []) {
+    let record = workflow.claudeSteps.find((r) => r.stepId === step.id);
+    if (!record)
+      workflow.claudeSteps.push(
+        (record = { role: step.role, stepId: step.id, run: "not run" }),
+      );
+    record.topsl = {
+      state: step.state,
+      replySource: step.replySource,
+      detail: withoutHome(step.detail),
+      opens: step.opens.map((open) => ({
+        sessionId: open.sessionId,
+        mode: open.mode,
+        runtimeVersion: open.runtimeVersion,
+        state: open.state,
+        error: withoutHome(open.error),
+      })),
+      replies: step.replies.map((reply) => ({
+        source: reply.source,
+        outcome: reply.outcome,
+        detail: withoutHome(reply.detail),
+      })),
+    };
+  }
+  report.claudeCodeSessions = (listed?.claudeSteps ?? []).reduce(
+    (sum, step) => sum + step.opens.length,
+    0,
+  );
+  workflow.claudeProvenance = listed?.claudeProvenance ?? [];
   workflow.candidate = {
     revision: inspection.candidate.revision,
     changes: (inspection.candidate.changes ?? []).map(
@@ -1827,7 +2643,8 @@ try {
       const optionsOf = (args) => (args.length > 1 ? args[1] : args[0]) ?? {};
       // Topsl's dialog to start a workflow shows its captured inputs as JSON
       // above its explanation. It has to name the workflow, the folder and,
-      // for both roles, the runtime and model the script chose.
+      // for both roles, the provider, runtime and model the script chose, and
+      // for a Claude role its terminal route.
       const startsWorkflow = (detail, expected) => {
         let inputs = null;
         try {
@@ -1840,11 +2657,10 @@ try {
         return (
           inputs.workflowId === expected.workflowId &&
           inputs.workspace === expected.workspace &&
-          ["builder", "reviewer"].every(
-            (role) =>
-              inputs[role]?.provider === "codex" &&
-              inputs[role]?.installationId === expected.installationId &&
-              inputs[role]?.model === expected.model,
+          ["builder", "reviewer"].every((role) =>
+            ["provider", "installationId", "model", "route", "effort"].every(
+              (key) => inputs[role]?.[key] === expected[role]?.[key],
+            ),
           )
         );
       };
@@ -1918,21 +2734,27 @@ try {
                           `In a disposable folder in ${policy.qualification.folder} it will:`,
                         )
                       ? "Run qualification"
-                      : message === "Approve captured inputs and start?" &&
-                          policy.dispatch &&
-                          startsWorkflow(detail, policy.dispatch)
-                        ? "Approve inputs and start"
-                        : message === "Run this required check?" &&
-                            policy.check &&
-                            detail.startsWith(
-                              `Required project check\n\nExecutable: ${policy.check.executable}\nArguments: ${JSON.stringify(policy.check.args)}\nCandidate: ${policy.check.candidate}\n`,
-                            )
-                          ? "Run check"
-                          : null;
+                      : message ===
+                            "Let Topsl read Claude Code's transcripts for workflow steps?" &&
+                          policy.transcriptRead
+                        ? "Read transcripts"
+                        : message === "Approve captured inputs and start?" &&
+                            policy.dispatch &&
+                            startsWorkflow(detail, policy.dispatch)
+                          ? "Approve inputs and start"
+                          : message === "Run this required check?" &&
+                              policy.check &&
+                              detail.startsWith(
+                                `Required project check\n\nExecutable: ${policy.check.executable}\nArguments: ${JSON.stringify(policy.check.args)}\nCandidate: ${policy.check.candidate}\n`,
+                              )
+                            ? "Run check"
+                            : null;
         // The handoff approval covers the one message the script sends, the
-        // qualification approval one qualification, and the workflow's
-        // approvals one start and one run of its check.
+        // qualification approval one qualification, the transcript approval
+        // one change of that setting, and the workflow's approvals one start
+        // and one run of its check.
         if (expected === "Send context") policy.handoff = false;
+        if (expected === "Read transcripts") policy.transcriptRead = false;
         if (expected === "Run qualification") policy.qualification = null;
         if (expected === "Approve inputs and start") policy.dispatch = null;
         if (expected === "Run check") policy.check = null;
@@ -1948,6 +2770,7 @@ try {
       runtimeKind: null,
       transcript: null,
       handoff: false,
+      transcriptRead: false,
       qualification: null,
       dispatch: null,
       check: null,
@@ -1955,38 +2778,63 @@ try {
     },
   );
 
+  /** Adds the disposable project in Workspace, as a user would. */
+  const addProject = async () => {
+    await page
+      .getByRole("button", { name: "+ Add project", exact: true })
+      .click();
+    await appear(
+      "the disposable project",
+      page.getByRole("heading", { name: "live-project", exact: true }),
+    );
+    const id = (await command({ type: "state" })).projects.find(
+      (p) => p.realPath === canonicalProject,
+    )?.id;
+    if (!id) throw new Error("Topsl did not add the disposable project.");
+    return id;
+  };
   let projectId = null,
     handoff = null;
-  for (const provider of providers) {
-    const step = both
-      ? (report.steps[provider] = {
-          route: routes[provider],
-          ...newStep(provider),
-        })
-      : report;
-    const trusted = await locate(provider, step);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    if (!projectId) {
-      await page
-        .getByRole("button", { name: "+ Add project", exact: true })
-        .click();
-      await appear(
-        "the disposable project",
-        page.getByRole("heading", { name: "live-project", exact: true }),
+  if (options.workflow) {
+    // Each executable the team needs, then the project, with Codex selected
+    // in the project's runtime bar when the team has it.
+    const runtimes = {};
+    for (const provider of teamProviders)
+      runtimes[provider] = await locate(
+        provider,
+        provider === "claude" ? report.claudeCode : report,
       );
-      projectId = (await command({ type: "state" })).projects.find(
-        (p) => p.realPath === canonicalProject,
-      )?.id;
-      if (!projectId)
-        throw new Error("Topsl did not add the disposable project.");
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    projectId = await addProject();
+    await page
+      .locator(".runtime-bar select")
+      .first()
+      .selectOption((runtimes.codex ?? runtimes.claude).id);
+    await teamWorkflow(projectId, runtimes);
+  } else
+    for (const provider of providers) {
+      const step = both
+        ? (report.steps[provider] = {
+            route: routes[provider],
+            ...newStep(provider),
+          })
+        : report;
+      const trusted = await locate(provider, step);
+      await page
+        .getByRole("button", { name: "Workspace", exact: true })
+        .click();
+      projectId ??= await addProject();
+      await page
+        .locator(".runtime-bar select")
+        .first()
+        .selectOption(trusted.id);
+      if (provider === "claude")
+        handoff = await claudeTerminal(projectId, step);
+      else if (options.qualify)
+        await codexQualification(projectId, { codex: trusted });
+      else if (options.terminal) await codexTerminal(projectId, step);
+      else await codexChat(projectId, step, both ? handoff : null);
     }
-    await page.locator(".runtime-bar select").first().selectOption(trusted.id);
-    if (provider === "claude") handoff = await claudeTerminal(projectId, step);
-    else if (options.workflow) await codexWorkflow(projectId, trusted);
-    else if (options.qualify) await codexQualification(projectId, trusted);
-    else if (options.terminal) await codexTerminal(projectId, step);
-    else await codexChat(projectId, step, both ? handoff : null);
-  }
   report.result = "passed";
 } catch (error) {
   report.failure = error instanceof Error ? error.message : String(error);
