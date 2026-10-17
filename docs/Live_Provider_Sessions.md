@@ -26,6 +26,7 @@ node scripts/live-session.mjs --codex "$(command -v codex)" --preset edit-on-req
 ## What a run does
 
 - Topsl runs from this checkout with a new `topsl-test-live-*` profile in the operating system's temporary folder, so the user's own Topsl profile is never opened. Packaged builds ignore this test profile switch.
+- A test profile never searches for applications. Its **Applications** screen says so, labels each application without a runtime **Not searched** instead of **Not found**, and turns **↻ Discover** off, so the window lists only the runtimes the script located.
 - The billing variables Topsl refuses (`billingConflicts` in [`packages/platform/system.ts`](../packages/platform/system.ts), such as `ANTHROPIC_API_KEY` or `OPENAI_BASE_URL`) are removed from Topsl's environment, as a launch from the Dock would not have them. The report lists the removed names only.
 - Native dialogs are answered by the script. It approves only the dialogs listed below, for the exact executable and folder it selected, cancels any other, and records every dialog in the report.
 - Each executable is chosen with **Locate runtime** (`select-runtime`) and trusted, and a new empty `live-project` folder inside the profile is added and trusted as a project. With `--workflow`, the seeded project is added instead.

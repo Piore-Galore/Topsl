@@ -317,6 +317,9 @@ kbd {
   margin-right: 6px;
   vertical-align: middle;
 }
+.status-dot.notice {
+  background: var(--accent);
+}
 .main-column {
   margin-left: 218px;
   width: calc(100% - 218px);

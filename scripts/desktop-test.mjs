@@ -125,6 +125,20 @@ try {
   ).toBeVisible({ timeout: 45000 });
   await expect(page.getByText("You approve every Topsl update.")).toBeVisible();
   await expect(page.locator(".application-card")).toHaveCount(4);
+  // A test profile never searches for applications, and says so. An
+  // application without a native build for this platform keeps its own label.
+  await expect(page.getByText("This is a test profile.")).toBeVisible();
+  const { applications, platform } = await page.evaluate(() =>
+    window.topsl.command({ type: "state" }),
+  );
+  const badges = page.locator(".application-card .badge");
+  await expect(badges.filter({ hasText: "Not searched" })).toHaveCount(
+    applications.filter((application) =>
+      application.platforms.includes(platform.split("/")[0]),
+    ).length,
+  );
+  await expect(badges.filter({ hasText: "Not found" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "↻ Discover" })).toBeDisabled();
   // A new profile has no stored theme, so Topsl follows the computer.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
   await mkdir("test-results", { recursive: true });
