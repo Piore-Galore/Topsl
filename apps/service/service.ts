@@ -540,6 +540,7 @@ export class Service {
         .flatMap((i) => this.runtime.chatPresetBlocks(i)),
       configurationWrites: this.store.list("configuration-write"),
       autoAccept: this.runtime.autoAccept(),
+      testProfile: this.isolatedTest,
       claudeTranscriptRead: this.claudeTranscriptRead(),
     };
   }

@@ -132,7 +132,8 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
                 </optgroup>
               ) : (
                 <option disabled key={app.id}>
-                  {app.name} · not installed
+                  {app.name} ·{" "}
+                  {state.testProfile ? "not searched" : "not installed"}
                 </option>
               );
             })}

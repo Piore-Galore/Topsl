@@ -93,6 +93,7 @@ let state: AppState = {
   claudeTranscriptRead: false,
   serviceError: null,
   configurationWrites: [],
+  testProfile: isolatedTest,
 };
 const pending = new Map<
   number,

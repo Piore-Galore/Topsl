@@ -57,6 +57,36 @@ describe("test profile settings", () => {
   });
 });
 
+describe("test profile applications", () => {
+  test("a test profile never searches, keeps the runtimes it was given and says so", async () => {
+    const f = await fixture(),
+      service = new Service(f.directory, f.key, () => {}, true);
+    try {
+      expect(service.state().testProfile).toBe(true);
+      const found = (await service.command({ type: "discover" })) as Array<{
+        id: string;
+      }>;
+      expect(found.map((i) => i.id)).toEqual([f.installation.id]);
+    } finally {
+      await service.close();
+      f.store.close();
+      await rm(f.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("the usual profile does not call itself a test profile", async () => {
+    const f = await fixture(),
+      service = new Service(f.directory, f.key, () => {});
+    try {
+      expect(service.state().testProfile).toBe(false);
+    } finally {
+      await service.close();
+      f.store.close();
+      await rm(f.directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("service qualification folder", () => {
   test("a test profile without a qualification folder refuses before qualifying", async () => {
     const f = await fixture(),
