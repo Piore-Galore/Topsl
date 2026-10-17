@@ -191,3 +191,20 @@ Each step adds its changes and validation here when it lands.
 - With the change, the stand-in run passed in 5 turns at **awaiting acceptance**. With `FIXTURE_BUILD_ASK=1` and `TOPSL_LIVE_OWNER_STAND_IN=1`, the terminal said for each request that the script answers it as the owner, the report listed the command as `denied` and the change as `allowed`, and the run passed the same way. One finding, a twenty percent build and a new file ended as at `18ff5f4`, and `TOPSL_LIVE_OWNER_STAND_IN=1` with the chat stand-in was refused before any turn.
 - Not run: a request left unanswered for 15 minutes, so the script's stop at that point is not yet tested.
 - No model requests were sent. Not established: the rerun against a live Codex, which waits for the owner, again with up to 5 Codex turns.
+
+### Step 1 result: the third live run passed (17 October 2026)
+
+**Runs.** On the owner's Mac (`darwin/arm64 27.0.0`) at `09399be`, with Codex CLI 0.163.0 from npm and `gpt-6.1-sol`. The owner started both in Terminal, the live run right after the stand-in run:
+
+- The stand-in run, with `FIXTURE_BUILD_ASK=1` and `TOPSL_LIVE_OWNER_STAND_IN=1`, passed in 5 turns at **awaiting acceptance**, and the report listed the command as `denied` and the change as `allowed`.
+- The live run passed in 5 turns at **awaiting acceptance**:
+  - The qualification passed all eight probes in 3 turns and 73.7 seconds, and both roles were ready.
+  - The build's turn completed after 336.2 seconds. Codex asked 9 times, 8 times to run a command and once to edit `src/order.mjs`, and the owner allowed each on the workflow's card. As in the second run, two commands read Codex's own memory file, `~/.codex/memories/MEMORY.md`: one searched it for `topsl-live`, `Topsl`, `round2`, `candidate` and `AGENTS`, and one printed its lines 1603 to 1648. Another printed any `AGENTS.md` in the project's folder and in each folder above it. The rest listed and read the project's files and its dependency archive, ran `npm ci --offline` and `npm run check` with a temporary cache, and checked the diff. The build changed only `src/order.mjs`.
+  - The review's turn completed after 37.9 seconds in a fresh, read-only session. It named this build and found nothing, and said that `npm run check` "remains unverified because command execution was denied", since Topsl declines every request a review makes.
+  - The required check passed on that build, and Topsl stopped the workflow at **awaiting acceptance**. The script deleted the project folder, the qualification folder and the profile.
+
+**What this shows.** The Codex builds · Codex reviews team ran once on that Mac, with those versions, through Topsl's own screens, as [What a pass shows](#live-runs) describes. It does not show review quality, independence between the roles, Windows or a packaged app, and with Codex in both roles it is neither R2-AT-37 nor R2-AT-38. This completes step 1.
+
+**Validation** (17 October 2026, Linux x64 container, at `09399be`)
+
+- A stand-in run with `FIXTURE_BUILD_ASK=1` and no owner stand-in left the build's request unanswered. The terminal gave the time to answer it by, and 15 minutes later the run failed in 4 turns with `Codex's request "Run a command" waited 15 minutes without an answer, and Topsl takes none after that.` The report listed the request as `unanswered`, and the script deleted both folders and kept the profile. This is the stop the second follow-up left untested.
