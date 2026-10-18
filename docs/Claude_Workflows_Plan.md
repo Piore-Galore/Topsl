@@ -402,3 +402,12 @@ The owner ran each team once on their Mac at `b7ab7a1`, after the three stand-in
 - No model requests were sent and no real Claude Code or Codex was started.
 
 **Not established:** that a live Claude step now reaches acceptance; whether Claude Code writes more record types or attachment kinds in other sessions, such as after a compaction or with a message typed while Claude works; and what an owner's **No** to a permission prompt leads to beyond what these runs showed. The live runs that remain wait for the owner's go-ahead.
+
+### Step 5 follow-up: the Claude with Claude rerun (18 October 2026)
+
+The owner ran Claude builds · Claude reviews again at `0dc4baa`, after its stand-in run passed on their Mac. It stopped before the review and used 1 Claude Code session, so the live runs have now used 3 of the 4 sessions the run table allows. [Live provider sessions](Live_Provider_Sessions.md#results) has the result.
+
+- **The fixes held.** Claude Code 2.1.300 opened in **Accept edits**, Claude changed `src/order.mjs` and asked once to proceed with a command. The script left the prompt to the owner, who answered **Yes** in the step's terminal, and the report kept the prompt, the answer and the 52 seconds it waited. Topsl read the transcript, with its bookkeeping records and attachments, and took Claude's reply.
+- **The build left two new files.** Besides `src/order.mjs`, the folder had `.serena/.gitignore` and `.serena/project.yml`. They come from a tool in the owner's Claude Code setup that keeps its project settings in that folder (inferred from the names), not from Claude's change. The workflow approves no new files, so Topsl held both for an exact-hash review before the review turn, as it does for any new file, and stopped at **ready review**. The script approves no file, so the run ended there.
+
+**Not established:** that a live Claude review runs and the workflow reaches acceptance. Running the team again would need 2 sessions, one more than the run table has left, and the owner chose to stop the live runs here.
