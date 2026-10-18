@@ -37,7 +37,7 @@ port.on("message", async ({ data }: any) => {
     } else if (closing) throw new Error("Control service is shutting down.");
     else if (!service) throw new Error("Control service is locked.");
     else if (data.kind === "review")
-      value = service.review(data.recordKind, data.recordId);
+      value = await service.review(data.recordKind, data.recordId);
     else
       value = await service.command(
         commandSchema.parse(data.command),

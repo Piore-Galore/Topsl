@@ -9,6 +9,23 @@ import {
 const id = z.string().min(1).max(256);
 const commandId = z.string().min(8).max(256);
 
+/** A required check definition, shared with Build and review and parallel workflows. */
+export const requiredCheckSchema = z.object({
+  id,
+  label: z.string().min(1).max(1000),
+  executable: z.string().min(1).max(4096),
+  args: z.array(z.string().max(20000)).max(100),
+  timeoutMs: z.number().int().min(100).max(300000),
+  environmentRecipeId: id.optional(),
+  executionPolicy: z
+    .object({
+      maximumUses: z.number().int().min(1).max(10),
+      allowCandidateChanges: z.boolean().optional(),
+      expiresAfterMs: z.number().int().min(100).max(3600000).optional(),
+    })
+    .optional(),
+});
+
 /** Service commands for the coordinator feature (docs/Coordinator_Teams.md). */
 export const orchestrationCommands = [
   z.object({ type: z.literal("orchestration-query"), projectId: id }),
@@ -27,6 +44,26 @@ export const orchestrationCommands = [
       .enum(["auto", "new-goal", "update-goal", "related-goal", "status"])
       .default("auto"),
     kind: z.enum(["code", "information"]).default("code"),
+    /** Required checks for a new code goal; ignored when the message steers a goal. */
+    checks: z.array(requiredCheckSchema).max(20).optional(),
+    commandId,
+  }),
+  z.object({
+    type: z.literal("orchestration-checks-set"),
+    goalId: id,
+    checks: z.array(requiredCheckSchema).max(20),
+    commandId,
+  }),
+  z.object({ type: z.literal("orchestration-checks-preview"), goalId: id }),
+  /** Runs one previewed check plan; the desktop shell confirms it natively. */
+  z.object({ type: z.literal("orchestration-check-apply"), id }),
+  z.object({
+    type: z.literal("orchestration-conflict-resolve"),
+    goalId: id,
+    resolutions: z
+      .array(z.object({ path: z.string().min(1).max(4096), candidateId: id }))
+      .min(1)
+      .max(10000),
     commandId,
   }),
   z.object({
@@ -115,4 +152,6 @@ export const orchestrationCommands = [
   }),
   z.object({ type: z.literal("orchestration-repair"), goalId: id, commandId }),
   z.object({ type: z.literal("orchestration-accept"), goalId: id, commandId }),
+  /** Writes the accepted candidate into the project folder after native confirmation. */
+  z.object({ type: z.literal("orchestration-apply"), goalId: id, commandId }),
 ] as const;

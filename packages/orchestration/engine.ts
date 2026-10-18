@@ -12,8 +12,11 @@ import type {
   ExecutionPurpose,
   FindingObservation,
   Goal,
+  GoalApplication,
+  GoalCheckDefinition,
   GoalGrant,
   GroupScopeLevel,
+  IntegrationConflict,
   ParticipantContribution,
   PlanTaskAction,
   QueuedPlanAction,
@@ -122,13 +125,69 @@ export interface OrchestrationDriver {
   interrupt(attemptId: string): Promise<void>;
   /** Captures the frozen project snapshot a code goal starts from. */
   baseline?(projectId: string, goalId: string): Promise<string>;
-  /** Integrates member candidates over a base in one controlled workspace. */
+  /**
+   * Integrates member candidates over a base in one controlled workspace. A
+   * resolution picks one candidate's version of one changed path; any other
+   * path changed differently by two candidates is returned as a conflict.
+   */
   integrate?(input: {
     projectId: string;
     goalId: string;
     baseCandidateId: string;
     candidateIds: string[];
-  }): Promise<{ candidateId: string } | { conflicts: string[] }>;
+    resolutions?: Array<{ path: string; candidateId: string }>;
+  }): Promise<
+    | { candidateId: string }
+    | { conflicts: Array<{ path: string; candidateIds: string[] }> }
+  >;
+  /** Freezes the check protocol (tests, configuration, scripts) at the goal's baseline. */
+  bindChecks?(input: {
+    goalId: string;
+    baselineCandidateId: string;
+    checks: GoalCheckDefinition[];
+  }): void;
+  /** A tester task that holds check evidence for one candidate. */
+  checkTask?(input: {
+    projectId: string;
+    goalId: string;
+    candidateId: string;
+    checks: GoalCheckDefinition[];
+  }): string;
+  /** Check plans for the exact candidate, for native confirmation one by one. */
+  previewChecks?(input: {
+    goalId: string;
+    taskId: string;
+    candidateId: string;
+    checks: GoalCheckDefinition[];
+  }): Promise<GoalCheckPlan[]>;
+  checkPlan?(planId: string): GoalCheckPlan | null;
+  /** Runs one confirmed plan through the existing check machinery. */
+  runCheck?(planId: string, digest: string): Promise<void>;
+  /** Current, uninvalidated check results for one task and candidate revision. */
+  checkEvidence?(input: {
+    projectId: string;
+    taskId: string;
+    candidateId: string;
+  }): GoalCheckEvidence[];
+  /** Fences further check dispatch for a stopped goal. */
+  cancelChecks?(goalId: string): void;
+  /** What applying the candidate to the project folder would write, and why it cannot yet. */
+  applyPreview?(input: {
+    projectId: string;
+    goalId: string;
+    baselineCandidateId: string;
+    candidateId: string;
+  }): Promise<ApplyPreview>;
+  /**
+   * Writes the candidate's changes into the project folder. Returns a refusal
+   * when nothing was written; throws when a write may have happened.
+   */
+  apply?(input: {
+    projectId: string;
+    goalId: string;
+    baselineCandidateId: string;
+    candidateId: string;
+  }): Promise<{ applied: GoalApplication["files"] } | { refused: string }>;
   /** Extra validation of a parsed review against its candidate (file/line existence). */
   validateReview?(
     candidateId: string,
@@ -140,6 +199,32 @@ export interface OrchestrationDriver {
   candidateRevision?(candidateId: string): string | null;
 }
 
+export interface GoalCheckPlan {
+  id: string;
+  workflowId: string;
+  taskId: string;
+  candidateId: string;
+  targetRevision: string;
+  definition: GoalCheckDefinition;
+  digest: string;
+}
+
+export interface GoalCheckEvidence {
+  definitionId: string;
+  verificationId: string;
+  result: string;
+  targetRevision: string;
+  evidenceArtifactId: string | null;
+}
+
+export interface ApplyPreview {
+  root: string;
+  baseRevision: string | null;
+  files: GoalApplication["files"];
+  /** Reasons the folder cannot take the candidate now: dirty, changed or not Git. */
+  problems: string[];
+}
+
 const defaultGrant = (kind: Goal["kind"]): GoalGrant => ({
   taskKinds:
     kind === "code" ? ["implementation", "information"] : ["information"],
@@ -149,6 +234,13 @@ const defaultGrant = (kind: Goal["kind"]): GoalGrant => ({
   maxReconciliationTurns: 1,
   expiresAt: null,
 });
+
+function validateChecks(kind: Goal["kind"], checks: GoalCheckDefinition[]) {
+  if (!checks.length) return;
+  if (kind !== "code") throw new Error("Only code goals have required checks.");
+  if (new Set(checks.map((c) => c.id)).size !== checks.length)
+    throw new Error("Each required check needs a distinct ID.");
+}
 
 const activeStages: ReadonlySet<RoleRound["stage"]> = new Set([
   "collecting",
@@ -444,6 +536,7 @@ export class Orchestrator {
     goalId?: string | null;
     routing?: "auto" | "new-goal" | "update-goal" | "related-goal" | "status";
     kind?: Goal["kind"];
+    checks?: GoalCheckDefinition[];
   }) {
     const conversation = this.repo.require<CoordinatorConversation>(
       kinds.conversation,
@@ -587,6 +680,7 @@ export class Orchestrator {
           text,
           input.kind ?? "code",
           routing === "related-goal" ? (target?.id ?? null) : null,
+          input.checks ?? [],
         );
         this.store.put(kinds.message, {
           ...message,
@@ -631,7 +725,9 @@ export class Orchestrator {
     objective: string,
     kind: Goal["kind"],
     parentGoalId: string | null,
+    checks: GoalCheckDefinition[] = [],
   ): Goal {
+    validateChecks(kind, checks);
     const at = now();
     const goal: Goal = {
       id: uid(),
@@ -655,6 +751,12 @@ export class Orchestrator {
       reviewCompletionId: null,
       acceptance: null,
       synthesis: null,
+      checks,
+      checkTaskId: null,
+      checkCandidateId: null,
+      conflicts: [],
+      resolutions: [],
+      application: null,
       detail: "Forming the coordinator group.",
       createdAt: at,
       updatedAt: at,
@@ -680,6 +782,7 @@ export class Orchestrator {
     kind?: Goal["kind"];
     constraints?: string[];
     grant?: Partial<GoalGrant>;
+    checks?: GoalCheckDefinition[];
     commandId: string;
   }) {
     const conversation = this.repo.require<CoordinatorConversation>(
@@ -696,6 +799,7 @@ export class Orchestrator {
           input.objective,
           input.kind ?? "code",
           null,
+          input.checks ?? [],
         );
         const next = {
           ...goal,
@@ -707,6 +811,54 @@ export class Orchestrator {
           kind: "new-goal",
           goalId: goal.id,
         });
+        this.changed();
+        return next;
+      },
+    );
+  }
+
+  /**
+   * Sets a code goal's required checks before any implementation round has
+   * frozen. The check protocol is bound to the goal's baseline, so members
+   * cannot weaken the tests or configuration a check reads.
+   */
+  async setChecks(input: {
+    goalId: string;
+    checks: GoalCheckDefinition[];
+    commandId: string;
+  }) {
+    const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
+    return this.repo.receipt(
+      input.commandId,
+      goal.projectId,
+      "goal-checks-set",
+      () => {
+        validateChecks(goal.kind, input.checks);
+        if (["stopped", "accepted", "completed"].includes(goal.state))
+          throw new Error("This goal has ended. Start a new goal.");
+        if (this.rounds(goal.id).some((r) => r.kind === "work"))
+          throw new Error(
+            "Required checks are fixed once implementation starts. Start a new goal to change them.",
+          );
+        if (goal.baselineCandidateId && input.checks.length) {
+          if (!this.driver.bindChecks)
+            throw new Error("No check route is available for this goal.");
+          this.driver.bindChecks({
+            goalId: goal.id,
+            baselineCandidateId: goal.baselineCandidateId,
+            checks: input.checks,
+          });
+        }
+        const next = this.saveGoal(
+          goal,
+          {
+            checks: input.checks,
+            detail: input.checks.length
+              ? `${input.checks.length} required ${input.checks.length === 1 ? "check" : "checks"} recorded; acceptance needs current passing evidence for the integrated candidate.`
+              : "No required checks; acceptance rests on the review group.",
+          },
+          true,
+        );
         this.changed();
         return next;
       },
@@ -963,6 +1115,11 @@ export class Orchestrator {
             );
           }
         });
+        // A stopped goal's checks are fenced; recorded evidence stays readable.
+        if (input.action === "stop")
+          for (const goal of goals)
+            if (!["stopped", "accepted", "completed"].includes(goal.state))
+              this.driver.cancelChecks?.(goal.id);
         for (const attemptId of interrupts)
           try {
             await this.driver.interrupt(attemptId);
@@ -2316,10 +2473,26 @@ export class Orchestrator {
           });
           continue;
         }
+        const checks = goal.checks ?? [];
+        if (checks.length && !this.driver.bindChecks) {
+          this.saveAction(action, {
+            state: "blocked",
+            detail:
+              "This goal has required checks, but no check route is available.",
+          });
+          continue;
+        }
         const baselineCandidateId = await this.driver.baseline(
           goal.projectId,
           goal.id,
         );
+        // The check protocol is frozen at the baseline members start from.
+        if (checks.length)
+          this.driver.bindChecks!({
+            goalId: goal.id,
+            baselineCandidateId,
+            checks,
+          });
         goal = this.saveGoal(this.repo.require<Goal>(kinds.goal, goal.id), {
           baselineCandidateId,
         });
@@ -2468,26 +2641,134 @@ export class Orchestrator {
       });
       return;
     }
+    // Resolutions apply only to the candidates they were chosen for; a repair
+    // or replan that produced other candidates leaves them unused.
+    const resolutions = (goal.resolutions ?? []).filter((r) =>
+      candidateIds.includes(r.candidateId),
+    );
     const result = await this.driver.integrate({
       projectId: goal.projectId,
       goalId: goal.id,
       baseCandidateId: base,
       candidateIds,
+      resolutions: resolutions.map((r) => ({
+        path: r.path,
+        candidateId: r.candidateId,
+      })),
     });
     if ("conflicts" in result) {
+      const owners = this.candidateOwners(goal);
+      const conflicts: IntegrationConflict[] = result.conflicts.map((c) => ({
+        path: c.path,
+        options: c.candidateIds.map((candidateId) => ({
+          candidateId,
+          memberId: owners.get(candidateId)?.memberId ?? "unknown member",
+          taskKey: owners.get(candidateId)?.taskKey ?? "",
+        })),
+      }));
       this.saveGoal(goal, {
         state: "blocked",
-        detail: `Integration conflicts need a decision: ${result.conflicts.join("; ")}`,
+        conflicts,
+        detail: `Integration conflicts need a decision: ${conflicts
+          .map(
+            (c) =>
+              `${c.path} changed differently by ${c.options.map((o) => o.memberId).join(", ")}`,
+          )
+          .join(
+            "; ",
+          )}. Choose one member's version of each file, or steer the goal.`,
       });
       return;
     }
+    const checks = goal.checks ?? [];
     this.saveGoal(this.repo.require<Goal>(kinds.goal, goal.id), {
       candidateId: result.candidateId,
       reviewCompletionId: null,
+      conflicts: [],
+      checkTaskId: null,
+      checkCandidateId: null,
       state: "reviewing",
-      detail:
-        "Integrated candidate captured; the review group reviews this exact candidate.",
+      detail: `Integrated candidate captured${resolutions.length ? ` with ${resolutions.length} owner-chosen ${resolutions.length === 1 ? "file" : "files"}` : ""}; the review group reviews this exact candidate${checks.length ? `, then ${checks.length} required ${checks.length === 1 ? "check runs" : "checks run"} against it` : ""}.`,
     });
+  }
+
+  /** Which member and task produced each member candidate of the current plan. */
+  private candidateOwners(
+    goal: Goal,
+  ): Map<string, { memberId: string; taskKey: string }> {
+    const owners = new Map<string, { memberId: string; taskKey: string }>();
+    for (const action of this.actions(goal)) {
+      if (!action.roundId) continue;
+      for (const c of this.contributions(action.roundId, goal.projectId)) {
+        const id = (c.output as { candidateId?: string | null } | null)
+          ?.candidateId;
+        if (id)
+          owners.set(id, { memberId: c.memberId, taskKey: action.taskKey });
+      }
+    }
+    return owners;
+  }
+
+  /**
+   * The owner's per-file choice between conflicting member versions. Each
+   * resolution names one path from the recorded conflicts and one candidate
+   * that changed it; the next integration uses that version and produces a
+   * new candidate, which the review group and required checks cover again.
+   */
+  async resolveConflicts(input: {
+    goalId: string;
+    resolutions: Array<{ path: string; candidateId: string }>;
+    commandId: string;
+  }) {
+    const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
+    return this.repo.receipt(
+      input.commandId,
+      goal.projectId,
+      "conflict-resolve",
+      () => {
+        const conflicts = goal.conflicts ?? [];
+        if (goal.state !== "blocked" || !conflicts.length)
+          throw new Error("This goal has no integration conflicts to resolve.");
+        if (
+          new Set(input.resolutions.map((r) => r.path)).size !==
+          input.resolutions.length
+        )
+          throw new Error("Choose one version per file.");
+        for (const r of input.resolutions) {
+          const conflict = conflicts.find((c) => c.path === r.path);
+          if (!conflict)
+            throw new Error(`${r.path} is not one of the recorded conflicts.`);
+          if (!conflict.options.some((o) => o.candidateId === r.candidateId))
+            throw new Error(
+              `Choose a member that changed ${r.path}; that candidate did not.`,
+            );
+        }
+        const at = now();
+        const chosen = new Map(
+          (goal.resolutions ?? []).map((r) => [r.path, r] as const),
+        );
+        for (const r of input.resolutions)
+          chosen.set(r.path, {
+            path: r.path,
+            candidateId: r.candidateId,
+            by: "local-user",
+            at,
+          });
+        const remaining = conflicts.filter((c) => !chosen.has(c.path));
+        const next = this.saveGoal(goal, {
+          resolutions: [...chosen.values()].sort((a, b) =>
+            a.path.localeCompare(b.path),
+          ),
+          conflicts: remaining,
+          state: remaining.length ? "blocked" : "running",
+          detail: remaining.length
+            ? `${input.resolutions.length} recorded; ${remaining.length} conflicting ${remaining.length === 1 ? "file still needs" : "files still need"} a choice: ${remaining.map((c) => c.path).join(", ")}.`
+            : "Every conflicting file has an owner-chosen version; integrating again.",
+        });
+        this.changed();
+        return next;
+      },
+    );
   }
 
   private findingsFor(roundId: string): AggregatedFinding[] {
@@ -2585,13 +2866,17 @@ export class Orchestrator {
       detail: status.detail,
     });
     const current = this.repo.require<Goal>(kinds.goal, goal.id);
-    if (status.satisfied)
-      this.saveGoal(current, {
-        state: "awaiting-acceptance",
+    if (status.satisfied) {
+      const next = this.saveGoal(current, {
         reviewCompletionId: completion.id,
-        detail: `Review complete: ${status.detail} The candidate awaits your acceptance.`,
       });
-    else if (status.complete)
+      if ((next.checks ?? []).length) this.settleChecks(next, status.detail);
+      else
+        this.saveGoal(next, {
+          state: "awaiting-acceptance",
+          detail: `Review complete: ${status.detail} The candidate awaits your acceptance.`,
+        });
+    } else if (status.complete)
       this.saveGoal(current, {
         state: "blocked",
         reviewCompletionId: completion.id,
@@ -2773,6 +3058,157 @@ export class Orchestrator {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Required checks against the exact integrated candidate
+
+  /** The tester task holding check evidence for the goal's current candidate. */
+  private ensureCheckTask(goal: Goal): Goal {
+    if (goal.checkTaskId && goal.checkCandidateId === goal.candidateId)
+      return goal;
+    if (!this.driver.checkTask)
+      throw new Error("No check route is available for this goal.");
+    const checkTaskId = this.driver.checkTask({
+      projectId: goal.projectId,
+      goalId: goal.id,
+      candidateId: goal.candidateId!,
+      checks: goal.checks ?? [],
+    });
+    return this.saveGoal(goal, {
+      checkTaskId,
+      checkCandidateId: goal.candidateId,
+    });
+  }
+
+  /**
+   * Current passing evidence per required check, for the exact candidate the
+   * review group covered. Evidence for another candidate, task or revision,
+   * or invalidated evidence, never counts.
+   */
+  checkStatus(goal: Goal): {
+    required: GoalCheckDefinition[];
+    results: Array<{
+      definitionId: string;
+      label: string;
+      result: string | null;
+      verificationId: string | null;
+    }>;
+    passing: boolean;
+    detail: string;
+  } {
+    const required = goal.checks ?? [];
+    const current =
+      goal.candidateId &&
+      goal.checkTaskId &&
+      goal.checkCandidateId === goal.candidateId &&
+      this.driver.checkEvidence
+        ? this.driver.checkEvidence({
+            projectId: goal.projectId,
+            taskId: goal.checkTaskId,
+            candidateId: goal.candidateId,
+          })
+        : [];
+    const latest = new Map<string, GoalCheckEvidence>();
+    for (const e of current) latest.set(e.definitionId, e);
+    const results = required.map((c) => ({
+      definitionId: c.id,
+      label: c.label,
+      result: latest.get(c.id)?.result ?? null,
+      verificationId: latest.get(c.id)?.verificationId ?? null,
+    }));
+    const passing = required.every((c) => {
+      const e = latest.get(c.id);
+      return e?.result === "passed" && !!e.evidenceArtifactId;
+    });
+    const failing = results.filter((r) => r.result && r.result !== "passed");
+    const missing = results.filter((r) => !r.result);
+    return {
+      required,
+      results,
+      passing,
+      detail: !required.length
+        ? "No required checks."
+        : passing
+          ? `All ${required.length} required ${required.length === 1 ? "check" : "checks"} passed on this candidate.`
+          : [
+              failing.length
+                ? `${failing.map((r) => `${r.label} ${r.result}`).join(", ")}`
+                : "",
+              missing.length
+                ? `${missing.length} of ${required.length} not yet run on this candidate`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("; ") + ".",
+    };
+  }
+
+  /** Moves a reviewed goal between checking and awaiting acceptance. */
+  private settleChecks(goal: Goal, reviewDetail?: string): Goal {
+    if (!this.driver.checkTask || !this.driver.checkEvidence)
+      return this.saveGoal(goal, {
+        state: "blocked",
+        detail:
+          "This goal has required checks, but no check route is available.",
+      });
+    goal = this.ensureCheckTask(goal);
+    const status = this.checkStatus(goal);
+    return this.saveGoal(goal, {
+      state: status.passing ? "awaiting-acceptance" : "checking",
+      detail: status.passing
+        ? `Review complete and ${status.detail} The candidate awaits your acceptance.`
+        : `${reviewDetail ? `Review complete: ${reviewDetail} ` : ""}Required checks: ${status.detail} Run each check on this exact candidate; acceptance needs current passing evidence.`,
+    });
+  }
+
+  /** Check plans for the goal's current candidate; each runs after native confirmation. */
+  async previewChecks(input: { goalId: string }): Promise<GoalCheckPlan[]> {
+    let goal = this.repo.require<Goal>(kinds.goal, input.goalId);
+    if (goal.state !== "checking" || !goal.candidateId)
+      throw new Error(
+        "Checks run after the review group is satisfied for the current candidate.",
+      );
+    if (!this.driver.previewChecks)
+      throw new Error("No check route is available for this goal.");
+    goal = this.ensureCheckTask(goal);
+    const plans = await this.driver.previewChecks({
+      goalId: goal.id,
+      taskId: goal.checkTaskId!,
+      candidateId: goal.candidateId!,
+      checks: goal.checks ?? [],
+    });
+    this.changed();
+    return plans;
+  }
+
+  /** Runs one confirmed check plan against the exact current candidate. */
+  async runCheck(input: { planId: string; digest: string }): Promise<Goal> {
+    const plan = this.driver.checkPlan?.(input.planId);
+    if (!plan) throw new Error("That check plan does not exist.");
+    const goal = this.repo.get<Goal>(kinds.goal, plan.workflowId);
+    if (!goal)
+      throw new Error("That check plan is not for a coordinator goal.");
+    if (
+      goal.state !== "checking" ||
+      plan.candidateId !== goal.candidateId ||
+      plan.taskId !== goal.checkTaskId ||
+      goal.checkCandidateId !== goal.candidateId
+    )
+      throw new Error(
+        "The check plan targets a stale candidate or task. Preview the checks again.",
+      );
+    if (!(goal.checks ?? []).some((c) => c.id === plan.definition.id))
+      throw new Error("That check is not one of this goal's required checks.");
+    await this.driver.runCheck!(plan.id, input.digest);
+    const latest = this.repo.require<Goal>(kinds.goal, goal.id);
+    // The goal may have been paused, stopped, steered or repaired meanwhile;
+    // the evidence stays recorded, but only a checking goal moves on.
+    if (latest.state !== "checking" || latest.candidateId !== plan.candidateId)
+      return latest;
+    const next = this.settleChecks(latest);
+    this.changed();
+    return next;
+  }
+
   acceptanceDigest(goalId: string): string {
     const goal = this.repo.require<Goal>(kinds.goal, goalId);
     const completion = goal.reviewCompletionId
@@ -2785,6 +3221,12 @@ export class Orchestrator {
         candidate: goal.candidateId,
         completion: completion?.id ?? null,
         findings: completion?.findings.map((f) => [f.key, f.disposition]) ?? [],
+        checkTask: goal.checkTaskId ?? null,
+        checks: this.checkStatus(goal).results.map((r) => [
+          r.definitionId,
+          r.verificationId,
+          r.result,
+        ]),
       }),
     );
   }
@@ -2815,6 +3257,11 @@ export class Orchestrator {
           throw new Error(
             "The current candidate's review completion is not satisfied.",
           );
+        const checks = this.checkStatus(goal);
+        if (!checks.passing)
+          throw new Error(
+            `Current passing evidence is required for every required check on this exact candidate: ${checks.detail}`,
+          );
         const next = this.saveGoal(
           goal,
           {
@@ -2825,11 +3272,139 @@ export class Orchestrator {
               digest: input.digest,
               candidateId: goal.candidateId!,
             },
-            detail:
-              "Accepted: the exact candidate covered by the required review group.",
+            detail: checks.required.length
+              ? `Accepted: the exact candidate covered by the required review group and ${checks.required.length} passing required ${checks.required.length === 1 ? "check" : "checks"}. It is not yet applied to the project folder.`
+              : "Accepted: the exact candidate covered by the required review group. It is not yet applied to the project folder.",
           },
           true,
         );
+        this.changed();
+        return next;
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Applying the accepted candidate to the project folder
+
+  /** What applying would write; refused when the folder is dirty, changed or not Git. */
+  async applicationReview(goalId: string) {
+    const goal = this.repo.require<Goal>(kinds.goal, goalId);
+    if (
+      goal.state !== "accepted" ||
+      !goal.acceptance ||
+      !goal.candidateId ||
+      goal.acceptance.candidateId !== goal.candidateId ||
+      !goal.baselineCandidateId
+    )
+      throw new Error("Only an accepted code goal's candidate can be applied.");
+    if (goal.application && goal.application.state !== "refused")
+      throw new Error(
+        goal.application.state === "applied"
+          ? "This candidate was already applied to the project folder."
+          : "An earlier apply has an unknown outcome. Inspect the project folder; Topsl will not write it again.",
+      );
+    if (!this.driver.applyPreview || !this.driver.apply)
+      throw new Error(
+        "No route can apply this candidate to the project folder.",
+      );
+    const preview = await this.driver.applyPreview({
+      projectId: goal.projectId,
+      goalId: goal.id,
+      baselineCandidateId: goal.baselineCandidateId,
+      candidateId: goal.candidateId,
+    });
+    const body = {
+      goalId: goal.id,
+      objective: goal.objective,
+      candidateId: goal.candidateId,
+      baselineCandidateId: goal.baselineCandidateId,
+      acceptanceDigest: goal.acceptance.digest,
+      root: preview.root,
+      baseRevision: preview.baseRevision,
+      files: preview.files,
+    };
+    return {
+      ...body,
+      problems: preview.problems,
+      digest: hash(stable(body)),
+    };
+  }
+
+  /**
+   * Writes the accepted candidate into the project folder after the owner's
+   * native confirmation of the exact file list. The driver refuses a folder
+   * with uncommitted or untracked changes, or one that no longer matches the
+   * goal's baseline. The intent is recorded before any write, so an
+   * interrupted apply is reported as uncertain and never repeated blindly.
+   */
+  async apply(input: { goalId: string; digest: string; commandId: string }) {
+    const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
+    return this.repo.receipt(
+      input.commandId,
+      goal.projectId,
+      "goal-apply",
+      async () => {
+        const review = await this.applicationReview(goal.id);
+        if (input.digest !== review.digest)
+          throw new Error(
+            "The apply confirmation is stale. Review the file list again.",
+          );
+        // A folder problem found now is recorded as a refusal by the driver,
+        // which checks the folder again immediately before writing.
+        const base = {
+          candidateId: review.candidateId,
+          digest: review.digest,
+          root: review.root,
+          files: review.files,
+          by: "local-user",
+        };
+        this.saveGoal(goal, {
+          application: {
+            ...base,
+            state: "applying",
+            detail: "Writing the accepted candidate into the project folder.",
+            at: now(),
+          },
+        });
+        let application: GoalApplication;
+        try {
+          const result = await this.driver.apply!({
+            projectId: goal.projectId,
+            goalId: goal.id,
+            baselineCandidateId: review.baselineCandidateId,
+            candidateId: review.candidateId,
+          });
+          application =
+            "refused" in result
+              ? {
+                  ...base,
+                  state: "refused",
+                  detail: `Nothing was written: ${result.refused}`,
+                  at: now(),
+                }
+              : {
+                  ...base,
+                  files: result.applied,
+                  state: "applied",
+                  detail: `Applied ${result.applied.length} ${result.applied.length === 1 ? "file" : "files"} to ${review.root}; each written file was read back and matches the candidate. Nothing was committed.`,
+                  at: now(),
+                };
+        } catch (error) {
+          application = {
+            ...base,
+            state: "uncertain",
+            detail: `The apply stopped after it may have written files (${safeError(error)}). Inspect the project folder; Topsl will not write it again.`,
+            at: now(),
+          };
+        }
+        const next = this.saveGoal(goal, {
+          application,
+          detail:
+            application.state === "applied"
+              ? `Accepted and applied to the project folder. ${application.detail}`
+              : application.detail,
+        });
         this.changed();
         return next;
       },
@@ -2875,6 +3450,7 @@ export class Orchestrator {
         "stopped",
         "accepted",
         "completed",
+        "checking",
         "awaiting-acceptance",
       ].includes(goal.state)
     )
@@ -3049,10 +3625,21 @@ export class Orchestrator {
     const completion = goal.reviewCompletionId
       ? this.repo.get<RoleCompletion>(kinds.completion, goal.reviewCompletionId)
       : undefined;
+    const checks = this.checkStatus(goal);
     return {
       goal,
       plan,
       actions: this.actions(goal),
+      checks: {
+        required: checks.required,
+        results: checks.results,
+        passing: checks.passing,
+        detail: checks.detail,
+        taskId: goal.checkTaskId ?? null,
+      },
+      conflicts: goal.conflicts ?? [],
+      resolutions: goal.resolutions ?? [],
+      application: goal.application ?? null,
       acceptanceDigest:
         goal.state === "awaiting-acceptance"
           ? this.acceptanceDigest(goal.id)

@@ -513,9 +513,55 @@ export type GoalState =
   | "paused"
   | "stopped"
   | "blocked"
+  /** The review group is satisfied; required checks still need current passing evidence. */
+  | "checking"
   | "awaiting-acceptance"
   | "completed"
   | "accepted";
+
+/**
+ * A required check for a code goal. The same shape as the check machinery's
+ * `CheckDefinition` (packages/workflows/verification.ts), which runs it.
+ */
+export interface GoalCheckDefinition {
+  id: string;
+  label: string;
+  executable: string;
+  args: string[];
+  timeoutMs: number;
+  environmentRecipeId?: string;
+  executionPolicy?: {
+    maximumUses: number;
+    allowCandidateChanges?: boolean;
+    expiresAfterMs?: number;
+  };
+}
+
+/** A file two or more members changed differently, with each member's version. */
+export interface IntegrationConflict {
+  path: string;
+  options: Array<{ candidateId: string; memberId: string; taskKey: string }>;
+}
+
+/** The owner's choice of one member's version for one conflicting path. */
+export interface ConflictResolution {
+  path: string;
+  candidateId: string;
+  by: string;
+  at: string;
+}
+
+/** The recorded outcome of applying an accepted candidate to the project folder. */
+export interface GoalApplication {
+  state: "applying" | "applied" | "refused" | "uncertain";
+  candidateId: string;
+  digest: string;
+  root: string;
+  files: Array<{ path: string; change: "added" | "modified" | "deleted" }>;
+  detail: string;
+  by: string;
+  at: string;
+}
 
 export interface Goal {
   id: string;
@@ -547,6 +593,19 @@ export interface Goal {
     candidateId: string;
   } | null;
   synthesis: string | null;
+  /**
+   * Required checks every integrated candidate must pass before acceptance.
+   * Absent on goals recorded before coordinator checks existed (no checks).
+   */
+  checks?: GoalCheckDefinition[];
+  /** The tester task that holds check evidence for `checkCandidateId`. */
+  checkTaskId?: string | null;
+  checkCandidateId?: string | null;
+  /** Conflicts from the latest integration attempt, until resolved. */
+  conflicts?: IntegrationConflict[];
+  /** Per-path choices applied on the next integration of the same candidates. */
+  resolutions?: ConflictResolution[];
+  application?: GoalApplication | null;
   detail: string;
   createdAt: string;
   updatedAt: string;

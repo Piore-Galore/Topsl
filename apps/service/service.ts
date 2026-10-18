@@ -432,6 +432,7 @@ export class Service {
         interrupt: (runId) => this.runtime.interrupt(runId),
         assertLocalOwner: (projectId) =>
           this.replication.assertLocalOwner(projectId),
+        integrationRoot: path.join(directory, "orchestration-integrations"),
       }),
       () => this.changed(),
     );
@@ -1142,9 +1143,16 @@ export class Service {
       | "advanced-review-plan"
       | "assisted-handoff"
       | "claude-step"
-      | "goal-acceptance",
+      | "goal-acceptance"
+      | "goal-application",
     id: string,
   ): LifecyclePlan | ConfigurationPlan | Approval | CheckPlan | unknown {
+    if (kind === "goal-application")
+      // Refused before any dialog when the folder is dirty, changed or not Git.
+      return this.orchestration.applicationReview(id).then((review) => {
+        if (review.problems.length) throw new Error(review.problems.join(" "));
+        return review;
+      });
     if (kind === "workflow-dispatch-inputs") {
       const state = this.require<BuilderReviewerState>("builder-reviewer", id),
         workflow = this.require<{ revision: number; objective: string }>(
@@ -1198,6 +1206,12 @@ export class Service {
               })),
             }
           : null,
+        checks: view.checks.results.map((c) => ({
+          definition: c.definitionId,
+          label: c.label,
+          result: c.result,
+          targetRevision: candidate?.revision ?? null,
+        })),
       };
     }
     if (kind === "advanced-acceptance")
@@ -1910,6 +1924,31 @@ export class Service {
             "Goal acceptance requires native confirmation of the exact reviewed candidate and review-group evidence.",
           );
         return this.orchestration.accept({
+          goalId: command.goalId,
+          digest: trusted.digest,
+          commandId: command.commandId,
+        });
+      case "orchestration-checks-set":
+        return this.orchestration.setChecks(command);
+      case "orchestration-checks-preview":
+        return this.orchestration.previewChecks(command);
+      case "orchestration-check-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Check execution requires native approval of its exact command and candidate revision.",
+          );
+        return this.orchestration.runCheck({
+          planId: command.id,
+          digest: trusted.digest,
+        });
+      case "orchestration-conflict-resolve":
+        return this.orchestration.resolveConflicts(command);
+      case "orchestration-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Applying a candidate requires native confirmation of the exact files and project folder.",
+          );
+        return this.orchestration.apply({
           goalId: command.goalId,
           digest: trusted.digest,
           commandId: command.commandId,

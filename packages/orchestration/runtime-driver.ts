@@ -1,4 +1,13 @@
-import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
@@ -12,9 +21,14 @@ import type {
   ContextPackage,
   ExecutionAttempt,
   Task,
+  Verification,
   Workspace,
 } from "../domain/workflow";
-import type { ExecutionPurpose } from "../domain/role-groups";
+import type {
+  ExecutionPurpose,
+  GoalApplication,
+  GoalCheckDefinition,
+} from "../domain/role-groups";
 import type { Store } from "../persistence/store";
 import type { Coordinator } from "../runtime/coordinator";
 import type { RuntimeExecution } from "../runtime/coordinator";
@@ -30,17 +44,29 @@ import { RevisionRepository } from "../context/revisions";
 import type { ContextServer } from "../workspace/context";
 import { candidateTools } from "../context/candidate-tools";
 import {
+  assertCandidateCurrent,
   assertMaterializedCandidate,
   candidateHasTextLine,
   captureCandidate,
+  gitWorkingTreeChanges,
   materializeCandidate,
   removeMaterializedCopy,
   type CandidateSnapshot,
 } from "../workflows/candidates";
+import { bindCheckInputs } from "../workflows/check-inputs";
+import { CheckExecutions } from "../workflows/check-executions";
+import {
+  executeCheck,
+  previewCheck,
+  type CheckPlan,
+} from "../workflows/verification";
 import { candidateChanges, fileEqual } from "../workflows/parallel-specialists";
 import { writeManagedSnapshot } from "../workspace/managed";
 import type {
+  ApplyPreview,
   AttemptObservation,
+  GoalCheckEvidence,
+  GoalCheckPlan,
   MemberTurn,
   OrchestrationDriver,
 } from "./engine";
@@ -71,6 +97,13 @@ export interface RuntimeDriverDeps {
   ): Promise<unknown>;
   interrupt(runId: string): Promise<void>;
   assertLocalOwner(projectId: string): void;
+  /**
+   * Where integrated candidates keep their source copy. The copy stays so a
+   * required check can prove the candidate unchanged before and after it
+   * runs. Defaults to the OS temporary directory.
+   */
+  integrationRoot?: string;
+  gitExecutable?: string;
 }
 
 interface CopyRecord {
@@ -744,6 +777,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     goalId: string;
     baseCandidateId: string;
     candidateIds: string[];
+    resolutions?: Array<{ path: string; candidateId: string }>;
   }) {
     const base = this.snapshot(input.baseCandidateId);
     const files = new Map(base.files.map((f) => [f.path, f]));
@@ -762,19 +796,42 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
         changes.set(file.path, list);
       }
     }
-    const conflicts: string[] = [];
-    for (const [name, list] of changes) {
+    const resolutions = input.resolutions ?? [];
+    if (
+      new Set(resolutions.map((r) => r.path)).size !== resolutions.length ||
+      resolutions.some(
+        (r) =>
+          !changes.get(r.path)?.some((v) => v.candidateId === r.candidateId),
+      )
+    )
+      throw new Error(
+        "Conflict resolutions must select a member candidate that changed that file.",
+      );
+    const conflicts: Array<{ path: string; candidateIds: string[] }> = [];
+    for (const [name, list] of [...changes].sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      const resolution = resolutions.find((r) => r.path === name);
       const distinct = list.filter(
         (v, i) => list.findIndex((o) => fileEqual(o.file, v.file)) === i,
       );
-      if (distinct.length > 1)
-        conflicts.push(
-          `${name} changed differently by ${list.map((l) => l.candidateId).join(", ")}`,
+      if (distinct.length > 1 && !resolution)
+        conflicts.push({
+          path: name,
+          candidateIds: [...new Set(list.map((l) => l.candidateId))],
+        });
+      else
+        files.set(
+          name,
+          resolution
+            ? list.find((v) => v.candidateId === resolution.candidateId)!.file
+            : list[0].file,
         );
-      else files.set(name, list[0].file);
     }
     if (conflicts.length) return { conflicts };
-    const root = await mkdtemp(path.join(os.tmpdir(), "topsl-integration-"));
+    const parent = this.deps.integrationRoot ?? os.tmpdir();
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    const root = await mkdtemp(path.join(parent, "topsl-integration-"));
     try {
       const merged = [...files.values()].sort((a, b) =>
         a.path.localeCompare(b.path),
@@ -804,9 +861,233 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
         throw new Error(
           "The integrated copy differs from the merged file manifest.",
         );
+      // The copy is kept: required checks prove the candidate unchanged
+      // against it before and after they run.
       return { candidateId: combined.id };
-    } finally {
+    } catch (error) {
       await rm(root, { recursive: true, force: true });
+      throw error;
     }
+  }
+
+  bindChecks(input: {
+    goalId: string;
+    baselineCandidateId: string;
+    checks: GoalCheckDefinition[];
+  }) {
+    try {
+      bindCheckInputs(
+        this.store,
+        input.goalId,
+        this.snapshot(input.baselineCandidateId),
+        input.checks,
+      );
+    } catch (error) {
+      if (/Immutable record collision/.test(safeError(error)))
+        throw new Error(
+          "A check with this ID was already bound to the goal's baseline with another definition. Give the changed check a new ID.",
+        );
+      throw error;
+    }
+  }
+
+  checkTask(input: {
+    projectId: string;
+    goalId: string;
+    candidateId: string;
+    checks: GoalCheckDefinition[];
+  }): string {
+    const project = this.repository.require<Project>(
+      "project",
+      input.projectId,
+    );
+    const workspace = this.repository.ensureWorkspace(project);
+    return this.store.transaction(() => {
+      let task = this.repository.createTask({
+        projectId: project.id,
+        workspaceId: workspace.id,
+        title: "Run required checks on the integrated candidate",
+        role: "tester",
+        inputRefs: [input.candidateId],
+        acceptanceCriteria: input.checks.map((c) => c.label),
+      });
+      task = this.repository.transitionTask(task.id, task.revision, "ready");
+      task = this.repository.transitionTask(task.id, task.revision, "active");
+      this.store.immutable("orchestration-task-goal", {
+        id: task.id,
+        projectId: project.id,
+        goalId: input.goalId,
+        roundId: null,
+        memberId: null,
+      });
+      return task.id;
+    });
+  }
+
+  async previewChecks(input: {
+    goalId: string;
+    taskId: string;
+    candidateId: string;
+    checks: GoalCheckDefinition[];
+  }): Promise<GoalCheckPlan[]> {
+    const candidate = this.snapshot(input.candidateId);
+    return Promise.all(
+      input.checks.map((check) =>
+        previewCheck(
+          this.repository,
+          input.goalId,
+          input.taskId,
+          candidate,
+          check,
+        ),
+      ),
+    );
+  }
+
+  checkPlan(planId: string): GoalCheckPlan | null {
+    return this.store.get<CheckPlan>("workflow-check-plan", planId) ?? null;
+  }
+
+  async runCheck(planId: string, digest: string): Promise<void> {
+    await executeCheck(
+      this.repository,
+      this.repository.require<CheckPlan>("workflow-check-plan", planId),
+      digest,
+    );
+  }
+
+  checkEvidence(input: {
+    projectId: string;
+    taskId: string;
+    candidateId: string;
+  }): GoalCheckEvidence[] {
+    const candidate = this.store.get<CandidateSnapshot>(
+      "candidate",
+      input.candidateId,
+    );
+    if (!candidate) return [];
+    return this.repository
+      .all<Verification>("verification", { projectId: input.projectId })
+      .filter(
+        (v) =>
+          v.taskId === input.taskId &&
+          v.candidateId === candidate.id &&
+          v.targetRevision === candidate.revision &&
+          !v.invalidatedAt,
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((v) => ({
+        definitionId: v.definition,
+        verificationId: v.id,
+        result: v.result,
+        targetRevision: v.targetRevision,
+        evidenceArtifactId: v.evidenceArtifactId ?? null,
+      }));
+  }
+
+  cancelChecks(goalId: string) {
+    CheckExecutions.for(this.store).cancelWorkflow(goalId);
+  }
+
+  async applyPreview(input: {
+    projectId: string;
+    goalId: string;
+    baselineCandidateId: string;
+    candidateId: string;
+  }): Promise<ApplyPreview> {
+    const project = this.repository.require<Project>(
+      "project",
+      input.projectId,
+    );
+    const baseline = this.snapshot(input.baselineCandidateId);
+    const candidate = this.snapshot(input.candidateId);
+    const problems: string[] = [];
+    if (!project.trusted) problems.push("The project folder must be trusted.");
+    if (baseline.sourceRoot !== project.realPath)
+      problems.push(
+        "The project was relinked to another folder after this goal started.",
+      );
+    if (!baseline.git)
+      problems.push(
+        "Applying needs a Git checkout, so Topsl can show the folder has no other changes.",
+      );
+    else
+      try {
+        const dirty = await gitWorkingTreeChanges(
+          project.realPath,
+          this.deps.gitExecutable,
+        );
+        if (dirty.length)
+          problems.push(
+            `The project folder has uncommitted or untracked changes (${dirty.slice(0, 8).join(", ")}${dirty.length > 8 ? `, and ${dirty.length - 8} more` : ""}). Commit, stash or remove them, then apply.`,
+          );
+      } catch (error) {
+        problems.push(
+          `Git could not report the folder's state: ${safeError(error)}`,
+        );
+      }
+    try {
+      await assertCandidateCurrent(baseline, this.deps.gitExecutable);
+    } catch (error) {
+      problems.push(
+        `The project folder changed since the goal's baseline: ${safeError(error)}`,
+      );
+    }
+    const before = new Set(
+      baseline.files.filter((f) => f.hash).map((f) => f.path),
+    );
+    return {
+      root: project.realPath,
+      baseRevision: baseline.baseRevision,
+      files: candidateChanges(baseline, candidate).map((f) => ({
+        path: f.path,
+        change:
+          f.hash === null
+            ? "deleted"
+            : before.has(f.path)
+              ? "modified"
+              : "added",
+      })),
+      problems,
+    };
+  }
+
+  /**
+   * Writes the accepted candidate's changes into the project folder, only
+   * when the folder is clean and still matches the goal's baseline, then
+   * reads every written file back.
+   */
+  async apply(input: {
+    projectId: string;
+    goalId: string;
+    baselineCandidateId: string;
+    candidateId: string;
+  }): Promise<{ applied: GoalApplication["files"] } | { refused: string }> {
+    this.deps.assertLocalOwner(input.projectId);
+    const preview = await this.applyPreview(input);
+    if (preview.problems.length) return { refused: preview.problems.join(" ") };
+    const baseline = this.snapshot(input.baselineCandidateId);
+    const candidate = this.snapshot(input.candidateId);
+    const changed = candidateChanges(baseline, candidate);
+    await writeManagedSnapshot(
+      { ...candidate, files: changed },
+      preview.root,
+      this.store,
+    );
+    for (const file of changed) {
+      const target = path.join(preview.root, file.path);
+      if (file.hash === null) {
+        const gone = await stat(target).then(
+          () => false,
+          () => true,
+        );
+        if (!gone) throw new Error(`${file.path} was not removed.`);
+        continue;
+      }
+      const bytes = await readFile(target);
+      if (createHash("sha256").update(bytes).digest("hex") !== file.hash)
+        throw new Error(`${file.path} does not match the accepted candidate.`);
+    }
+    return { applied: preview.files };
   }
 }

@@ -549,7 +549,8 @@ async function dispatch(command: Command): Promise<any> {
   if (
     command.type === "builder-reviewer-check-apply" ||
     command.type === "parallel-check-apply" ||
-    command.type === "advanced-check-apply"
+    command.type === "advanced-check-apply" ||
+    command.type === "orchestration-check-apply"
   ) {
     const plan: any = await request({
       kind: "review",
@@ -597,8 +598,31 @@ async function dispatch(command: Command): Promise<any> {
     if (
       !(await confirm(
         "Accept this reviewed candidate?",
-        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nReview group: ${JSON.stringify(review.review)}\nNo required checks run for coordinator goals yet; this acceptance rests on the review group's evidence only.\n\nAcceptance records your decision for this exact candidate. It does not apply the candidate to the project folder, deploy or commit. Any change to the goal, review or candidate invalidates this confirmation.`,
+        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nReview group: ${JSON.stringify(review.review)}\n${review.checks?.length ? `Required checks on this exact candidate: ${JSON.stringify(review.checks.map((check: any) => ({ definition: check.definition, label: check.label, result: check.result, targetRevision: check.targetRevision })))}` : "This goal has no required checks; acceptance rests on the review group's evidence only."}\n\nAcceptance records your decision for this exact candidate. It does not write the project folder, deploy or commit; applying the candidate to the folder is a separate step with its own confirmation. Any change to the goal, review, checks or candidate invalidates this confirmation.`,
         "Accept candidate",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
+  if (command.type === "orchestration-apply") {
+    const review: any = await request({
+      kind: "review",
+      recordKind: "goal-application",
+      recordId: command.goalId,
+    });
+    const files: Array<{ path: string; change: string }> = review.files ?? [];
+    if (
+      !(await confirm(
+        "Apply the accepted candidate to the project folder?",
+        `${review.objective}\n\nFolder: ${review.root}\nGit commit: ${review.baseRevision ?? "none"}\nCandidate: ${review.candidateId}\n\n${files.length} ${files.length === 1 ? "file" : "files"} will be written:\n${files
+          .slice(0, 200)
+          .map((file) => `${file.change}: ${file.path}`)
+          .join(
+            "\n",
+          )}${files.length > 200 ? `\n… and ${files.length - 200} more` : ""}\n\nTopsl checked that the folder has no uncommitted or untracked changes and still matches the goal's baseline, and checks again just before writing. Nothing is committed, staged or pushed. Native tools watching the folder may react to the change.`,
+        "Apply to folder",
+        "warning",
       ))
     )
       return null;

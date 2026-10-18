@@ -4,11 +4,16 @@ import type { Store } from "../packages/persistence/store";
 import {
   Orchestrator,
   type AttemptObservation,
+  type GoalCheckEvidence,
+  type GoalCheckPlan,
   type MemberTurn,
   type OrchestrationDriver,
 } from "../packages/orchestration/engine";
 import type { RouteCandidate } from "../packages/orchestration/selection";
-import type { ExecutionPurpose } from "../packages/domain/role-groups";
+import type {
+  ExecutionPurpose,
+  GoalCheckDefinition,
+} from "../packages/domain/role-groups";
 import { fixture } from "./helpers";
 
 /**
@@ -207,12 +212,32 @@ export class ScriptedDriver implements OrchestrationDriver {
   /** When set, a launch records its attempt and then "crashes" before returning. */
   crashAfterRecord = false;
   reply: (turn: MemberTurn) => Reply = (turn) => defaultReply(turn);
-  integrations: Array<{ base: string; candidates: string[] }> = [];
+  integrations: Array<{
+    base: string;
+    candidates: string[];
+    resolutions: Array<{ path: string; candidateId: string }>;
+  }> = [];
   integrateResult:
     | ((
         candidates: string[],
-      ) => { candidateId: string } | { conflicts: string[] })
+        resolutions: Array<{ path: string; candidateId: string }>,
+      ) =>
+        | { candidateId: string }
+        | { conflicts: Array<{ path: string; candidateIds: string[] }> })
     | null = null;
+  /** Check protocols bound per goal, as the check machinery would freeze them. */
+  boundChecks: Array<{ goalId: string; baseline: string; ids: string[] }> = [];
+  checkTasks: string[] = [];
+  checkPlans = new Map<string, GoalCheckPlan>();
+  evidence: Array<GoalCheckEvidence & { taskId: string; candidateId: string }> =
+    [];
+  /** The scripted result of running a check on a candidate. */
+  checkResult: (definitionId: string, candidateId: string) => string = () =>
+    "passed";
+  cancelledChecks: string[] = [];
+  /** A refusal the scripted folder returns (dirty or changed), or null. */
+  applyProblem: string | null = null;
+  applied: Array<{ goalId: string; candidateId: string }> = [];
   private counter = 0;
   routes() {
     return this.routesList;
@@ -316,16 +341,94 @@ export class ScriptedDriver implements OrchestrationDriver {
   async baseline() {
     return "baseline-candidate";
   }
-  async integrate(input: { baseCandidateId: string; candidateIds: string[] }) {
+  async integrate(input: {
+    baseCandidateId: string;
+    candidateIds: string[];
+    resolutions?: Array<{ path: string; candidateId: string }>;
+  }) {
     this.integrations.push({
       base: input.baseCandidateId,
       candidates: input.candidateIds,
+      resolutions: input.resolutions ?? [],
     });
     return (
-      this.integrateResult?.(input.candidateIds) ?? {
+      this.integrateResult?.(input.candidateIds, input.resolutions ?? []) ?? {
         candidateId: `integrated-${this.integrations.length}`,
       }
     );
+  }
+  bindChecks(input: {
+    goalId: string;
+    baselineCandidateId: string;
+    checks: GoalCheckDefinition[];
+  }) {
+    this.boundChecks.push({
+      goalId: input.goalId,
+      baseline: input.baselineCandidateId,
+      ids: input.checks.map((c) => c.id),
+    });
+  }
+  checkTask() {
+    const id = `check-task-${this.checkTasks.length + 1}`;
+    this.checkTasks.push(id);
+    return id;
+  }
+  async previewChecks(input: {
+    goalId: string;
+    taskId: string;
+    candidateId: string;
+    checks: GoalCheckDefinition[];
+  }) {
+    return input.checks.map((definition) => {
+      const plan: GoalCheckPlan = {
+        id: `plan-${this.checkPlans.size + 1}`,
+        workflowId: input.goalId,
+        taskId: input.taskId,
+        candidateId: input.candidateId,
+        targetRevision: `rev-${input.candidateId}`,
+        definition,
+        digest: `digest-${this.checkPlans.size + 1}`,
+      };
+      this.checkPlans.set(plan.id, plan);
+      return plan;
+    });
+  }
+  checkPlan(planId: string) {
+    return this.checkPlans.get(planId) ?? null;
+  }
+  async runCheck(planId: string, digest: string) {
+    const plan = this.checkPlans.get(planId)!;
+    if (digest !== plan.digest) throw new Error("Check approval is stale.");
+    this.evidence.push({
+      definitionId: plan.definition.id,
+      verificationId: `verification-${this.evidence.length + 1}`,
+      result: this.checkResult(plan.definition.id, plan.candidateId),
+      targetRevision: plan.targetRevision,
+      evidenceArtifactId: `evidence-${this.evidence.length + 1}`,
+      taskId: plan.taskId,
+      candidateId: plan.candidateId,
+    });
+  }
+  checkEvidence(input: { taskId: string; candidateId: string }) {
+    return this.evidence.filter(
+      (e) => e.taskId === input.taskId && e.candidateId === input.candidateId,
+    );
+  }
+  cancelChecks(goalId: string) {
+    this.cancelledChecks.push(goalId);
+  }
+  async applyPreview(input: { candidateId: string }) {
+    return {
+      root: "/fixture/project",
+      baseRevision: "fixture-head",
+      files: [{ path: "src/a.ts", change: "modified" as const }],
+      problems: this.applyProblem ? [this.applyProblem] : [],
+    };
+  }
+  async apply(input: { goalId: string; candidateId: string }) {
+    if (this.applyProblem) return { refused: this.applyProblem };
+    this.applied.push({ goalId: input.goalId, candidateId: input.candidateId });
+    return { applied: [{ path: "src/a.ts", change: "modified" as const }] };
   }
   candidateRevision(candidateId: string) {
     return `rev-${candidateId}`;

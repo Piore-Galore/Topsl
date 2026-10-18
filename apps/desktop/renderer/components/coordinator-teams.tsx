@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Command } from "../../../../packages/domain/commands";
 import type {
   CollaborationMode,
+  GoalCheckDefinition,
   MemberIntent,
   RoleGroupSettings,
   SchedulingKind,
@@ -442,6 +443,81 @@ function MemberCard({ member }: { member: any }) {
   );
 }
 
+interface CheckDraft {
+  label: string;
+  executable: string;
+  args: string;
+  timeoutSeconds: string;
+}
+const emptyCheck: CheckDraft = {
+  label: "",
+  executable: "",
+  args: "",
+  timeoutSeconds: "120",
+};
+/** One required check from the form, or none when the executable is empty. */
+function checksFrom(draft: CheckDraft): GoalCheckDefinition[] {
+  if (!draft.executable.trim()) return [];
+  return [
+    {
+      id: "required-check",
+      label: draft.label.trim() || "Required project check",
+      executable: draft.executable.trim(),
+      args: draft.args.split("\n").filter((line) => line.length),
+      timeoutMs: Math.round(Number(draft.timeoutSeconds || "120") * 1000),
+    },
+  ];
+}
+
+function CheckFields({
+  draft,
+  setDraft,
+}: {
+  draft: CheckDraft;
+  setDraft: (draft: CheckDraft) => void;
+}) {
+  return (
+    <div className="check-fields">
+      <label>
+        Check name{" "}
+        <input
+          value={draft.label}
+          onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+          placeholder="Required project check"
+        />
+      </label>
+      <label>
+        Executable (absolute path){" "}
+        <input
+          value={draft.executable}
+          onChange={(e) => setDraft({ ...draft, executable: e.target.value })}
+          placeholder="/usr/local/bin/npm"
+        />
+      </label>
+      <label>
+        Arguments, one per line{" "}
+        <textarea
+          rows={2}
+          value={draft.args}
+          onChange={(e) => setDraft({ ...draft, args: e.target.value })}
+        />
+      </label>
+      <label>
+        Timeout (seconds){" "}
+        <input
+          type="number"
+          min={1}
+          max={300}
+          value={draft.timeoutSeconds}
+          onChange={(e) =>
+            setDraft({ ...draft, timeoutSeconds: e.target.value })
+          }
+        />
+      </label>
+    </div>
+  );
+}
+
 export function CoordinatorTeams({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<any>(null),
     [errors, setErrors] = useState<Record<string, string>>({}),
@@ -451,7 +527,13 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
       goalId: string | null;
       roleId: string;
     } | null>(null),
-    [rationale, setRationale] = useState("");
+    [rationale, setRationale] = useState(""),
+    [newCheck, setNewCheck] = useState<CheckDraft>(emptyCheck),
+    [goalChecks, setGoalChecks] = useState<Record<string, CheckDraft>>({}),
+    [checkPlans, setCheckPlans] = useState<Record<string, any[]>>({}),
+    [choices, setChoices] = useState<Record<string, Record<string, string>>>(
+      {},
+    );
   const generation = useRef(0),
     reads = useRef(new ScopedReadFence(projectId));
   useEffect(() => {
@@ -460,6 +542,9 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
     setSnapshot(null);
     setErrors({});
     setEditing(null);
+    setCheckPlans({});
+    setChoices({});
+    setGoalChecks({});
   }, [projectId]);
   async function refresh() {
     const ticket = reads.current.begin();
@@ -503,6 +588,7 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
       goalId: null,
       routing: "auto",
       kind,
+      ...(kind === "code" ? { checks: checksFrom(newCheck) } : {}),
       commandId: newCommandId(),
     });
     setText("");
@@ -573,6 +659,21 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
             <option value="information">Information only</option>
           </select>
         </label>
+        {kind === "code" && (
+          <details>
+            <summary>
+              Required check for new code goals
+              {newCheck.executable.trim() ? " (set)" : " (none)"}
+            </summary>
+            <p className="muted">
+              The check runs against the exact integrated candidate after the
+              review group is satisfied; acceptance needs its current passing
+              evidence. Its tests and configuration are frozen at the goal's
+              baseline.
+            </p>
+            <CheckFields draft={newCheck} setDraft={setNewCheck} />
+          </details>
+        )}
         <button
           type="button"
           onClick={() => void send()}
@@ -754,6 +855,23 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
                     Accept candidate…
                   </button>
                 )}
+                {g.state === "accepted" &&
+                  g.baselineCandidateId &&
+                  (!view.application ||
+                    view.application.state === "refused") && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void run(`apply-${g.id}`, {
+                          type: "orchestration-apply",
+                          goalId: g.id,
+                          commandId: newCommandId(),
+                        })
+                      }
+                    >
+                      Apply to project folder…
+                    </button>
+                  )}
                 {view.review?.result === "blocked" && (
                   <button
                     type="button"
@@ -769,6 +887,183 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
                   </button>
                 )}
               </div>
+              {view.application && (
+                <p role="status">
+                  <strong>
+                    Project folder: {label(view.application.state)}
+                  </strong>{" "}
+                  · {view.application.detail}
+                </p>
+              )}
+              {g.kind === "code" &&
+                (view.checks.required.length > 0 ||
+                  !view.rounds.some((r: any) => r.kind === "work")) && (
+                  <section aria-label="Required checks">
+                    <h4>Required checks</h4>
+                    {view.checks.required.length ? (
+                      <>
+                        <p>{view.checks.detail}</p>
+                        <ul>
+                          {view.checks.results.map((c: any) => (
+                            <li key={c.definitionId}>
+                              {c.label} · {c.result ?? "not run"} on the current
+                              candidate
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p className="muted">
+                        No required checks; acceptance rests on the review
+                        group.
+                      </p>
+                    )}
+                    {g.state === "checking" && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const plans: any = await run(`checks-${g.id}`, {
+                            type: "orchestration-checks-preview",
+                            goalId: g.id,
+                          });
+                          if (plans)
+                            setCheckPlans((current) => ({
+                              ...current,
+                              [g.id]: plans,
+                            }));
+                        }}
+                      >
+                        Prepare checks for this candidate
+                      </button>
+                    )}
+                    {g.state === "checking" &&
+                      (checkPlans[g.id] ?? [])
+                        .filter((p: any) => p.candidateId === g.candidateId)
+                        .map((p: any) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={async () => {
+                              await run(`check-${p.id}`, {
+                                type: "orchestration-check-apply",
+                                id: p.id,
+                              });
+                              setCheckPlans((current) => ({
+                                ...current,
+                                [g.id]: (current[g.id] ?? []).filter(
+                                  (x: any) => x.id !== p.id,
+                                ),
+                              }));
+                            }}
+                          >
+                            Run {p.definition.label}…
+                          </button>
+                        ))}
+                    {!view.rounds.some((r: any) => r.kind === "work") &&
+                      !["stopped", "accepted", "completed"].includes(
+                        g.state,
+                      ) && (
+                        <details>
+                          <summary>Set this goal's required check</summary>
+                          <p className="muted">
+                            Checks are fixed once implementation starts. Leave
+                            the executable empty to remove them.
+                          </p>
+                          <CheckFields
+                            draft={goalChecks[g.id] ?? emptyCheck}
+                            setDraft={(draft) =>
+                              setGoalChecks((current) => ({
+                                ...current,
+                                [g.id]: draft,
+                              }))
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void run(`checks-set-${g.id}`, {
+                                type: "orchestration-checks-set",
+                                goalId: g.id,
+                                checks: checksFrom(
+                                  goalChecks[g.id] ?? emptyCheck,
+                                ),
+                                commandId: newCommandId(),
+                              })
+                            }
+                          >
+                            Save required check
+                          </button>
+                        </details>
+                      )}
+                  </section>
+                )}
+              {g.state === "blocked" && view.conflicts.length > 0 && (
+                <section aria-label="Integration conflicts">
+                  <h4>Integration conflicts ({view.conflicts.length})</h4>
+                  <p className="muted">
+                    These files were changed differently by more than one
+                    member. Choose one member's whole version of each file; no
+                    text is merged. The result is integrated again and the
+                    review group and required checks cover it anew.
+                  </p>
+                  <ul>
+                    {view.conflicts.map((c: any) => (
+                      <li key={c.path}>
+                        <fieldset>
+                          <legend>{c.path}</legend>
+                          {c.options.map((o: any) => (
+                            <label key={o.candidateId}>
+                              <input
+                                type="radio"
+                                name={`${g.id}:${c.path}`}
+                                checked={
+                                  choices[g.id]?.[c.path] === o.candidateId
+                                }
+                                onChange={() =>
+                                  setChoices((current) => ({
+                                    ...current,
+                                    [g.id]: {
+                                      ...current[g.id],
+                                      [c.path]: o.candidateId,
+                                    },
+                                  }))
+                                }
+                              />{" "}
+                              {o.memberId}'s version
+                              {o.taskKey ? ` (task ${o.taskKey})` : ""}
+                            </label>
+                          ))}
+                        </fieldset>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    disabled={
+                      !Object.keys(choices[g.id] ?? {}).some((path) =>
+                        view.conflicts.some((c: any) => c.path === path),
+                      )
+                    }
+                    onClick={() =>
+                      void run(`resolve-${g.id}`, {
+                        type: "orchestration-conflict-resolve",
+                        goalId: g.id,
+                        resolutions: Object.entries(choices[g.id] ?? {})
+                          .filter(([path]) =>
+                            view.conflicts.some((c: any) => c.path === path),
+                          )
+                          .map(([path, candidateId]) => ({
+                            path,
+                            candidateId,
+                          })),
+                        commandId: newCommandId(),
+                      })
+                    }
+                  >
+                    Use the chosen versions
+                  </button>
+                </section>
+              )}
               {g.synthesis && <pre className="synthesis">{g.synthesis}</pre>}
               {view.actions.length > 0 && (
                 <details>

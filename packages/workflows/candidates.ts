@@ -344,6 +344,25 @@ async function gitProgram(executable?: string): Promise<string> {
       : "git")
   );
 }
+/**
+ * Paths with uncommitted, staged or untracked changes in a Git checkout, as
+ * `git status` reports them. Ignored files are not listed.
+ */
+export async function gitWorkingTreeChanges(
+  root: string,
+  gitExecutable?: string,
+): Promise<string[]> {
+  return (
+    await runFile(
+      await gitProgram(gitExecutable),
+      ["status", "--porcelain=v1", "--untracked-files=all", "-z"],
+      { cwd: root },
+    )
+  )
+    .split("\0")
+    .filter((entry) => entry.length > 3)
+    .map((entry) => entry.slice(3));
+}
 async function gitBasis(
   root: string,
   executable: string,

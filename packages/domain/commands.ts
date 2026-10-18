@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { workflowDraftCommands } from "./workflow-drafts";
 import { candidateReviewCommands } from "./candidate-reviews";
-import { orchestrationCommands } from "./orchestration-commands";
+import {
+  orchestrationCommands,
+  requiredCheckSchema,
+} from "./orchestration-commands";
 import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
@@ -26,21 +29,7 @@ const roleAssignment = z.object({
   /** A Claude Code step the owner runs in Topsl's terminal, instead of a turn Topsl runs. */
   route: z.literal("terminal").optional(),
 });
-const requiredCheck = z.object({
-  id,
-  label: z.string().min(1).max(1000),
-  executable: z.string().min(1).max(4096),
-  args: z.array(z.string().max(20000)).max(100),
-  timeoutMs: z.number().int().min(100).max(300000),
-  environmentRecipeId: id.optional(),
-  executionPolicy: z
-    .object({
-      maximumUses: z.number().int().min(1).max(10),
-      allowCandidateChanges: z.boolean().optional(),
-      expiresAfterMs: z.number().int().min(100).max(3600000).optional(),
-    })
-    .optional(),
-});
+const requiredCheck = requiredCheckSchema;
 const specialist = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
   title: z.string().min(1).max(1000),

@@ -1396,3 +1396,306 @@ describe("coordinator goals end to end (scripted driver)", () => {
     );
   });
 });
+
+describe("required checks, conflict resolution and applying (scripted driver)", () => {
+  const check = (id = "unit") => ({
+    id,
+    label: `${id} tests`,
+    executable: "/fixture/bin/check",
+    args: ["--all"],
+    timeoutMs: 30_000,
+  });
+  async function startWith(
+    f: Awaited<ReturnType<typeof setup>>,
+    text: string,
+    checks: ReturnType<typeof check>[] = [],
+    kind: Goal["kind"] = "code",
+  ) {
+    const conversation = await f.orchestrator.createConversation({
+      projectId: "p",
+      title: "Main",
+      commandId: cmd(),
+    });
+    const posted = await f.orchestrator.post({
+      conversationId: conversation.id,
+      text,
+      commandId: cmd(),
+      kind,
+      checks,
+    });
+    return posted.goal!;
+  }
+
+  test("CK-01: acceptance needs the review group and current passing evidence for every required check on the exact candidate", async () => {
+    const f = await setup();
+    const goal = await startWith(f, "Change the value.", [
+      check("unit"),
+      check("lint"),
+    ]);
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe("checking");
+    // The protocol was frozen at the baseline members started from.
+    expect(f.driver.boundChecks).toEqual([
+      {
+        goalId: goal.id,
+        baseline: "baseline-candidate",
+        ids: ["unit", "lint"],
+      },
+    ]);
+    let current = goalOf(f, goal.id);
+    expect(current.candidateId).toBe("integrated-1");
+    expect(f.orchestrator.goalView(goal.id).review?.result).toBe("satisfied");
+    expect(current.detail).toContain("2 of 2 not yet run");
+    await expect(
+      f.orchestrator.accept({
+        goalId: goal.id,
+        digest: f.orchestrator.acceptanceDigest(goal.id),
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/stale|not completed/);
+    // One check fails on this candidate: acceptance stays closed.
+    f.driver.checkResult = (id) => (id === "lint" ? "failed" : "passed");
+    let plans = await f.orchestrator.previewChecks({ goalId: goal.id });
+    expect(plans.map((p) => [p.definition.id, p.candidateId])).toEqual([
+      ["unit", "integrated-1"],
+      ["lint", "integrated-1"],
+    ]);
+    for (const plan of plans)
+      await f.orchestrator.runCheck({ planId: plan.id, digest: plan.digest });
+    current = goalOf(f, goal.id);
+    expect(current.state).toBe("checking");
+    expect(current.detail).toContain("lint tests failed");
+    // Evidence on another task, or a plan for another candidate, never counts.
+    f.driver.evidence.push({
+      definitionId: "lint",
+      verificationId: "elsewhere",
+      result: "passed",
+      targetRevision: "rev-integrated-1",
+      evidenceArtifactId: "elsewhere",
+      taskId: "another-task",
+      candidateId: "integrated-1",
+    });
+    expect(f.orchestrator.checkStatus(goalOf(f, goal.id)).passing).toBe(false);
+    plans = await f.orchestrator.previewChecks({ goalId: goal.id });
+    const lint = plans.find((p) => p.definition.id === "lint")!;
+    f.driver.checkPlans.set("stale-plan", {
+      ...lint,
+      id: "stale-plan",
+      candidateId: "integrated-0",
+    });
+    await expect(
+      f.orchestrator.runCheck({ planId: "stale-plan", digest: lint.digest }),
+    ).rejects.toThrow(/stale candidate/);
+    f.driver.checkResult = () => "passed";
+    const before = f.orchestrator.acceptanceDigest(goal.id);
+    await f.orchestrator.runCheck({ planId: lint.id, digest: lint.digest });
+    current = goalOf(f, goal.id);
+    expect(current.state).toBe("awaiting-acceptance");
+    expect(f.orchestrator.acceptanceDigest(goal.id)).not.toBe(before);
+    const accepted = await f.orchestrator.accept({
+      goalId: goal.id,
+      digest: f.orchestrator.acceptanceDigest(goal.id),
+      commandId: cmd(),
+    });
+    expect(accepted.state).toBe("accepted");
+    expect(accepted.detail).toContain("2 passing required checks");
+    // Checks ran on one tester task bound to the accepted candidate.
+    expect(f.driver.checkTasks).toEqual([current.checkTaskId]);
+    expect(current.checkCandidateId).toBe(accepted.acceptance?.candidateId);
+  });
+
+  test("CK-02: checks belong to code goals, have distinct IDs and are fixed once implementation starts; stopping fences them", async () => {
+    const f = await setup();
+    await expect(
+      startWith(f, "Research it.", [check()], "information"),
+    ).rejects.toThrow(/Only code goals/);
+    const goal = await startWith(f, "Change the value.");
+    await expect(
+      f.orchestrator.setChecks({
+        goalId: goal.id,
+        checks: [check("a"), check("a")],
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/distinct ID/);
+    await f.orchestrator.setChecks({
+      goalId: goal.id,
+      checks: [check("a")],
+      commandId: cmd(),
+    });
+    expect(goalOf(f, goal.id).checks?.map((c) => c.id)).toEqual(["a"]);
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe("checking");
+    await expect(
+      f.orchestrator.setChecks({
+        goalId: goal.id,
+        checks: [],
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/fixed once implementation starts/);
+    await f.orchestrator.controlCommand({
+      projectId: "p",
+      goalId: goal.id,
+      action: "stop",
+      commandId: cmd(),
+    });
+    expect(f.driver.cancelledChecks).toEqual([goal.id]);
+    await expect(
+      f.orchestrator.previewChecks({ goalId: goal.id }),
+    ).rejects.toThrow(/after the review group/);
+  });
+
+  test("CF-01: the owner chooses one member's version per conflicting file; the result is integrated and reviewed again", async () => {
+    const f = await setup();
+    f.driver.integrateResult = (candidates, resolutions) => {
+      const open = ["src/shared.ts", "src/other.ts"].filter(
+        (p) => !resolutions.some((r) => r.path === p),
+      );
+      return open.length
+        ? {
+            conflicts: open.map((path) => ({ path, candidateIds: candidates })),
+          }
+        : { candidateId: "integrated-resolved" };
+    };
+    const goal = await startWith(f, "Use two implementers.");
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe("blocked");
+    let view = f.orchestrator.goalView(goal.id);
+    expect(view.conflicts.map((c) => c.path)).toEqual([
+      "src/shared.ts",
+      "src/other.ts",
+    ]);
+    const [first, second] = view.conflicts[0].options;
+    expect(first.memberId).not.toBe(second.memberId);
+    expect(first.memberId).toMatch(/^implementer/);
+    expect(first.taskKey).toBe("build");
+    expect(goalOf(f, goal.id).detail).toContain(
+      `src/shared.ts changed differently by ${first.memberId}, ${second.memberId}`,
+    );
+    await expect(
+      f.orchestrator.resolveConflicts({
+        goalId: goal.id,
+        resolutions: [
+          { path: "src/unknown.ts", candidateId: first.candidateId },
+        ],
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/not one of the recorded conflicts/);
+    await expect(
+      f.orchestrator.resolveConflicts({
+        goalId: goal.id,
+        resolutions: [{ path: "src/shared.ts", candidateId: "someone-else" }],
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/Choose a member that changed/);
+    // A partial choice keeps the goal blocked on the rest.
+    let next = await f.orchestrator.resolveConflicts({
+      goalId: goal.id,
+      resolutions: [{ path: "src/shared.ts", candidateId: second.candidateId }],
+      commandId: cmd(),
+    });
+    expect(next.state).toBe("blocked");
+    expect(next.conflicts?.map((c) => c.path)).toEqual(["src/other.ts"]);
+    next = await f.orchestrator.resolveConflicts({
+      goalId: goal.id,
+      resolutions: [{ path: "src/other.ts", candidateId: first.candidateId }],
+      commandId: cmd(),
+    });
+    expect(next.state).toBe("running");
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    expect(f.driver.integrations.at(-1)!.resolutions).toEqual([
+      { path: "src/other.ts", candidateId: first.candidateId },
+      { path: "src/shared.ts", candidateId: second.candidateId },
+    ]);
+    view = f.orchestrator.goalView(goal.id);
+    expect(view.goal.candidateId).toBe("integrated-resolved");
+    expect(view.conflicts).toEqual([]);
+    expect(view.resolutions.every((r) => r.by === "local-user")).toBe(true);
+    // The review group reviewed the resolved candidate, not an earlier one.
+    expect(rounds(f, goal.id, "review").at(-1)!.input.candidateId).toBe(
+      "integrated-resolved",
+    );
+  });
+
+  test("AP-01: applying the accepted candidate is confirmed by digest, refused for a dirty folder and never repeated", async () => {
+    const f = await setup();
+    const goal = await startWith(f, "Change the value.");
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    await expect(f.orchestrator.applicationReview(goal.id)).rejects.toThrow(
+      /Only an accepted/,
+    );
+    await f.orchestrator.accept({
+      goalId: goal.id,
+      digest: f.orchestrator.acceptanceDigest(goal.id),
+      commandId: cmd(),
+    });
+    const review = await f.orchestrator.applicationReview(goal.id);
+    expect(review.files).toEqual([{ path: "src/a.ts", change: "modified" }]);
+    expect(review.problems).toEqual([]);
+    await expect(
+      f.orchestrator.apply({
+        goalId: goal.id,
+        digest: "wrong",
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/stale/);
+    f.driver.applyProblem = "The project folder has uncommitted changes.";
+    expect((await f.orchestrator.applicationReview(goal.id)).problems).toEqual([
+      f.driver.applyProblem,
+    ]);
+    let next = await f.orchestrator.apply({
+      goalId: goal.id,
+      digest: review.digest,
+      commandId: cmd(),
+    });
+    expect(next.application).toMatchObject({
+      state: "refused",
+      candidateId: goal.candidateId ?? next.candidateId,
+    });
+    expect(next.application!.detail).toContain("Nothing was written");
+    expect(f.driver.applied).toEqual([]);
+    f.driver.applyProblem = null;
+    next = await f.orchestrator.apply({
+      goalId: goal.id,
+      digest: review.digest,
+      commandId: cmd(),
+    });
+    expect(next.application?.state).toBe("applied");
+    expect(next.state).toBe("accepted");
+    expect(f.driver.applied).toEqual([
+      { goalId: goal.id, candidateId: next.candidateId },
+    ]);
+    await expect(
+      f.orchestrator.apply({
+        goalId: goal.id,
+        digest: review.digest,
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/already applied/);
+  });
+
+  test("AP-02: an apply that fails after it may have written is uncertain and is not retried", async () => {
+    const f = await setup();
+    const goal = await startWith(f, "Change the value.");
+    await drive(f.orchestrator, f.driver, goal.id);
+    await f.orchestrator.accept({
+      goalId: goal.id,
+      digest: f.orchestrator.acceptanceDigest(goal.id),
+      commandId: cmd(),
+    });
+    const review = await f.orchestrator.applicationReview(goal.id);
+    f.driver.apply = async () => {
+      throw new Error("disk full");
+    };
+    const next = await f.orchestrator.apply({
+      goalId: goal.id,
+      digest: review.digest,
+      commandId: cmd(),
+    });
+    expect(next.application?.state).toBe("uncertain");
+    expect(next.application?.detail).toContain("disk full");
+    await expect(f.orchestrator.applicationReview(goal.id)).rejects.toThrow(
+      /unknown outcome/,
+    );
+  });
+});

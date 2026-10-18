@@ -349,3 +349,216 @@ test("Claude's managed route stays gated outside fixtures: a pinned Claude membe
   )!;
   expect(claude.purposes["coordinator-contribution"]!.ready).toBe(false);
 });
+
+const valueCheck = {
+  id: "value-check",
+  label: "value is two",
+  executable: process.execPath,
+  args: [
+    "-e",
+    'if(!require("fs").readFileSync("file.ts","utf8").includes("value = 2"))process.exit(1)',
+  ],
+  timeoutMs: 30_000,
+};
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync(gitExecutable, args, { cwd }).toString();
+async function post(
+  f: Awaited<ReturnType<typeof setup>>,
+  text: string,
+  checks: unknown[] = [],
+) {
+  const conversation = await f.service.command({
+    type: "orchestration-conversation-create",
+    projectId: "p",
+    title: "",
+    commandId: `c-${uid()}`,
+  });
+  return f.service.command({
+    type: "orchestration-message",
+    conversationId: conversation.id,
+    text,
+    goalId: null,
+    routing: "auto",
+    kind: "code",
+    checks,
+    commandId: `c-${uid()}`,
+  } as any);
+}
+
+test("a required check runs against the exact integrated candidate, gates acceptance, and the accepted candidate is applied to a clean folder", async () => {
+  const f = await setup();
+  const posted = await post(f, "Change the value to two.", [valueCheck]);
+  let goal = await untilGoal(f.service, posted.goal.id, [
+    "checking",
+    "blocked",
+  ]);
+  expect(goal.state).toBe("checking");
+  // The review group is satisfied, but acceptance waits for the check.
+  expect(f.service.orchestration.goalView(goal.id).review!.result).toBe(
+    "satisfied",
+  );
+  const acceptanceBefore = f.service.review("goal-acceptance", goal.id) as any;
+  await expect(
+    f.service.command(
+      {
+        type: "orchestration-accept",
+        goalId: goal.id,
+        commandId: `c-${uid()}`,
+      },
+      { digest: acceptanceBefore.digest },
+    ),
+  ).rejects.toThrow(/stale|not completed/);
+  const plans: any[] = await f.service.command({
+    type: "orchestration-checks-preview",
+    goalId: goal.id,
+  });
+  expect(plans).toHaveLength(1);
+  expect(plans[0].candidateId).toBe(goal.candidateId);
+  expect(plans[0].workflowId).toBe(goal.id);
+  await expect(
+    f.service.command({ type: "orchestration-check-apply", id: plans[0].id }),
+  ).rejects.toThrow(/native approval/);
+  goal = await f.service.command(
+    { type: "orchestration-check-apply", id: plans[0].id },
+    { digest: plans[0].digest },
+  );
+  expect(goal.state).toBe("awaiting-acceptance");
+  const tester = f.service.store.get<any>("task", goal.checkTaskId!);
+  expect(tester).toMatchObject({ role: "tester", workflowId: null });
+  const verification = f.service.store
+    .list<any>("verification")
+    .find((v) => v.taskId === tester.id)!;
+  expect(verification).toMatchObject({
+    candidateId: goal.candidateId,
+    definition: "value-check",
+    result: "passed",
+  });
+  const acceptance = f.service.review("goal-acceptance", goal.id) as any;
+  expect(acceptance.checks).toEqual([
+    {
+      definition: "value-check",
+      label: "value is two",
+      result: "passed",
+      targetRevision: acceptance.targetRevision,
+    },
+  ]);
+  goal = await f.service.command(
+    { type: "orchestration-accept", goalId: goal.id, commandId: `c-${uid()}` },
+    { digest: acceptance.digest },
+  );
+  expect(goal.state).toBe("accepted");
+  // Acceptance alone leaves the folder untouched.
+  expect(await readFile(path.join(f.project, "file.ts"), "utf8")).toContain(
+    "value = 1",
+  );
+  // An untracked file makes the folder dirty: no confirmation is offered.
+  await writeFile(path.join(f.project, "scratch.txt"), "notes\n");
+  await expect(f.service.review("goal-application", goal.id)).rejects.toThrow(
+    /uncommitted or untracked changes \(scratch\.txt\)/,
+  );
+  await rm(path.join(f.project, "scratch.txt"));
+  // A new commit changes the folder's basis: also refused.
+  await writeFile(path.join(f.project, "other.ts"), "export {};\n");
+  git(f.project, "add", "other.ts");
+  git(
+    f.project,
+    "-c",
+    "user.email=f@example.test",
+    "-c",
+    "user.name=Fixture",
+    "commit",
+    "-qm",
+    "other",
+  );
+  await expect(f.service.review("goal-application", goal.id)).rejects.toThrow(
+    /changed since the goal's baseline/,
+  );
+  git(f.project, "reset", "-q", "--hard", "HEAD~1");
+  const application = (await f.service.review(
+    "goal-application",
+    goal.id,
+  )) as any;
+  expect(application.files).toEqual([{ path: "file.ts", change: "modified" }]);
+  await expect(
+    f.service.command({
+      type: "orchestration-apply",
+      goalId: goal.id,
+      commandId: `c-${uid()}`,
+    }),
+  ).rejects.toThrow(/native confirmation/);
+  goal = await f.service.command(
+    { type: "orchestration-apply", goalId: goal.id, commandId: `c-${uid()}` },
+    { digest: application.digest },
+  );
+  expect(goal.application).toMatchObject({
+    state: "applied",
+    files: [{ path: "file.ts", change: "modified" }],
+  });
+  expect(await readFile(path.join(f.project, "file.ts"), "utf8")).toBe(
+    "export const value = 2;\n",
+  );
+  // Written, not committed.
+  expect(git(f.project, "status", "--porcelain")).toContain(" M file.ts");
+  await expect(f.service.review("goal-application", goal.id)).rejects.toThrow(
+    /already applied/,
+  );
+});
+
+test("two implementers' different versions of one file conflict; the owner's per-file choice is integrated and reviewed", async () => {
+  const f = await setup();
+  await f.service.command({
+    type: "orchestration-group-set",
+    projectId: "p",
+    goalId: null,
+    level: "project-role",
+    taskKey: null,
+    mode: "replace",
+    roleId: "implementer",
+    settings: {
+      form: "exact",
+      collaboration: "parallel-independent",
+      members: ["astra", "sol"].map((name) => ({
+        memberId: `implementer-${name}`,
+        required: true,
+        pin: { label: name === "astra" ? "Astra" : "Sol" },
+        fallbacks: [],
+        preferences: { providers: [], models: [] },
+        source: { kind: "ui", reference: null, provenance: "explicit" },
+      })),
+    },
+    commandId: `c-${uid()}`,
+  });
+  const posted = await post(f, "Change the value to two [distinct versions].");
+  let goal = await untilGoal(f.service, posted.goal.id, ["blocked"]);
+  const view = f.service.orchestration.goalView(goal.id);
+  expect(view.conflicts).toHaveLength(1);
+  expect(view.conflicts[0].path).toBe("file.ts");
+  expect(view.conflicts[0].options.map((o: any) => o.memberId).sort()).toEqual([
+    "implementer-astra",
+    "implementer-sol",
+  ]);
+  const sol = view.conflicts[0].options.find(
+    (o: any) => o.memberId === "implementer-sol",
+  )!;
+  goal = await f.service.command({
+    type: "orchestration-conflict-resolve",
+    goalId: goal.id,
+    resolutions: [{ path: "file.ts", candidateId: sol.candidateId }],
+    commandId: `c-${uid()}`,
+  });
+  expect(goal.state).toBe("running");
+  goal = await untilGoal(f.service, goal.id, ["awaiting-acceptance"]);
+  const candidate = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    goal.candidateId!,
+  )!;
+  const file = candidate.files.find((x) => x.path === "file.ts")!;
+  expect(candidateFileBytes(candidate, file, f.service.store)!.toString()).toBe(
+    "export const value = 2; // by implementer-sol\n",
+  );
+  const review = f.service.orchestration
+    .rounds(goal.id)
+    .filter((r: RoleRound) => r.kind === "review")
+    .at(-1)!;
+  expect(review.input.candidateId).toBe(goal.candidateId);
+});

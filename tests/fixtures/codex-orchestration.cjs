@@ -68,11 +68,16 @@ function answer(prompt) {
     const outputs =
       match(prompt, /Change only: ([^\n]+)\./) ||
       match(prompt, /Permitted outputs: ([^\n]+)\./);
+    // A goal marked "[distinct versions]" makes each member write its own
+    // version of file.ts, so two members conflict on it.
+    const member = /\[distinct versions\]/.test(prompt)
+      ? match(prompt, /You are member (\S+)\./)
+      : "";
     for (const file of outputs.split(", ").filter(Boolean))
       fs.writeFileSync(
         path.join(process.cwd(), file),
         file === "file.ts"
-          ? "export const value = 2;\n"
+          ? `export const value = 2;${member ? ` // by ${member}` : ""}\n`
           : `export const ${file.replace(/\W/g, "_")} = true;\n`,
       );
     return JSON.stringify({
