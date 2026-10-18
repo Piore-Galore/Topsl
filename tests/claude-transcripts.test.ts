@@ -90,6 +90,12 @@ async function setup() {
     },
   });
   const text = (value: string) => ({ type: "text", text: value });
+  /** Context Claude Code attaches to a turn, of the kind given. */
+  const attachment = (kind: string, extra: Record<string, unknown> = {}) => ({
+    ...common(extra),
+    type: "attachment",
+    attachment: { type: kind },
+  });
   /** What Claude Code records when the owner types /exit. */
   const exit = () => [
     user(
@@ -165,6 +171,7 @@ async function setup() {
     user,
     assistant,
     text,
+    attachment,
     exit,
     build,
     write: (...records: unknown[]) => writeFile(file, jsonl(...records)),
@@ -295,6 +302,119 @@ describe("Claude's reply from a step's session transcript", () => {
     await mkdir(other);
     await writeFile(path.join(other, `${session}.jsonl`), jsonl(...f.build()));
     await unread(f.read(), /More than one of Claude Code's project folders/);
+  });
+
+  test("Claude Code 2.1.300's bookkeeping records and attachments carry no conversation", async () => {
+    const f = await setup(),
+      records = f.build();
+    // The record types and field names of two live runs' transcripts, with
+    // stand-in values.
+    const bookkeeping = [
+      { type: "mode", mode: "normal", sessionId: session },
+      {
+        type: "permission-mode",
+        permissionMode: "acceptEdits",
+        sessionId: session,
+      },
+      { type: "atis-latch", atis: false, sessionId: session },
+      { type: "ai-title", aiTitle: "Change the value", sessionId: session },
+      {
+        type: "api-request-shape",
+        shape: {},
+        shapeHash: "h",
+        version: "2.1.300",
+        timestamp: "",
+        sessionId: session,
+      },
+      { type: "api-request-blob", hash: "h", message: {}, sessionId: session },
+      {
+        type: "api-request",
+        id: uid(),
+        params: {},
+        tail: [],
+        keep: 0,
+        cacheControl: {},
+        querySource: "repl_main_thread",
+        requestDigest: "d",
+        shapeHash: "h",
+        version: "2.1.300",
+        timestamp: "",
+        sessionId: session,
+      },
+      {
+        type: "file-history-delta",
+        messageId: uid(),
+        snapshotMessageId: uid(),
+        trackingPath: "file.ts",
+        backup: {},
+        timestamp: "",
+      },
+      {
+        type: "cost-state",
+        modelUsage: {},
+        totalCostUSD: 0,
+        hasUnknownModelCost: false,
+        sessionId: session,
+      },
+      {
+        type: "last-prompt",
+        lastPrompt: "Role: builder",
+        leafUuid: uid(),
+        sessionId: session,
+      },
+    ];
+    const kinds = [
+      "agent_listing_delta",
+      "credential_org",
+      "date",
+      "deferred_tools_delta",
+      "deferred_tools_record",
+      "environment",
+      "mcp_instructions_delta",
+      "model",
+      "prompt_snapshot",
+      "remote_session_change",
+      "session_context",
+      "skill_listing",
+      "total_tokens_reminder",
+    ];
+    const [snapshot, prompt, ...rest] = records;
+    await f.write(
+      ...bookkeeping.slice(0, 3),
+      snapshot,
+      ...kinds.map((kind) => f.attachment(kind)),
+      prompt,
+      ...bookkeeping.slice(3),
+      ...rest,
+      f.attachment("total_tokens_reminder"),
+    );
+    const result = await f.read();
+    expect(result.ok && result.text).toBe(
+      "Changed the value to two in file.ts.",
+    );
+    // They still must not name another session, and an attachment must name
+    // the step's session and folder.
+    await f.write({ ...bookkeeping[0], sessionId: uid() }, ...records);
+    await unread(f.read(), /Line 1 of the transcript names another session\./);
+    await f.write(records[0], f.attachment("date", { cwd: os.tmpdir() }));
+    await unread(
+      f.read(),
+      /Line 2 of the transcript names a folder outside the step's\./,
+    );
+    // A kind of attachment Topsl does not know could hold a prompt, such as a
+    // message typed while Claude works.
+    await f.write(...records, f.attachment("queued_command"));
+    await unread(
+      f.read(),
+      new RegExp(
+        `Line ${records.length + 1} of the transcript has an attachment of kind "queued_command", which Topsl does not recognize\\.`,
+      ),
+    );
+    await f.write(records[0], { ...f.attachment("date"), attachment: null });
+    await unread(
+      f.read(),
+      /Line 2 of the transcript has an attachment Topsl does not recognize\./,
+    );
   });
 
   test("a record of another session or folder, or one naming neither, falls back to paste", async () => {
