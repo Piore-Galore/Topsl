@@ -2842,12 +2842,16 @@ export class Orchestrator {
   async tick(): Promise<void> {
     if (this.ticking) return;
     this.ticking = true;
+    const head = this.store.controlHead();
     try {
       await this.driver.sync?.();
       for (const goal of this.repo.all<Goal>(kinds.goal))
         await this.tickGoal(goal.id);
     } finally {
       this.ticking = false;
+      // Progress made here, such as a returned review completing its round,
+      // is published as a command's is, so open screens show it.
+      if (this.store.controlHead() !== head) this.changed();
     }
   }
 

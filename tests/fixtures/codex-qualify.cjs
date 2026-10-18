@@ -23,7 +23,9 @@
 // It answers --version and lists one model, so the desktop test can register,
 // connect and qualify it through Topsl's own interface.
 // A wrapper answers the turns the suite does not send, such as a workflow's
-// build and review, by setting otherTurn on this module's exports.
+// build and review, by setting otherTurn on this module's exports. It can
+// list other models by setting models, and interrupt such a turn by setting
+// interrupt, which returns true when it ended the turn.
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
@@ -214,7 +216,7 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
     reply({ platformFamily: "unix", platformOs: process.platform });
   else if (request.method === "model/list")
     reply({
-      data: [
+      data: module.exports.models ?? [
         {
           id: "fixture",
           model: "fixture-model",
@@ -296,6 +298,7 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
   } else if (request.method === "command/exec" && !process.env.FIXTURE_NO_EXEC)
     reply(exec(request.params.command, request.params.sandboxPolicy));
   else if (request.method === "turn/interrupt") {
+    if (module.exports.interrupt?.(request.params)) return reply({});
     if (!streaming?.active || streaming.turnId !== request.params.turnId)
       return send({
         id: request.id,
@@ -311,4 +314,11 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
       error: { code: -32601, message: "Unsupported fixture method." },
     });
 });
-module.exports = { call, complete, send, otherTurn: null };
+module.exports = {
+  call,
+  complete,
+  send,
+  otherTurn: null,
+  models: null,
+  interrupt: null,
+};

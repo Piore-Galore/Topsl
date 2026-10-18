@@ -152,7 +152,10 @@ function RoleEditor({
       executionWidth: width ? Number(width) : null,
       distinctModels: distinct ? "required" : "none",
       ...(form !== "exact" && count ? { count: Number(count) } : {}),
-      ...(form !== "exact" && maxCount ? { maxCount: Number(maxCount) } : {}),
+      // "At most" bounds Auto only when no exact count is given.
+      ...(form !== "exact" && !count && maxCount
+        ? { maxCount: Number(maxCount) }
+        : {}),
       completion: {
         threshold: threshold
           ? { kind: "count", count: Number(threshold) }
@@ -207,15 +210,17 @@ function RoleEditor({
               placeholder="Auto"
             />
           </label>
-          <label>
-            At most{" "}
-            <input
-              type="number"
-              min={1}
-              value={maxCount}
-              onChange={(e) => setMaxCount(e.target.value)}
-            />
-          </label>
+          {!count && (
+            <label>
+              At most{" "}
+              <input
+                type="number"
+                min={1}
+                value={maxCount}
+                onChange={(e) => setMaxCount(e.target.value)}
+              />
+            </label>
+          )}
         </>
       )}
       <ul
@@ -253,15 +258,21 @@ function RoleEditor({
             {m.pin && (
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  // As the service's release: the slot stays and Auto fills
+                  // it, so an exact roster becomes pins plus Auto.
+                  if (form === "exact") {
+                    setForm("required-plus-auto");
+                    setCount(String(members.length));
+                  }
                   setMembers(
                     members.map((x) =>
                       x.memberId === m.memberId
                         ? { ...x, pin: null, fallbacks: [] }
                         : x,
                     ),
-                  )
-                }
+                  );
+                }}
               >
                 Return to Auto
               </button>
@@ -381,15 +392,23 @@ function RoleEditor({
         </button>
         <button
           type="button"
-          onClick={() =>
-            void run(`release-${role.id}`, {
+          onClick={async () => {
+            const released = await run(`release-${role.id}`, {
               type: "orchestration-roster-release",
               projectId,
               goalId,
               roleId: role.id,
               commandId: newCommandId(),
-            })
-          }
+            });
+            // The editor shows what was saved, so a later save cannot bring
+            // the released roster back.
+            if (released) {
+              setForm("auto");
+              setMembers([]);
+              setCount("");
+              setMaxCount("");
+            }
+          }}
         >
           Return whole role to Auto
         </button>
