@@ -10,16 +10,14 @@ const outputs = new Map<string, string>();
 export function recordTerminalOutput(id: string, data: string): void {
   outputs.set(id, ((outputs.get(id) ?? "") + data).slice(-262144));
 }
-export const terminalOutput = (id: string): string => outputs.get(id) ?? "";
+const terminalOutput = (id: string): string => outputs.get(id) ?? "";
 
 export function TerminalPanel({
   id,
-  initial,
   mode,
   close,
 }: {
   id: string;
-  initial: string;
   /** The permission mode Topsl asked for, if any. */
   mode: string | null;
   close: () => void;
@@ -41,7 +39,9 @@ export function TerminalPanel({
     terminal.loadAddon(fit);
     terminal.open(ref.current!);
     fit.fit();
-    terminal.write(initial);
+    // The output so far, read just before subscribing below, so output that
+    // arrived after the panel rendered is not lost.
+    terminal.write(terminalOutput(id));
     terminal.parser.registerOscHandler(52, () => true); // Native output cannot write the system clipboard.
     const input = terminal.onData((data) => {
       void window.topsl
