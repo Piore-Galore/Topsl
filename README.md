@@ -88,7 +88,7 @@ npm run package       # personal-pilot package for this OS and architecture
 npm run verify:mac-package # macOS: verify the app extracted from the ZIP
 ```
 
-The test suite runs with Electron's Node ABI so the same native SQLite and PTY modules are exercised. Desktop tests use synthetic projects/transcripts; no vendor account, paid model turn, or real application installation is involved. Linux GUI tests need a display, for example `xvfb-run --auto-servernum npm run test:desktop`. The Linux CI smoke process uses Chromium's `--no-sandbox` only for that isolated fixture run; shipped application configuration keeps renderer sandboxing enabled.
+The test suite runs with Electron's Node ABI so the same native SQLite and PTY modules are exercised. Desktop tests use synthetic projects/transcripts; no vendor account, paid model turn, or real application installation is involved. `npm run test:desktop` runs the main desktop harness and then the Coordinator journey, each in its own temporary profile; `npm run test:desktop -- scripts/desktop-coordinator-test.mjs` runs only the second. Both run against stand-ins for Codex and Claude Code. Linux GUI tests need a display, for example `xvfb-run --auto-servernum npm run test:desktop`. The Linux CI smoke process uses Chromium's `--no-sandbox` only for that isolated fixture run; shipped application configuration keeps renderer sandboxing enabled.
 
 For an explicitly selected trusted Codex binary, a separate read-only protocol probe uses an empty temporary native home and submits no model turn:
 

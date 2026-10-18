@@ -76,11 +76,11 @@ The cross-provider examples in the plan therefore cannot run as automated groups
 | 2 — Auto and model-controlled routes | Every eligible catalog model assignable to every role its route satisfies; no native-default substitution; mismatches cannot satisfy a role; cross-provider qualification before presentation | Met for selection, freshness and account binding, and mismatch handling. Not met for qualified cross-provider automatic execution (Claude gated) |
 | 3 — Coordinator conversation and decisions | N contributions, one plan; unanimous and three-of-five decisions; dissent retained; missing participation blocks; no duplicate work; no blind replay; controls without models; information goals | Met in fixture tests, and for two coordinators through the service with the stand-in runtime |
 | 4 — Review groups and workers | Barrier for 2, 3 and 5 reviewers; four clean reports cannot erase a fifth's finding; three-member implementation group; integrated candidate reviewed; waves and honest queuing | Met in fixture tests; two reviewers, two implementers and integration through the service with the stand-in runtime. Required checks on the integrated candidate, per-file conflict choices and applying the accepted candidate were added in the [follow-up](#follow-up-checks-conflict-choices-and-applying-18-october-2026), verified in fixture and service tests |
-| 5 — Product UI and end-to-end evidence | Full goals on managed routes for the original examples and larger teams; live runs against observed models | **Not met.** The screens are built and compile; no actual Electron journey and no live provider run was performed |
+| 5 — Product UI and end-to-end evidence | Full goals on managed routes for the original examples and larger teams; live runs against observed models | **Not met.** An actual Electron journey against a qualified Codex stand-in now covers UI-01, UI-02 and one goal from the conversation to acceptance ([journey record](#electron-journey-18-october-2026)). No live provider run, no larger-team Electron goal and no packaged-platform run was performed |
 
 ## Acceptance scenarios and their evidence
 
-"Fixture" means [orchestration.test.ts](../tests/orchestration.test.ts) with the scripted driver. "Service" means [orchestration-service.test.ts](../tests/orchestration-service.test.ts): the real service, runtime manager, attempts, leases, budget, copies, capture and integration, with a Codex stand-in process ([codex-orchestration.cjs](../tests/fixtures/codex-orchestration.cjs)).
+"Fixture" means [orchestration.test.ts](../tests/orchestration.test.ts) with the scripted driver. "Service" means [orchestration-service.test.ts](../tests/orchestration-service.test.ts): the real service, runtime manager, attempts, leases, budget, copies, capture and integration, with a Codex stand-in process ([codex-orchestration.cjs](../tests/fixtures/codex-orchestration.cjs)). "Electron" means [desktop-coordinator-test.mjs](../scripts/desktop-coordinator-test.mjs): Topsl's own screens in Electron with a synthetic profile, against a Codex stand-in registered and qualified as a runtime ([codex-desktop-coordinator.cjs](../tests/fixtures/codex-desktop-coordinator.cjs)). None of these contacts a model.
 
 | ID | Evidence |
 | --- | --- |
@@ -111,10 +111,10 @@ The cross-provider examples in the plan therefore cannot run as automated groups
 | EX-07 | Partly: coordinator purposes run read-only and implementation copies are separate from the project folder; auto-accept applies through the runtime as before. No dedicated test |
 | EX-08 | Fixture: information goal |
 | EX-09, EX-10, EX-11 | Fixture: strict cohorts and waves |
-| UI-01 | Fixture: instruction parsing matches editor settings. No Electron journey |
-| UI-02 | Not verified: the editor renders a scrollable N-member list, but no compact-window or keyboard journey was run |
+| UI-01 | Fixture: instruction parsing matches editor settings. Electron: pinning three reviewers, removing one, returning one to Auto, and the plan's "coordinate with Opus and Astra, review with Fable and Sol" save the same settings through the role editor (project defaults) and through conversation messages (the goal), with no conflicts; the whole role returns to Auto from the editor; the goal's team lines, round progress and member cards follow the changes, and both paths' settings survive a restart |
+| UI-02 | Electron: in a 560 × 720 window, a third, fourth and fifth reviewer are added and the fifth made optional and returned to Auto by keyboard alone; the list stays one role of five, the totals read "5 members listed of 5" with the exact count 5, every member's controls scroll into view, and the page does not scroll sideways |
 | MG-01 | Fixture: legacy drafts and presets; existing suites for in-flight Build and review workflows |
-| E2E-01, E2E-03 | Fixture only |
+| E2E-01, E2E-03 | Fixture only. The Electron journey runs a two-coordinator, two-reviewer goal to acceptance, which is not these scenarios' larger teams |
 | E2E-02, E2E-04 | Not met: needs a production route with qualified bounded fan-out and live lifecycle evidence |
 | Required checks (follow-up) | Fixture: "CK-01: acceptance needs the review group and current passing evidence for every required check on the exact candidate" and "CK-02: checks belong to code goals, have distinct IDs and are fixed once implementation starts; stopping fences them". Service: "a required check runs against the exact integrated candidate, gates acceptance, and the accepted candidate is applied to a clean folder" runs a real check process through check plans, the trusted digest and a tester task |
 | Conflict choices (follow-up) | Fixture: "CF-01: the owner chooses one member's version per conflicting file; the result is integrated and reviewed again". Service: "two implementers' different versions of one file conflict; the owner's per-file choice is integrated and reviewed" |
@@ -132,7 +132,7 @@ The cross-provider examples in the plan therefore cannot run as automated groups
 - **Git projects only for code goals.** The baseline snapshot needs a Git checkout; a non-Git folder has no implied file selection. Coordinator turns in a non-Git project get the brief alone.
 - **Coordinator context.** Coordinators receive the frozen goal, constraints, rosters and completed results in their prompt, and a read-only copy of the baseline. There is no separate project-state reader tool yet.
 - **Not implemented from the plan.** An optional adjudicator, independent plan subsets proceeding while another branch is disputed, deliberation while workers run, learned performance preferences, cross-goal fairness beyond the shared budget, and a model-written final synthesis (the synthesis is rendered from recorded facts).
-- **Screens.** Built and compiled; not exercised in an actual Electron session. This includes the check, conflict-choice and apply controls and their native dialogs.
+- **Screens.** Exercised in Electron against a Codex stand-in only ([journey record](#electron-journey-18-october-2026)): the role editor, conversation, controls, round progress, member cards and acceptance. Branch choice, findings with dispositions, repair, information goals, larger teams in a running goal, and the check, conflict-choice and apply controls from the [checks follow-up](#follow-up-checks-conflict-choices-and-applying-18-october-2026) and their native dialogs were not exercised on screen.
 
 ## Validation record
 
@@ -175,3 +175,51 @@ Not run: `npm run test:release`, the desktop test runner (`npm run test:desktop`
 The service tests ran a real check process (`node -e` reading `file.ts`) through `previewCheck`, the trusted digest and `executeCheck` on a tester task, refused an apply for an untracked file and for a new commit, and wrote `file.ts` into a real Git folder without committing. The conflict test used the stand-in's opt-in `[distinct versions]` marker so two implementers write different versions of `file.ts`.
 
 Not run: the desktop test runner, an actual Electron session (the new controls and the check, acceptance and apply dialogs were not exercised), packaging, and any live provider session.
+
+## Electron journey (18 October 2026)
+
+A follow-up to the validation record above, on branch `coordinator-journeys` after `989be61`, macOS 27.0.1 arm64, Electron 44.4.5, with `ANTHROPIC_BASE_URL` unset. It is Electron UI evidence against a stand-in only: no model, account or live runtime was contacted, the Opus, Astra, Fable and Sol labels are the stand-in's catalog entries, and no packaged build was used.
+
+### What the journey does
+
+[desktop-coordinator-test.mjs](../scripts/desktop-coordinator-test.mjs) starts Topsl in Electron with a temporary profile and a Git project, and registers, trusts, connects, catalogs and qualifies the stand-in [codex-desktop-coordinator.cjs](../tests/fixtures/codex-desktop-coordinator.cjs) through typed IPC (the main desktop test covers the same steps through the setup screen). The stand-in is the qualification suite's scripted app-server ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) that also answers coordinator turns as the service tests' stand-in does ([orchestration-answers.cjs](../tests/fixtures/orchestration-answers.cjs)), each turn after 1.2 seconds so a round can be watched and paused. Everything after that goes through the **Coordinator** section of the project **Overview**:
+
+| Step | Through the screens | Checked |
+| --- | --- | --- |
+| Routes | — | Every coordinator purpose reports ready for the qualified stand-in |
+| UI-01 conversation | Send "Change the value to two in file.ts.", **Pause** the goal, then steer it with "Review with Astra, Sol and Fable", "Review with Astra and Sol" and "Use two reviewers; include Astra" | The goal's team line follows each message |
+| UI-01 editor | **Project role defaults → Reviewers → Edit**: Exact members, add Astra, Sol and Fable; **Remove** Fable; **Return to Auto** on Sol; **Save reviewers** after each | After each pair, the project defaults (editor) and the goal (conversation) hold the same form, total, pins and Auto slots, with no conflicts |
+| UI-01 whole role | **Return whole role to Auto** | The saved role is Auto and the editor shows "Reviewers: Auto" with an empty list |
+| Plan example | "Coordinate with Opus and Astra, review with Fable and Sol" as one message; the same through the editor for both roles | Same settings for both roles on both paths; team lines read "Coordinators: Opus + Astra" and "Reviewers: Fable + Sol" |
+| Goal run | **Resume** | The coordinator round shows two member cards (requested Opus and Astra, codex) and a "2 of 2" decision rule while it runs; the goal reaches **Awaiting acceptance**; the review round shows the service's progress text and two pinned member cards with effective models `fixture-fable` and `fixture-sol` |
+| Acceptance | **Accept candidate…** | Topsl's native dialog ("Accept this reviewed candidate?", buttons Cancel and Accept candidate) names the goal, the review group and that no required checks ran; the goal shows **Accepted**; the project folder is unchanged |
+| UI-02 | Window 560 × 720; from the model search, by Tab, Shift+Tab, Enter and Space only: add Fixture, Opus and Astra to the two reviewers, clear the fifth's **Required**, **Return to Auto** on it, **Save reviewers** | One list of five; "5 members listed of 5", exact count 5 and no smaller "At most" beside it; the first four stay required; each member's controls scroll into view; no sideways scroll; the saved role holds all five members with no conflicts |
+| Restart | Reopen the same profile | Project defaults, the goal's rosters and its accepted state are unchanged |
+
+Screenshots are written to `test-results/coordinator-*.png` (not committed).
+
+### Defects found and fixed
+
+| Defect | Effect before the fix | Fix |
+| --- | --- | --- |
+| Goal progress made by the background tick was not published | The service reached "awaiting acceptance", but the screen stayed on "1 of 2 reviews returned; 1 running" until some other change arrived | `tick` in [engine.ts](../packages/orchestration/engine.ts) notifies when it wrote anything |
+| **Return to Auto** on a member of an exact roster saved an exact roster with an open slot | The editor and the conversation disagreed (exact versus Required members + Auto), and the service flagged the saved role ("has no model choice") | The editor now does what the service's release does: the role becomes Required members + Auto with the roster's count ([coordinator-teams.tsx](../apps/desktop/renderer/components/coordinator-teams.tsx)) |
+| **Return whole role to Auto** left the editor showing the released roster | A later save would bring the released members back | The editor resets to Auto after the release succeeds |
+| The editor showed and saved the derived "At most" beside an exact count | Five reviewers read "Exact count 5" beside "At most 3" | "At most" is hidden and not saved while an exact count is set, as a conversation message saves it |
+
+Reverting only the editor changes made the journey fail at the Return to Auto comparison (`form` "exact" instead of "required-plus-auto"); before the `tick` change it failed waiting for **Awaiting acceptance** while the service already held that state.
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `env -u ANTHROPIC_BASE_URL npm run build` | Passed (renderer chunk-size warning from Vite) |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` | Passed: the main desktop harness and its encrypted restart, then the coordinator journey |
+| `env -u ANTHROPIC_BASE_URL node scripts/test.mjs tests/orchestration.test.ts tests/orchestration-service.test.ts tests/runtime-qualification.test.ts` | 47 tests passed across the three files |
+| `env -u ANTHROPIC_BASE_URL npm run typecheck` | Passed |
+| `env -u ANTHROPIC_BASE_URL npm test` | 487 passed, 4 skipped, none failed (47 files passed, 3 skipped). The 25 failures in environments and Round 2 acceptance recorded above did not occur in this worktree, whose `node_modules` is a symbolic link to the main checkout's; the cause was not investigated |
+| `git diff --check`, Prettier on changed code, relative-link check of changed docs | Clean |
+
+### Not covered
+
+Branch choice, findings and dispositions, repair, information goals, stop and steering of a running goal on screen, larger teams in a running goal (E2E-01, E2E-03), Claude members, Linux and Windows (the journey skips Windows, where the stand-in's shell wrapper cannot run), CI, packaged builds and live providers.
