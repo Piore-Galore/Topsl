@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ParallelActivity } from "./components/parallel-activity";
+import { CoordinatorTeams } from "./components/coordinator-teams";
 import { OptionalCoordination, UsageBudget } from "./components/reporting";
 import { Workflows } from "./workflows";
 import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
@@ -555,6 +556,7 @@ export function Coordination({
                 summary={usage}
                 attempts={coordination.attempts}
               />
+              <CoordinatorTeams projectId={projectId} />
               <Workflows projectId={projectId} />
               <OptionalCoordination projectId={projectId} />
             </>

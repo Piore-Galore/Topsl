@@ -25,6 +25,9 @@ import { spawn as spawnPty, type IPty } from "node-pty";
 import { RpcPeer } from "./rpc";
 import { processGroupPresent, type ProcessEvidence } from "./process-lifecycle";
 import { Coordinator, type RuntimeExecution } from "./coordinator";
+import type { ExecutionPurpose } from "../domain/role-groups";
+import { purposeRequirements } from "../orchestration/roles";
+import { purposeOutputSchema } from "../orchestration/contracts";
 import { CodexAdapter } from "../providers/codex";
 import type {
   PreparedTurn,
@@ -225,11 +228,26 @@ export class RuntimeManager {
         : [];
     });
   }
+  /** Readiness for an execution purpose: its own requirements, never a model-family list. */
+  purposeReadiness(
+    installation: Installation,
+    selection: RuntimeSelection,
+    purpose: ExecutionPurpose,
+  ) {
+    return this.readiness(
+      installation,
+      selection,
+      purpose === "implementation" ? "implementer" : "reviewer",
+      [],
+      purposeRequirements(purpose),
+    );
+  }
   readiness(
     installation: Installation,
     selection: RuntimeSelection,
     role: RuntimeRole,
     additionalRequirements: string[] = [],
+    requirements?: string[],
   ) {
     const catalog = this.store.get<{
         models: ProviderModel[];
@@ -257,10 +275,11 @@ export class RuntimeManager {
       selection,
       role,
       additionalRequirements,
+      ...(requirements ? { requirements } : {}),
       capabilities: this.fixtureMode
         ? [
             ...this.capabilities(installation),
-            ...roleRequirements(role).map((name) => ({
+            ...(requirements ?? roleRequirements(role)).map((name) => ({
               name,
               route: "structured" as const,
               support: "enforceable" as const,
@@ -301,6 +320,42 @@ export class RuntimeManager {
       });
     result.ready = result.blockers.length === 0;
     return result;
+  }
+  /** A coordinated attempt's readiness: by its execution purpose when it has one. */
+  private assertCoordinatedReady(
+    installation: Installation,
+    provider: "codex" | "claude",
+    model: string,
+    effort: string | null,
+    mode: "review" | "edit",
+    execution: RuntimeExecution | undefined,
+  ) {
+    const selection = {
+      installationId: installation.id,
+      provider,
+      model,
+      ...(effort ? { effort } : {}),
+    };
+    if (!execution?.purpose)
+      return this.assertReady(
+        installation,
+        selection,
+        mode === "review" ? "reviewer" : "implementer",
+      );
+    if ((execution.purpose === "implementation") !== (mode === "edit"))
+      throw new Error(
+        "The execution purpose and filesystem mode disagree. No provider turn was dispatched.",
+      );
+    const readiness = this.purposeReadiness(
+      installation,
+      selection,
+      execution.purpose,
+    );
+    if (!readiness.ready)
+      throw new Error(
+        readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" "),
+      );
+    return readiness;
   }
   assertReady(
     installation: Installation,
@@ -548,10 +603,16 @@ export class RuntimeManager {
       // reported by the run preflight, while inspection still returns metadata.
       if (result.account)
         try {
-          this.observeAccount(
-            installation,
-            await adapter.account(client, installation),
-          );
+          const account = await adapter.account(client, installation);
+          this.observeAccount(installation, account);
+          // Bind the catalog to the account it was observed under, so a
+          // changed sign-in makes it stale for automatic selection.
+          this.store.put("runtime-model-catalog", {
+            ...this.store.get<object>("runtime-model-catalog", installation.id),
+            id: installation.id,
+            accountKey: account.accountKey,
+            profileId: account.profileId,
+          });
         } catch {}
       return result;
     } finally {
@@ -689,17 +750,13 @@ export class RuntimeManager {
           "A workflow's Claude Code step holds this project folder until its reply is handed back or the workflow is cancelled. No managed writer was started.",
         );
       if (coordinated)
-        this.assertReady(
+        this.assertCoordinatedReady(
           installation,
-          {
-            installationId: installation.id,
-            provider,
-            model,
-            ...(requestedSettings?.effort
-              ? { effort: requestedSettings.effort }
-              : {}),
-          },
-          mode === "review" ? "reviewer" : "implementer",
+          provider,
+          model,
+          requestedSettings?.effort ?? null,
+          mode,
+          execution,
         );
       const run: Run = {
         id: uid(),
@@ -848,20 +905,15 @@ export class RuntimeManager {
               ? `${preset.label} is not available for this runtime. ${stillBlocked}`
               : `Auto-accept sends this chat with no asking, which this runtime cannot use now. ${stillBlocked} Codex asks you as before when you send it again.`,
           );
-        if (coordinated) {
-          this.assertReady(
+        if (coordinated)
+          this.assertCoordinatedReady(
             installation,
-            {
-              installationId: installation.id,
-              provider,
-              model,
-              ...(requestedSettings?.effort
-                ? { effort: requestedSettings.effort }
-                : {}),
-            },
-            mode === "review" ? "reviewer" : "implementer",
+            provider,
+            model,
+            requestedSettings?.effort ?? null,
+            mode,
+            execution,
           );
-        }
         const priorSession = this.coordinator.repository.require<any>(
           "agent-session",
           attempt.sessionId,
@@ -900,11 +952,18 @@ export class RuntimeManager {
           ...(requestedSettings?.effort
             ? { requestedEffort: requestedSettings.effort }
             : {}),
+          // The output contract follows the execution purpose, not the
+          // filesystem mode: a read-only coordinator is not a candidate review.
           ...(mode === "review" &&
           this.capabilities(installation).some((c) =>
             capabilitySatisfies(c, "review-output-schema"),
           )
-            ? { outputSchema: reviewOutputSchema }
+            ? execution?.purpose && execution.purpose !== "candidate-review"
+              ? (() => {
+                  const schema = purposeOutputSchema(execution.purpose);
+                  return schema ? { outputSchema: schema } : {};
+                })()
+              : { outputSchema: reviewOutputSchema }
             : {}),
           ...(execution?.tools ? { toolset: execution.tools.toolset } : {}),
           mode,

@@ -13,10 +13,13 @@ import { WorkspaceOwnership } from "../workspace/ownership";
 import { ConcurrencyBudget } from "./concurrency";
 import { RevisionRepository } from "../context/revisions";
 import type { ToolBinding } from "../providers/contract";
-
+import type { ExecutionPurpose } from "../domain/role-groups";
 export interface RuntimeExecution {
   attemptId: string;
   freshSession?: boolean;
+  /** What this attempt is for; selects its output contract and readiness,
+   * separately from its filesystem permission. */
+  purpose?: ExecutionPurpose;
   /** Topsl's tools for this attempt's fresh review session. Calls are answered
    * only from the session's own thread and turn. */
   tools?: ToolBinding;

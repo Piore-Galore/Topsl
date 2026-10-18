@@ -239,6 +239,8 @@ export interface RoutingPreset {
   name: string;
   assignments: Array<{
     role: "planner" | "implementer" | "reviewer" | "tester" | "integrator";
+    /** Stable member identity; a role may hold several members. Defaults to the role name. */
+    memberId?: string;
     provider: "codex" | "claude";
     installationId: string;
     model: string;
@@ -2122,12 +2124,15 @@ export class AdvancedCollaboration {
     if (
       !input.name.trim() ||
       !input.assignments.length ||
-      new Set(input.assignments.map((a) => a.role)).size !==
-        input.assignments.length ||
+      // Uniqueness belongs to member identity, so one role can hold any
+      // number of members; an unnamed member is identified by its role.
+      new Set(
+        input.assignments.map((a) => `${a.role}\u0000${a.memberId ?? a.role}`),
+      ).size !== input.assignments.length ||
       input.assignments.some((a) => !a.model.trim())
     )
       throw new Error(
-        "Presets require explicit distinct role/provider/model assignments; no default substitution.",
+        "Presets require explicit provider/model assignments with distinct member identities; no default substitution.",
       );
     for (const a of input.assignments) {
       const i = this.repository.require<Installation>(

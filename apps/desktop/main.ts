@@ -588,6 +588,22 @@ async function dispatch(command: Command): Promise<any> {
       return null;
     trusted.digest = review.digest;
   }
+  if (command.type === "orchestration-accept") {
+    const review: any = await request({
+      kind: "review",
+      recordKind: "goal-acceptance",
+      recordId: command.goalId,
+    });
+    if (
+      !(await confirm(
+        "Accept this reviewed candidate?",
+        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nReview group: ${JSON.stringify(review.review)}\nNo required checks run for coordinator goals yet; this acceptance rests on the review group's evidence only.\n\nAcceptance records your decision for this exact candidate. It does not apply the candidate to the project folder, deploy or commit. Any change to the goal, review or candidate invalidates this confirmation.`,
+        "Accept candidate",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
   if (command.type === "configuration-apply") {
     const plan: ConfigurationPlan = await request({
       kind: "review",

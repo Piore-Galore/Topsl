@@ -70,10 +70,12 @@ export function evaluateRoleReadiness(input: {
   models?: ProviderModel[];
   freshness?: RoleReadiness["freshness"];
   additionalRequirements?: string[];
+  /** A purpose's own requirements, replacing the role's (see packages/orchestration/roles.ts). */
+  requirements?: string[];
 }): RoleReadiness {
   const capabilitiesUsed = [
       ...new Set([
-        ...roleRequirements(input.role),
+        ...(input.requirements ?? roleRequirements(input.role)),
         ...(input.additionalRequirements ?? []),
       ]),
     ],

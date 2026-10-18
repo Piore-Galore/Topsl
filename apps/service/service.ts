@@ -131,6 +131,8 @@ import {
   requireProjectFolder,
 } from "../../packages/workspace/projects";
 import { desktopProjectRoute } from "../../packages/workspace/project-opening";
+import { Orchestrator } from "../../packages/orchestration/engine";
+import { RuntimeOrchestrationDriver } from "../../packages/orchestration/runtime-driver";
 import {
   CodexProjectSync,
   orderLocalProjects,
@@ -167,6 +169,8 @@ export class Service {
   readonly context: ContextServer;
   readonly projects: ProjectSync;
   readonly codexProjects: CodexProjectSync;
+  /** The coordinator feature: goals, role groups and rounds (docs/Coordinator_Teams.md). */
+  readonly orchestration: Orchestrator;
   private timer?: ReturnType<typeof setInterval>;
   private ownershipTimer?: ReturnType<typeof setInterval>;
   private workflowTimer?: ReturnType<typeof setInterval>;
@@ -398,6 +402,39 @@ export class Service {
           this.replication.assertLocalOwner(projectId, action),
       },
     );
+    this.orchestration = new Orchestrator(
+      this.store,
+      new RuntimeOrchestrationDriver({
+        store: this.store,
+        coordinator: this.coordinator,
+        context: this.context,
+        capabilities: (installation) => this.runtime.capabilities(installation),
+        purposeReadiness: (installation, selection, purpose) =>
+          this.runtime.purposeReadiness(installation, selection, purpose),
+        start: (
+          installation,
+          conversation,
+          project,
+          prompt,
+          model,
+          mode,
+          execution,
+        ) =>
+          this.runtime.start(
+            installation,
+            conversation,
+            project,
+            prompt,
+            model,
+            mode,
+            execution,
+          ),
+        interrupt: (runId) => this.runtime.interrupt(runId),
+        assertLocalOwner: (projectId) =>
+          this.replication.assertLocalOwner(projectId),
+      }),
+      () => this.changed(),
+    );
     const projectPaths = isolatedTest
       ? projectSourcePaths(path.join(directory, "native-home"), {})
       : projectSourcePaths();
@@ -423,8 +460,10 @@ export class Service {
     });
   }
   async start(): Promise<void> {
+    await this.orchestration.recover();
     this.workflowTimer = setInterval(() => {
       this.background(this.parallel.tick());
+      this.background(this.orchestration.tick());
       for (const state of this.store.iterate<BuilderReviewerState>(
         "builder-reviewer",
       )) {
@@ -1102,7 +1141,8 @@ export class Service {
       | "candidate-review-plan"
       | "advanced-review-plan"
       | "assisted-handoff"
-      | "claude-step",
+      | "claude-step"
+      | "goal-acceptance",
     id: string,
   ): LifecyclePlan | ConfigurationPlan | Approval | CheckPlan | unknown {
     if (kind === "workflow-dispatch-inputs") {
@@ -1135,6 +1175,30 @@ export class Service {
         selection: state.selection,
       };
       return { ...body, digest: hash(stable(body)) };
+    }
+    if (kind === "goal-acceptance") {
+      const view = this.orchestration.goalView(id);
+      const candidate = view.goal.candidateId
+        ? this.require<CandidateSnapshot>("candidate", view.goal.candidateId)
+        : null;
+      return {
+        id,
+        objective: view.goal.objective,
+        targetRevision: candidate?.revision ?? null,
+        digest: this.orchestration.acceptanceDigest(id),
+        detail: view.goal.detail,
+        review: view.review
+          ? {
+              result: view.review.result,
+              reports: view.review.includedContributionIds.length,
+              findings: view.review.findings.map((f) => ({
+                title: f.title,
+                disposition: f.disposition,
+                members: f.observations.map((o) => o.memberId),
+              })),
+            }
+          : null,
+      };
     }
     if (kind === "advanced-acceptance")
       return {
@@ -1800,6 +1864,56 @@ export class Service {
             "Workspace creation/cleanup requires native approval of this exact input snapshot and filesystem operation.",
           );
         return this.managedWorkspaces.apply(command.id, trusted.digest);
+      case "orchestration-query":
+        this.require<Project>("project", command.projectId);
+        return this.orchestration.view(command.projectId);
+      case "orchestration-conversation-create":
+        this.require<Project>("project", command.projectId);
+        return this.orchestration.createConversation(command);
+      case "orchestration-message":
+        return this.orchestration.post(command);
+      case "orchestration-group-set":
+        this.require<Project>("project", command.projectId);
+        return this.orchestration.setGroup(command);
+      case "orchestration-member-release":
+        return this.orchestration.releaseMember(command);
+      case "orchestration-roster-release":
+        return this.orchestration.releaseRoster(command);
+      case "orchestration-policy-set":
+        this.require<Project>("project", command.projectId);
+        return this.orchestration.repo.receipt(
+          command.commandId,
+          command.projectId,
+          "policy-set",
+          () => {
+            const policy = this.orchestration.repo.setPolicy(command);
+            this.changed();
+            return policy;
+          },
+        );
+      case "orchestration-role-define":
+        this.require<Project>("project", command.projectId);
+        return this.orchestration.defineRole(command);
+      case "orchestration-control":
+        return this.orchestration.controlCommand(command);
+      case "orchestration-round-restart":
+        return this.orchestration.restartRound(command);
+      case "orchestration-branch-choose":
+        return this.orchestration.chooseBranch(command);
+      case "orchestration-finding-decide":
+        return this.orchestration.decideFinding(command);
+      case "orchestration-repair":
+        return this.orchestration.repair(command);
+      case "orchestration-accept":
+        if (!trusted.digest)
+          throw new Error(
+            "Goal acceptance requires native confirmation of the exact reviewed candidate and review-group evidence.",
+          );
+        return this.orchestration.accept({
+          goalId: command.goalId,
+          digest: trusted.digest,
+          commandId: command.commandId,
+        });
       case "parallel-create":
         return this.parallel.create(command);
       case "parallel-query":

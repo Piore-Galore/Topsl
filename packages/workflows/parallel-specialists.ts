@@ -117,12 +117,12 @@ export interface ParallelDriver {
   }): Promise<void>;
   interrupt?(attempt: ExecutionAttempt): Promise<void>;
 }
-const fileEqual = (a?: CandidateFile, b?: CandidateFile) =>
+export const fileEqual = (a?: CandidateFile, b?: CandidateFile) =>
   (a?.hash ?? null) === (b?.hash ?? null) &&
   (a?.mode ?? null) === (b?.mode ?? null);
 const contentBasis = (candidate: CandidateSnapshot) =>
   stable(candidate.files.map((f) => [f.path, f.hash, f.mode]));
-function candidateChanges(
+export function candidateChanges(
   baseline: CandidateSnapshot,
   candidate: CandidateSnapshot,
 ): CandidateFile[] {

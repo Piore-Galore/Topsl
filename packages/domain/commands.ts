@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { workflowDraftCommands } from "./workflow-drafts";
 import { candidateReviewCommands } from "./candidate-reviews";
+import { orchestrationCommands } from "./orchestration-commands";
 import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
@@ -54,6 +55,7 @@ const specialist = z.object({
 export const commandSchema = z.discriminatedUnion("type", [
   ...workflowDraftCommands,
   ...candidateReviewCommands,
+  ...orchestrationCommands,
   z.object({ type: z.literal("environment-detect"), projectId: id }),
   z.object({
     type: z.literal("environment-selection-create"),
@@ -302,10 +304,15 @@ export const commandSchema = z.discriminatedUnion("type", [
             "tester",
             "integrator",
           ]),
+          /** Unique within the preset; a role may repeat with distinct members. */
+          memberId: z
+            .string()
+            .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/)
+            .optional(),
         }),
       )
       .min(1)
-      .max(5),
+      .max(320),
   }),
   z.object({
     type: z.literal("routing-measure"),

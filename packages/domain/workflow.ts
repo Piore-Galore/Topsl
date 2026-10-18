@@ -106,6 +106,10 @@ export const taskSchema = z.object({
     "planner",
     "native",
     "historical",
+    // Coordinator-feature control and informational tasks: workflowId null,
+    // completed through a non-code result, never through candidate acceptance.
+    "coordinator",
+    "information",
   ]),
   workspaceId: id,
   dependencies: z.array(id),

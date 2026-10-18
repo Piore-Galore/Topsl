@@ -374,6 +374,37 @@ describe("advanced collaboration templates", () => {
     });
     expect(f.engine.routingSummary(changed.id).tasks).toBe(0);
   });
+  test("routing presets key members by identity, so one role can hold several members", async () => {
+    const f = await setup();
+    const member = (memberId: string, model: string) => ({
+      role: "reviewer" as const,
+      memberId,
+      provider: "codex" as const,
+      installationId: f.installation.id,
+      model,
+    });
+    const preset = f.engine.savePreset({
+      projectId: "project",
+      name: "Five reviewers",
+      assignments: ["a", "b", "c", "d", "e"].map((id) =>
+        member(id, `fixture-${id}`),
+      ),
+    });
+    expect(preset.assignments.map((a) => a.memberId)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+    ]);
+    expect(() =>
+      f.engine.savePreset({
+        projectId: "project",
+        name: "Duplicate member",
+        assignments: [member("a", "fixture-a"), member("a", "fixture-b")],
+      }),
+    ).toThrow(/distinct member identities/);
+  });
   test("independent test design refuses implementation input and checks design and execution are different stages", async () => {
     const f = await setup();
     expect(() =>

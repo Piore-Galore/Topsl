@@ -109,7 +109,11 @@ export function validateCandidateAccess(
     attempt.projectId !== scope.projectId ||
     task.projectId !== scope.projectId ||
     session.projectId !== scope.projectId ||
-    task.workflowId !== scope.subject.workflowId ||
+    // A coordinator goal's task has no workflow; its explicit goal binding
+    // stands in, and the goal ID is the candidate's workflow scope.
+    (task.workflowId ??
+      store.get<{ goalId: string }>("orchestration-task-goal", task.id)
+        ?.goalId) !== scope.subject.workflowId ||
     !task.attemptIds.includes(attempt.id) ||
     attempt.workspaceId !== task.workspaceId ||
     session.workspaceId !== attempt.workspaceId ||

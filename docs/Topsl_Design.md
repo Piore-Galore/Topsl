@@ -32,6 +32,7 @@ This is a complete revision of the supplied v2.0 design. It retains the native-r
 | Settings | Preserve existing configuration; preview, apply, reconcile, and track whether running sessions loaded changes. |
 | Interface | Quiet monospaced graphical interface; follows the computer's light or dark appearance by default, with warm light and dark themes as explicit choices. |
 | Existing requirements | All accessible supported model routes, shared projects/history/context, token/quota/cost tracking, and delegated native login management remain in scope. |
+| Coordinator teams | One project conversation backed by role groups of any size, a single service-owned decision commit, and a review completion barrier ([§18.8](#188-coordinator-conversation-and-role-groups)). |
 
 **Core boundary:** Topsl integrates supported native interfaces rather than extracting subscription credentials, rewriting proprietary session stores, or promising identical functionality on every surface. “All functionality” means complete discoverable coverage with an honest access path and status for the actual installed version; it does not create an API that a provider has not exposed.
 
@@ -1790,6 +1791,20 @@ Every run starts against a resolved configuration generation. When a plugin, per
 Apply a change live only if the native interface explicitly supports that operation and confirms the result. Otherwise queue it for a new turn/session or ask to stop and restart. Permission tightening should pause new Topsl-controlled operations where possible; existing tools may already be running, so report any enforcement gap.
 
 Do not classify a native terminal fallback as managed execution unless Topsl can actually enforce the selected policy through that route. Unsupported enforced policies block dispatch rather than becoming a warning that is silently ignored.
+
+### 18.8 Coordinator conversation and role groups
+
+Agreed on 18 October 2026 in the [coordinator feature specification](Coordinator_Feature_Specification.md); what is built and verified is recorded in [Coordinator teams](Coordinator_Teams.md).
+
+- **Role groups with N members.** Every role (coordinator, planner, implementer, reviewer, tester, integrator, researcher, documentation, custom) holds one or more members keyed by stable member IDs. Membership is Auto, Exact members, or Required members + Auto, with count, pins, diversity and permitted degradation as independent fields. The only size limit is the configurable members-per-role policy; there is no two-member limit anywhere.
+- **No provider preference.** Any model whose qualified route satisfies a role's execution-purpose requirements is eligible for that role. Write access belongs to the assignment's purpose, not to the model's name.
+- **Intent outside plans.** Membership intent is stored per scope (project role, goal, goal role, task) and resolved by precedence, so replanning cannot erase it. Exact rosters never shrink or substitute members without an authorized policy; unknown or unavailable pins stay visible and are never replaced by a provider default.
+- **One decision commit.** Coordinator members contribute independent proposals against a frozen snapshot, reconcile once when they disagree, and endorse an exact candidate digest under a frozen electorate and threshold (unanimous by default). The service alone commits the plan, once, keyed by the decision. Required participation cannot be waived by a quorum; dissent is retained.
+- **Review barrier.** A review group completes only when every required report is valid. Findings are deduplicated with every observation kept; a finding stays blocking until a finding-specific disposition or a repair that a new required round reviews. A clean majority never resolves a finding by omission.
+- **Width is not size.** Team size, execution width and reservation weight are separate. Capacity-bounded waves are the default; strict simultaneity beyond capacity blocks visibly rather than changing the policy.
+- **Controls do not consult models.** Pause, stop, resume and steering are service operations with control generations; uncertain executions keep their leases and capacity, and restarts adopt recorded launches instead of replaying them.
+
+**Implemented** (18 October 2026): the domain model, persistence, selection, protocol, review barrier, scheduling, service commands and the project overview's Coordinator section, verified with fixture and stand-in-runtime tests. **Not yet implemented or established:** a qualified production Claude structured route, a qualified bounded native fan-out route for parallel waves, check execution and candidate application for coordinator goals, an adjudicator policy, partial progress on disputed plans, and any live provider or actual Electron evidence.
 
 ---
 
