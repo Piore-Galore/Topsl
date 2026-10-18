@@ -31,7 +31,10 @@
 // input. Its transcript has the record shapes Topsl recognizes
 // (claude-code-session-v1): each part of a message is a record with the
 // message's id, each tool call is followed by its result, and /exit is
-// recorded as a local command. More files in CLAUDE_CONFIG_DIR change a step:
+// recorded as a local command. Around each prompt it also writes some of the
+// bookkeeping records and attachments Claude Code 2.1.300 wrote in two live
+// runs, by their type and field names. More files in CLAUDE_CONFIG_DIR
+// change a step:
 // - stand-in-permission: it first asks to run `npm run check`, in a
 //   permission prompt with Yes selected. A No ends Claude's turn there, with
 //   the declined call and an interruption in the transcript, as Claude Code
@@ -41,8 +44,8 @@
 //   turn the same way.
 // - stand-in-ask: Claude first asks a multiple-choice question, as Claude
 //   Code's AskUserQuestion tool does.
-// - stand-in-transcript: the transcript gets a record of a type Topsl does
-//   not recognize, as a newer Claude Code might write.
+// - stand-in-transcript: the transcript gets an attachment of a kind Topsl
+//   does not recognize, a message typed while Claude works.
 // - stand-in-finding: the review reports one finding on src/order.mjs.
 // Each answer to these questions is saved to a file named after it with
 // -answer, so a missing file shows the question went unanswered. An answer
@@ -124,6 +127,15 @@ const record = (fields) => {
   );
   parentUuid = uuid;
 };
+/** A bookkeeping record, which carries no conversation. */
+const bookkeeping = (fields) =>
+  fs.appendFileSync(
+    transcript,
+    JSON.stringify({ ...fields, sessionId }) + "\n",
+  );
+/** Context attached to a turn, of the kind given. */
+const attachment = (kind) =>
+  record({ type: "attachment", attachment: { type: kind } });
 const user = (content, extra = {}) =>
   record({ type: "user", message: { role: "user", content }, ...extra });
 /** One message of Claude's: a record for each part, sharing its id. */
@@ -307,7 +319,7 @@ async function step(instructions) {
     show("⏺ Update(src/order.mjs)");
     show("  ⎿  Updated src/order.mjs");
     await pause(600);
-    if (knob("stand-in-transcript")) record({ type: "attachment" });
+    if (knob("stand-in-transcript")) attachment("queued_command");
     const reply =
       "Applied the ten percent discount in src/order.mjs. No model was contacted.";
     assistant(text(reply));
@@ -357,7 +369,7 @@ async function step(instructions) {
     if (picked.startsWith("No")) return declined(use, "Ready to code?");
     toolResult(use, "The user approved the plan.");
   }
-  if (knob("stand-in-transcript")) record({ type: "attachment" });
+  if (knob("stand-in-transcript")) attachment("queued_command");
   assistant(text(review));
   show(`⏺ ${review}`);
   done();
@@ -411,7 +423,16 @@ function submit() {
     user("<local-command-stdout>Goodbye!</local-command-stdout>");
     process.exit(0);
   }
+  bookkeeping({ type: "mode", mode: "normal" });
+  bookkeeping({ type: "permission-mode", permissionMode: mode ?? "default" });
+  attachment("date");
+  attachment("skill_listing");
   user(value);
+  bookkeeping({
+    type: "last-prompt",
+    lastPrompt: value.slice(0, 80),
+    leafUuid: parentUuid,
+  });
   const errorFile = path.join(config, "stand-in-api-error");
   const status = fs.existsSync(errorFile)
     ? fs.readFileSync(errorFile, "utf8").trim()

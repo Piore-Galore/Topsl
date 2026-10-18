@@ -136,11 +136,12 @@ if (
   (options.preset && !codexChatRun)
 )
   throw new Error(usage);
-// Only for checking a workflow run against the repository's stand-in: the
-// script then also plays the owner on the workflow's card, denying each
-// command Codex asks to run and allowing each file change.
+// Only for checking a workflow run against the repository's stand-ins: the
+// script then also plays the owner, denying each command Codex asks to run
+// and allowing each file change on the workflow's card, and answering Yes to
+// each permission prompt in a Claude Code step.
 const ownerStandIn = process.env.TOPSL_LIVE_OWNER_STAND_IN === "1";
-if (ownerStandIn && !teamProviders.includes("codex")) throw new Error(usage);
+if (ownerStandIn && !options.workflow) throw new Error(usage);
 if (qualifies && process.platform === "win32")
   throw new Error(
     "The runtime qualification uses POSIX shell probes and runs on macOS and Linux only.",
@@ -637,10 +638,12 @@ const answerNumbered = (start) =>
   new RegExp(String.raw`^\s*[│|]?\s*(?:❯\s*)?\d+\.\s*${start}`, "i");
 const keepPlanning = answerNumbered("no, keep planning");
 const declinePermission = answerNumbered(String.raw`no\b`);
+// Yes alone, not "Yes, and don't ask again …".
+const approvePermission = answerNumbered(String.raw`yes[\s│|]*$`);
 /**
  * The choice Claude Code shows during a step, if any: an offer to approve a
  * plan, which the script declines with **No, keep planning**, a permission
- * prompt ("Do you want to …?"), which it declines with its No, or any other
+ * prompt ("Do you want to …?"), which it leaves for the owner, or any other
  * question, which it does not answer.
  */
 function claudeChoice(screen) {
@@ -1725,8 +1728,10 @@ const stepWindow = 30 * 60000;
  * Runs the Claude Code step the workflow waits on from its card, as the
  * owner would: it opens Claude Code for the step, answers the folder trust
  * question for the run's folder, and pastes the instructions Topsl copied
- * once. During Claude's turn, it declines every permission prompt and every
- * offer to approve a plan; any other question stops the run. After Claude's
+ * once. During Claude's turn, it leaves each permission prompt for the owner
+ * to answer in Topsl's terminal within 15 minutes, and keeps the answer;
+ * with TOPSL_LIVE_OWNER_STAND_IN, it answers Yes as the owner. It declines
+ * every offer to approve a plan, and any other question stops the run. After Claude's
  * reply it exits Claude Code, confirms that Claude Code stopped and hands the
  * reply back from the session's transcript, which Topsl must take.
  */
@@ -1749,6 +1754,7 @@ async function claudeStep(projectId, card, step, workflowOf) {
     pasted: false,
     replySeconds: null,
     declined: [],
+    permissions: [],
     question: null,
     apiError: null,
     exit: null,
@@ -1940,7 +1946,8 @@ async function claudeStep(projectId, card, step, workflowOf) {
     // Claude's turn, until Claude Code waits for the owner again with
     // nothing on its screen changing for 5 seconds.
     let last = null,
-      steadySince = Date.now();
+      steadySince = Date.now(),
+      asking = null;
     await until(
       `Claude's reply in the ${noun}`,
       stepWindow,
@@ -1968,13 +1975,60 @@ async function claudeStep(projectId, card, step, workflowOf) {
             `Claude Code exited before Claude replied in the ${noun}.`,
           );
         const choice = claudeChoice(screen);
-        if (choice?.kind === "plan" || choice?.kind === "permission") {
-          await screenshot(`claude-${noun}-${choice.kind}`);
+        // A permission prompt waits for the owner, who answers it in Topsl's
+        // terminal. It is kept with the answer last selected before it went.
+        if (asking && choice?.kind !== "permission") {
+          asking.seconds = Math.round((Date.now() - asking.at) / 1000);
+          delete asking.at;
+          delete asking.deadline;
+          asking = null;
+          steadySince = Date.now();
+          return false;
+        }
+        if (choice?.kind === "permission") {
+          const selected = screen
+            .split("\n")
+            .findLast((l) => numberedAnswer.test(l));
+          if (!asking) {
+            await screenshot(`claude-${noun}-permission`);
+            const deadline = Date.now() + answerWindow;
+            asking = {
+              question: choice.question,
+              selectedFirst: selected ? answerText(selected) : null,
+              answeredBy: ownerStandIn ? "owner stand-in" : "owner",
+              answer: null,
+              seconds: null,
+              at: Date.now(),
+              deadline,
+            };
+            record.permissions.push(asking);
+            console.error(
+              ownerStandIn
+                ? `Claude Code asks: ${choice.question} The script answers Yes as the owner, since this is the stand-in run.`
+                : `Claude Code asks: ${choice.question} Answer it in the ${noun}'s terminal in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which the run stops.`,
+            );
+            if (ownerStandIn)
+              asking.answer = (
+                await choose(
+                  view,
+                  "permission prompt",
+                  approvePermission,
+                  numberedAnswer,
+                )
+              ).chosen;
+          }
+          if (selected && !ownerStandIn) asking.answer = answerText(selected);
+          if (Date.now() > asking.deadline)
+            throw new Error(
+              `Claude Code's permission prompt "${choice.question}" waited 15 minutes without an answer, so the run stopped.`,
+            );
+          return false;
+        }
+        if (choice?.kind === "plan") {
+          await screenshot(`claude-${noun}-plan`);
           const { first, chosen } = await choose(
             view,
-            choice.kind === "plan"
-              ? "offer to approve the plan"
-              : "permission prompt",
+            "offer to approve the plan",
             choice.answer,
             numberedAnswer,
           );
@@ -1998,7 +2052,7 @@ async function claudeStep(projectId, card, step, workflowOf) {
           record.question = choice?.question ?? null;
           await screenshot(`claude-${noun}-question`);
           throw new Error(
-            `Claude Code asked ${record.question ? `"${record.question}"` : "a question the script cannot read"} during the ${noun}. The script answers no question there but permission prompts and plan approvals, which it declines, so it stopped.`,
+            `Claude Code asked ${record.question ? `"${record.question}"` : "a question the script cannot read"} during the ${noun}. The script answers no question there but plan approvals, which it declines, and leaves permission prompts to you, so it stopped.`,
           );
         }
         const working =
@@ -2138,9 +2192,16 @@ async function claudeStep(projectId, card, step, workflowOf) {
  * recorded is kept, also when it fails.
  */
 async function teamWorkflow(projectId, runtimes) {
-  if (ownerStandIn && !String(runtimes.codex.version).endsWith("-fixture"))
+  if (
+    ownerStandIn &&
+    ((runtimes.codex && !String(runtimes.codex.version).endsWith("-fixture")) ||
+      (runtimes.claude &&
+        !/tests\/fixtures\/live-session\/claude\.cjs$/.test(
+          runtimes.claude.realPath,
+        )))
+  )
     throw new Error(
-      "TOPSL_LIVE_OWNER_STAND_IN plays the owner only for the repository's stand-in, never for a live Codex.",
+      "TOPSL_LIVE_OWNER_STAND_IN plays the owner only for the repository's stand-ins, never for a live Codex or Claude Code.",
     );
   await watchTerminals();
   if (runtimes.claude) await claudeTranscripts();
