@@ -38,24 +38,29 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       method: "turn/started",
       params: { threadId: session, turn: { id: turn } },
     });
-    setTimeout(() => {
-      const text = answer(prompt);
-      send({
-        method: "item/completed",
-        params: {
-          threadId: session,
-          turnId: turn,
-          item: { type: "agentMessage", id: "fixture-message", text },
-        },
-      });
-      send({
-        method: "turn/completed",
-        params: {
-          threadId: session,
-          turnId: turn,
-          turn: { id: turn, status: "completed" },
-        },
-      });
-    }, 20);
+    setTimeout(
+      () => {
+        const text = answer(prompt);
+        send({
+          method: "item/completed",
+          params: {
+            threadId: session,
+            turnId: turn,
+            item: { type: "agentMessage", id: "fixture-message", text },
+          },
+        });
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: session,
+            turnId: turn,
+            turn: { id: turn, status: "completed" },
+          },
+        });
+        // FIXTURE_TURN_DELAY_MS lets a test hold turns open long enough to
+        // observe overlapping members on slow hosted runners.
+      },
+      Number(process.env.FIXTURE_TURN_DELAY_MS ?? 20),
+    );
   } else reply({});
 });

@@ -92,7 +92,7 @@ function seedCatalog(
     accountKey,
   });
 }
-async function setup(inject = true) {
+async function setup(inject = true, turnDelayMs = 20) {
   const f = await fixture();
   f.store.close();
   const service = new Service(
@@ -108,7 +108,10 @@ async function setup(inject = true) {
                 process.execPath,
                 [path.resolve("tests/fixtures/codex-orchestration.cjs")],
                 cwd,
-                nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+                nativeEnvironment({
+                  ELECTRON_RUN_AS_NODE: "1",
+                  FIXTURE_TURN_DELAY_MS: String(turnDelayMs),
+                }),
               ),
           ),
           claude: new ClaudeAdapter(
@@ -167,7 +170,7 @@ async function untilGoal(service: Service, goalId: string, states: string[]) {
           service.store.get<Goal>("goal", goalId)!.state,
         );
       },
-      { timeout: 60_000, interval: 100 },
+      { timeout: 180_000, interval: 100 },
     )
     .catch((error) => {
       const view = service.orchestration.goalView(goalId);
@@ -205,7 +208,10 @@ async function untilGoal(service: Service, goalId: string, states: string[]) {
 }
 
 test("a two-coordinator, two-reviewer goal runs through real attempts, copies, capture and one acceptance", async () => {
-  const f = await setup();
+  // Turns stay open for 2.5 s, so both coordinators of one wave are
+  // provably running at once even on slow hosted runners; 20 ms was not
+  // enough on macOS Intel and Windows.
+  const f = await setup(true, 2500);
   const conversation = await f.service.command({
     type: "orchestration-conversation-create",
     projectId: "p",
