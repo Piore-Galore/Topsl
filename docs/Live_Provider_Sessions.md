@@ -32,7 +32,7 @@ node scripts/live-session.mjs --codex "$(command -v codex)" --preset edit-on-req
 - A test profile never searches for applications. Its **Applications** screen says so, labels each application without a runtime **Not searched** instead of **Not found**, and turns **↻ Discover** off, so the window lists only the runtimes the script located.
 - The billing variables Topsl refuses (`billingConflicts` in [`packages/platform/system.ts`](../packages/platform/system.ts), such as `ANTHROPIC_API_KEY` or `OPENAI_BASE_URL`) are removed from Topsl's environment, as a launch from the Dock would not have them. The report lists the removed names only.
 - Native dialogs are answered by the script. It approves only the dialogs listed below, for the exact executable and folder it selected, cancels any other, and records every dialog in the report.
-- Each executable is chosen with **Locate runtime** (`select-runtime`) and trusted, and a new empty `live-project` folder inside the profile is added and trusted as a project. With `--workflow`, the seeded project is added instead.
+- Each executable is chosen with **Locate runtime** (`select-runtime`) and trusted, and a new empty `live-project` folder inside the profile is added with **Projects → + Add project** and trusted as a project. With `--workflow`, the seeded project is added instead. The runtime is then selected in the project's **Sessions**, where the terminal, **Models & account** and the chat are.
 - The prompt is `What is A + B? Reply with only the number.`, with random four-digit numbers whose sum is not already on screen. After a handoff, Codex is asked `Add C to the number Claude Code replied with in the handoff above. Reply with only the number.` A step passes only if the expected sum comes back as a whole number, not inside a longer one.
 - With `--qualify`, Topsl also gets `TOPSL_TEST_QUALIFICATION_DIR`: a new `topsl-qualify-*` folder in `~/Library/Caches` on macOS or `~/.cache` on Linux, because a qualification in the temporary folder could not be judged. The script deletes that folder after every run, passed or failed.
 - With `--workflow`, the qualification folder is made the same way for a team with Codex, and the seeded project goes into a new `topsl-live-*` folder in the same cache folder. It sits outside the temporary folders, as a user's project would, because Codex's workspace-write sandbox lets a turn write there whatever folder it runs in. The script deletes it after every run, passed or failed.
@@ -102,7 +102,7 @@ If the Claude Code step fails, Codex is not started.
 | Step | Passes when |
 |---|---|
 | **Models & account** | As for Codex alone. The model is the one Codex reports as default, or the one `--model` names |
-| Guided setup | In **Activity → Create a workflow → 2. Team**, **Codex builds · Codex reviews** is chosen and the runtime is selected for both roles. **Discover builder models** lists the model, and it is chosen for both roles |
+| Guided setup | In the project's **Tasks → Create a workflow → 2. Team**, **Codex builds · Codex reviews** is chosen and the runtime is selected for both roles. **Discover builder models** lists the model, and it is chosen for both roles |
 | **Qualify builder runtime** | Topsl's dialog is approved as described above, and the script does not retry. Topsl records a qualification with every probe passed, none untested, no error, and at most 3 turns started |
 | Readiness | Topsl's readiness query and the guided setup both show the builder and reviewer roles satisfied with this qualification |
 

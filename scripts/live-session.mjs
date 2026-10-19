@@ -15,6 +15,7 @@ import { createHash, randomInt } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { createDemoFixture } from "./round2-demo-fixture.mjs";
+import { navigate } from "./desktop-navigation.mjs";
 
 // Live acceptance of provider sessions inside Topsl: Claude Code in its native
 // terminal, Codex through the structured chat or in its native terminal, or
@@ -874,7 +875,7 @@ async function claudeTerminal(projectId, step) {
   await app.evaluate((_electron, file) => {
     globalThis.__liveSession.policy.transcript = file;
   }, transcript);
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await navigate(page, "History");
   await page
     .getByRole("button", { name: "Import Claude JSONL", exact: true })
     .click();
@@ -1261,9 +1262,9 @@ const roleOf = (provider, runtimes, model) =>
       }
     : { provider, installationId: runtimes.codex.id, model };
 
-/** Opens the guided setup in the project's Activity at its Team step. */
+/** Opens the guided setup in the project's Tasks at its Team step. */
 async function openTeamStep() {
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await navigate(page, "Tasks");
   const setup = page.locator(".guided-workflow");
   await appear("the guided setup", setup.locator("summary").first());
   if ((await setup.getAttribute("open")) === null)
@@ -1615,7 +1616,7 @@ async function answerAsOwner(card, approval) {
  * its session's transcript.
  */
 async function claudeTranscripts() {
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await navigate(page, "Settings");
   const setting = page.getByRole("region", {
     name: "Claude Code transcripts",
     exact: true,
@@ -1635,7 +1636,7 @@ async function claudeTranscripts() {
     timeout: 15000,
   });
   report.claudeCode.transcriptRead = "on";
-  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await navigate(page, "Sessions");
 }
 
 /**
@@ -2695,7 +2696,7 @@ async function locate(provider, step) {
 
 try {
   await expect(
-    page.getByRole("heading", { name: "Applications", exact: true }),
+    page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible({ timeout: 60000 });
   // Answer only the expected native dialogs, and record every dialog shown.
   await app.evaluate(
@@ -2839,8 +2840,9 @@ try {
     },
   );
 
-  /** Adds the disposable project in Workspace, as a user would. */
+  /** Adds the disposable project in Projects, as a user would. */
   const addProject = async () => {
+    await navigate(page, "Projects");
     await page
       .getByRole("button", { name: "+ Add project", exact: true })
       .click();
@@ -2858,15 +2860,15 @@ try {
     handoff = null;
   if (options.workflow) {
     // Each executable the team needs, then the project, with Codex selected
-    // in the project's runtime bar when the team has it.
+    // in the runtime bar of the project's Sessions when the team has it.
     const runtimes = {};
     for (const provider of teamProviders)
       runtimes[provider] = await locate(
         provider,
         provider === "claude" ? report.claudeCode : report,
       );
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
     projectId = await addProject();
+    await navigate(page, "Sessions");
     await page
       .locator(".runtime-bar select")
       .first()
@@ -2881,10 +2883,8 @@ try {
           })
         : report;
       const trusted = await locate(provider, step);
-      await page
-        .getByRole("button", { name: "Workspace", exact: true })
-        .click();
       projectId ??= await addProject();
+      await navigate(page, "Sessions");
       await page
         .locator(".runtime-bar select")
         .first()

@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, test } from "vitest";
+import os from "node:os";
 import path from "node:path";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import {
   claudeRouteConfirmation,
   claudeRouteDecision,
   claudeRoutePreferenceId,
 } from "../packages/domain/claude-route";
+import { readClaudeAccount } from "../packages/providers/claude-allowance";
+import type { ProviderAccount } from "../packages/providers/contract";
+import type { Store } from "../packages/persistence/store";
 import {
   ClaudeAdapter,
   claudeArguments,
@@ -20,7 +24,7 @@ import { claudeQualificationSuite } from "../packages/providers/claude-qualifica
 import { RuntimeManager } from "../packages/runtime/manager";
 import { Service } from "../apps/service/service";
 import { identity, nativeEnvironment } from "../packages/platform/system";
-import { now } from "../packages/domain/invariants";
+import { hash, now, stable } from "../packages/domain/invariants";
 import type { ExecutionPurpose } from "../packages/domain/role-groups";
 import { fixture } from "./helpers";
 
@@ -40,13 +44,102 @@ async function qualificationParent() {
   return parent;
 }
 
+const windows = process.platform === "win32";
+
+/** Reads `A=1 B=2 ` (the POSIX wrapper's variable prefix) as variables. */
+function variables(env: string): Record<string, string> {
+  return Object.fromEntries(
+    env
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]),
+  );
+}
+
+/**
+ * Windows only: the stand-in's `auth status --json`, run through Node's own
+ * executable, mapped as readClaudeAccount maps a claude.ai login. Topsl's
+ * account reader launches the selected executable with execFile and no
+ * shell, so on Windows it can launch only a native .exe: a `#!/bin/sh`
+ * wrapper is not a Win32 program, and Node refuses .cmd/.bat files without a
+ * shell (EINVAL); the broker's preflight refuses .cmd paths anyway. The
+ * repository has no .exe stand-in, so on Windows this test double replaces
+ * the native account read, and the launch failure itself is diagnosed in
+ * "Claude account read diagnostics" below. Its errors name the launch,
+ * response or sign-in cause for the test log; Topsl's own message is
+ * asserted separately. Unverified on Windows by the 2026-10-19 campaign.
+ */
+function standInAccount(env: Record<string, string>): Promise<ProviderAccount> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [standIn, "auth", "status", "--json"],
+      {
+        env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1", ...env }),
+        windowsHide: true,
+        timeout: 10_000,
+        encoding: "utf8",
+      },
+      (error, stdout) => {
+        if (error)
+          return reject(
+            new Error(`Stand-in account read did not launch or exit cleanly: ${error.code ?? error.message}`),
+          );
+        let account: any;
+        try {
+          account = JSON.parse(stdout);
+        } catch {
+          return reject(new Error("Stand-in account read returned malformed JSON."));
+        }
+        if (account?.loggedIn !== true || account.authMethod !== "claude.ai")
+          return reject(new Error("Stand-in account read reported no claude.ai login."));
+        resolve({
+          accountKey: hash(stable(["claude.ai", account.email, account.orgId ?? null])),
+          profileId: hash(path.join(os.homedir(), ".claude")),
+          billingRoute: "native-subscription",
+          sanitized: {
+            type: "claude.ai",
+            email: null,
+            planType: account.subscriptionType ?? null,
+          },
+        });
+      },
+    );
+  });
+}
+
+/** Windows only: the manager's Claude adapter, with the stand-in started
+ * through Node (no shell wrapper) and the account read above. The route
+ * decision is read from the store on every use, as the manager's own
+ * adapter reads it. */
+function windowsStandInAdapter(store: Store, env: Record<string, string>) {
+  return new ClaudeAdapter(undefined, undefined, {
+    routeAllowed: () =>
+      claudeRouteDecision(store.get("preference", claudeRoutePreferenceId)).enabled,
+    transport: (_executable, args, cwd) =>
+      spawn(process.execPath, [standIn, ...args], {
+        cwd,
+        shell: false,
+        env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1", ...env }),
+      }),
+    readAccount: () => standInAccount(env),
+  });
+}
+
 /** A trusted "Claude Code" executable that runs the stand-in, with a
- * production runtime manager (no injected fixture) over it. */
+ * production runtime manager (no injected fixture) over it. On macOS and
+ * Linux the executable is a shell wrapper Topsl launches itself. On Windows
+ * the file only carries the installation's identity: the manager's Claude
+ * adapter is replaced by windowsStandInAdapter, which starts the stand-in
+ * without a shell wrapper. */
 async function launched(env = "") {
   const f = await fixture();
   await writeFile(
     f.installation.path,
-    `#!/bin/sh\n${env}ELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(standIn)} "$@"\n`,
+    windows
+      ? "Topsl test stand-in identity; never launched on Windows.\n"
+      : `#!/bin/sh\n${env}ELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(standIn)} "$@"\n`,
   );
   await chmod(f.installation.path, 0o700);
   const installation = {
@@ -59,6 +152,9 @@ async function launched(env = "") {
     f.store,
     () => {},
     () => {},
+    undefined,
+    undefined,
+    windows ? { claude: windowsStandInAdapter(f.store, variables(env)) } : {},
   );
   cleanup.push(async () => {
     await runtime.close();
@@ -351,8 +447,9 @@ describe("Topsl's MCP server for Claude Code", () => {
       calls.push(request);
       return { content: [{ type: "text", text: "answer" }], isError: false };
     });
+    // Closed even when an assertion below fails; close() is idempotent.
+    cleanup.push(() => server.close());
     const file = await server.start();
-    expect(statSync(file).mode & 0o777).toBe(0o600);
     const config = JSON.parse(readFileSync(file, "utf8")).mcpServers
       .topsl_candidate;
     expect(config.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/[a-f0-9]+$/);
@@ -430,6 +527,48 @@ describe("Topsl's MCP server for Claude Code", () => {
     ).rejects.toThrow();
   });
 
+  test("its configuration file, which holds the bearer token, is private to the owner and is removed with its folder on close", async () => {
+    const server = new ClaudeToolServer(candidateToolset, async () => ({
+      content: [],
+      isError: false,
+    }));
+    cleanup.push(() => server.close());
+    const file = await server.start();
+    const folder = path.dirname(file);
+    // A fresh folder of its own, holding only the configuration.
+    expect(path.basename(folder)).toMatch(/^topsl-claude-mcp-/);
+    expect(readdirSync(folder)).toEqual(["mcp.json"]);
+    const config = JSON.parse(readFileSync(file, "utf8")).mcpServers
+      .topsl_candidate;
+    expect(config.headers.Authorization).toMatch(/^Bearer [a-f0-9]{64}$/);
+    // The token is not in the route Claude Code is given on its command line.
+    expect(config.url).not.toContain(config.headers.Authorization.slice(7));
+    if (windows) {
+      // Mode bits do not describe Windows access. Read the file's effective
+      // access rules as security identifiers (locale-independent): the
+      // current user may read it, and no rule allows Everyone, Authenticated
+      // Users, Users, Guests or Anonymous. Unverified by the 2026-10-19
+      // campaign, which had no Windows host.
+      const access = windowsAccess(file);
+      expect(
+        access.rules.some((r) => r.sid === access.user && r.type === "Allow"),
+      ).toBe(true);
+      expect(
+        access.rules.filter(
+          (r) => r.type === "Allow" && broadWindowsGroups.includes(r.sid),
+        ),
+      ).toEqual([]);
+    } else {
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(statSync(folder).mode & 0o777).toBe(0o700);
+      expect(statSync(file).uid).toBe(process.getuid!());
+    }
+    await server.close();
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(folder)).toBe(false);
+    await server.close();
+  });
+
   test("a call reaches the runtime's request handler with the session's thread and turn, and a call outside a turn is refused", async () => {
     const adapter = new ClaudeAdapter(undefined, undefined, {
       routeAllowed: () => true,
@@ -480,6 +619,107 @@ describe("Topsl's MCP server for Claude Code", () => {
     });
     await connection.close();
   });
+});
+
+describe("Claude account read diagnostics", () => {
+  /** How a launch of `executable` the way readClaudeAccount launches it (no
+   * shell) failed, for the test log: a spawn error code, or null. */
+  const launchCause = (executable: string) =>
+    new Promise<string | null>((resolve) => {
+      execFile(
+        executable,
+        ["auth", "status", "--json"],
+        { env: nativeEnvironment(), windowsHide: true, timeout: 10_000 },
+        (error) =>
+          resolve(error ? String((error as any).code ?? error.message) : null),
+      );
+    });
+  const unreadable =
+    "Claude account status could not be read. Sign in through Claude Code and retry.";
+  const unavailable =
+    "Claude subscription account is unavailable. Sign in through Claude Code with your subscription and retry.";
+
+  test("a launch failure gives Topsl's sanitized message, while the fixture names the launch cause", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-claude-account-"));
+    cleanup.push(() => rm(directory, { recursive: true, force: true }));
+    const missing = path.join(directory, "missing-claude");
+    await expect(
+      readClaudeAccount(missing, AbortSignal.timeout(15_000)),
+    ).rejects.toThrow(unreadable);
+    expect(await launchCause(missing)).toBe("ENOENT");
+    // The shell wrapper this test file used to write on every platform.
+    const wrapper = path.join(directory, windows ? "claude-wrapper" : "claude-not-executable");
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(standIn)} "$@"\n`,
+      { mode: 0o600 },
+    );
+    await expect(
+      readClaudeAccount(wrapper, AbortSignal.timeout(15_000)),
+    ).rejects.toThrow(unreadable);
+    // POSIX: not executable (EACCES). Windows: not a Win32 program; the
+    // exact code is unverified by the 2026-10-19 campaign.
+    const cause = await launchCause(wrapper);
+    expect(cause).toBeTruthy();
+    if (!windows) expect(cause).toBe("EACCES");
+    if (windows) {
+      // Node refuses to launch a .cmd file without a shell.
+      const cmd = path.join(directory, "claude.cmd");
+      await writeFile(cmd, "@echo {}\r\n");
+      await expect(
+        readClaudeAccount(cmd, AbortSignal.timeout(15_000)),
+      ).rejects.toThrow(unreadable);
+      expect(await launchCause(cmd)).toBeTruthy();
+    }
+  });
+
+  test.skipIf(windows)(
+    "a malformed response, a signed-out or API-key account and a failing command are distinguished from a launch failure; nothing raw is returned",
+    async () => {
+      const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-claude-account-"));
+      cleanup.push(() => rm(directory, { recursive: true, force: true }));
+      const script = async (name: string, body: string) => {
+        const file = path.join(directory, name);
+        await writeFile(file, `#!/bin/sh\n${body}\n`);
+        await chmod(file, 0o700);
+        expect(await launchCause(file), name).toBeNull();
+        return file;
+      };
+      const read = (file: string) =>
+        readClaudeAccount(file, AbortSignal.timeout(15_000));
+      await expect(read(await script("malformed", "printf 'not json'"))).rejects.toThrow(unavailable);
+      await expect(
+        read(await script("signed-out", `printf '%s' '{"loggedIn":false}'`)),
+      ).rejects.toThrow(unavailable);
+      await expect(
+        read(
+          await script(
+            "api-key",
+            `printf '%s' '{"loggedIn":true,"authMethod":"api_key","email":"x@example.test"}'`,
+          ),
+        ),
+      ).rejects.toThrow(unavailable);
+      // A command that runs but fails reads as unreadable, without its stderr.
+      const failing = path.join(directory, "failing");
+      await writeFile(failing, "#!/bin/sh\necho secret-canary >&2\nexit 3\n");
+      await chmod(failing, 0o700);
+      const error = await read(failing).catch((e: Error) => e);
+      expect(String(error)).toContain(unreadable);
+      expect(String(error)).not.toContain("secret-canary");
+      // Positive control: the stand-in's claude.ai login, with no email kept.
+      const account = await read(
+        await script(
+          "stand-in",
+          `ELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(standIn)} "$@"`,
+        ),
+      );
+      expect(account).toMatchObject({
+        billingRoute: "native-subscription",
+        sanitized: { type: "claude.ai", email: null, planType: "max" },
+      });
+      expect(JSON.stringify(account)).not.toContain("owner@example.test");
+    },
+  );
 });
 
 describe("Claude runtime qualification through the runtime manager", () => {
@@ -687,4 +927,48 @@ function completion(connection: { onNotification: any }) {
       if (params.event.type === "completed") resolve(params.event);
     };
   });
+}
+
+/** Everyone, Authenticated Users, Users, Guests and Anonymous Logon. */
+const broadWindowsGroups = [
+  "S-1-1-0",
+  "S-1-5-11",
+  "S-1-5-32-545",
+  "S-1-5-32-546",
+  "S-1-5-7",
+];
+/** The current user's security identifier and a file's access rules
+ * (explicit and inherited), read with PowerShell's Get-Acl. Windows only. */
+function windowsAccess(file: string): {
+  user: string;
+  rules: Array<{ sid: string; type: string }>;
+} {
+  const script =
+    "$ErrorActionPreference = 'Stop'; " +
+    "$acl = Get-Acl -LiteralPath $env:TOPSL_ACL_PATH; " +
+    "$rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { @{ sid = $_.IdentityReference.Value; type = [string]$_.AccessControlType } }); " +
+    "@{ user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; rules = $rules } | ConvertTo-Json -Compress -Depth 4";
+  const output = execFileSync(
+    path.join(
+      process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows",
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      env: { ...process.env, TOPSL_ACL_PATH: file },
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30_000,
+    },
+  );
+  const parsed = JSON.parse(output.replace(/^\uFEFF/, ""));
+  return {
+    user: String(parsed.user),
+    rules: (Array.isArray(parsed.rules) ? parsed.rules : [parsed.rules])
+      .filter(Boolean)
+      .map((r: any) => ({ sid: String(r.sid), type: String(r.type) })),
+  };
 }
