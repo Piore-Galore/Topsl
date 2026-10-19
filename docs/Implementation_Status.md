@@ -24,7 +24,7 @@
 | Native project connections | Experimental Codex project API: trusted-folder registration, native names/order in Topsl's sidebar, group rename/reorder, readback, removal retention, identity/profile pinning; Claude Code folder deep links | Actual isolated Codex API acceptance plus Electron create/rename/order/pause/restart smoke. Visible Codex desktop-cache refresh and full Claude sidebar mirroring are not established |
 | History and handoffs | Explicit native JSONL source approval, durable parser/cursor/provenance, replay deduplication, rotation/truncation coverage, pause, paged project/conversation search, virtual transcript, reviewed attributed handoff and tombstones | Read-only native histories; profiles and sessions stay separate. Imported references do not gain native resumability. Missing coverage is visible |
 | Configuration | Explicit native file allowlist, JSON/TOML syntax checks, source hash, parent/symlink checks, encrypted backup, atomic replace | File-write success never claims native reload. A concurrent external editor is detected by repeated reads; there is no cross-process editor transaction |
-| Context service | Permission-restricted local socket / Windows named pipe, independent random scoped grants, expiry/revocation, paginated stdio MCP companion; the same grant checks answer the reviewer's tool calls inside Topsl | Server-held project/message/conversation/run visibility; eight-hour default expiry or process exit/revocation. Retrieval policy does not enforce native filesystem isolation; native configuration installation remains explicit |
+| Context service | Permission-restricted local socket / Windows named pipe, independent random scoped grants, expiry/revocation, paginated stdio MCP companion; the same grant checks answer the reviewer's tool calls inside Topsl. A profile path too long for a Unix socket uses a private per-profile folder in the temporary directory; if the socket cannot listen, the vault still opens and only project context sharing is refused ([D-09](testing/TEST-DECISIONS.md#defect-repairs--19-october-2026-follow-up)) | Server-held project/message/conversation/run visibility; eight-hour default expiry or process exit/revocation. Retrieval policy does not enforce native filesystem isolation; native configuration installation remains explicit |
 | Interface | Navigator’s Atlas project desk: Overview/Sessions/Coordinator/Tasks/Changes/Context/History/Synchronization; global Projects/Applications/Settings; native navigation dialog, source-aware inspector, explicit runtime/model selection, per-operation pending/error, preserved drafts/native sessions, Paper/Night/System themes and topsail app identity. System is the default: it follows the computer's light or dark appearance with Paper's or Night's exact colors, and a chosen Paper or Night is kept | Actual Electron scale/compact/keyboard/reduced-motion and Unicode journeys; scoped late responses cannot replace another project. System is compared with Night and Paper under an emulated color scheme ([17 October 2026](#recorded-engineering-evidence)). Full screen-reader acceptance remains open |
 
 ## Build targets and channel matrix
@@ -292,5 +292,17 @@ The *Topsl Comprehensive Testing Plan* (359 cases, 14 journeys, 197 commands) wa
 - The live Claude Build-and-review pairings, which need the owner to answer Claude Code's prompts during the run.
 - Claude live qualification.
 - Long soaks, screen-reader acceptance and real Gatekeeper first-open.
+
+### Campaign defect repairs — 19 October 2026 follow-up
+
+After the campaign, D-06, D-07, D-08, D-09, D-10 and D-12 were repaired on top of `5b5b0b4`, and each reproduction now passes as a plain test. The repairs, commands and results are in [Defect repairs](testing/TEST-DECISIONS.md#defect-repairs--19-october-2026-follow-up). In short:
+
+- A failed managed interrupt during cancel still revokes the reader grant and cancels the workflow's checks (D-06).
+- A reviewed handoff snapshot goes only to a Codex installation, and `handoff.sent` is recorded only after the runtime accepts the turn (D-07, D-10).
+- Replication refuses nested `secret`/`passphrase` keys, `aws_secret_access_key`, password-bearing URLs, `.netrc` and `.git-credentials` (D-08).
+- A long profile path no longer keeps the vault locked: the context socket moves to a short private folder, and a socket failure refuses only context sharing (D-09).
+- The companion MCP server answers malformed JSON with `-32700` and oversized requests with `-32600` for their id (D-12).
+
+The campaign verdict above remains a snapshot of `d4b788e`. The status of every other defect is kept in [TEST-DECISIONS](testing/TEST-DECISIONS.md).
 
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

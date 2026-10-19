@@ -330,8 +330,7 @@ describe("BW-21 builder-reviewer-cancel through the service", () => {
     ).toHaveLength(1);
   });
 
-  // CAMPAIGN DEFECT BW-21: when the managed interrupt fails, builder-reviewer-cancel records cancelled but skips grant revocation and checks.cancelWorkflow (service.ts:2735-2740, builder-reviewer.ts:2407-2415).
-  test.fails(
+  test(
     "BW-21: a failed managed interruption still revokes the grant and cancels the workflow's checks at the service",
     async () => {
       const f = await setup(),

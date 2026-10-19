@@ -1085,7 +1085,6 @@ describe("REPL-08 secrets, native paths and native record types are excluded", (
       expect(rows(b, kind), kind).toHaveLength(0);
   });
 
-  // CAMPAIGN DEFECT REPL-08: nested "secret"/"passphrase"/AWS secret-key fields pass the filter (packages/replication/local.ts:149-152).
   for (const [name, text] of [
     ["nested secret key", '{"service":{"secret":"fixture-secret-value"}}'],
     [
@@ -1094,7 +1093,7 @@ describe("REPL-08 secrets, native paths and native record types are excluded", (
     ],
     ["nested passphrase", '{"db":{"passphrase":"fixture-passphrase"}}'],
   ])
-    test.fails(`secret-like nested field is refused: ${name}`, async () => {
+    test(`secret-like nested field is refused: ${name}`, async () => {
       const a = await device("A");
       expectRejectedWithoutEffect(a, () =>
         a.engine.previewStage(
@@ -1105,12 +1104,11 @@ describe("REPL-08 secrets, native paths and native record types are excluded", (
       );
     });
 
-  // CAMPAIGN DEFECT REPL-08: .netrc and .git-credentials are neither path-protected nor content-detected (packages/replication/local.ts:147-152).
   for (const [file, text] of [
     [".netrc", "machine example.test login fixture password fixture-pass"],
     [".git-credentials", "https://fixture:fixture-pass@example.test"],
   ])
-    test.fails(`credential file is refused: ${file}`, async () => {
+    test(`credential file is refused: ${file}`, async () => {
       const a = await device("A");
       expectRejectedWithoutEffect(a, () =>
         a.engine.previewStage("s", "project", artifactWith(file, text)),

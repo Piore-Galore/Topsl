@@ -145,11 +145,14 @@ const recordHash = (
   >,
 ) => hash(stable(record));
 const protectedPath =
-  /(^|\/)(\.git|\.topsl|\.codex|\.claude|\.ssh|\.aws|\.config|context-grants|node_modules)(\/|$)|(^|\/)(\.env(?:\..*)?|\.claude\.json|\.codex-global-state\.json|auth\.json|credentials(?:\..*)?|config\.toml|.*(?:sqlite(?:-(?:wal|shm))?|\.db(?:-(?:wal|shm))?|\.wal|[-.]shm)|id_(?:rsa|ed25519)|.*\.(?:pem|key|p12|pfx))$/i;
+  /(^|\/)(\.git|\.topsl|\.codex|\.claude|\.ssh|\.aws|\.config|context-grants|node_modules)(\/|$)|(^|\/)(\.env(?:\..*)?|\.claude\.json|\.codex-global-state\.json|auth\.json|[._]netrc|\.git-credentials|credentials(?:\..*)?|config\.toml|.*(?:sqlite(?:-(?:wal|shm))?|\.db(?:-(?:wal|shm))?|\.wal|[-.]shm)|id_(?:rsa|ed25519)|.*\.(?:pem|key|p12|pfx))$/i;
+// Any key naming a secret or passphrase (e.g. aws_secret_access_key) counts.
 const sensitiveKey =
-  /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|approval[_-]?token|grant|grants|credential|credentials|private[_-]?key|authorization|trustRevision|approvalDigest|leaseGeneration)$/i;
+  /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|approval[_-]?token|grant|grants|credential|credentials|private[_-]?key|authorization|trustRevision|approvalDigest|leaseGeneration)$|secret|passphrase/i;
+// Also URLs carrying a password and netrc-style "login … password …" lines.
+// New alternatives keep bounded repeats: the check runs over up to 1 MB.
 const secretText =
-  /-----BEGIN [\w ]*PRIVATE KEY-----|\bsk-[a-z0-9_-]{12,}|\bBearer\s+\S+|["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|approval[_-]?token|private[_-]?key|authorization)["']?\s*[=:]\s*["']?\S+/i;
+  /-----BEGIN [\w ]*PRIVATE KEY-----|\bsk-[a-z0-9_-]{12,}|\bBearer\s+\S+|\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/:@]{1,256}:[^\s/@]{1,256}@|\blogin\s+\S{1,256}\s+password\s+\S|["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret[\w-]{0,64}|passphrase|approval[_-]?token|private[_-]?key|authorization)["']?\s*[=:]\s*["']?\S+/i;
 function hasSensitiveJson(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasSensitiveJson);
   if (value && typeof value === "object")

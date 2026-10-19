@@ -69,12 +69,37 @@ if (mode !== "mcp") {
     });
 } else {
   const lines = createInterface({ input: process.stdin });
+  const reply = (id: unknown, code: number, message: string) =>
+    process.stdout.write(
+      JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n",
+    );
   lines.on("line", async (line) => {
-    if (line.length > 16000) return;
+    // Every request gets an answer, so a client waiting on its id never hangs.
+    // An oversized one is answered for its id without being run; a notification
+    // (no id) gets no reply even then.
+    if (line.length > 16000) {
+      let id: unknown = null;
+      if (line.length <= 1_000_000)
+        try {
+          id = JSON.parse(line)?.id;
+        } catch {}
+      if (id === undefined) return;
+      reply(
+        typeof id === "string" || typeof id === "number" ? id : null,
+        -32600,
+        "Request exceeds 16,000 characters.",
+      );
+      return;
+    }
     let request: any;
     try {
       request = JSON.parse(line);
-      if (request.id === undefined) return;
+    } catch {
+      reply(null, -32700, "Parse error.");
+      return;
+    }
+    try {
+      if (request?.id === undefined) return;
       let result: unknown;
       if (request.method === "initialize")
         result = {
@@ -173,14 +198,7 @@ if (mode !== "mcp") {
         JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n",
       );
     } catch (error: any) {
-      if (request?.id !== undefined)
-        process.stdout.write(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: request.id,
-            error: { code: -32601, message: error.message },
-          }) + "\n",
-        );
+      reply(request.id, -32601, error.message);
     }
   });
 }

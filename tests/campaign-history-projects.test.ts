@@ -375,8 +375,7 @@ describe("HX-10 reviewed snapshot attachment binding through run-start", () => {
     });
     expect(start).toHaveBeenCalledTimes(1);
   });
-  // CAMPAIGN DEFECT HX-10: run-start forwards a Codex-targeted snapshot to a non-Codex (Claude) installation.
-  test.fails(
+  test(
     "a Codex-targeted snapshot cannot be attached to a turn on a non-Codex installation",
     async () => {
       const f = await serviceFixture();
@@ -405,8 +404,7 @@ describe("HX-10 reviewed snapshot attachment binding through run-start", () => {
 });
 
 describe("HX-10 refused dispatch evidence", () => {
-  // CAMPAIGN DEFECT HX-10: handoff.sent is recorded before dispatch, so a turn the runtime refuses still reads as sent.
-  test.fails(
+  test(
     "a turn the runtime refuses leaves no handoff.sent record and no run",
     async () => {
       const f = await serviceFixture();

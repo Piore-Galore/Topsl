@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:net";
+import os from "node:os";
 import path from "node:path";
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { Store, type MessageVisibility } from "../persistence/store";
 import { hash, safeEqual } from "../domain/invariants";
@@ -135,6 +136,24 @@ function contextMessage(m: Message) {
         : [],
   };
 }
+/** Longest Unix socket path that fits every supported platform's sun_path
+ * with its terminating NUL (macOS allows 104 bytes in all). */
+export const maxSocketPathBytes = 103;
+/** `<directory>/context.sock` when it fits; otherwise a short folder in the
+ * temporary directory, named after the profile so each profile keeps its own. */
+export function contextSocketPath(
+  directory: string,
+  temporary = os.tmpdir(),
+): string {
+  const preferred = path.join(directory, "context.sock");
+  if (Buffer.byteLength(preferred) <= maxSocketPathBytes) return preferred;
+  const name = `topsl-${hash(path.resolve(directory)).slice(0, 16)}`;
+  for (const base of [temporary, "/tmp"]) {
+    const candidate = path.join(base, name, "context.sock");
+    if (Buffer.byteLength(candidate) <= maxSocketPathBytes) return candidate;
+  }
+  return preferred;
+}
 export class ContextServer {
   private server: Server | null = null;
   private grants = new Map<
@@ -145,20 +164,31 @@ export class ContextServer {
   readonly endpoint: string;
   constructor(
     private store: Store,
-    directory: string,
+    private directory: string,
     private clock: () => number = Date.now,
   ) {
     this.endpoint =
       process.platform === "win32"
         ? `\\\\.\\pipe\\topsl-${hash(directory).slice(0, 16)}`
-        : path.join(directory, "context.sock");
+        : contextSocketPath(directory);
   }
   async start(): Promise<void> {
     if (process.platform !== "win32") {
-      await mkdir(path.dirname(this.endpoint), {
-        recursive: true,
-        mode: 0o700,
-      });
+      const parent = path.dirname(this.endpoint);
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+      // The short fallback lives in a shared temporary folder, which may
+      // already hold a directory someone else made.
+      if (this.endpoint !== path.join(this.directory, "context.sock")) {
+        const stat = await lstat(parent);
+        if (
+          !stat.isDirectory() ||
+          (process.getuid && stat.uid !== process.getuid()) ||
+          stat.mode & 0o077
+        )
+          throw new Error(
+            `The context socket folder ${parent} must be a private directory owned by this user.`,
+          );
+      }
       await rm(this.endpoint, { force: true });
     }
     this.server = createServer((socket) => {

@@ -456,8 +456,7 @@ describe("BW-21 builder-reviewer cancellation (engine)", () => {
     ).rejects.toThrow("Acceptance is stale");
   });
 
-  // CAMPAIGN DEFECT BW-21: a failed managed interruption leaves the cancelled workflow's reader grant live (builder-reviewer.ts:2407-2415 revokes only after interrupt succeeds).
-  test.fails(
+  test(
     "BW-21: a failed managed interruption still revokes the cancelled attempt's reader grant",
     async () => {
       const f = await setup({ hold: ["edit"] }),

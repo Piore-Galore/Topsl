@@ -2397,22 +2397,27 @@ export class BuilderReviewerWorkflow {
       },
       "cancelled",
     );
-    if (waiting)
-      await this.endClaudeStep(
-        waiting,
-        "cancelled",
-        "The workflow was cancelled during this Claude Code step.",
-        !!confirmation.claudeCodeStopped,
-      );
-    else if (state.activeAttemptId && this.driver.interrupt)
-      await this.driver.interrupt(
-        this.repository.require<ExecutionAttempt>(
-          "attempt",
-          state.activeAttemptId,
-        ),
-      );
-    if (state.activeAttemptId)
-      this.contextServer?.revokeAttempt(state.activeAttemptId);
+    // The workflow is already cancelled, so its reader grant ends even when
+    // stopping the provider fails; the failure still reaches the caller.
+    try {
+      if (waiting)
+        await this.endClaudeStep(
+          waiting,
+          "cancelled",
+          "The workflow was cancelled during this Claude Code step.",
+          !!confirmation.claudeCodeStopped,
+        );
+      else if (state.activeAttemptId && this.driver.interrupt)
+        await this.driver.interrupt(
+          this.repository.require<ExecutionAttempt>(
+            "attempt",
+            state.activeAttemptId,
+          ),
+        );
+    } finally {
+      if (state.activeAttemptId)
+        this.contextServer?.revokeAttempt(state.activeAttemptId);
+    }
     return cancelled;
   }
   publishSpecification(

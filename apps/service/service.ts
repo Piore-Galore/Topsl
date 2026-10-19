@@ -181,6 +181,8 @@ export class Service {
   readonly replication: LocalReplication;
   readonly configuration: Configuration;
   readonly context: ContextServer;
+  /** Why the context socket could not listen at start, if it could not. */
+  private contextFailure: string | null = null;
   readonly projects: ProjectSync;
   readonly codexProjects: CodexProjectSync;
   /** The coordinator feature: goals, role groups and rounds (docs/Coordinator_Teams.md). */
@@ -562,7 +564,14 @@ export class Service {
       }
     }, 10_000);
     await this.configuration.reconcile();
-    await this.context.start();
+    // Only native MCP clients need the socket; Topsl answers its own tool
+    // calls in process, so a socket that cannot listen leaves the vault usable.
+    try {
+      await this.context.start();
+      this.contextFailure = null;
+    } catch (error) {
+      this.contextFailure = safeError(error);
+    }
     await this.refreshProjects();
     this.timer = setInterval(() => {
       this.background(this.refreshProjects());
@@ -2727,18 +2736,25 @@ export class Service {
           trusted.digest,
         );
       case "builder-reviewer-cancel": {
-        const active = this.require<BuilderReviewerState>(
-          "builder-reviewer",
-          command.id,
-        ).activeAttemptId;
+        const { activeAttemptId: active, stage } =
+          this.require<BuilderReviewerState>("builder-reviewer", command.id);
         if (active) this.assertClaudeStepExited(active);
-        const result = await this.workflows.cancel(
-          command.id,
-          command.expectedRevision,
-          { claudeCodeStopped: command.claudeCodeStopped },
-        );
-        this.checks.cancelWorkflow(command.id);
-        return result;
+        try {
+          return await this.workflows.cancel(
+            command.id,
+            command.expectedRevision,
+            { claudeCodeStopped: command.claudeCodeStopped },
+          );
+        } finally {
+          // Once the workflow is recorded as cancelled, its checks stop even
+          // if stopping the provider failed afterwards.
+          if (
+            stage !== "cancelled" &&
+            this.require<BuilderReviewerState>("builder-reviewer", command.id)
+              .stage === "cancelled"
+          )
+            this.checks.cancelWorkflow(command.id);
+        }
       }
       case "coordination-query":
         this.require<Project>("project", command.projectId);
@@ -3369,16 +3385,20 @@ export class Service {
             this.installation(command.installationId),
             project,
           );
-        let prompt = command.prompt;
+        const installation = this.installation(command.installationId);
+        let prompt = command.prompt,
+          snapshot: ContextSnapshot | undefined;
         if (command.snapshotId) {
-          const snapshot = this.require<ContextSnapshot>(
+          snapshot = this.require<ContextSnapshot>(
             "snapshot",
             command.snapshotId,
           );
+          // A snapshot reviewed for Codex goes only to a Codex installation.
           if (
             snapshot.projectId !== project.id ||
             snapshot.conversationId !== conversation.id ||
             snapshot.provider !== "codex" ||
+            installation.appId !== "openai.codex-cli" ||
             hash(snapshot.text) !== snapshot.hash ||
             !trusted.approved
           )
@@ -3386,14 +3406,9 @@ export class Service {
               "Review the exact handoff snapshot for this destination first.",
             );
           prompt = snapshot.text + "\n\n# Current user request\n" + prompt;
-          this.store.event("handoff.sent", {
-            id: snapshot.id,
-            hash: snapshot.hash,
-            provider: snapshot.provider,
-          });
         }
-        return this.runtime.start(
-          this.installation(command.installationId),
+        const run = await this.runtime.start(
+          installation,
           conversation,
           project,
           prompt,
@@ -3402,6 +3417,14 @@ export class Service {
           undefined,
           command.approvalPolicy,
         );
+        // Recorded only once the runtime has accepted the turn.
+        if (snapshot)
+          this.store.event("handoff.sent", {
+            id: snapshot.id,
+            hash: snapshot.hash,
+            provider: snapshot.provider,
+          });
+        return run;
       }
       case "run-interrupt":
         return this.runtime.interrupt(command.id);
@@ -3544,6 +3567,10 @@ export class Service {
         if (!trusted.approved)
           throw new Error(
             "Project context sharing requires a native confirmation.",
+          );
+        if (this.contextFailure)
+          throw new Error(
+            `Project context sharing is unavailable: ${this.contextFailure}`,
           );
         const project = await this.project(command.projectId);
         const grant = this.context.grant(project);

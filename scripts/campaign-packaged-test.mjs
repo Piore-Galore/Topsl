@@ -1393,7 +1393,7 @@ async function longpath() {
       if (session) kill(session);
     }
     notes.lengths[length] = record;
-    // CAMPAIGN DEFECT PKG-03: a userData path whose context.sock exceeds 104 bytes cannot unlock (listen EINVAL).
+    // PKG-03 (D-09, fixed): at d4b788e a context.sock path of 104 bytes or more kept the vault locked (listen EINVAL).
     check("PKG-03", `isolated --user-data-dir with a ${length}-byte context socket path unlocks`, record.locked === false, record);
     rmSync(profile, { recursive: true, force: true });
   }

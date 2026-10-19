@@ -8,10 +8,15 @@ import os from "node:os";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 import { Store } from "../packages/persistence/store";
-import { ContextServer, type ContextGrant } from "../packages/workspace/context";
+import {
+  ContextServer,
+  contextSocketPath,
+  maxSocketPathBytes,
+  type ContextGrant,
+} from "../packages/workspace/context";
 import type { Message, Project } from "../packages/domain/types";
 import { Service } from "../apps/service/service";
 import { fixture } from "./helpers";
@@ -424,8 +429,7 @@ describe("MCP-05 MCP stdio protocol", () => {
     mcp.child.stdin!.end();
     expect(await mcp.exited).toBe(0);
   });
-  // CAMPAIGN DEFECT MCP-05: a malformed JSON line gets no JSON-RPC parse error (-32700, id null); apps/cli/main.ts drops it silently.
-  test.fails("malformed JSON receives a well-formed parse error response", async () => {
+  test("malformed JSON receives a well-formed parse error response", async () => {
     const { mcp } = await client();
     mcp.send("{not json");
     mcp.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
@@ -433,8 +437,7 @@ describe("MCP-05 MCP stdio protocol", () => {
     const parseError = mcp.responses.find((r) => r.id === null);
     expect(parseError?.error?.code).toBe(-32700);
   });
-  // CAMPAIGN DEFECT MCP-05: a request line over 16,000 characters is dropped without any response, so a client waiting on its id never completes.
-  test.fails("an oversized request receives a bounded error for its id", async () => {
+  test("an oversized request receives a bounded error for its id", async () => {
     const { mcp } = await client();
     mcp.send({
       jsonrpc: "2.0",
@@ -560,5 +563,71 @@ describe("MCP-07 close and restart during use", () => {
     expect(JSON.parse(fresh.stdout).projectId).toBe("A");
     mcp.child.stdin!.end();
     expect(await mcp.exited).toBe(0);
+  });
+});
+
+// PKG-03 (D-09): a profile whose context.sock would exceed the Unix socket
+// path limit used to keep the vault locked with `listen EINVAL`.
+describe.skipIf(process.platform === "win32")("PKG-03 context socket path length", () => {
+  /** A profile folder under the test's temporary folder whose context.sock is `bytes` long. */
+  async function longProfile(bytes: number) {
+    const f = await fixture();
+    f.store.close();
+    cleanups.push(() => rm(f.directory, { recursive: true, force: true }));
+    const pad = bytes - Buffer.byteLength(path.join(f.directory, "p", "context.sock"));
+    const directory = path.join(f.directory, "p" + "x".repeat(pad));
+    expect(Buffer.byteLength(path.join(directory, "context.sock"))).toBe(bytes);
+    const fallback = path.dirname(contextSocketPath(directory));
+    cleanups.push(() => rm(fallback, { recursive: true, force: true }));
+    return { ...f, directory, fallback };
+  }
+  test("context.sock stays in the profile up to the limit and moves to a short per-profile folder past it", () => {
+    const fits = "/" + "a".repeat(maxSocketPathBytes - "//context.sock".length);
+    expect(contextSocketPath(fits, "/short")).toBe(path.join(fits, "context.sock"));
+    expect(Buffer.byteLength(contextSocketPath(fits, "/short"))).toBe(maxSocketPathBytes);
+    for (const extra of ["b", "c".repeat(400)]) {
+      const long = fits + extra,
+        endpoint = contextSocketPath(long, "/short");
+      expect(path.dirname(path.dirname(endpoint))).toBe("/short");
+      expect(Buffer.byteLength(endpoint)).toBeLessThanOrEqual(maxSocketPathBytes);
+      expect(contextSocketPath(long, "/short")).toBe(endpoint);
+    }
+    // Each profile keeps its own socket.
+    expect(contextSocketPath(fits + "b", "/short")).not.toBe(contextSocketPath(fits + "d", "/short"));
+    // A temporary directory that is itself too long falls back to /tmp.
+    expect(path.dirname(path.dirname(contextSocketPath(fits + "b", "/" + "t".repeat(200))))).toBe("/tmp");
+  });
+  for (const bytes of [104, 105])
+    test(`a profile with a ${bytes}-byte context.sock path starts and serves context`, async () => {
+      const f = await longProfile(bytes);
+      const service = new Service(f.directory, f.key, () => {}, true);
+      cleanups.push(() => service.close().catch(() => {}));
+      service.store.put("project", project("A", f.directory));
+      await service.start();
+      expect(service.state().locked).toBe(false);
+      const enabled = await service.command({ type: "context-enable", projectId: "A" }, { approved: true });
+      const grant = JSON.parse(await readFile(enabled.file, "utf8"));
+      expect(path.dirname(grant.endpoint)).toBe(f.fallback);
+      expect(Buffer.byteLength(grant.endpoint)).toBeLessThanOrEqual(maxSocketPathBytes);
+      expect((await stat(f.fallback)).mode & 0o777).toBe(0o700);
+      expect((await stat(grant.endpoint)).mode & 0o777).toBe(0o600);
+      const status = await runCli(["status", enabled.file]);
+      expect(status.code).toBe(0);
+      expect(JSON.parse(status.stdout).projectId).toBe("A");
+    });
+  test("a socket that cannot listen leaves the service usable and refuses only context sharing", async () => {
+    const f = await longProfile(110);
+    // Someone else's (or a widened) shared folder is not used for the socket.
+    await mkdir(f.fallback, { recursive: true });
+    await chmod(f.fallback, 0o755);
+    const service = new Service(f.directory, f.key, () => {}, true);
+    cleanups.push(() => service.close().catch(() => {}));
+    service.store.put("project", project("A", f.directory));
+    await service.start();
+    expect(service.state().locked).toBe(false);
+    await expect(
+      service.command({ type: "context-enable", projectId: "A" }, { approved: true }),
+    ).rejects.toThrow(/context sharing is unavailable.*private directory/);
+    expect(await readdir(f.fallback)).toEqual([]);
   });
 });
