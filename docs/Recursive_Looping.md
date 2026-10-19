@@ -165,7 +165,7 @@ One existing behavior changed as the specification required: the coordinator pro
 | RL-4 Automatic organization | Implemented, fixture-tested; one automatic change observed on screen | TM-01–TM-14 (TM-06–TM-08 at engine level), OV-01–OV-07 |
 | RL-5 Endless discovery | Implemented, fixture- and service-tested | EN-01–EN-06, OP-01, OP-03, OP-04 |
 | RL-6 Desktop interaction | Implemented, desktop-tested against a stand-in | [desktop-loop-test.mjs](../scripts/desktop-loop-test.mjs) |
-| RL-7 Provider and platform qualification | **Partial: one Codex-only live pilot** | [§16](#16-live-pilot-19-october-2026); no Claude route, packaged build or repeated live runs; remote CI ran the automated suites |
+| RL-7 Provider and platform qualification | **Partial: Codex-only live pilot, completed twice** | [§16](#16-live-pilot-19-october-2026); mixed Claude and Codex teams only with stand-ins ([§17](#17-combined-provider-stand-in-19-october-2026)); no Claude route or packaged build; remote CI ran the automated suites |
 
 A delivery satisfying RL-0 to RL-6 remains an experimental partial delivery until RL-7 closes.
 
@@ -181,7 +181,7 @@ A delivery satisfying RL-0 to RL-6 remains an experimental partial delivery unti
 
 ## 14. Limits and open gates
 
-- One bounded Codex-only live pilot completed ([§16](#16-live-pilot-19-october-2026)); nothing else has run against a live provider. Claude's managed structured route stays gated, so loops run only Codex members; managed members still run one at a time because no production route qualifies native fan-out. A qualified Codex-only pilot would be labelled as such; full cross-provider support needs a production Claude route and live acceptance.
+- A bounded Codex-only live pilot completed twice ([§16](#16-live-pilot-19-october-2026)); nothing else has run against a live provider. Claude's managed structured route stays gated, so loops run only Codex members; managed members still run one at a time because no production route qualifies native fan-out. A qualified Codex-only pilot would be labelled as such; full cross-provider support needs a production Claude route and live acceptance. Even with that route, a Claude member cannot hold a candidate-review role: a coordinated review always installs Topsl's candidate reader, and the Claude adapter has no tool calls to host it ([§17](#17-combined-provider-stand-in-19-october-2026)).
 - Code loops need a Git project. The run continues only while Topsl's service is running; there is no background service.
 - The Electron journey uses a scripted Codex stand-in and covers the scenarios listed in [§15](#15-validation-record); a regressed goal, coordinator replacement after failure and five-member editing are covered by fixture tests only, not on screen. Packaged builds, Windows, Linux and remote CI are unverified for this feature.
 - Numeric defaults (dwell, exploration share, thresholds, backoff, reserve, minimum turns) are proposed tuning values.
@@ -219,7 +219,7 @@ npm run build
 node scripts/live-loop.mjs --codex "$(command -v codex)" --claude "$(command -v claude)" --max-turns 30
 ```
 
-Host: macOS 27 arm64; Codex CLI 0.163.0 under the owner's ChatGPT sign-in; Claude Code 2.1.302; Topsl 0.1.2 at `d5a20b1` plus the fixes below (uncommitted during the runs). Reports: `test-results/live-loop/<time>/report.json` (not committed).
+Host: macOS 27 arm64; Codex CLI 0.163.0 under the owner's ChatGPT sign-in; Claude Code 2.1.302; Topsl 0.1.2 at `d5a20b1` plus the fixes below (uncommitted during passes 1–4). Reports: `test-results/live-loop/<time>/report.json` (not committed).
 
 | Pass | What happened | Finding and fix |
 | --- | --- | --- |
@@ -227,5 +227,19 @@ Host: macOS 27 arm64; Codex CLI 0.163.0 under the owner's ChatGPT sign-in; Claud
 | 2 | All 6 loop decisions were valid and reported the assigned model. All 12 child plan contributions were invalid: the coordinator delegated an information task to the reviewer role, which the purpose check rejects; after two rejected approaches the run waited for direction. Run B's pinned Claude reviewer stayed unresolved and the run **waited on the pin without substituting a model**. Decision-round turns were not yet counted in usage. | The coordinator prompt now lists only delegable roles with the task kind each takes and says review and checks run automatically. Decision turns now count every tick. |
 | 3 | Plan, implementation and review were valid and the candidate was integrated. The evaluator could not read `value.ts` (its shell read needed an approval a read-only turn never gets) and reported an environment problem; the same decided evaluation would then have been reused after the wait. | Evaluation prompts now include the candidate's changed files; an environment report leads to a fresh evaluation after the wait. |
 | 4 | **Completed on checkpoint 1** in 6 member turns (126,679 input and 4,528 output tokens, reported for 6 of 6 attempts). Every loop and child turn (coordinator, implementer, reviewer, evaluator) requested and reported `gpt-6.1-sol` and was valid; the coordinators committed one organization change. Publication through the native dialog wrote `export const value = 2;` into the folder (`M value.ts`, nothing committed). Only the 13 expected dialogs were approved; the profile and folders were deleted. | None. |
+| 5 (repeat at `67f7754` plus the stand-in readiness fix below) | **Completed on checkpoint 1** in 6 member turns (128,813 input and 4,811 output tokens, reported for 6 of 6 attempts). All 6 loop decisions and 3 child contributions were valid; each requested and reported `gpt-6.1-sol`. Publication wrote `export const value = 2;` (`M value.ts`). Run B's coordinators made 3 valid decision turns, then the run **waited on the pinned Claude reviewer** ("No observed model matches the label \"Claude\"", because no Claude catalog is observed while its route is gated), with no substitution. 14 dialogs, all expected (pass 4 skipped run B); the profile and folders were deleted. | None. |
 
-Each fix has a fixture or unit test (decision examples, delegable roles, changed-file contents, re-evaluation after an environment wait). **Not established by the pilot:** Endless mode, multi-member or multi-model teams, repairs, checks, restart and stop with live attempts, any Claude structured turn, packaged builds, other hosts, and repeatability across runs or models.
+Each fix has a fixture or unit test (decision examples, delegable roles, changed-file contents, re-evaluation after an environment wait). **Not established by the pilot:** Endless mode, multi-member or multi-model teams, repairs, checks, restart and stop with live attempts, any Claude structured turn, packaged builds, other hosts, and repeatability across models (passes 4 and 5 both completed on `gpt-6.1-sol`).
+
+## 17. Combined-provider stand-in (19 October 2026)
+
+[loop-service.test.ts](../tests/loop-service.test.ts) runs Goal loops with Claude and Codex members on one team through the real service: runtime manager, attempts, leases, snapshot copies, capture, integration, owned checkpoints and machine promotion. Both providers are stand-ins: [codex-orchestration.cjs](../tests/fixtures/codex-orchestration.cjs) for Codex's app server and [claude-orchestration.cjs](../tests/fixtures/claude-orchestration.cjs) for Claude Code's print/stream-json route. Both answer from [orchestration-answers.cjs](../tests/fixtures/orchestration-answers.cjs) and report the requested model. Claude's route is ready only because its transport is injected; production keeps it gated. Nothing here is live evidence.
+
+| Test | Roster (user-pinned, exact) | Result |
+| --- | --- | --- |
+| Mixed team | Coordinators: Claude `claude-opus-fixture` and Codex `fixture-astra`. Implementer: Claude. Reviewer: Codex `fixture-sol` | Completes on checkpoint 1. Both coordinators answer loop decision rounds and child plans, Claude writes the change, and Codex reviews the integrated candidate. Every turn is valid and runs on its pinned model and provider. Machine promotion is by `loop-policy`, with no owner acceptance. |
+| Pinned Claude reviewer | As above, with reviewers Claude and Codex | Waits with `pinned-model` and `candidate-reader-unavailable` before the child goal starts. No attempt fails, and no model is substituted. |
+
+**Finding and fix.** The first mixed run put a Claude reviewer on the team. Stand-in readiness then assumed every capability a purpose names, so Claude looked ready for candidate review. Every dispatch then failed ("Topsl's tools are installed only on a fresh review session of a runtime that can call them"), and the loop rejected three approaches before asking for direction. In stand-in mode, purpose readiness no longer assumes `candidate-reader` for an adapter without tool calls (`packages/runtime/manager.ts`). Build and review's roles pass the candidate in their task input and keep the previous behaviour.
+
+Commands: `node scripts/test.mjs tests/loop-service.test.ts` (5 passed) and `npm test` (615 passed, 5 skipped), both with `ANTHROPIC_*`/`CLAUDE_*` removed from the environment; `npx tsc --noEmit -p .` clean.

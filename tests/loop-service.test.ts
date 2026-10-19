@@ -13,6 +13,7 @@ import { nativeEnvironment } from "../packages/platform/system";
 import { hash, now, uid } from "../packages/domain/invariants";
 import type { Installation } from "../packages/domain/types";
 import type { Goal } from "../packages/domain/role-groups";
+import type { ExecutionAttempt } from "../packages/domain/workflow";
 import type { LoopRun } from "../packages/domain/recursive-loops";
 import type { CandidateSnapshot } from "../packages/workflows/candidates";
 import { candidateFileBytes } from "../packages/workflows/candidates";
@@ -118,7 +119,7 @@ async function setup(inject = true, turnDelayMs = 20) {
           ),
           claude: new ClaudeAdapter(
             claudeFixtureTransport(process.execPath, [
-              path.resolve("tests/fixtures/claude.cjs"),
+              path.resolve("tests/fixtures/claude-orchestration.cjs"),
             ]),
           ),
         }
@@ -161,6 +162,7 @@ async function setup(inject = true, turnDelayMs = 20) {
     ["fixture-astra", "Astra"],
     ["fixture-sol", "Sol"],
   ]);
+  seedCatalog(service, claude, [["claude-opus-fixture", "Opus"]]);
   return { ...f, service, project, claude };
 }
 const git = (cwd: string, ...args: string[]) =>
@@ -345,4 +347,169 @@ test("an Endless loop improves once, then monitors instead of completing", async
     (r) => r.state === "stopped",
   );
   expect(stopped.checkpoint!.sequence).toBe(1);
+});
+
+/** An exact roster of pinned members, set by the user for one built-in role. */
+async function roster(
+  f: Awaited<ReturnType<typeof setup>>,
+  roleId: string,
+  labels: string[],
+) {
+  await f.service.command({
+    type: "orchestration-group-set",
+    projectId: "p",
+    goalId: null,
+    level: "project-role",
+    taskKey: null,
+    mode: "replace",
+    roleId,
+    settings: {
+      form: "exact",
+      members: labels.map((label, i) => ({
+        memberId: `${roleId}-${label.toLowerCase()}-${i}`,
+        required: true,
+        pin: { label },
+        fallbacks: [],
+        preferences: { providers: [], models: [] },
+        source: { kind: "ui", reference: null, provenance: "explicit" },
+      })),
+    },
+    commandId: `c-${uid()}`,
+  });
+}
+
+async function startLoop(f: Awaited<ReturnType<typeof setup>>) {
+  const created = await f.service.command({
+    type: "loop-create",
+    projectId: "p",
+    conversationId: null,
+    mode: "goal",
+    text: "Change the value to two.",
+    policy: { scheduling: { reserveForDirectWork: 0 } },
+    commandId: `c-${uid()}`,
+  });
+  const runId = created.run.id;
+  const authority = f.service.review("loop-authority", runId) as {
+    digest: string;
+  };
+  await f.service.command(
+    { type: "loop-start", runId, commandId: `c-${uid()}` },
+    { digest: authority.digest },
+  );
+  return untilRun(f.service, runId, (r) =>
+    ["completed", "waiting", "stopped"].includes(r.state),
+  );
+}
+/** Each member turn of the run's loop rounds and child goals, by provider. */
+function memberTurns(f: Awaited<ReturnType<typeof setup>>) {
+  const attempts = new Map(
+    f.service.store
+      .list<ExecutionAttempt>("attempt")
+      .map((a) => [a.id, a] as const),
+  );
+  type Contribution = {
+    attemptId: string;
+    memberId: string;
+    validation: { state: string };
+  };
+  return [
+    ...f.service.store
+      .list<Contribution>("loop-contribution")
+      .map((c) => ({ ...c, loop: true })),
+    ...f.service.store
+      .list<Contribution>("role-contribution")
+      .map((c) => ({ ...c, loop: false })),
+  ].map((c) => {
+    const a = attempts.get(c.attemptId)!;
+    return {
+      loop: c.loop,
+      member: c.memberId,
+      provider: a.provider,
+      requested: a.requestedModel,
+      reported: a.reportedModel,
+      validation: c.validation.state,
+    };
+  });
+}
+
+test("a Goal loop with Claude and Codex members on one team coordinates, implements, reviews and promotes", async () => {
+  const f = await setup();
+  await enable(f);
+  // Claude's structured route is ready here only because the stand-in
+  // transport is injected; production keeps it gated (claudeStructuredGate).
+  // Claude cannot review a candidate (next test), so Codex reviews.
+  await roster(f, "coordinator", ["Opus", "Astra"]);
+  await roster(f, "implementer", ["Opus"]);
+  await roster(f, "reviewer", ["Sol"]);
+  const view = await startLoop(f);
+  expect(view.run.state).toBe("completed");
+  expect(view.checkpoint!.sequence).toBe(1);
+  expect(view.goals[0].status).toBe("satisfied");
+  const head = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    view.checkpoint!.candidateId,
+  )!;
+  expect(
+    candidateFileBytes(
+      head,
+      head.files.find((x) => x.path === "file.ts")!,
+      f.service.store,
+    )!.toString(),
+  ).toContain("value = 2");
+
+  // Every loop and child turn ran on the model its pinned member asked for,
+  // and each provider did the work the roster gave it.
+  const turns = memberTurns(f);
+  for (const t of turns) {
+    expect(t.validation).toBe("valid");
+    expect(t.reported).toBe(t.requested);
+    expect(t.provider).toBe(
+      t.requested === "claude-opus-fixture" ? "claude" : "codex",
+    );
+  }
+  const by = (role: string, provider: string, loop: boolean) =>
+    turns.filter(
+      (t) =>
+        t.member.startsWith(`${role}-`) &&
+        t.provider === provider &&
+        t.loop === loop,
+    ).length;
+  // Loop decision rounds (boundary, organize, evaluate) went to both
+  // coordinators; in the child goal both planned, Claude implemented and
+  // Codex reviewed the integrated candidate.
+  expect(by("coordinator", "claude", true)).toBeGreaterThan(0);
+  expect(by("coordinator", "codex", true)).toBeGreaterThan(0);
+  expect(by("coordinator", "claude", false)).toBeGreaterThan(0);
+  expect(by("coordinator", "codex", false)).toBeGreaterThan(0);
+  expect(by("implementer", "claude", false)).toBeGreaterThan(0);
+  expect(by("implementer", "codex", false)).toBe(0);
+  expect(by("reviewer", "codex", false)).toBeGreaterThan(0);
+  // Machine promotion, not owner acceptance, on a mixed team too.
+  const child = f.service.store.get<Goal>(
+    "goal",
+    view.iterations.find((i) => i.state === "promoted")!
+      .childExecutionGoalIds[0],
+  )!;
+  expect(child.acceptance).toBeNull();
+  expect(child.loopDisposition!.by).toBe("loop-policy");
+});
+
+test("a pinned Claude reviewer waits visibly: its adapter cannot host Topsl's candidate reader", async () => {
+  const f = await setup();
+  await enable(f);
+  await roster(f, "coordinator", ["Opus", "Astra"]);
+  await roster(f, "implementer", ["Opus"]);
+  await roster(f, "reviewer", ["Opus", "Sol"]);
+  const view = await startLoop(f);
+  expect(view.run.state).toBe("waiting");
+  expect(view.run.waitReason).toMatchObject({ kind: "pinned-model" });
+  expect(view.run.waitReason!.detail).toContain("candidate-reader-unavailable");
+  // The child goal never started, so no Claude review was dispatched and failed.
+  expect(view.checkpoint!.sequence).toBe(0);
+  expect(
+    f.service.store
+      .list<ExecutionAttempt>("attempt")
+      .filter((a) => a.state === "failed"),
+  ).toEqual([]);
+  expect(memberTurns(f).filter((t) => !t.loop)).toEqual([]);
 });

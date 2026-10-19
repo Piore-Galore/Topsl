@@ -457,20 +457,33 @@ export class RuntimeManager {
       capabilities: this.fixtureMode
         ? [
             ...this.capabilities(installation),
-            ...(requirements ?? roleRequirements(role)).map((name) => ({
-              name,
-              route: "structured" as const,
-              support: "enforceable" as const,
-              versions: [installation.version ?? "fixture"],
-              testedPlatforms: ["fixture"],
-              restrictions: ["Isolated dependency injected fixture only."],
-              evidence: {
-                level: "source-observation" as const,
-                source: "isolated-fixture",
-                observedAt: now(),
-                detail: "No live capability is inferred.",
-              },
-            })),
+            // A coordinated candidate review always installs Topsl's
+            // candidate reader, which a stand-in still cannot host on an
+            // adapter without tool calls, so that one is not assumed for an
+            // execution purpose. Build and review's roles pass the candidate
+            // in their task input instead.
+            ...(requirements ?? roleRequirements(role))
+              .filter(
+                (name) =>
+                  !requirements ||
+                  name !== "candidate-reader" ||
+                  (this.adapters[selection.provider]?.toolCall &&
+                    this.adapters[selection.provider]?.toolResult),
+              )
+              .map((name) => ({
+                name,
+                route: "structured" as const,
+                support: "enforceable" as const,
+                versions: [installation.version ?? "fixture"],
+                testedPlatforms: ["fixture"],
+                restrictions: ["Isolated dependency injected fixture only."],
+                evidence: {
+                  level: "source-observation" as const,
+                  source: "isolated-fixture",
+                  observedAt: now(),
+                  detail: "No live capability is inferred.",
+                },
+              })),
           ]
         : this.capabilities(installation),
       models,

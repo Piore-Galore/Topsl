@@ -14,7 +14,13 @@ const scripts = process.argv.slice(2).length
     ];
 function report(script, detail) {
   if (process.env.GITHUB_ACTIONS === "true") {
-    const escaped = detail
+    // GitHub keeps only the first 4 KB of an annotation, and job logs need a
+    // sign-in, so the annotation leaves out Playwright's browser protocol
+    // lines and keeps the error. The full stderr stays in the job log.
+    const lines = detail.split("\n").filter((l) => !/ pw:browser /.test(l));
+    const escaped = lines
+      .join("\n")
+      .slice(-4000)
       .replaceAll("%", "%25")
       .replaceAll("\r", "%0D")
       .replaceAll("\n", "%0A");
