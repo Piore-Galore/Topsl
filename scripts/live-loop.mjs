@@ -163,6 +163,7 @@ const report = {
   dialogs: [],
   qualification: null,
   claudeQualification: null,
+  ownerChoices: [],
   routes: null,
   runs: [],
   failure: null,
@@ -381,7 +382,7 @@ try {
   }));
   await command({ type: "loop-feature-set", enabled: true });
 
-  const runLoop = async (label, input, until, timeoutMs) => {
+  const runLoop = async (label, input, until, timeoutMs, onView = null) => {
     const created = await command({
       type: "loop-create",
       projectId,
@@ -411,6 +412,7 @@ try {
         console.log(`[${label}] ${now.slice(0, 200)}`);
       }
       if (until(view) || Date.now() > deadline) break;
+      if (onView) await onView(view);
       await sleep(5000);
     }
     const record = {
@@ -623,7 +625,52 @@ try {
       },
       (v) =>
         ["completed", "waiting", "stopped", "monitoring"].includes(v.run.state),
-      40 * 60_000,
+      60 * 60_000,
+      // When the child goal's coordinators still disagree after their
+      // bounded exchange, Topsl asks the owner to choose a branch. The
+      // procedure chooses as the owner, as the Coordinator section's "Use
+      // ...'s proposal" button does: the Claude coordinator's valid proposal,
+      // or else the first valid one. Each choice and its alternatives are
+      // recorded.
+      async (view) => {
+        const goal = view.current?.goal;
+        for (const round of goal?.rounds ?? []) {
+          if (
+            round.stage !== "awaiting-user" ||
+            report.ownerChoices.some((c) => c.roundId === round.id)
+          )
+            continue;
+          const proposals = round.contributions.filter(
+            (c) => c.validation.state === "valid" && c.phase !== "endorsement",
+          );
+          const chosen =
+            proposals.find((c) => c.memberId.includes("claude")) ??
+            proposals[0];
+          report.ownerChoices.push({
+            at: new Date().toISOString(),
+            roundId: round.id,
+            detail: round.detail,
+            proposals: proposals.map((c) => ({
+              memberId: c.memberId,
+              phase: c.phase,
+              reportedModel: c.reportedModel,
+              summary: c.summary,
+            })),
+            chosen: chosen?.memberId ?? null,
+          });
+          console.log(
+            `[c-mixed] owner choice: ${chosen?.memberId ?? "none"} of ${proposals.length} proposals`,
+          );
+          if (chosen)
+            await command({
+              type: "orchestration-branch-choose",
+              goalId: goal.id,
+              roundId: round.id,
+              contributionId: chosen.id,
+              commandId: `live-c-branch-${Date.now()}`,
+            });
+        }
+      },
     );
     if (c.view.run.state !== "completed")
       await command({

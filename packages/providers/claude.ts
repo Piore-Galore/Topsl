@@ -326,7 +326,14 @@ export class ClaudeStreamParser {
           text: value.result ?? "",
           structuredOutput: value.structured_output ?? null,
           failed: value.is_error || value.subtype !== "success",
-          detail: safeError((value.errors ?? []).join("\n") || value.subtype),
+          // Claude Code 2.1.302 can mark a result as an error while its
+          // subtype still reads "success"; say so instead of "success".
+          detail: safeError(
+            (value.errors ?? []).join("\n") ||
+              (value.is_error && value.subtype === "success"
+                ? "Claude Code reported an error result."
+                : value.subtype),
+          ),
           reportedModel: this.model,
           denials: (value.permission_denials ?? [])
             .slice(0, 50)

@@ -114,6 +114,16 @@ describe("Claude protocol compatibility and live gate", () => {
       ].join("\n"),
     );
     parser.finish();
+    const errored: ClaudeStreamEvent[] = [];
+    const second = new ClaudeStreamParser((e) => errored.push(e));
+    second.push(
+      '{"type":"result","session_id":"s","subtype":"success","is_error":true,"result":""}\n',
+    );
+    expect(errored.at(-1)).toMatchObject({
+      type: "completed",
+      failed: true,
+      detail: "Claude Code reported an error result.",
+    });
     expect(events.filter((e) => e.type === "delta")).toHaveLength(1);
     expect(events.at(-1)).toMatchObject({ type: "completed", failed: false });
   });
