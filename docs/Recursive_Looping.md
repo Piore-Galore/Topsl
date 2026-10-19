@@ -1,6 +1,6 @@
 # Recursive Looping (experimental)
 
-**Status (19 October 2026):** implemented behind `experimental.recursiveLooping` (off by default). It is **implemented, fixture-tested, service-tested with a scripted Codex process and desktop-tested in an actual Electron session against that stand-in**. It is **not live-provider-qualified** and **not packaged-platform-qualified** (RL-7 is open). The release labels in [§12](#12-phase-status) stay separate.
+**Status (19 October 2026):** implemented behind `experimental.recursiveLooping` (off by default). It is **implemented, fixture-tested, service-tested with a scripted Codex process and desktop-tested in an actual Electron session against that stand-in**. A bounded **Codex-only live pilot** completed one Goal loop through the real app with Codex CLI 0.163.0 ([§16](#16-live-pilot-19-october-2026)); that is not cross-provider, packaged or repeated-run qualification, so RL-7 remains open. The release labels in [§12](#12-phase-status) stay separate.
 
 This is the repository's canonical description of the feature. It was built from the owner's *Topsl — Recursive Looping* specification (reviewed 18 October 2026 against `main` at `b3e5a18`), which proposed placing the canonical document here and updating the existing documents instead of copying the specification into each. It extends the [coordinator feature specification](Coordinator_Feature_Specification.md) and the [coordinator teams delivery](Coordinator_Teams.md); arbitrary N-member roles, separately attributed contributions, one authoritative service decision and the existing task, attempt and lease machinery are kept. Where this implementation departs from that proposal, [§13](#13-deviations-from-the-proposed-specification) says how and why.
 
@@ -77,7 +77,7 @@ All are additive document kinds in the encrypted store, scoped by project and in
 
 ## 4. The `recursive-loop-v1` protocol
 
-Every loop decision turn runs on the read-only coordinator route (`coordinator-contribution`) with `protocol: { kind: "recursive-loop-v1", stage, mode }` on the member turn and runtime execution. `purposeOutputSchema(purpose, protocol)` ([contracts.ts](../packages/orchestration/contracts.ts)) is the one registry for provider schema enforcement and parsing: an ordinary `coordinator-v1` contribution keeps its task-plan schema; a loop turn gets its stage's envelope, emitted with `anyOf` because strict providers reject `oneOf`. A response for another protocol, stage or mode is invalid; one naming other revisions is stored as stale history.
+Every loop decision turn runs on the read-only coordinator route (`coordinator-contribution`) with `protocol: { kind: "recursive-loop-v1", stage, mode }` on the member turn and runtime execution. `purposeOutputSchema(purpose, protocol)` ([contracts.ts](../packages/orchestration/contracts.ts)) is the one registry for provider schema enforcement and parsing. No production adapter currently declares the `review-output-schema` capability, so no schema is sent to a provider: the prompt is the contract the model sees, and the parser is the gate. The prompt therefore shows one complete example of every permitted decision (`decisionExamples`, validated against the schemas by [recursive-loop-contracts.test.ts](../tests/recursive-loop-contracts.test.ts)), with the real goal and criterion IDs filled in: an ordinary `coordinator-v1` contribution keeps its task-plan schema; a loop turn gets its stage's envelope, emitted with `anyOf` because strict providers reject `oneOf`. A response for another protocol, stage or mode is invalid; one naming other revisions is stored as stale history.
 
 | Stage | Permitted decisions |
 | --- | --- |
@@ -88,7 +88,7 @@ Every loop decision turn runs on the read-only coordinator route (`coordinator-c
 
 An envelope repeats the exact expected run ID, iteration, control and authority generations, checkpoint ID and digest, goal-set, topology, policy and override revisions, the round's input digest and an idempotency key, and carries one to four decisions. A zero-work outcome (`request_wait` alone) is valid; the non-empty action rule stays for an executable child plan. Models propose; only the supervisor commits.
 
-Prompts are bounded: current goals and criteria, the active organization with your locks, observed models (organize only), the backlog and ideas rejected at this content, evidence IDs for the target, the last five iteration results, changed files, and, after a coordination team change, a versioned handoff package. The exact context is frozen with the round.
+Prompts are bounded: current goals and criteria, for evaluation the contents of up to ten changed files of the candidate (8,000 characters each), because a read-only turn cannot be relied on to read its copy, the active organization with your locks, observed models (organize only), the backlog and ideas rejected at this content, evidence IDs for the target, the last five iteration results, changed files, and, after a coordination team change, a versioned handoff package. The exact context is frozen with the round.
 
 ## 5. Goal mode
 
@@ -165,7 +165,7 @@ One existing behavior changed as the specification required: the coordinator pro
 | RL-4 Automatic organization | Implemented, fixture-tested; one automatic change observed on screen | TM-01–TM-14 (TM-06–TM-08 at engine level), OV-01–OV-07 |
 | RL-5 Endless discovery | Implemented, fixture- and service-tested | EN-01–EN-06, OP-01, OP-03, OP-04 |
 | RL-6 Desktop interaction | Implemented, desktop-tested against a stand-in | [desktop-loop-test.mjs](../scripts/desktop-loop-test.mjs) |
-| RL-7 Provider and platform qualification | **Not done** | No live provider run, no packaged build, no remote CI |
+| RL-7 Provider and platform qualification | **Partial: one Codex-only live pilot** | [§16](#16-live-pilot-19-october-2026); no Claude route, packaged build or repeated live runs; remote CI ran the automated suites |
 
 A delivery satisfying RL-0 to RL-6 remains an experimental partial delivery until RL-7 closes.
 
@@ -181,7 +181,7 @@ A delivery satisfying RL-0 to RL-6 remains an experimental partial delivery unti
 
 ## 14. Limits and open gates
 
-- No live provider has run a loop. Claude's managed structured route stays gated, so loops run only Codex members; managed members still run one at a time because no production route qualifies native fan-out. A qualified Codex-only pilot would be labelled as such; full cross-provider support needs a production Claude route and live acceptance.
+- One bounded Codex-only live pilot completed ([§16](#16-live-pilot-19-october-2026)); nothing else has run against a live provider. Claude's managed structured route stays gated, so loops run only Codex members; managed members still run one at a time because no production route qualifies native fan-out. A qualified Codex-only pilot would be labelled as such; full cross-provider support needs a production Claude route and live acceptance.
 - Code loops need a Git project. The run continues only while Topsl's service is running; there is no background service.
 - The Electron journey uses a scripted Codex stand-in and covers the scenarios listed in [§15](#15-validation-record); a regressed goal, coordinator replacement after failure and five-member editing are covered by fixture tests only, not on screen. Packaged builds, Windows, Linux and remote CI are unverified for this feature.
 - Numeric defaults (dwell, exploration share, thresholds, backoff, reserve, minimum turns) are proposed tuning values.
@@ -209,3 +209,23 @@ Fixture tests are [recursive-loops.test.ts](../tests/recursive-loops.test.ts) un
 | PR-02, PR-03, PR-05 | Fixture and units |
 | UI-01–UI-03 | UI-02 (same meaning from message and editor) fixture and Electron; UI-03 Electron; UI-01's fifth-member editing is fixture-only for loops |
 | PR-01, PR-04, OP-05 | Not separately tested: fixture labels are never presented as live qualification (the view's release label says so), fan-out stays the existing conservative accounting, and rematerialization has no separate command ([§13](#13-deviations-from-the-proposed-specification)) |
+
+## 16. Live pilot (19 October 2026)
+
+[live-loop.mjs](../scripts/live-loop.mjs) runs the real app from this checkout with a disposable `topsl-test-*` profile and the owner's native Codex sign-in. It answers only the native dialogs the procedure expects (recording all of them), qualifies Codex through Topsl's runtime qualification (up to three model turns), registers and trusts Claude Code without connecting it for structured turns, turns on auto-accept **Sandboxed** (so unattended edit turns ask nothing inside Codex's workspace sandbox and requests outside it are declined), and runs **run A**, a Goal loop on a seeded one-file Git project ("Change value.ts so that it exports value = 2", one user criterion) under a 30-member-turn allowance, then publishes its checkpoint. **Run B** (skipped with `--no-pin-run`) pins a Claude reviewer. [live-loop-extract.cjs](../scripts/live-loop-extract.cjs) then reads each member's validation and reported model from the closed profile into the report. The model turns count against the account's usage.
+
+```sh
+npm run build
+node scripts/live-loop.mjs --codex "$(command -v codex)" --claude "$(command -v claude)" --max-turns 30
+```
+
+Host: macOS 27 arm64; Codex CLI 0.163.0 under the owner's ChatGPT sign-in; Claude Code 2.1.302; Topsl 0.1.2 at `d5a20b1` plus the fixes below (uncommitted during the runs). Reports: `test-results/live-loop/<time>/report.json` (not committed).
+
+| Pass | What happened | Finding and fix |
+| --- | --- | --- |
+| 1 (stopped early) | Qualification passed. Every boundary decision from `gpt-6.1-sol`, `gpt-5.6-luna` and `gpt-5.6-sol` was rejected as invalid (invented field names such as `goalAssessments`); one turn first failed with the provider's "Selected model is at capacity". Recovery replaced the coordinator models as designed; nothing invalid was acted on. | No schema reaches the provider, and the prompt named the decisions but not their fields. The prompt now shows a complete, schema-validated example of each permitted decision. |
+| 2 | All 6 loop decisions were valid and reported the assigned model. All 12 child plan contributions were invalid: the coordinator delegated an information task to the reviewer role, which the purpose check rejects; after two rejected approaches the run waited for direction. Run B's pinned Claude reviewer stayed unresolved and the run **waited on the pin without substituting a model**. Decision-round turns were not yet counted in usage. | The coordinator prompt now lists only delegable roles with the task kind each takes and says review and checks run automatically. Decision turns now count every tick. |
+| 3 | Plan, implementation and review were valid and the candidate was integrated. The evaluator could not read `value.ts` (its shell read needed an approval a read-only turn never gets) and reported an environment problem; the same decided evaluation would then have been reused after the wait. | Evaluation prompts now include the candidate's changed files; an environment report leads to a fresh evaluation after the wait. |
+| 4 | **Completed on checkpoint 1** in 6 member turns (126,679 input and 4,528 output tokens, reported for 6 of 6 attempts). Every loop and child turn (coordinator, implementer, reviewer, evaluator) requested and reported `gpt-6.1-sol` and was valid; the coordinators committed one organization change. Publication through the native dialog wrote `export const value = 2;` into the folder (`M value.ts`, nothing committed). Only the 13 expected dialogs were approved; the profile and folders were deleted. | None. |
+
+Each fix has a fixture or unit test (decision examples, delegable roles, changed-file contents, re-evaluation after an environment wait). **Not established by the pilot:** Endless mode, multi-member or multi-model teams, repairs, checks, restart and stop with live attempts, any Claude structured turn, packaged builds, other hosts, and repeatability across runs or models.

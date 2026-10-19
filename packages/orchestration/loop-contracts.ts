@@ -192,18 +192,16 @@ export const reconfigureTeamSchema = z
     reason: z.string().min(1).max(4000),
     expectedBenefit: text(),
     evidenceIds: z.array(id).max(50),
-    trigger: z
-      .enum([
-        "none",
-        "unavailable-route",
-        "invalid-output",
-        "verification-failures",
-        "repairs-exhausted",
-        "no-progress",
-        "new-requirements",
-        "user-steering",
-      ])
-      .default("none"),
+    trigger: z.enum([
+      "none",
+      "unavailable-route",
+      "invalid-output",
+      "verification-failures",
+      "repairs-exhausted",
+      "no-progress",
+      "new-requirements",
+      "user-steering",
+    ]),
   })
   .strict();
 
@@ -501,7 +499,185 @@ export interface LoopPromptContext {
   evidence: Array<{ id: string; kind: string; detail: string }>;
   lessons: string[];
   target: { kind: string; id: string; changedFiles: string[] } | null;
+  /**
+   * The target's changed files, bounded. Read-only decision turns cannot be
+   * relied on to read their copy (their shell reads may need approvals they
+   * never get), so the evidence they judge is in the prompt.
+   */
+  files?: Array<{ path: string; text: string }>;
   handoff: string | null;
+}
+
+/**
+ * One valid example of every decision, with every field. No production
+ * adapter enforces the output schema on the provider side, so the prompt is
+ * the contract a model sees and the parser is the gate; these examples are
+ * validated against the schemas in the protocol tests.
+ */
+export const decisionExamples: {
+  [K in LoopDecisionKind]: Extract<LoopDecision, { kind: K }>;
+} = {
+  assess_goals: {
+    kind: "assess_goals",
+    assessments: [
+      {
+        goalId: "<goal id>",
+        goalVersion: 1,
+        result: "unmet",
+        criteria: [
+          {
+            criterionId: "<criterion id>",
+            result: "unmet",
+            evidenceIds: [],
+            citedPaths: ["<file path in the target>"],
+            note: "<what you observed>",
+          },
+        ],
+        proposedCriteria: [],
+        blocker: null,
+        conflictsWith: [],
+      },
+    ],
+  },
+  plan_iteration: {
+    kind: "plan_iteration",
+    goalIds: ["<goal id>"],
+    summary: "<what the next iteration should achieve>",
+    acceptanceConditions: ["<observable condition>"],
+    approach: "<how>",
+  },
+  request_wait: {
+    kind: "request_wait",
+    condition: "no-opportunity",
+    reason: "<why no work now>",
+    question: null,
+    goalIds: [],
+    retryAfterSeconds: null,
+  },
+  propose_goal_completion: {
+    kind: "propose_goal_completion",
+    goalIds: ["<goal id>"],
+    summary: "<why every required goal is satisfied>",
+  },
+  propose_opportunity: {
+    kind: "propose_opportunity",
+    opportunities: [
+      {
+        title: "<short title>",
+        observedIssue: "<what is wrong or missing>",
+        area: "<files or component>",
+        expectedBenefit: "<what better looks like>",
+        baselineEvidence: [],
+        acceptanceConditions: ["<observable condition>"],
+        estimatedScope: "small",
+        dependencies: [],
+        whyNow: "<why it matters now>",
+        approach: "<how>",
+        scores: {
+          benefit: 0.5,
+          confidence: 0.5,
+          urgency: 0.5,
+          effort: 0.5,
+          regressionRisk: 0.5,
+        },
+      },
+    ],
+  },
+  select_opportunity: {
+    kind: "select_opportunity",
+    opportunity: "<backlog id or title>",
+    reason: "<why this one>",
+  },
+  reconfigure_team: {
+    kind: "reconfigure_team",
+    operations: [
+      {
+        op: "set_members",
+        roleId: "reviewer",
+        count: 1,
+        models: ["<observed model id>"],
+        effort: null,
+      },
+    ],
+    reason: "<why>",
+    expectedBenefit: "<what improves>",
+    evidenceIds: [],
+    trigger: "none",
+  },
+  request_repair: {
+    kind: "request_repair",
+    failure: "product-defect",
+    summary: "<what must change>",
+    approach: "repair",
+    roleId: null,
+  },
+  propose_integration: {
+    kind: "propose_integration",
+    paths: ["<file path>"],
+    roleId: null,
+    summary: "<how to combine>",
+  },
+  propose_promotion: {
+    kind: "propose_promotion",
+    candidateId: "<candidate id>",
+    summary: "<why it satisfies the contract>",
+  },
+};
+
+const decisionNotes: Record<LoopDecisionKind, string> = {
+  assess_goals:
+    'One entry per listed goal, with its exact goalId and goalVersion. result: "satisfied" | "unmet" | "blocked". One criteria entry per listed criterion of that goal: result "met" | "unmet" | "unknown"; cite evidenceIds from the evidence list and citedPaths that exist in the target. proposedCriteria only for a goal with no criteria yet: [{"text": "...", "verification": "check" | "review" | "artifact" | "inspection", "checkId": null}]. blocker: null or what you need from the owner. conflictsWith: other goal IDs this goal contradicts.',
+  plan_iteration: "goalIds from the listed goals.",
+  request_wait:
+    'condition: "no-opportunity" | "needs-input" | "external". question: null or the question for the owner. goalIds: the goals the question blocks.',
+  propose_goal_completion:
+    "Only when every required goal is satisfied with evidence on this checkpoint.",
+  propose_opportunity:
+    'estimatedScope: "small" | "medium" | "large". Each score is a number from 0 to 1.',
+  select_opportunity: "",
+  reconfigure_team:
+    'operations, each one of: {"op": "create_role", "roleId", "title", "instructions", "function": "coordination" | "evaluation" | "implementation" | "integration" | "review" | "information"}, {"op": "activate_role", "roleId"}, {"op": "retire_role", "roleId"}, {"op": "split_role", "roleId", "into": [{"roleId", "title", "instructions"}]}, {"op": "merge_roles", "roleIds": [...], "into": {"roleId", "title", "instructions"}}, {"op": "set_members", "roleId", "count": number | null, "models": [observed model IDs], "effort": null}, {"op": "set_collaboration", "roleId", "collaboration": "solo" | "parallel-independent" | "parallel-partitioned" | "peer-collaboration" | "sequential", "executionWidth": number | null}, {"op": "bind_function", "function", "roleId"}. An empty operations list keeps the organization. trigger: "none" | "unavailable-route" | "invalid-output" | "verification-failures" | "repairs-exhausted" | "no-progress" | "new-requirements" | "user-steering".',
+  request_repair:
+    'failure: "product-defect" | "transient" | "environment" | "invalid-output" | "integration". approach: "repair" | "new-approach" | "retry" | "wait". roleId: null or an active implementation role.',
+  propose_integration: "",
+  propose_promotion: "",
+};
+
+/** The decision shapes for a stage, with the context's real IDs where known. */
+function decisionShapes(c: LoopPromptContext): string {
+  return allowedDecisions(c.stage, c.mode)
+    .map((kind) => {
+      let example: LoopDecision = decisionExamples[kind];
+      if (kind === "assess_goals" && c.goals.length)
+        example = {
+          kind: "assess_goals",
+          assessments: c.goals.map((g) => ({
+            goalId: g.id,
+            goalVersion: g.version,
+            result: "unmet",
+            criteria: g.criteria.map((k) => ({
+              criterionId: k.id,
+              result: "unmet",
+              evidenceIds: [],
+              citedPaths: [],
+              note: "<what you observed>",
+            })),
+            proposedCriteria: g.criteria.length
+              ? []
+              : [
+                  {
+                    text: "<observable acceptance criterion>",
+                    verification: "inspection",
+                    checkId: null,
+                  },
+                ],
+            blocker: null,
+            conflictsWith: [],
+          })),
+        };
+      return `- ${kind}: ${JSON.stringify(example)}${decisionNotes[kind] ? `\n  ${decisionNotes[kind]}` : ""}`;
+    })
+    .join("\n");
 }
 
 const bounded = (items: string[], max: number, chars = 600) =>
@@ -539,6 +715,9 @@ export function loopPrompt(c: LoopPromptContext): string {
     c.target
       ? `Target ${c.target.kind} ${c.target.id}. Changed files: ${bounded(c.target.changedFiles, 200, 200).join(", ") || "none"}.`
       : "",
+    c.files?.length
+      ? `Contents of the target's changed files (read-only; cite a path in citedPaths when you rely on it):\n${c.files.map((f) => `### ${f.path}\n\`\`\`\n${f.text}\n\`\`\``).join("\n")}`
+      : "",
     c.evidence.length
       ? `Evidence you may cite (by ID):\n${bounded(
           c.evidence.map((e) => `${e.id} (${e.kind}): ${e.detail}`),
@@ -570,8 +749,8 @@ export function loopPrompt(c: LoopPromptContext): string {
       ? `Handoff from the previous coordination team:\n${c.handoff}`
       : "",
     stageText[c.stage],
-    `Permitted decisions for this stage: ${allowed.join(", ")}.`,
-    `Reply with one JSON object only: {"schemaVersion": 1, "protocolKind": "recursive-loop-v1", "stage": "${c.stage}", "inputDigest": "${c.inputDigest}", "expected": ${JSON.stringify(c.expected)}, "idempotencyKey": "${c.idempotencyKey}", "decisions": [ ...one to four decisions, each with its "kind" ]}.`,
+    `Permitted decisions for this stage: ${allowed.join(", ")}. Each decision has exactly the fields shown, with these names, and no others (replace the example values):\n${decisionShapes(c)}`,
+    `Reply with one JSON object only: {"schemaVersion": 1, "protocolKind": "recursive-loop-v1", "stage": "${c.stage}", "inputDigest": "${c.inputDigest}", "expected": ${JSON.stringify(c.expected)}, "idempotencyKey": "${c.idempotencyKey}", "decisions": [ one to four of the decisions above ]}.`,
   ]
     .filter(Boolean)
     .join("\n\n");

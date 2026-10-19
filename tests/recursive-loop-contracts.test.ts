@@ -2,7 +2,9 @@ import { describe, expect, test } from "vitest";
 import { purposeOutputSchema } from "../packages/orchestration/contracts";
 import {
   allowedDecisions,
+  decisionExamples,
   loopEnvelopeSchema,
+  loopPrompt,
   opportunityFingerprint,
   parseEnvelope,
 } from "../packages/orchestration/loop-contracts";
@@ -147,6 +149,82 @@ describe("recursive-loop-v1 protocol", () => {
     ).not.toBe(
       opportunityFingerprint({ title: "Fix bug 17", area: "x", approach: "y" }),
     );
+  });
+});
+
+describe("decision shapes in the prompt", () => {
+  // No production adapter enforces the output schema on the provider side
+  // (live run, 19 October 2026: Codex invented field names), so the prompt's
+  // examples are the contract and must parse.
+  test("every example decision parses in each stage and mode that permits it", () => {
+    for (const stage of ["boundary", "organize", "evaluate"] as const)
+      for (const mode of ["goal", "endless"] as const)
+        for (const kind of allowedDecisions(stage, mode)) {
+          const text = envelope(stage, [decisionExamples[kind]]);
+          const parsed = parseEnvelope(text, stage, mode, expected, "x");
+          expect(
+            parsed.ok,
+            `${stage}/${mode}/${kind}: ${"reason" in parsed ? parsed.reason : ""}`,
+          ).toBe(true);
+        }
+  });
+  test("the prompt fills assess_goals with the listed goals and criteria", () => {
+    const prompt = loopPrompt({
+      mode: "goal",
+      stage: "boundary",
+      memberId: "m",
+      instructions: "i",
+      title: "t",
+      priorities: [],
+      expected,
+      inputDigest: "x",
+      idempotencyKey: "k",
+      checkpoint: { id: "c", sequence: 0, changedSinceBase: [] },
+      goals: [
+        {
+          id: "g1",
+          version: 2,
+          text: "Goal",
+          required: true,
+          priority: 0,
+          status: "unassessed",
+          criteria: [
+            {
+              id: "g1:c1",
+              text: "C",
+              verification: "inspection",
+              provenance: "user",
+            },
+          ],
+          blocker: null,
+        },
+      ],
+      organization: [],
+      models: [],
+      backlog: [],
+      rejected: [],
+      evidence: [],
+      lessons: [],
+      target: null,
+      handoff: null,
+    });
+    const line = /^- assess_goals: (\{.*\})$/m.exec(prompt)![1];
+    const example = JSON.parse(line);
+    expect(example.assessments[0]).toMatchObject({
+      goalId: "g1",
+      goalVersion: 2,
+      criteria: [{ criterionId: "g1:c1" }],
+    });
+    expect(
+      parseEnvelope(
+        envelope("boundary", [example]),
+        "boundary",
+        "goal",
+        expected,
+        "x",
+      ).ok,
+    ).toBe(true);
+    expect(prompt).toContain("no others");
   });
 });
 

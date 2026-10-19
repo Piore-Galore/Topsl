@@ -138,6 +138,12 @@ node scripts/live-session.mjs --workflow codex-claude --claude "$(command -v cla
 node scripts/live-session.mjs --workflow claude-claude --claude "$(command -v claude)"
 ```
 
+For [Recursive Looping](docs/Recursive_Looping.md#16-live-pilot-19-october-2026), `scripts/live-loop.mjs` qualifies Codex (up to three model turns), registers Claude Code without structured turns, runs one bounded Goal loop on a seeded project under a member-turn allowance, publishes its checkpoint to that scratch folder, and, with Claude Code, shows a pinned Claude reviewer waiting rather than being substituted. Its turns count toward your Codex usage.
+
+```sh
+node scripts/live-loop.mjs --codex "$(command -v codex)" --claude "$(command -v claude)" --max-turns 30
+```
+
 The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without Developer ID signing/notarization or Windows publisher signing. macOS bundles use an ad-hoc signature to seal the finished app, helpers, and native modules. Packaging checks the bundle with Apple's strict signature verifier; both Mac CI jobs also extract the ZIP and verify it before recording checksums or uploading a release. An ad-hoc signature verifies bundle integrity but does not identify the publisher or provide Apple notarization. Native runtime compatibility and production eligibility are separate from compilation.
 
 ### macOS reports that Topsl is damaged

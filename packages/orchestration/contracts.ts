@@ -384,12 +384,25 @@ export function coordinatorPrompt(input: {
     input.constraints.length
       ? `Constraints:\n- ${input.constraints.join("\n- ")}`
       : "Constraints: none recorded.",
-    `Roles you may delegate to (exact IDs; partitioned groups need one partition per member):\n${input.knownRoles
+    // Only implementation and information roles take delegated tasks; a
+    // role's purpose decides which task kind it can produce.
+    `Roles you may delegate to (exact IDs; partitioned groups need one partition per member). An implementation task goes to an implementation role and an information task to an information role:\n${input.knownRoles
+      .filter(
+        (r) => r.purpose === "implementation" || r.purpose === "information",
+      )
       .map(
         (r) =>
           `- ${r.id}: ${r.purpose}, ${r.members} member(s), ${r.collaboration}${r.unresolved ? ` (${r.unresolved} more cannot run now)` : ""}`,
       )
       .join("\n")}`,
+    `Review and checks are not tasks: after the implementation tasks finish, Topsl integrates their changes and the review group${
+      input.knownRoles.some((r) => r.purpose === "candidate-review")
+        ? ` (${input.knownRoles
+            .filter((r) => r.purpose === "candidate-review")
+            .map((r) => r.id)
+            .join(", ")})`
+        : ""
+    } reviews the integrated candidate automatically, then any required checks run on it. Do not plan review, inspection-only or check tasks for the change itself.`,
     input.completed.length
       ? `Completed work:\n${input.completed.map((c) => `- ${c.key} ${c.title}: ${c.summary}`).join("\n")}`
       : "No completed work yet.",

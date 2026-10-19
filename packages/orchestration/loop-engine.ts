@@ -1883,6 +1883,9 @@ export class LoopSupervisor {
       if (!it) return;
       run = this.run(run.id);
     }
+    // Decision-round turns count toward allowances as they happen, not only
+    // when the iteration's child work runs or ends.
+    it = this.account(run, it, this.childTurns(it) + this.roundTurns(run, it));
     switch (it.state) {
       case "assessing":
         return this.assess(run, it);
@@ -4166,7 +4169,12 @@ export class LoopSupervisor {
     const transient =
       requests.length > 0 && requests.every((r) => r.failure === "transient");
     const environment = requests.some((r) => r.failure === "environment");
-    if (environment)
+    if (environment) {
+      // The wait ends in a fresh evaluation, never the same decision again.
+      this.saveRound(result.round, {
+        state: "stale",
+        detail: "Evaluated again after the verification wait.",
+      });
       return this.wait(
         run,
         {
@@ -4175,6 +4183,7 @@ export class LoopSupervisor {
         },
         null,
       );
+    }
     const left = goal.usage.repairRounds < goal.grant.maxRepairRounds;
     if (
       goal.kind === "code" &&
@@ -6273,16 +6282,14 @@ export class LoopSupervisor {
           .filter((b) => b.roleId === roleId)
           .map((b) => b.function),
         members: (assignmentsByRole.get(roleId) ?? []).length
-          ? assignmentsByRole
-              .get(roleId)!
-              .map((a) => ({
-                memberId: a.memberId,
-                model: a.model,
-                pinned:
-                  group?.members.some(
-                    (m) => m.memberId === a.memberId && m.pin,
-                  ) ?? false,
-              }))
+          ? assignmentsByRole.get(roleId)!.map((a) => ({
+              memberId: a.memberId,
+              model: a.model,
+              pinned:
+                group?.members.some(
+                  (m) => m.memberId === a.memberId && m.pin,
+                ) ?? false,
+            }))
           : (group?.members ?? []).map((m) => ({
               memberId: m.memberId,
               model:
@@ -6373,8 +6380,30 @@ export class LoopSupervisor {
           : stage === "evaluate"
             ? { kind: "checkpoint", id: target.id, changedFiles: [] }
             : null,
+      files:
+        target.kind === "candidate"
+          ? this.changedFileTexts(head.candidateId, target.candidateId)
+          : [],
       handoff: this.handoff(run),
     };
+  }
+
+  /** Up to ten changed files of a candidate, each bounded, for evaluation. */
+  private changedFileTexts(fromCandidateId: string, toCandidateId: string) {
+    if (!this.driver.fileText) return [];
+    const out: Array<{ path: string; text: string }> = [];
+    let total = 0;
+    for (const f of this.loop.changedPaths(fromCandidateId, toCandidateId)) {
+      if (f.change === "deleted" || out.length >= 10 || total > 40_000)
+        continue;
+      const text = this.driver.fileText(toCandidateId, f.path);
+      if (text === null) continue;
+      const bounded =
+        text.length > 8000 ? `${text.slice(0, 8000)}\n… (truncated)` : text;
+      total += bounded.length;
+      out.push({ path: f.path, text: bounded });
+    }
+    return out;
   }
 
   /** The versioned handoff package an incoming coordination team receives. */

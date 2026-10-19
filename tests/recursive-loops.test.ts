@@ -2019,3 +2019,69 @@ describe("Recursive Looping: live steering", () => {
     void state;
   });
 });
+
+describe("Recursive Looping: evaluation inputs (live run follow-up, 19 October 2026)", () => {
+  test("the evaluate prompt carries the target's changed files, since read-only turns may not read their copy", async () => {
+    const t = await setup();
+    implementing(t);
+    (
+      t.driver as unknown as {
+        fileText: (c: string, p: string) => string | null;
+      }
+    ).fileText = (c, p) =>
+      p === "src/a.ts" ? `export const greeting = "hi"; // ${c}` : null;
+    const prompts: string[] = [];
+    const reply = t.driver.reply;
+    t.driver.reply = (turn) => {
+      if (turn.protocol?.stage === "evaluate") prompts.push(turn.prompt);
+      return reply(turn);
+    };
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting",
+      policy,
+    });
+    await driveLoop(t, started.run.id, done, 300);
+    expect(prompts[0]).toMatch(
+      /Contents of the target's changed files[\s\S]*### src\/a\.ts\n```\nexport const greeting = "hi";/,
+    );
+  });
+
+  test("an evaluation that reports an environment problem is evaluated again after the wait", async () => {
+    const t = await setup();
+    implementing(t);
+    let first = true;
+    t.script.override = (p) => {
+      if (p.stage !== "evaluate" || !first) return null;
+      first = false;
+      return {
+        text: envelope(p, [
+          assess(p, () => false),
+          {
+            kind: "request_repair",
+            failure: "environment",
+            summary: "Cannot read the candidate.",
+            approach: "wait",
+            roleId: null,
+          } as LoopDecision,
+        ]),
+      };
+    };
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting",
+      policy,
+    });
+    let view = await driveLoop(
+      t,
+      started.run.id,
+      (v) => v.run.state === "waiting",
+      300,
+    );
+    expect(view.run.waitReason!.kind).toBe("verification");
+    t.advance(3_600_000);
+    view = await driveLoop(t, started.run.id, done, 300);
+    expect(view.run.state).toBe("completed");
+    expect(loopRounds(t).filter((r) => r.stage === "evaluate").length).toBe(2);
+  });
+});
