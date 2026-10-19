@@ -65,7 +65,15 @@ const lines = (value: string) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
-export function Workflows({ projectId }: { projectId: string }) {
+export function Workflows({
+  projectId,
+  view = "tasks",
+  onView,
+}: {
+  projectId: string;
+  view?: "tasks" | "changes";
+  onView?: (view: "changes") => void;
+}) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [pending, setPending] = useState<Record<string, boolean>>({}),
     [error, setError] = useState("");
@@ -150,7 +158,7 @@ export function Workflows({ projectId }: { projectId: string }) {
       aria-label="Builder reviewer workflows"
       className="workflow-section"
     >
-      <h2>Build and review</h2>
+      <h2>{view === "changes" ? "Candidate review" : "Build and review"}</h2>
       {projectId && <Freshness state={freshness} retry={freshness.retry} />}
       <p className="muted">
         One request, a fresh review of captured files, up to two repair rounds,
@@ -162,13 +170,15 @@ export function Workflows({ projectId }: { projectId: string }) {
         <p>Select a project to create a workflow.</p>
       ) : (
         <>
-          <WorkflowSetup
-            key={projectId}
-            projectId={projectId}
-            runtimes={snapshot?.runtimes ?? []}
-            checkRuntime={snapshot?.checkRuntime ?? ""}
-            afterCreate={refresh}
-          />
+          <div hidden={view !== "tasks"}>
+            <WorkflowSetup
+              key={projectId}
+              projectId={projectId}
+              runtimes={snapshot?.runtimes ?? []}
+              checkRuntime={snapshot?.checkRuntime ?? ""}
+              afterCreate={refresh}
+            />
+          </div>
           {snapshot?.workflows.map((workflow) => (
             <article
               key={workflow.id}
@@ -368,6 +378,7 @@ export function Workflows({ projectId }: { projectId: string }) {
                         readTicket = inspectionReads.current.begin();
                       activeInspection.current = workflow.id;
                       setActiveWorkflow(workflow.id);
+                      onView?.("changes");
                       await window.topsl.command({
                         type: "navigation-save",
                         projectId,

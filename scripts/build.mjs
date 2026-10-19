@@ -1,7 +1,8 @@
 import { build } from "esbuild";
 import { build as buildVite } from "vite";
-import { mkdir } from "node:fs/promises";
+import { mkdir, copyFile } from "node:fs/promises";
 await mkdir("dist", { recursive: true });
+await copyFile("assets/brand/icons/png/512x512.png", "dist/icon.png");
 for (const [entry, outfile] of [
   ["apps/desktop/main.ts", "main.cjs"],
   ["apps/desktop/preload.ts", "preload.cjs"],

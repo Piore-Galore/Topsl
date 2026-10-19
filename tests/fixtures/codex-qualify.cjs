@@ -234,7 +234,33 @@ readline.createInterface({ input: process.stdin }).on("line", async (raw) => {
         chatgptAccountId: process.env.FIXTURE_ACCOUNT_ID || "fixture-account",
       },
     });
-  else if (request.method === "thread/start") {
+  else if (request.method === "account/rateLimits/read") {
+    // The shape Codex CLI 0.163.0 returns; the values are synthetic.
+    const snapshot = {
+      limitId: "codex",
+      limitName: null,
+      normalModelSlug: null,
+      primary: {
+        usedPercent: 12,
+        windowDurationMins: 10080,
+        resetsAt: Math.floor(Date.now() / 1000) + 86400,
+      },
+      secondary: null,
+      credits: { hasCredits: false, unlimited: false, balance: "0" },
+      individualLimit: null,
+      spendControlReached: false,
+      planType: "fixture",
+      rateLimitReachedType: null,
+    };
+    reply({
+      ordinaryUsageAllowed: true,
+      rateLimits: snapshot,
+      rateLimitsByLimitId: { codex: snapshot },
+      rateLimitResetCredits: null,
+      accountId: "fixture-account",
+      rateLimitUpsell: null,
+    });
+  } else if (request.method === "thread/start") {
     if (process.env.FIXTURE_REFUSE_TOOLS && request.params.dynamicTools)
       return send({
         id: request.id,

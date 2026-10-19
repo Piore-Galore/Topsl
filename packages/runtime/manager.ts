@@ -29,6 +29,19 @@ import type { ExecutionPurpose } from "../domain/role-groups";
 import { purposeRequirements } from "../orchestration/roles";
 import { purposeOutputSchema } from "../orchestration/contracts";
 import { CodexAdapter } from "../providers/codex";
+import {
+  claudeAllowanceInterface,
+  readClaudeAccount,
+  readClaudeUsage,
+} from "../providers/claude-allowance";
+import {
+  allowanceId,
+  applyAllowanceReport,
+  recordAllowanceFailure,
+  type AllowanceOrigin,
+  type AllowanceReport,
+  type AllowanceSnapshot,
+} from "../domain/allowance";
 import type {
   PreparedTurn,
   ProviderAdapter,
@@ -116,6 +129,14 @@ export class RuntimeManager {
   private settling = new Set<Promise<void>>();
   private operations = new Set<Promise<unknown>>();
   private probes = new Set<ProviderConnection>();
+  private allowanceReads = new Map<
+    string,
+    {
+      abort: AbortController;
+      managementUnitId: string;
+      promise: Promise<AllowanceSnapshot | null>;
+    }
+  >();
   /** Installation id → management unit of a running qualification. */
   private qualifying = new Map<string, string>();
   readonly coordinator: Coordinator;
@@ -175,6 +196,163 @@ export class RuntimeManager {
       },
       observedAt: now(),
     });
+  }
+  private allowanceOrigin(
+    installation: Installation,
+    adapter: ProviderAdapter,
+    accountKey: string,
+  ): AllowanceOrigin {
+    return {
+      provider: adapter.provider,
+      accountKey,
+      installationId: installation.id,
+      runtimeVersion: installation.version,
+      interface:
+        adapter.provider === "codex"
+          ? "Codex app-server account/rateLimits"
+          : "unknown",
+    };
+  }
+  private storeAllowance(
+    origin: AllowanceOrigin,
+    report: AllowanceReport | { error: string },
+  ): AllowanceSnapshot {
+    const previous = this.store.get<AllowanceSnapshot>(
+        "allowance-snapshot",
+        allowanceId(origin.provider, origin.accountKey),
+      ),
+      next =
+        "error" in report
+          ? recordAllowanceFailure(previous, origin, report.error, now())
+          : applyAllowanceReport(previous, origin, report, now());
+    this.store.put("allowance-snapshot", next);
+    return next;
+  }
+  /** Reads the account's allowance on an open connection. A failed read is
+   * recorded beside the older values instead of failing the caller. */
+  private async readAllowance(
+    adapter: ProviderAdapter,
+    client: ProviderConnection,
+    installation: Installation,
+    accountKey: string,
+  ): Promise<AllowanceSnapshot | null> {
+    if (!adapter.allowance) return null;
+    const origin = this.allowanceOrigin(installation, adapter, accountKey);
+    try {
+      return this.storeAllowance(origin, await adapter.allowance(client));
+    } catch (error) {
+      return this.storeAllowance(origin, {
+        error: safeError(error),
+      });
+    }
+  }
+  /** Deduplicate clicks and let shutdown cancel native usage reads. */
+  refreshAllowance(
+    installation: Installation,
+    projectId?: string,
+  ): Promise<AllowanceSnapshot | null> {
+    const active = this.allowanceReads.get(installation.id);
+    if (active) return active.promise;
+    const abort = new AbortController();
+    const promise = this.refreshAllowanceOwned(
+      installation,
+      abort.signal,
+      projectId,
+    );
+    this.allowanceReads.set(installation.id, {
+      abort,
+      promise,
+      managementUnitId: installation.managementUnitId,
+    });
+    this.operations.add(promise);
+    const finished = () => {
+      this.allowanceReads.delete(installation.id);
+      this.operations.delete(promise);
+    };
+    void promise.then(finished, finished);
+    return promise;
+  }
+  private async refreshAllowanceOwned(
+    installation: Installation,
+    signal: AbortSignal,
+    projectId?: string,
+  ): Promise<AllowanceSnapshot | null> {
+    await this.preflight(installation);
+    if (installation.appId === "anthropic.claude-code-cli") {
+      const account = await readClaudeAccount(installation.path, signal);
+      const origin: AllowanceOrigin = {
+        provider: "claude",
+        accountKey: account.accountKey,
+        installationId: installation.id,
+        runtimeVersion: installation.version,
+        interface: claudeAllowanceInterface,
+      };
+      let snapshot: AllowanceSnapshot;
+      try {
+        const project = this.store
+          .list<Project>("project")
+          .find(
+            (p) =>
+              p.trusted &&
+              p.availability !== "missing" &&
+              p.availability !== "changed" &&
+              (!projectId || p.id === projectId),
+          );
+        if (!project)
+          throw new Error(
+            "Add and trust a project in Topsl, then open Claude Code there once before reading usage.",
+          );
+        const report = await readClaudeUsage(
+          installation.path,
+          project.realPath,
+          signal,
+        );
+        const after = await readClaudeAccount(installation.path, signal);
+        if (
+          after.accountKey !== account.accountKey ||
+          after.profileId !== account.profileId
+        )
+          throw new Error(
+            "The Claude account changed during the usage read. Refresh again for the current account.",
+          );
+        this.observeAccount(installation, after);
+        snapshot = this.storeAllowance(origin, {
+          ...report,
+          buckets: report.buckets.map((bucket) => ({
+            ...bucket,
+            planType: after.sanitized.planType,
+          })),
+        });
+      } catch (error) {
+        if (this.closing) throw error;
+        snapshot = this.storeAllowance(origin, { error: safeError(error) });
+      }
+      this.changed();
+      return snapshot;
+    }
+    if (installation.appId !== "openai.codex-cli")
+      throw new Error(
+        "Usage reading requires a Codex CLI or Claude Code CLI executable.",
+      );
+    const adapter = this.adapters.codex!;
+    const client = adapter.connect(installation.path, os.homedir());
+    this.probes.add(client);
+    try {
+      await client.initialize();
+      const account = await adapter.account(client, installation);
+      this.observeAccount(installation, account);
+      const snapshot = await this.readAllowance(
+        adapter,
+        client,
+        installation,
+        account.accountKey,
+      );
+      this.changed();
+      return snapshot;
+    } finally {
+      await client.close();
+      this.probes.delete(client);
+    }
   }
   capabilities(installation: Installation) {
     const provider = installation.appId.includes("claude") ? "claude" : "codex",
@@ -545,6 +723,7 @@ export class RuntimeManager {
       this.active.size ||
       this.terminals.size ||
       this.openingWorkspaces.size ||
+      this.allowanceReads.size ||
       this.qualifying.size
     );
   }
@@ -554,7 +733,10 @@ export class RuntimeManager {
       [...this.terminals.values()].some(
         (t) => t.installation.managementUnitId === id,
       ) ||
-      [...this.qualifying.values()].includes(id)
+      [...this.qualifying.values()].includes(id) ||
+      [...this.allowanceReads.values()].some(
+        (read) => read.managementUnitId === id,
+      )
     );
   }
   private async preflight(installation: Installation): Promise<void> {
@@ -613,6 +795,12 @@ export class RuntimeManager {
             accountKey: account.accountKey,
             profileId: account.profileId,
           });
+          await this.readAllowance(
+            adapter,
+            client,
+            installation,
+            account.accountKey,
+          );
         } catch {}
       return result;
     } finally {
@@ -1087,6 +1275,26 @@ export class RuntimeManager {
   private notification(active: Active, method: string, payload: unknown): void {
     const run = active.run;
     if (active.finished) return;
+    // An account-level rolling update, not part of the run's thread.
+    const allowance = active.adapter.allowanceUpdate?.(method, payload);
+    if (allowance) {
+      const installation = this.store.get<Installation>(
+        "installation",
+        run.installationId,
+      );
+      if (installation && run.nativeAccountKey) {
+        this.storeAllowance(
+          this.allowanceOrigin(
+            installation,
+            active.adapter,
+            run.nativeAccountKey,
+          ),
+          allowance,
+        );
+        this.changed();
+      }
+      return;
+    }
     const started = active.adapter.startedItem?.(method, payload);
     if (
       started &&
@@ -1684,6 +1892,7 @@ export class RuntimeManager {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
+    for (const read of this.allowanceReads.values()) read.abort.abort();
     for (const active of [...this.active.values()])
       this.finish(
         active,

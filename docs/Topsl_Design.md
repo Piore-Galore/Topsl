@@ -6,7 +6,7 @@
 **Platforms:** macOS, Windows, and Linux  
 **Status:** Implementation blueprint for a personal/local pilot. Platform, installation, update, and integration acceptance remain to be demonstrated; this document is not an application implementation.
 
-> One place to acquire and maintain coding applications, then work with the installed Codex and Claude Code environments: models, projects, history, context, usage, accounts, skills, plugins, permissions, and native settings. A simple retro-terminal-inspired interface, without sacrificing native capabilities or hiding integration boundaries.
+> One place to acquire and maintain coding applications, then work with the installed Codex and Claude Code environments: models, projects, history, context, usage, accounts, skills, plugins, permissions, and native settings. A Navigator’s Atlas interface centered on the selected project, with native capabilities and integration boundaries visible.
 
 ## Revision summary
 
@@ -30,7 +30,7 @@ This is a complete revision of the supplied v2.0 design. It retains the native-r
 | Extensions | Skills, plugins, marketplaces, MCP, hooks, subagents, native commands, and other supported components. |
 | Permissions | Native rule management, effective-policy inspection, managed restrictions, approvals, and actual sandbox enforcement. |
 | Settings | Preserve existing configuration; preview, apply, reconcile, and track whether running sessions loaded changes. |
-| Interface | Quiet monospaced graphical interface; follows the computer's light or dark appearance by default, with warm light and dark themes as explicit choices. |
+| Interface | Navigator’s Atlas graphical interface with nautical chart details, serif headings, readable controls, and Paper/Night palettes; System follows the computer by default. |
 | Existing requirements | All accessible supported model routes, shared projects/history/context, token/quota/cost tracking, and delegated native login management remain in scope. |
 | Coordinator teams | One project conversation backed by role groups of any size, a single service-owned decision commit, and a review completion barrier ([§18.8](#188-coordinator-conversation-and-role-groups)). |
 
@@ -57,7 +57,7 @@ This is a complete revision of the supplied v2.0 design. It retains the native-r
 17. [Login and account management](#17-login-and-account-management)
 18. [Execution, approvals, and parallel work](#18-execution-approvals-and-parallel-work)
 19. [Shared MCP interface](#19-shared-mcp-interface)
-20. [Interface design: a quiet retro terminal](#20-interface-design-a-quiet-retro-terminal)
+20. [Interface design: Navigator’s Atlas](#20-interface-design-navigators-atlas)
 21. [Security, privacy, deletion, and backups](#21-security-privacy-deletion-and-backups)
 22. [Reliability and performance](#22-reliability-and-performance)
 23. [Implementation structure and internal contracts](#23-implementation-structure-and-internal-contracts)
@@ -133,7 +133,7 @@ A cloud connector may be added later only when its actual supported interface, e
 | Use what is installed | Discover existing installations; let the user choose the executable, profile, host, and surface. Do not require both providers or force replacement installations. |
 | Acquire and maintain applications | Download, install, inspect eligible updates, and update through an approved official or existing installation-owner route. An installed application need not have a Topsl runtime adapter. |
 | Cross-platform application | Share the same project model and workflows across macOS, Windows, and Linux; isolate host-specific execution and storage behind adapters. |
-| Simple presentation | A restrained retro-terminal-inspired graphical interface with a warm light theme and a dark theme. By default it follows the computer's light or dark appearance; an explicit theme choice is kept. |
+| Simple presentation | An Age of Discovery graphical interface with parchment, sailcloth, ocean ink, and brass, expressed in warm light and deep ocean dark themes. By default it follows the computer's light or dark appearance; an explicit theme choice is kept. |
 | Preserve native specificity | Offer common controls where meanings align, plus complete provider-specific controls and explicit native fallbacks. |
 | Safe coexistence | Observe external changes, preserve unmanaged settings, respect organization policy, and distinguish saved configuration from what a running session loaded. |
 
@@ -416,7 +416,7 @@ Do not silently downgrade, replace, or patch vendor binaries. Do not redistribut
 
 Provide a small `topsl` CLI for opening the GUI, registering a project, viewing connection status, opening a native terminal, exporting a handoff, and querying the local usage ledger. It uses the same authorization and service commands as the GUI; it is not a parallel database or alternate policy bypass.
 
-A full-screen Topsl TUI may be added later. The requested retro-terminal appearance does not require users to memorize commands or abandon a normal graphical interface.
+A full-screen Topsl TUI may be added later. The Atlas visual direction keeps ordinary graphical controls and discoverable actions.
 
 ### 5.8 Initial application catalog and acquisition routes
 
@@ -1629,9 +1629,18 @@ Provider-issued corrections may decrease previously reported totals. Preserve co
 
 Store account, workspace, quota bucket, used/remaining values, reset time, units, scope, and observation time exactly as reported. A field may be unknown or unavailable.
 
-For Codex, use the supported quota interface. For Claude, enable structured quota collection only when the installed runtime exposes a validated supported source; otherwise offer the native usage display and show **quota unavailable in Topsl**. Do not scrape private account endpoints or infer exact remaining quota from token totals.
+For Codex, use the supported quota interface. Claude can report quota through its built-in native `/usage` display. A bounded reader may collect validated display fields while authentication remains inside the unmodified CLI; this is a display compatibility adapter, not a structured quota API. An unsupported layout stays unknown and points to the native display. Do not scrape private account endpoints or infer exact remaining quota from token totals. Any future structured Claude quota source needs separate validation.
 
 Reset times are presented in the user's selected timezone with the underlying timestamp available. An old snapshot is marked stale and cannot authorize automatic spending.
+
+**Status, 19 October 2026.** Implemented for Codex and for Claude Code's native display. Details and separate validation boundaries: [initial allowance delivery](Implementation_Status.md#usage-remaining--18-october-2026) and [Claude follow-up](Implementation_Status.md#claude-usage-reading--19-october-2026).
+
+- **Codex source.** `account/rateLimits/read` (sent with `excludeResetCreditDetails: true`) when a runtime is connected, its models/account are loaded or the owner chooses **Refresh from Codex**, and the sparse `account/rateLimits/updated` notifications that arrive on a run's connection. The read starts no thread or turn.
+- **Stored per provider account** (`allowance-snapshot`, keyed by provider and Topsl's account hash, never the provider's account id): each quota bucket's primary and secondary windows (reported used percent, window length in minutes, reset time in Unix seconds), credits, plan type and limit-reached reason; the read-only `ordinaryUsageAllowed`; the installation and runtime version; the interface name; when the last full read and the latest value arrived; and the last failed read beside the older values. Each window carries its own observation time and whether it came from a read or an update.
+- **Merge rule.** A full read replaces what was known for the account. A rolling update merges into it, and a field the update leaves null keeps the earlier value with that value's own observation time, as Codex's protocol documents.
+- **Presentation.** Remaining is shown as 100% minus the reported used share, never as tokens. A window older than 15 minutes is stale. A window whose reported reset timestamp has passed is unknown until the next read rather than carried forward. Exact reset timestamps are shown in the computer's local time with the Unix value available. A native display's reset text is retained as `resetDescription` with its original timezone and observation time; it supplies no exact reset timestamp, so automatic reset detection is unavailable for that window. A failed refresh is labelled even while older values are still within the freshness interval.
+- **Not used for control.** No dispatch, stop or alternate-route decision reads these snapshots yet; §16.8's exhausted-allowance stop remains planned.
+- **Claude source.** **Refresh from Claude** uses a trusted CLI executable and a trusted, available Topsl project. It invokes the built-in `/usage` command in a disposable PTY using safe mode, screen-reader output, empty tools and MCP configuration, disabled hooks, and Plan mode. It never answers native trust or login prompts. The account and profile hashes from native `auth status --json` must match before and after the read. Only recognized session/weekly windows, their displayed used percentages and reset labels, and the native plan name enter the encrypted allowance snapshot; activity statistics and raw terminal/account output do not. Reads are bounded, concurrent refreshes share an operation, shutdown cancels them, and failures retain older values. The native structured execution gate and `rate_limit_event` behavior remain unchanged. [Claude command reference](https://code.claude.com/docs/en/commands) documents `/usage`; [CLI reference](https://code.claude.com/docs/en/cli-reference) documents safe mode. Layout compatibility was checked on 2.1.302, not guaranteed across releases.
 
 ### 16.7 Monetary accounting
 
@@ -1655,6 +1664,8 @@ Allow per-run, project, account, and daily API budgets. Reserve estimated remain
 A local budget is a stop/dispatch control, not a mathematically guaranteed invoice ceiling: in-flight requests, reporting delay, unknown cost dimensions, and externally started native runs can exceed it. Show this limitation and use provider-side spending controls where supported.
 
 When a subscription allowance is exhausted, stop or request an explicit alternate route. Do not silently buy extra usage, enable overages, switch to an API key, or change accounts.
+
+**Owner-set provider budgets (agreed and implemented 18 October 2026).** Besides per-project reporting thresholds, the owner can set one token budget per provider for each day, week (from Monday, local time) or month. It is labelled owner-set and is never presented as a provider limit or a remaining subscription balance. It counts the known input and output tokens of the provider's runs that Topsl ran or opened in the period, excluding native sign-in sessions, using the §16.5 deduplication. Sessions started outside Topsl are not counted. When a counted run reported no usage, or coverage is otherwise uncertain, the remainder is shown as an upper bound ("at most"). It is a display only: it does not reserve, stop or dispatch work. Reservation across concurrent runs and API cost budgets remain planned.
 
 ---
 
@@ -1851,34 +1862,32 @@ An agent may submit a proposed configuration or application-management action fo
 
 ---
 
-## 20. Interface design: a quiet retro terminal
+## 20. Interface design: Navigator’s Atlas
 
 ### 20.1 Visual direction
 
-**Topsl should feel like a well-designed terminal workstation, not a simulated CRT.** Use readable monospaced typography, fine rules, restrained color, simple text labels, compact status indicators, and generous enough spacing to work for long sessions.
+**Navigator’s Atlas**, agreed 18 October 2026 and implemented 19 October 2026, replaces the earlier quiet-terminal styling and the restriction of nautical branding to an optional mark. Topsl uses parchment, sailcloth panels, ocean ink, brass chart rules, and restrained compass details. Reading, code, evidence, and approval surfaces stay clear. Ordinary labels describe the work: Projects, Sessions, Coordinator, Tasks, Changes, Context, History, Synchronization, Applications, and Settings.
 
-The application remains a normal graphical desktop application: clickable controls, selection, copy/paste, resizable panes, file dialogs, accessible menus, and discoverable actions. The terminal aesthetic must not force users to learn commands.
-
-Avoid scanlines, flicker, glow, phosphor trails, distortion, noisy textures, decorative blinking cursors, typing animations, and sound effects. Do not turn every dialog into ASCII art. Nautical branding is limited to the name and a subtle optional mark; navigation uses ordinary words such as **Projects**, **History**, and **Settings**.
+A billowing square topsail, yard, and short mast form the app emblem, in ivory and brass on a navy tile. The canonical geometry is [topsl.svg](../assets/brand/topsl.svg). The sidebar, loading/lock screens, native About/Dock/window identity and packaged icons share it. Run `npm run icons:build` for reproducible PNG, ICNS and ICO exports with the installed electron-builder converter; normal builds use the checked-in exports. No external fonts or hosted artwork are required.
 
 ### 20.2 Themes and color tokens
 
-Ship **Paper**, the warm light theme, and **Night**, the dark theme. The default setting, **System**, follows the computer's light or dark appearance: it draws exactly Paper on a light computer and exactly Night on a dark one, and changes while Topsl is open when the computer's appearance changes. It is not a third palette. A chosen Paper or Night is stored and kept, whatever the computer's appearance, until the user changes it. A toolbar or command-palette action can change the theme without a restart.
+Ship **Paper**, the warm light theme, and **Night**, the dark theme. The default setting, **System**, follows the computer's light or dark appearance: it draws exactly Paper on a light computer and exactly Night on a dark one, and changes while Topsl is open when the computer's appearance changes. It is not a third palette. A chosen Paper or Night is stored and kept, whatever the computer's appearance, until the user changes it. Settings → Appearance changes the theme without a restart. Direct toolbar/palette theme actions remain planned.
 
 Decided 17 October 2026, when the owner asked for automatic, system-based dark mode: **System** replaces Paper as the default, so Topsl matches the computer without setup. A profile with no stored choice gets System, and a stored Paper or Night choice is kept. The choice is stored in the encrypted vault, so until the vault opens, the window and the lock screen follow the computer's appearance; a stored Paper or Night choice applies once the vault opens.
 
 | Token | Paper | Night | Purpose |
 |---|---|---|---|
-| `background` | `#F3EFE5` | `#191D1A` | Main work surface. |
-| `panel` | `#E8E5DB` | `#232924` | Sidebar and inset sections. |
-| `text` | `#2B2E2B` | `#D9DDCF` | Main text. |
-| `muted` | `#5F665F` | `#A2AC9F` | Secondary labels; still readable. |
-| `accent` | `#466653` | `#9CB99B` | Selected actions and focus details. |
-| `warning` | `#795818` | `#CBA96A` | Pending or attention state. |
-| `danger` | `#943F38` | `#D78E83` | Destructive actions and errors. |
-| `strong-border` | `#7D857B` | `#788675` | Boundaries that must be distinguishable. |
+| `--paper` | `#F3EBDD` | `#101F28` | Main work surface and native window background. |
+| `--card` | `#FCF8EF` | `#182D38` | Panels, forms and evidence. |
+| `--ink` | `#203A46` | `#EEE5D5` | Main text. |
+| `--muted` | `#586770` | `#BAC7C8` | Secondary text. |
+| `--primary` | `#254D60` | `#DCC18B` | Primary action fill. |
+| `--primary-ink` | `#FCF8EF` | `#142C38` | Primary action text. |
+| `--brass` | `#865F24` | `#D4B474` | Eyebrows and chart details. |
+| `--strong-line` | `#7B817B` | `#81969C` | Essential control boundaries. |
 
-Calculated contrast ratios for these proposed tokens are approximately **11.97:1 / 12.33:1** for main text against the Paper/Night backgrounds. Muted text is approximately **5.15:1 / 7.25:1** against those backgrounds, and **4.69:1 / 6.32:1** against their panels. The strong-border tokens exceed 3:1 against both their main and panel backgrounds. These are color-pair calculations, not a completed accessibility audit.
+The sidebar has its own ocean palette in both themes. Terminal colors come from the same theme tokens and update xterm in place. [atlas.css](../apps/desktop/renderer/atlas.css) is the palette source; the [Atlas evidence record](Navigator_Atlas_UI.md) records rendered contrast checks and their scope.
 
 Use WCAG contrast guidance as the validation baseline: normal text should reach at least 4.5:1, with appropriate thresholds for other content. Test actual rendered controls, disabled states, syntax highlighting, selection, focus, and hover combinations—not just the palette table. [S46]
 
@@ -1886,45 +1895,30 @@ Status is conveyed by text and shape as well as color. Do not make red/green the
 
 ### 20.3 Typography, density, and motion
 
-Use an available, licensed monospaced UI font with a system fallback, for example `ui-monospace, SFMono-Regular, Consolas, Liberation Mono, monospace`. Choose any bundled font only after license and rendering review. Code and terminal views may expose a separate font preference.
+Use Georgia/Cambria serif headings, system sans-serif controls and prose, and monospace for code, paths, keyboard hints, and technical evidence. Body text is 15px with about 1.6 line height; secondary controls and labels are 13px, with 11–12px technical captions. No font download is required. Support desktop zoom, CJK, combining characters, emoji, and input methods.
 
-Default body and conversation text to about **15 px** with **1.5–1.6 line height**; secondary labels about **13 px**. Use an 80–100-character preferred reading width where practical. Support user font scaling and desktop zoom without clipping controls. CJK text, combining characters, emoji, ligatures, and input methods need explicit testing.
-
-Default to a comfortable density, with an optional compact mode. Use a small spacing scale, such as 4/8/12/16/24 px, thin dividers, square or subtly rounded corners, and minimal shadows. Motion is limited to short state transitions and honors reduced-motion preferences. Streaming text appears directly rather than character-by-character theatrical animation.
+Use adaptive density: concise summaries and primary actions lead to dedicated editors and evidence views. Fine dividers, small corner radii, a 4/8/12/16/24px spacing scale, and minimal shadows keep long sessions readable. Motion honors reduced-motion preferences. A selectable compact-density preference remains planned; responsive compact layouts are implemented.
 
 ### 20.4 Main window
 
-```text
-+------------------------------------------------------------------------------------------+
-| Topsl   Project: Example / main        Claude Code : <selected model>     [Subscription]   |
-+------------------+-----------------------------------------------------------------------+
-| PROJECTS         | Session     Files     Terminal                         [Inspector]     |
-| > Example        |-----------------------------------------------------------------------|
-|   Another        | Task: Improve a subsystem                                             |
-|                  |                                                                       |
-| HISTORY          | You                                                                   |
-| Search...        | Review the current implementation before changing it.                 |
-|                  |                                                                       |
-| Usage            | Claude Code / <reported model> / local                                |
-| Settings         | Findings and an implementation proposal...                            |
-|                  |                                                                       |
-|                  | -- Handoff to Codex: context preview approved ----------------------- |
-|                  |                                                                       |
-|                  | Codex / <reported model> / local                                      |
-|                  | Patch summary...       [Diff] [Tests] [Usage]                          |
-|                  |-----------------------------------------------------------------------|
-|                  | Write a request...                                                    |
-|                  | [Attach] [Context]                 [Review v]          [Run] [Stop]   |
-+------------------+-----------------------------------------------------------------------+
-| Local host / default profile     History: current for selected sources     Usage: observed |
-+------------------------------------------------------------------------------------------+
-```
+The sidebar contains a project picker, the eight project destinations, and global Projects, Applications and Settings. Selecting another project opens Overview. Launch restores a valid saved project/view; otherwise it opens Projects. The existing preference record now accepts Sessions and Coordinator in addition to the old views; an unknown stored view falls back to Overview. No database migration is required.
 
-The wireframe is a layout specification, not literal pixel styling. The sidebar has only a few primary destinations. The right inspector is collapsed by default; opening it exposes **Context**, **Controls**, and **Details** for the current selection.
+| Project destination | Main content |
+|---|---|
+| Overview | Attention items, recorded responsibility/capacity/usage, and actions to start a session or coordinate work. |
+| Sessions | Conversations, composer, explicit runtime/model/permission choices, native terminal and handoff. |
+| Coordinator | Team conversation, role defaults, goals, rounds, checks and acceptance. |
+| Tasks | Workflow setup, attempts and task inspection. |
+| Changes | Candidate review, findings, check evidence and acceptance; workflow setup stays under Tasks. |
+| Context | Captured shared context and input freshness. |
+| History | Conversation search/import and explicitly approved native history sources. |
+| Synchronization | Native sync evidence, managed workspaces and optional coordination settings. |
 
-Keep provider, model, account/billing route, and working project unambiguous before sending. Long configuration detail belongs in the inspector or settings, not a permanent row of fifteen dropdowns.
+Project editors and terminals retain their mounts when navigating within the selected project; project-scoped reads and drafts reset on a project switch. Below 900px, Navigation opens a native HTML dialog with focus trapping and restoration. Controls stack below 700px. Task inspectors use dialogs below 1200px, where their side panel is hidden. Provider identity, permissions, billing route, errors and evidence uncertainty remain explicit.
 
 ### 20.5 Settings information architecture
+
+The implemented settings page groups existing controls under Appearance, Agent behavior, Configuration and Context. The broader hierarchy below remains a target; it does not establish native management support for every listed feature.
 
 ```text
 Settings
@@ -1991,7 +1985,7 @@ Provide visible focus indicators, logical tab order, accessible names, screen-re
 
 ### 20.9 Required user journeys
 
-**First launch:** choose appearance and open Applications to adopt detected installations or download/install a missing application. Show installation ownership, channel, native auto-update policy, and Topsl's notify-then-approve default. Verify installation separately from connecting a native login. Then select projects/history scope, review optional shared configuration, and start a session. Applications must remain usable before any project/profile/account exists. Do not require a Topsl cloud account or both providers.
+**First launch:** follow System appearance, open Projects, and use Applications to adopt detected installations or download/install a missing application. Show installation ownership, channel, native auto-update policy, and Topsl's notify-then-approve default. Verify installation separately from connecting a native login. Then select projects/history scope, review optional shared configuration, and start a session. Applications must remain usable before any project/profile/account exists. Do not require a Topsl cloud account or both providers.
 
 **Switch provider:** choose another route, inspect the context transfer and account, review any lost capabilities, then create/resume the linked session. The history retains both providers' original work.
 
@@ -2837,7 +2831,7 @@ Block unsupported platform and production claims independently of pilot function
 | Platforms | macOS, Windows, and Linux desktop; independently tested host/runtime capabilities |
 | Initial audience | Personal/local pilot; production distribution has a separate support and release gate |
 | Initial application catalog | Codex CLI, desktop host providing Codex, Claude Code CLI, and Claude Desktop |
-| Applications navigation | Settings → Connections → Applications, onboarding, and command palette |
+| Applications navigation | Global sidebar, onboarding, and command palette |
 | New installations | Prefer official installer and stable channel where offered; preview prerequisites and native effects |
 | Existing installations | Adopt detected owner/channel; update bundled runtimes through the parent application |
 | Download behavior | Explicit download-only or one approved download-and-install plan; no automatic payload fetch |
@@ -2864,7 +2858,7 @@ Block unsupported platform and production claims independently of pilot function
 | Usage display | Tokens, quotas, and money in separate views |
 | Missing data | Unknown/partial with provenance |
 | Cloud synchronization | Not required; optional encrypted application-state replication later |
-| Interface | Simple retro-terminal-inspired GUI; mouse and keyboard first-class |
+| Interface | Navigator’s Atlas project command desk; mouse and keyboard first-class |
 | Default theme | System, following the computer's light or dark appearance; an explicit Paper (light) or Night (dark) choice is kept |
 | Full feature access | Structured or documented native route per capability; unsupported states visible |
 | Extension management | Native lifecycle operations with source/trust review |
@@ -2879,7 +2873,7 @@ Block unsupported platform and production claims independently of pilot function
 
 Topsl should make all accessible models discoverable, keep projects and available history together, give both agents the right context, and manage the native login experience. It should not claim identical vendor chat databases or unrestricted subscription API access.
 
-The first valuable personal release is a **native-subscription workbench with application downloads and updates, supported native controls, a quiet retro-terminal interface, verified session continuity, shared project context, and an honest usage ledger**. It retains independent macOS, Windows, and Linux acceptance requirements. Broader model coverage follows through explicitly connected API routes and capability-specific adapters; production distribution requires its own support and release evidence.
+The first valuable personal release is a **native-subscription workbench with application downloads and updates, supported native controls, a Navigator’s Atlas interface, verified session continuity, shared project context, and an honest usage ledger**. It retains independent macOS, Windows, and Linux acceptance requirements. Broader model coverage follows through explicitly connected API routes and capability-specific adapters; production distribution requires its own support and release evidence.
 
 Topsl is a control and continuity layer over the actual installed products. It preserves each provider's full native vocabulary rather than reducing both to the smallest shared chat interface.
 

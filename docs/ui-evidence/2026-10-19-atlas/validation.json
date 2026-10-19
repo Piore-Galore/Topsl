@@ -1,0 +1,96 @@
+{
+  "recordedAt": "2026-10-18T16:38:08.833Z",
+  "baseRevision": "b3e5a187f27a865ca82ad47aa74e834bbaa54a5f",
+  "tree": "Uncommitted UI work plus pre-existing allowance changes",
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v26.0.0",
+  "checks": {
+    "check": {
+      "passed": true,
+      "tests": 534,
+      "skippedTests": 5,
+      "testFiles": 50,
+      "skippedFiles": 3,
+      "releaseTests": 18
+    },
+    "desktop": {
+      "passed": true,
+      "journeys": [
+        "main",
+        "coordinator",
+        "atlas"
+      ]
+    },
+    "reviewFixture": {
+      "passed": true,
+      "p95Ms": 116,
+      "maxMs": 125
+    },
+    "macArchive": {
+      "passed": true,
+      "path": "release/Topsl-0.1.2-mac-arm64.zip",
+      "sha256": "0dcc05fd0f3a9e5b3abf0a1e0f493556d1e47f7a82fe33259178521ffcfb7875"
+    },
+    "nativeUI": {
+      "passed": true,
+      "inspected": [
+        "Packaged Projects with vault unlocked",
+        "About Topsl / Quit Topsl menu labels",
+        "Native About dialog: Topsl icon, version 0.1.2 and Navigator’s Atlas pronunciation"
+      ],
+      "dockPixels": "Unverified: two Computer Use Dock reads timed out (-10005). Dock visibility API returned true.",
+      "packagedStartupCLI": true,
+      "auxiliaryProbe": "An app.getFileIcon diagnostic produced a SIGTRAP on this host; it is not a shipped Topsl call. Normal startup and native Projects/About inspection subsequently passed."
+    },
+    "iconReproducibility": {
+      "passed": true,
+      "exports": 11,
+      "detail": "Regeneration preserved every SHA-256 digest."
+    }
+  },
+  "sourceSHA256": {
+    "apps/desktop/main.ts": "bb6fe77717087792273a5aeb453322669237c95a058f64add092d5c8a7d702aa",
+    "apps/desktop/renderer/main.tsx": "7fe4d64b4d80ab816103374bd137218d264ebd053b486d09c8a12c4b47f15241",
+    "apps/desktop/renderer/coordination.tsx": "e00b9792a8e8585cc038df61d0c9b90a2516f5e4520a519bb4d1534fc064af38",
+    "apps/desktop/renderer/atlas.css": "724e655f2d82267f400006e31e15705b5c7eba59222d5c76725ce963f89097bb",
+    "apps/desktop/renderer/components/terminal-panel.tsx": "12a9b9441affc91702c5a6b879e50e92bc566f2e45c86829ae78c6217e9f6fa7",
+    "packages/domain/navigation.ts": "ecaa4dc769ee2291d1367fcfc2c6a8cd1a41ec97af3771147d51dade32a763eb",
+    "assets/brand/topsl.svg": "97df7423111fb433f0a8dde4ad36ed9add7e50fd8d6c83827f64bd610cdc01d8",
+    "assets/brand/icons/icon.icns": "decb9cee80295d6ce3c3284decb88afcaa4b48e705fd00767dd53f45f866e579",
+    "assets/brand/icons/icon.ico": "f3e8b2ae8659d6c9d5caefd509fd65806d7eaa39d839d9f87e96eb76a3959ef9",
+    "apps/desktop/renderer/screens/applications.tsx": "dbd9edbe7524d19a7721e776eb4ee9e613f01e2c44a2a72002a0dcdba00c2b11",
+    "apps/desktop/renderer/screens/history.tsx": "e5474e03e29e7d30e602cea9d568a7576ca0b8cdcae29d16cfeeacdebb08f374",
+    "apps/desktop/renderer/screens/project-overview.tsx": "45fabdb0127f8c30993009802b56fce4481979e81035bcbd41b157fb618636b1",
+    "apps/desktop/renderer/screens/settings.tsx": "18592ebfd94e6a334e28d428dfd8699f9c3cb0224e1bcb90e1801b2bcb19ffc6",
+    "apps/desktop/renderer/components/action-button.tsx": "9157c6d79e3a02368232296c19de16e6e65b5369819ba7c5ceeb184a07293910",
+    "apps/desktop/renderer/components/allowance.tsx": "b2002a6b13c7ca2a02b7c03c243756395cd1d4281d48bdb5fb8696882b754b66",
+    "apps/desktop/renderer/components/approval-card.tsx": "821c9232f239173b231af0f36c01b884e744dc83466b7697b85c3a0a0131b3ba",
+    "apps/desktop/renderer/components/assisted-handoff.tsx": "c9818070fdc6c8fb94d1362be0a7c6dedc8c43dcf0aabc9c407662e7adfc8add",
+    "apps/desktop/renderer/components/atlas.tsx": "a306a9731f74fb46aa9a5313b9b8dbb1d0e3a4d65f55f7b5113e7ff4fb26a177",
+    "apps/desktop/renderer/components/candidate-artifacts.tsx": "693569eb81f1f55abaa98b26c7288cab2fd88be60ff55cc6160edd62e64405c4",
+    "apps/desktop/renderer/components/claude-step.tsx": "8d3ec4c565699c0189106c14d5993925ca64b8fa674fca4cc16cdc5e0cfee8f9",
+    "apps/desktop/renderer/components/coordinator-teams.tsx": "384241e70bf13db231853f56017296a055f31640dce10285a06b03463eb7b814",
+    "apps/desktop/renderer/components/environment-evidence.tsx": "8f2c945052b38a81724363340cea607185f6258279f7aeac4d2568dcc1325fe1",
+    "apps/desktop/renderer/components/freshness.tsx": "d04cdb0b46ca62b17a37973986e280fc48c3a6619c1056037ac5f12f8bd79d98",
+    "apps/desktop/renderer/components/parallel-activity.tsx": "d136460a4e2a64a837736f16b65983f1a75bf2debca69c1ec928ba9ecc30bb08",
+    "apps/desktop/renderer/components/reporting.tsx": "3a3313669ef0b766c1f9183ecdfe069e0a3e86c9d2593167ff43c1980ccfab2a",
+    "apps/desktop/renderer/components/specification-draft.tsx": "3869179f50ec23cec0484401f7dbbf2b07057b469b05c3f72102ba4ecc1eb90a",
+    "apps/desktop/renderer/components/synchronization-summary.tsx": "57a6c5263c0900c628f82591129e495a0d6d9e9ee6ecbcefaebb40d2bf9a2aea",
+    "apps/desktop/renderer/components/terminal-mode.tsx": "99bbbb865c58c1db35bafe677ab1fcc3696294a7b03cfe0d6ae70b1bce4f54c4",
+    "apps/desktop/renderer/components/transcript.tsx": "c6b9c2399e5abec138e8414c5891279df1d6bf1980dcdeeae83cf8ef47e38b64",
+    "apps/desktop/renderer/components/workbench-sidebar.tsx": "fa6b21dba2667442e55a8ee49094a2e88bf6a2a98551c55e2712a8edaad8c188",
+    "apps/desktop/renderer/components/workflow-dispatch.tsx": "af54013457e3895e0fd4ca38a07187a68a4119ca7e6ae3ef6c8e097d540f046f",
+    "apps/desktop/renderer/components/workflow-evidence.tsx": "a577bd05f3664af851d4e88d2f63bf8ccc1b224961f613287d2e8205ef742bba",
+    "apps/desktop/renderer/components/workflow-setup.tsx": "91c793eb4cc835361222841f1abc2cecd34bc5942857a9fd368cf3f439367fa9",
+    "apps/desktop/renderer/global.d.ts": "8c7f210bd17ad2b9cafd010ff10af276930303bc2dd68a7b71ca4311d0f85e19",
+    "apps/desktop/renderer/index.html": "8a556fead5bac5743f3fd7f42a86c9542bc4256abe78b5c1b82c094dd24dfba4",
+    "apps/desktop/renderer/projects.tsx": "53b2e6227eb22d334ae19d5ef674d71178e05f796f4bdffd146875fae1ce7f1b",
+    "apps/desktop/renderer/state/allowance-view.ts": "591530699766aacd77d8000010103bbcc33fdf9471888cd5e3f212960992d847",
+    "apps/desktop/renderer/state/scoped-controller.ts": "83641272735982946473875cf6e105a8f556177aa56839d57c75ade9295e82c0",
+    "apps/desktop/renderer/state/scoped.ts": "95b93d0c58625a1f93cd127cc85d1192945c6dffadc24ab70519cc3f84fc1b46",
+    "apps/desktop/renderer/state/usage-view.ts": "5851f5e3938608436ac134f8ba309d11ec58764726ccf54527a20c84f07e6d77",
+    "apps/desktop/renderer/style.css": "9abe2dccf4efdabf3d22b3db0df658ad69eb537165fcb8ac965f2166b75a4388",
+    "apps/desktop/renderer/workflows.tsx": "fedbdc5939ceec7bb6c5035cff4075c1fa28f312fd51841f8c9f7a8850b2173f"
+  }
+}

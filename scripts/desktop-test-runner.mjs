@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 // that one, for example `npm run test:desktop -- scripts/desktop-coordinator-test.mjs`.
 const scripts = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ["scripts/desktop-test.mjs", "scripts/desktop-coordinator-test.mjs"];
+  : ["scripts/desktop-test.mjs", "scripts/desktop-coordinator-test.mjs", "scripts/desktop-atlas-test.mjs"];
 function report(script, detail) {
   if (process.env.GITHUB_ACTIONS === "true") {
     const escaped = detail

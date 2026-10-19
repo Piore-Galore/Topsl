@@ -1,3 +1,4 @@
+import { projectView as validProjectView } from "../../packages/domain/navigation";
 import path from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
 import { Store } from "../../packages/persistence/store";
@@ -30,9 +31,17 @@ import type {
   Project,
   ProjectOpenResult,
   ServiceEvent,
+  Run,
   TerminalModePreference,
+  UsageFact,
 } from "../../packages/domain/types";
 import type { Command } from "../../packages/domain/commands";
+import {
+  providerBudgetId,
+  providerBudgetStatus,
+  type AllowanceSnapshot,
+  type ProviderBudget,
+} from "../../packages/domain/allowance";
 import {
   handoffTerminalMode,
   isBypassMode,
@@ -583,7 +592,20 @@ export class Service {
       autoAccept: this.runtime.autoAccept(),
       testProfile: this.isolatedTest,
       claudeTranscriptRead: this.claudeTranscriptRead(),
+      allowances: this.store.list<AllowanceSnapshot>("allowance-snapshot"),
+      providerBudgets: this.providerBudgets(),
     };
+  }
+  /** Each owner-set budget with the usage Topsl observed against it this period. */
+  private providerBudgets() {
+    const budgets = this.store.list<ProviderBudget>("provider-budget");
+    if (!budgets.length) return [];
+    const runs = this.store.list<Run>("run"),
+      usage = this.store.list<UsageFact>("usage"),
+      at = new Date();
+    return budgets.map((budget) =>
+      providerBudgetStatus(budget, runs, usage, at),
+    );
   }
   /**
    * Remembers the owner's last ordinary terminal mode for this project and
@@ -948,10 +970,22 @@ export class Service {
           "preference",
           "codex-native-project",
           "codex-project-sync",
+          "allowance-snapshot",
+          "provider-budget",
         ];
+        // An owner-set budget counts runs and their usage, so those change
+        // the catalog only while a budget exists.
+        const budgeted = () =>
+          !!this.store.db
+            .prepare(
+              "SELECT 1 FROM documents WHERE kind='provider-budget' LIMIT 1",
+            )
+            .get();
         if (
           this.catalogDirty ||
-          page.events.some((event) => catalogKinds.includes(event.kind))
+          page.events.some((event) => catalogKinds.includes(event.kind)) ||
+          (page.events.some((event) => ["run", "usage"].includes(event.kind)) &&
+            budgeted())
         ) {
           this.catalogDirty = false;
           this.emit({ type: "state", data: this.state(false) });
@@ -1756,14 +1790,14 @@ export class Service {
           nextOffset: end < message.text.length ? end : null,
         };
       }
-      case "navigation-query":
-        return (
-          this.store.get("preference", "navigation") ?? {
-            projectId: null,
-            workflowId: null,
-            projectView: "overview",
-          }
-        );
+      case "navigation-query": {
+        const savedNavigation = this.store.get<any>("preference", "navigation");
+        return {
+          projectId: savedNavigation?.projectId ?? null,
+          workflowId: savedNavigation?.workflowId ?? null,
+          projectView: validProjectView(savedNavigation?.projectView),
+        };
+      }
       case "navigation-save":
         const previous = this.store.get<any>("preference", "navigation");
         this.store.put("preference", {
@@ -3065,6 +3099,37 @@ export class Service {
           this.changed();
           throw e;
         }
+      }
+      case "provider-allowance-refresh": {
+        const i = this.installation(command.id);
+        // Claude's native /usage does not require the gated structured route.
+        if (
+          i.appId !== "anthropic.claude-code-cli" &&
+          i.compatibility !== "compatible"
+        )
+          throw new Error("Connect the selected runtime first.");
+        return this.runtime.refreshAllowance(i, command.projectId);
+      }
+      case "provider-budget-save": {
+        const id = providerBudgetId(command.provider);
+        this.store.transaction(() => {
+          if (command.tokens === null) this.store.remove("provider-budget", id);
+          else
+            this.store.put("provider-budget", {
+              id,
+              provider: command.provider,
+              tokens: command.tokens,
+              period: command.period,
+              updatedAt: now(),
+            } satisfies ProviderBudget);
+          this.store.event("provider-budget.set", {
+            provider: command.provider,
+            tokens: command.tokens,
+            period: command.period,
+          });
+        });
+        this.changed();
+        return this.providerBudgets();
       }
       case "runtime-qualify": {
         if (!trusted.approved)

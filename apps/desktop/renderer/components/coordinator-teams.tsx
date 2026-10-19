@@ -623,7 +623,7 @@ export function CoordinatorTeams({ projectId }: { projectId: string }) {
     : null;
   return (
     <section aria-label="Coordinator conversation">
-      <h2>Coordinator</h2>
+      <h2>Team conversation</h2>
       <Freshness state={freshness} retry={freshness.retry} />
       <p className="muted">
         Give a goal in one conversation. Each role can have any number of

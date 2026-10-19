@@ -14,7 +14,7 @@ import type {
 import type { Command } from "../../../packages/domain/commands";
 import "./style.css";
 import { Projects } from "./projects";
-import { Coordination, type ProjectView } from "./coordination";
+import { Coordination } from "./coordination";
 import { ActionButton, ActionContext } from "./components/action-button";
 import { Transcript } from "./components/transcript";
 import { ApprovalCard } from "./components/approval-card";
@@ -43,17 +43,25 @@ import {
   autoAcceptChatNote,
   autoAcceptOptions,
 } from "../../../packages/domain/auto-accept";
-import { claudeTranscriptOptions } from "../../../packages/domain/claude-steps";
 import { useScopedRefresh } from "./state/scoped";
 import { summarizeUsage } from "../../../packages/domain/usage";
+import { SettingsScreen } from "./screens/settings";
+import { HistoryScreen } from "./screens/history";
+import { ApplicationsScreen } from "./screens/applications";
+import {
+  WorkbenchSidebar,
+  type GlobalPage,
+} from "./components/workbench-sidebar";
+import { AtlasIcon, Brand, Badge } from "./components/atlas";
+import {
+  projectView as validProjectView,
+  projectViews,
+  viewLabel,
+  type ProjectView,
+} from "../../../packages/domain/navigation";
+import "./atlas.css";
 
-type Page =
-  | "workspace"
-  | "projects"
-  | "activity"
-  | "applications"
-  | "history"
-  | "settings";
+type Page = GlobalPage | "project";
 function Modal({
   title,
   children,
@@ -84,18 +92,9 @@ function Modal({
     </dialog>
   );
 }
-function Badge({
-  children,
-  tone = "",
-}: {
-  children: React.ReactNode;
-  tone?: string;
-}) {
-  return <span className={"badge " + tone}>{children}</span>;
-}
 function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [page, setPage] = useState<Page>("applications");
+  const [page, setPage] = useState<Page>("projects");
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [operationErrors, setOperationErrors] = useState<
@@ -205,8 +204,11 @@ function App() {
     void window.topsl
       .command({ type: "navigation-query" })
       .then((saved) => {
-        if (saved.projectId) setProjectId(saved.projectId);
-        if (saved.projectView) setProjectView(saved.projectView);
+        if (state.projects.some((project) => project.id === saved.projectId)) {
+          setProjectId(saved.projectId);
+          setProjectView(validProjectView(saved.projectView));
+          setPage("project");
+        }
         setNavigationReady(true);
       })
       .catch(() => setNavigationReady(true));
@@ -250,11 +252,26 @@ function App() {
     document.documentElement.dataset.theme = state.theme;
     if (
       navigationReady &&
-      (!projectId || !state.projects.some((p) => p.id === projectId)) &&
-      state.projects[0]
-    )
-      setProjectId(state.projects[0].id);
+      projectId &&
+      !state.projects.some((project) => project.id === projectId)
+    ) {
+      setProjectId("");
+      setProjectView("overview");
+      setPage("projects");
+    }
   }, [state, navigationReady]);
+  function openProjectView(view: ProjectView) {
+    setProjectView(view);
+    setPage("project");
+    setNavOpen(false);
+  }
+  function selectProject(id: string) {
+    setProjectId(id);
+    setConversationId("");
+    setAttachedSnapshot(null);
+    setTerminalId("");
+    openProjectView("overview");
+  }
   const project = state?.projects.find((p) => p.id === projectId);
   const conversations =
     scopedData?.conversations ??
@@ -328,15 +345,13 @@ function App() {
     (scopedData?.usage ?? state?.usage ?? []).filter((u: any) =>
       runs.some((r: any) => r.id === u.runId),
     ) ?? [];
-  const updateCount =
-    state?.checks.filter((c) => c.status === "available").length ?? 0;
   async function addProject() {
     const origin = selectedProject.current;
     const result = await act({ type: "project-add" });
     if (result && selectedProject.current === origin) {
       setProjectId(result.id);
       setConversationId("");
-      setPage("workspace");
+      openProjectView("overview");
     }
   }
   async function newConversation() {
@@ -389,13 +404,17 @@ function App() {
     });
     if (result) setPlan(result);
   }
-  if (!state) return <main className="loading">Opening Topsl…</main>;
+  if (!state)
+    return (
+      <main className="loading">
+        <Brand large />
+        <p role="status">Opening your local atlas…</p>
+      </main>
+    );
   if (state.locked)
     return (
       <main className="lock-screen">
-        <div className="brand large">
-          t<span>Topsl</span>
-        </div>
+        <Brand large />
         <h1>Your work stays local.</h1>
         <p>{state.lockReason}</p>
         <p className="muted">
@@ -442,107 +461,19 @@ function App() {
       }}
     >
       <div className="app-shell">
-        <aside
-          className={`sidebar ${navOpen ? "navigation-open" : ""}`}
-          aria-label="Workbench navigation"
-          id="workbench-sidebar"
-        >
-          <div className="brand">
-            t
-            <span>
-              Topsl<small>LOCAL WORKBENCH</small>
-            </span>
-          </div>
-          <nav aria-label="Main navigation">
-            {(
-              ["projects", "activity", "applications", "settings"] as Page[]
-            ).map((p, index) => (
-              <ActionButton
-                key={p}
-                aria-label={p[0].toUpperCase() + p.slice(1)}
-                className={page === p ? "nav selected" : "nav"}
-                aria-current={page === p ? "page" : undefined}
-                onClick={() => {
-                  setPage(p);
-                  setNavOpen(false);
-                }}
-              >
-                <span className="nav-icon">{["⌁", "▤", "⊞", "⚙"][index]}</span>
-                <span>{p[0].toUpperCase() + p.slice(1)}</span>
-                {p === "applications" && updateCount > 0 && (
-                  <b className="count">{updateCount}</b>
-                )}
-              </ActionButton>
-            ))}
-          </nav>
-          <div className="sidebar-projects">
-            <div className="eyebrow">
-              PROJECTS{" "}
-              <ActionButton
-                aria-label="Add project"
-
-                onClick={addProject}
-              >
-                +
-              </ActionButton>
-            </div>
-            {state.projects.map((p) => (
-              <ActionButton
-                key={p.id}
-                className={
-                  "project-link " + (projectId === p.id ? "active" : "")
-                }
-                onClick={() => {
-                  setProjectId(p.id);
-                  setConversationId("");
-                  setAttachedSnapshot(null);
-                  setPage("activity");
-                  setProjectView("overview");
-                  setNavOpen(false);
-                }}
-              >
-                <span>{p.trusted ? "⌁" : "○"}</span>
-                {p.name}
-              </ActionButton>
-            ))}
-            <nav
-              className="project-shortcuts"
-              aria-label="Native project routes"
-            >
-              <ActionButton
-                onClick={() => {
-                  setPage("workspace");
-                  setNavOpen(false);
-                }}
-              >
-                Workspace
-              </ActionButton>
-              <ActionButton
-                onClick={() => {
-                  setPage("history");
-                  setNavOpen(false);
-                }}
-              >
-                History
-              </ActionButton>
-            </nav>
-            {!state.projects.length && (
-              <p className="muted tiny">
-                Add a folder when you’re ready to work.
-              </p>
-            )}
-          </div>
-          <div className="sidebar-bottom">
-            <ActionButton
-              className="palette-key"
-              onClick={() => setPalette(true)}
-            >
-              Command palette <kbd>⌘ K</kbd>
-            </ActionButton>
-            <span className="status-dot" /> Local vault unlocked
-            <small>Personal pilot · {state.version}</small>
-          </div>
-        </aside>
+        <WorkbenchSidebar
+          state={state}
+          page={page}
+          projectId={projectId}
+          view={projectView}
+          open={navOpen}
+          close={() => setNavOpen(false)}
+          navigate={setPage}
+          selectProject={selectProject}
+          selectView={openProjectView}
+          addProject={addProject}
+          palette={() => setPalette(true)}
+        />
         <div className="main-column">
           <header className="topbar">
             <ActionButton
@@ -551,12 +482,14 @@ function App() {
               aria-controls="workbench-sidebar"
               onClick={() => setNavOpen((value) => !value)}
             >
-              Navigation
+              <AtlasIcon name="menu" /> Navigation
             </ActionButton>
             <span>
               {page === "applications"
-                ? "Settings / Connections / Applications"
-                : `Topsl / ${page[0].toUpperCase() + page.slice(1)}`}
+                ? "Topsl / Applications"
+                : page === "project"
+                  ? `${project?.name ?? "Project"} / ${viewLabel(projectView)}`
+                  : `Topsl / ${viewLabel(page)}`}
             </span>
             <span>
               {state.platform}
@@ -604,373 +537,12 @@ function App() {
                 </p>
               ))}
             {page === "applications" && (
-              <>
-                <div className="page-heading">
-                  <div>
-                    <div className="eyebrow">YOUR TOOLBOX</div>
-                    <h1>Applications</h1>
-                    <p>Native tools. One place to keep them ready.</p>
-                  </div>
-                  <div className="actions">
-                    <ActionButton
-                      onClick={() => void act({ type: "select-runtime" })}
-                    >
-                      Locate a runtime
-                    </ActionButton>
-                    <ActionButton
-                      disabled={state.testProfile}
-                      onClick={() => void act({ type: "discover" })}
-                    >
-                      ↻ Discover
-                    </ActionButton>
-                  </div>
-                </div>
-                {state.testProfile && (
-                  <div className="info-strip">
-                    <span className="status-dot notice" />
-                    <div>
-                      <strong>This is a test profile.</strong>
-                      <span>
-                        {" "}
-                        Topsl doesn't search for applications here, so it lists
-                        only the ones the test set up. Your usual profile still
-                        finds what's installed.
-                      </span>
-                    </div>
-                  </div>
-                )}
-                <div className="info-strip">
-                  <span className="status-dot" />
-                  <div>
-                    <strong>You approve every Topsl update.</strong>
-                    <span>
-                      {" "}
-                      Metadata checks run at most daily. Native automatic
-                      updates keep their existing settings.
-                    </span>
-                  </div>
-                </div>
-                <div className="application-grid">
-                  {state.applications.map((app) => {
-                    const installations = state.installations.filter(
-                      (i) => i.appId === app.id,
-                    );
-                    const supported = app.platforms.includes(
-                      state.platform.split("/")[0],
-                    );
-                    return (
-                      <article className="application-card" key={app.id}>
-                        <div className="card-title">
-                          <div className={"app-icon " + app.provider}>
-                            {app.provider === "codex" ? "◎" : "✳"}
-                          </div>
-                          <div>
-                            <h2>{app.name}</h2>
-                            <span className="muted tiny">
-                              {app.kind === "cli"
-                                ? "CLI RUNTIME"
-                                : "DESKTOP APPLICATION"}
-                            </span>
-                          </div>
-                          <Badge tone={installations.length ? "good" : ""}>
-                            {installations.length
-                              ? "Installed"
-                              : !supported
-                                ? "Native app unavailable"
-                                : state.testProfile
-                                  ? "Not searched"
-                                  : "Not found"}
-                          </Badge>
-                        </div>
-                        <p className="description">{app.description}</p>
-                        {installations.length ? (
-                          installations.map((i) => {
-                            const check = state.checks.find(
-                              (c) => c.installationId === i.id,
-                            );
-                            return (
-                              <div className="installation" key={i.id}>
-                                <div className="installation-heading">
-                                  <strong>
-                                    {i.version ?? "Version not verified"}
-                                  </strong>
-                                  <Badge
-                                    tone={
-                                      check?.status === "available"
-                                        ? "warm"
-                                        : ""
-                                    }
-                                  >
-                                    {check?.status === "available"
-                                      ? `${check.release?.version} available`
-                                      : i.compatibility === "compatible"
-                                        ? "Protocol connected"
-                                        : i.compatibility}
-                                  </Badge>
-                                </div>
-                                <dl>
-                                  <div>
-                                    <dt>Owner / channel</dt>
-                                    <dd>
-                                      {i.owner} / {i.channel}
-                                    </dd>
-                                  </div>
-                                  <div>
-                                    <dt>Native auto-updates</dt>
-                                    <dd>
-                                      {i.nativeAutoUpdates === "unknown"
-                                        ? "Unknown · owner controlled"
-                                        : i.nativeAutoUpdates}
-                                    </dd>
-                                  </div>
-                                  <div>
-                                    <dt>Running state</dt>
-                                    <dd>
-                                      {i.runningPids == null
-                                        ? "Unknown"
-                                        : i.runningPids.length
-                                          ? `${i.runningPids.length} process(es)`
-                                          : "Not observed running"}
-                                    </dd>
-                                  </div>
-                                  <div>
-                                    <dt>Topsl trust</dt>
-                                    <dd>
-                                      {i.trusted
-                                        ? "Approved executable"
-                                        : "Review before execution"}
-                                    </dd>
-                                  </div>
-                                </dl>
-                                <code className="path" title={i.realPath}>
-                                  {i.path}
-                                </code>
-                                <div className="actions wrap">
-                                  {!i.trusted && (
-                                    <ActionButton
-                                      onClick={() =>
-                                        void act({
-                                          type: "trust-installation",
-                                          id: i.id,
-                                        })
-                                      }
-                                    >
-                                      Trust executable
-                                    </ActionButton>
-                                  )}
-                                  {app.id === "openai.codex-cli" &&
-                                    i.trusted && (
-                                      <ActionButton onClick={() => connect(i)}>
-                                        Connect / test
-                                      </ActionButton>
-                                    )}
-                                  <ActionButton
-                                    onClick={() =>
-                                      void act({
-                                        type: "check-updates",
-                                        id: i.id,
-                                      })
-                                    }
-                                  >
-                                    Check for updates
-                                  </ActionButton>
-                                  <ActionButton
-                                    onClick={() => preview(i, app.id, "update")}
-                                  >
-                                    Update…
-                                  </ActionButton>
-                                  {app.kind === "desktop" && (
-                                    <ActionButton
-                                      onClick={() =>
-                                        void act({
-                                          type: "open-application",
-                                          id: i.id,
-                                        })
-                                      }
-                                    >
-                                      Open
-                                    </ActionButton>
-                                  )}
-                                </div>
-                                {check && (
-                                  <p className="check-detail">
-                                    {check.detail}
-                                    <br />
-                                    Checked{" "}
-                                    {new Date(
-                                      check.checkedAt,
-                                    ).toLocaleString()}{" "}
-                                    · next{" "}
-                                    {new Date(
-                                      check.nextCheckAt,
-                                    ).toLocaleString()}
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="not-installed">
-                            <span>Ready when you are.</span>
-                            <small>
-                              Installer availability depends on your OS and
-                              architecture.
-                            </small>
-                          </div>
-                        )}
-                        <div className="card-footer">
-                          <div className="actions">
-                            <ActionButton
-                              className={!installations.length ? "primary" : ""}
-                              disabled={!supported}
-                              onClick={() => preview(null, app.id, "download")}
-                            >
-                              Download
-                            </ActionButton>
-                            {!installations.length && (
-                              <ActionButton
-                                disabled={!supported}
-                                onClick={() => preview(null, app.id, "install")}
-                              >
-                                Install…
-                              </ActionButton>
-                            )}
-                          </div>
-                          <ActionButton
-                            className="text-button"
-                            onClick={() =>
-                              void act({
-                                type: "open-docs",
-                                appId: app.id,
-                                kind: "releaseNotes",
-                              })
-                            }
-                          >
-                            Release notes ↗
-                          </ActionButton>
-                        </div>
-                        <ActionButton
-                          className="text-button download-link"
-                          onClick={() =>
-                            void act({
-                              type: "open-docs",
-                              appId: app.id,
-                              kind: "website",
-                            })
-                          }
-                        >
-                          Official download / native installer ↗
-                        </ActionButton>
-                      </article>
-                    );
-                  })}
-                </div>
-                <section className="jobs">
-                  <div className="section-heading">
-                    <h2>Operations</h2>
-                    <span className="muted tiny">DURABLE LOCAL JOURNAL</span>
-                  </div>
-                  {!state.jobs.length ? (
-                    <div className="empty-row">
-                      No downloads or updates yet. Approved operations will
-                      appear here.
-                    </div>
-                  ) : (
-                    state.jobs.map((j) => (
-                      <div key={j.id} className="job">
-                        <div>
-                          <strong>Operation {j.id.slice(0, 8)}</strong>{" "}
-                          <Badge>{j.state}</Badge>
-                          <p>{j.detail}</p>
-                          {j.bytes > 0 && (
-                            <>
-                              <progress
-                                value={j.bytes}
-                                max={j.total ?? Math.max(j.bytes * 1.1, 1)}
-                              />
-                              <small>
-                                {" "}
-                                {(j.bytes / 1e6).toFixed(1)} MB
-                                {j.total
-                                  ? ` / ${(j.total / 1e6).toFixed(1)} MB`
-                                  : ""}
-                              </small>
-                            </>
-                          )}
-                          {j.actualVersion && (
-                            <small>
-                              Installed {j.actualVersion} · compatibility
-                              evaluated separately
-                            </small>
-                          )}
-                        </div>
-                        <div className="actions">
-                          {j.acquiredPath && (
-                            <ActionButton
-                              onClick={() =>
-                                void act({ type: "show-download", id: j.id })
-                              }
-                            >
-                              Show download
-                            </ActionButton>
-                          )}
-                          {[
-                            "queued",
-                            "waiting-for-idle",
-                            "downloading",
-                          ].includes(j.state) && (
-                            <ActionButton
-                              onClick={() =>
-                                void act({ type: "lifecycle-cancel", id: j.id })
-                              }
-                            >
-                              Cancel
-                            </ActionButton>
-                          )}
-                          {["failed", "cancelled", "unchanged"].includes(
-                            j.state,
-                          ) && (
-                            <ActionButton
-                              onClick={async () => {
-                                const value = await act({
-                                  type: "lifecycle-retry-preview",
-                                  id: j.id,
-                                });
-                                if (value) setPlan(value);
-                              }}
-                            >
-                              Review retry…
-                            </ActionButton>
-                          )}
-                          {[
-                            "uncertain",
-                            "awaiting-native",
-                            "waiting-for-idle",
-                          ].includes(j.state) && (
-                            <ActionButton
-                              onClick={() =>
-                                void act({
-                                  type: "lifecycle-reconcile",
-                                  id: j.id,
-                                })
-                              }
-                            >
-                              Reconcile
-                            </ActionButton>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </section>
-              </>
-            )}
-            {page === "activity" && (
-              <Coordination
-                key={projectId}
-                projectId={projectId}
-                view={projectView}
-                onView={setProjectView}
+              <ApplicationsScreen
+                state={state}
+                act={act}
+                connect={connect}
+                preview={preview}
+                setPlan={setPlan}
               />
             )}
             {page === "projects" && (
@@ -979,849 +551,481 @@ function App() {
                 busy={false}
                 act={act}
                 addProject={addProject}
-                selectProject={(id) => {
-                  setProjectId(id);
-                  setConversationId("");
-                  setAttachedSnapshot(null);
-                  setPage("workspace");
-                }}
+                selectProject={selectProject}
                 openTerminal={(id, terminal) => {
                   setProjectId(id);
                   setConversationId("");
                   setAttachedSnapshot(null);
                   setTerminalId(terminal);
-                  setPage("workspace");
+                  openProjectView("sessions");
                 }}
               />
             )}
-            {page === "workspace" && (
-              <>
-                <div className="page-heading">
-                  <div>
-                    <div className="eyebrow">A PLACE FOR THE WORK</div>
-                    <h1>{project?.name ?? "Your workspace"}</h1>
-                    <p>
-                      {project?.path ??
-                        "Bring a trusted folder and your native coding tools."}
-                    </p>
-                  </div>
-                  <ActionButton
-                    className="primary"
-
-                    onClick={addProject}
-                  >
-                    + Add project
-                  </ActionButton>
-                </div>
-                <div className="actions wrap">
-                  <ActionButton onClick={() => setPage("projects")}>
-                    Manage shared projects
-                  </ActionButton>
-                  {project &&
-                    (!project.trusted ||
-                      (project.availability &&
-                        project.availability !== "available")) && (
-                      <span className="tiny">
-                        {project.availability === "missing" ||
-                        project.availability === "changed"
-                          ? "Relink this folder in Projects before starting a session."
-                          : "Trust this discovered folder in Projects before starting a session."}
-                      </span>
-                    )}
-                </div>
-                {!project ? (
-                  <div className="onboarding">
-                    <span className="large-glyph">⌁</span>
-                    <h2>Start with a project.</h2>
-                    <p>
-                      Choose a folder, review your runtime, then open a native
-                      session. Your history and handoffs stay in the local
-                      vault.
-                    </p>
-                    <div className="onboarding-steps">
-                      <span>01 · Connect a tool</span>
-                      <span>02 · Trust a folder</span>
-                      <span>03 · Start a session</span>
-                    </div>
-                    <ActionButton onClick={() => setPage("applications")}>
-                      Manage applications
-                    </ActionButton>
-                  </div>
-                ) : (
+            <div hidden={page !== "project"}>
+              <Coordination
+                key={projectId}
+                projectId={projectId}
+                projectName={project?.name}
+                projectPath={project?.path}
+                view={projectView}
+                onView={openProjectView}
+                sessionsContent={
                   <>
-                    <div className="runtime-bar">
-                      <label>
-                        Runtime
-                        <select
-                          value={installationId}
-                          onChange={(e) => {
-                            setInstallationId(e.target.value);
-                            setModels([]);
-                          }}
-                        >
-                          <option value="">Select a native runtime</option>
-                          {state.installations
-                            .filter((i) => i.appId.endsWith("cli"))
-                            .map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.appId.includes("claude")
-                                  ? "Claude Code"
-                                  : "Codex"}{" "}
-                                · {i.version ?? "unverified"} · {i.owner}
-                              </option>
-                            ))}
-                          {!state.installations.some((i) =>
-                            i.appId.endsWith("cli"),
-                          ) && (
-                            <option value="">
-                              {state.testProfile
-                                ? "No runtime in this test profile"
-                                : "No runtime found"}
-                            </option>
-                          )}
-                        </select>
-                      </label>
-                      {installation && (
-                        <TerminalModeSelect
-                          provider={terminalProvider(installation)}
-                          value={terminalModeValue}
-                          onChange={setTerminalModeChoice}
-                        />
-                      )}
-                      <div className="actions wrap">
-                        <ActionButton
-                          disabled={!installation}
-                          onClick={() => openTerminal()}
-                        >
-                          Native terminal
-                        </ActionButton>
-                        <ActionButton
-                          disabled={!installation}
-                          onClick={() => openTerminal(true)}
-                        >
-                          Native login
-                        </ActionButton>
-                        {installation?.appId === "openai.codex-cli" && (
-                          <ActionButton
-                            disabled={!installation.trusted}
-                            onClick={() => connect(installation)}
-                          >
-                            Models & account
-                          </ActionButton>
-                        )}
-                      </div>
-                    </div>
-                    {installation && (
-                      <TerminalModeNote
-                        provider={terminalProvider(installation)}
-                        value={terminalModeValue}
-                      />
-                    )}
-                    <div className="chat-tabs">
-                      <select
-                        aria-label="Conversation"
-                        value={conversationId}
-                        onChange={(e) => {
-                          setConversationId(e.target.value);
-                          setAttachedSnapshot(null);
-                        }}
-                      >
-                        <option value="">Choose a conversation</option>
-                        {conversations.map((c: any) => (
-                          <option key={c.id} value={c.id}>
-                            {c.title}
-                          </option>
-                        ))}
-                      </select>
-                      <ActionButton onClick={newConversation}>
-                        + New chat
+                    <div className="actions wrap">
+                      <ActionButton onClick={() => setPage("projects")}>
+                        Manage shared projects
                       </ActionButton>
-                      {scopedData?.conversationCursor && (
-                        <ActionButton
-                          disabled={pending["history-conversations"]}
-                          onClick={async () => {
-                            const result = await act({
-                              type: "history-conversations",
-                              projectId,
-                              cursor: scopedData.conversationCursor,
-                              limit: 200,
-                            });
-                            if (result)
-                              setScopedData((current: any) => ({
-                                ...current,
-                                conversations: [
-                                  ...current.conversations,
-                                  ...result.items,
-                                ],
-                                conversationCursor: result.nextCursor,
-                              }));
-                          }}
-                        >
-                          Load older chats
-                        </ActionButton>
-                      )}
-                      {conversation && (
-                        <ActionButton
-                          onClick={async () => {
-                            const value = await act({
-                              type: "handoff-preview",
-                              conversationId,
-                              provider: installation?.appId.includes("claude")
-                                ? "claude"
-                                : "codex",
-                              objective:
-                                prompt ||
-                                "Continue this work with the selected provider.",
-                            });
-                            if (value) setSnapshot(value);
-                          }}
-                        >
-                          Prepare handoff
-                        </ActionButton>
-                      )}
-                    </div>
-                    {terminalId && (
-                      <TerminalPanel
-                        key={terminalId}
-                        id={terminalId}
-                        mode={(() => {
-                          const open = (
-                            scopedData?.terminals ?? state.terminals
-                          ).find((t: any) => t.id === terminalId);
-                          const mode =
-                            open &&
-                            openedMode(
-                              open.installationId,
-                              open.permissionMode,
-                            );
-                          return mode ? terminalModeText(mode) : null;
-                        })()}
-                        close={() => {
-                          void act({ type: "terminal-close", id: terminalId });
-                          setTerminalId("");
-                        }}
-                      />
-                    )}{" "}
-                    {!terminalId &&
-                      (scopedData?.terminals ?? state.terminals)
-                        .filter((t: any) => t.projectId === projectId)
-                        .map((t: any) => (
-                          <ActionButton
-                            key={t.id}
-                            onClick={() => setTerminalId(t.id)}
-                          >
-                            Show active native terminal
-                            {openedLabel(t)}
-                          </ActionButton>
-                        ))}
-                    <div className="conversation">
-                      <div className="conversation-heading">
-                        <span>{conversation?.title ?? "Shared history"}</span>
-                        <span className="muted tiny">
-                          PROVIDER ATTRIBUTION PRESERVED
-                        </span>
-                      </div>
-                      <Transcript
-                        key={`${projectId}:${conversationId}`}
-                        projectId={projectId}
-                        conversationId={conversationId}
-                      />
-                    </div>
-                    {runs.map((r: any) => (
-                      <div className="run-status" key={r.id}>
-                        <span>
-                          <Badge tone={r.status === "completed" ? "good" : ""}>
-                            {r.status}
-                          </Badge>{" "}
-                          {r.provider} · {r.runtimeVersion ?? "unknown version"}{" "}
-                          · {r.model}
-                          {requestedMode(r)}
-                          <small>
-                            Run {r.id.slice(0, 8)} · installation revision{" "}
-                            {r.installationRevisionId.slice(0, 10)}
-                          </small>
-                          {r.reportedPermissions && (
-                            <small>
-                              {reportedPermissionsText(r.reportedPermissions)}
-                            </small>
-                          )}
-                          {r.error && <p>{r.error}</p>}
-                        </span>
-                        {r.status === "uncertain" && (
-                          <ActionButton
-                            onClick={() =>
-                              void act({ type: "run-reconcile", id: r.id })
-                            }
-                          >
-                            Inspect & reconcile
-                          </ActionButton>
+                      {project &&
+                        (!project.trusted ||
+                          (project.availability &&
+                            project.availability !== "available")) && (
+                          <span className="tiny">
+                            {project.availability === "missing" ||
+                            project.availability === "changed"
+                              ? "Relink this folder in Projects before starting a session."
+                              : "Trust this discovered folder in Projects before starting a session."}
+                          </span>
                         )}
-                        {r.id === active?.id && (
-                          <ActionButton
-                            onClick={() =>
-                              void act({ type: "run-interrupt", id: r.id })
-                            }
-                          >
-                            Interrupt
-                          </ActionButton>
-                        )}
-                      </div>
-                    ))}
-                    {(scopedData?.approvals ?? state.approvals)
-                      .filter((a: any) =>
-                        runs.some((r: any) => r.id === a.runId),
-                      )
-                      .map((a: Approval) => (
-                        <ApprovalCard
-                          key={a.id}
-                          approval={a}
-                          decide={(allow) =>
-                            act({ type: "approval-decide", id: a.id, allow })
-                          }
-                        />
-                      ))}
-                    <form
-                      className="composer"
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        if (!conversation || !installation) return;
-                        const value = await act({
-                          type: "run-start",
-                          conversationId,
-                          installationId,
-                          prompt,
-                          model,
-                          mode: selectedPreset.mode,
-                          approvalPolicy: selectedPreset.approvalPolicy,
-                          snapshotId: attachedSnapshot,
-                        });
-                        if (value) {
-                          setPrompt("");
-                          setAttachedSnapshot(null);
-                        }
-                      }}
-                    >
-                      <textarea
-                        aria-label="Message"
-                        placeholder="What would you like to work on?"
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        rows={3}
-                      />
-                      {attachedSnapshot && (
-                        <span className="tiny">
-                          Reviewed handoff attached{" "}
-                          <ActionButton
-                            type="button"
-                            className="text-button"
-                            onClick={() => setAttachedSnapshot(null)}
-                          >
-                            Remove
-                          </ActionButton>
+                    </div>
+                    {!project ? (
+                      <div className="onboarding">
+                        <span className="empty-compass">
+                          <AtlasIcon name="overview" />
                         </span>
-                      )}
-                      <div className="composer-controls">
-                        <label>
-                          Model
-                          <select
-                            value={model}
-                            onChange={(e) => setModel(e.target.value)}
-                          >
-                            <option value="">Select a requested model</option>
-                            {model &&
-                              !models.some((m) => m.model === model) && (
-                                <option value={model}>
-                                  {model} · unconfirmed
+                        <h2>Start with a project.</h2>
+                        <p>
+                          Choose a folder, review your runtime, then open a
+                          native session. Your history and handoffs stay in the
+                          local vault.
+                        </p>
+                        <div className="onboarding-steps">
+                          <span>01 · Connect a tool</span>
+                          <span>02 · Trust a folder</span>
+                          <span>03 · Start a session</span>
+                        </div>
+                        <ActionButton onClick={() => setPage("applications")}>
+                          Manage applications
+                        </ActionButton>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="runtime-bar">
+                          <label>
+                            Runtime
+                            <select
+                              value={installationId}
+                              onChange={(e) => {
+                                setInstallationId(e.target.value);
+                                setModels([]);
+                              }}
+                            >
+                              <option value="">Select a native runtime</option>
+                              {state.installations
+                                .filter((i) => i.appId.endsWith("cli"))
+                                .map((i) => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.appId.includes("claude")
+                                      ? "Claude Code"
+                                      : "Codex"}{" "}
+                                    · {i.version ?? "unverified"} · {i.owner}
+                                  </option>
+                                ))}
+                              {!state.installations.some((i) =>
+                                i.appId.endsWith("cli"),
+                              ) && (
+                                <option value="">
+                                  {state.testProfile
+                                    ? "No runtime in this test profile"
+                                    : "No runtime found"}
                                 </option>
                               )}
-                            {models.map((m) => (
-                              <option key={m.id} value={m.model}>
-                                {m.name ?? m.model}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          Permissions
+                            </select>
+                          </label>
+                          {installation && (
+                            <TerminalModeSelect
+                              provider={terminalProvider(installation)}
+                              value={terminalModeValue}
+                              onChange={setTerminalModeChoice}
+                            />
+                          )}
+                          <div className="actions wrap">
+                            <ActionButton
+                              disabled={!installation}
+                              onClick={() => openTerminal()}
+                            >
+                              Native terminal
+                            </ActionButton>
+                            <ActionButton
+                              disabled={!installation}
+                              onClick={() => openTerminal(true)}
+                            >
+                              Native login
+                            </ActionButton>
+                            {installation?.appId === "openai.codex-cli" && (
+                              <ActionButton
+                                disabled={!installation.trusted}
+                                onClick={() => connect(installation)}
+                              >
+                                Models & account
+                              </ActionButton>
+                            )}
+                          </div>
+                        </div>
+                        {installation && (
+                          <TerminalModeNote
+                            provider={terminalProvider(installation)}
+                            value={terminalModeValue}
+                          />
+                        )}
+                        <div className="chat-tabs">
                           <select
-                            value={chatPresetId}
-                            onChange={(e) =>
-                              setChatPresetId(e.target.value as ChatPresetId)
-                            }
-                          >
-                            {chatPresets.map((preset) => (
-                              <option key={preset.id} value={preset.id}>
-                                {presetBlocks.has(preset.id)
-                                  ? `${preset.label} (unavailable)`
-                                  : preset.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <ActionButton
-                          className="primary"
-                          disabled={
-                            !!active ||
-                            !conversation ||
-                            !prompt.trim() ||
-                            !model ||
-                            !!presetBlocked ||
-                            installation?.compatibility !== "compatible" ||
-                            installation?.appId !== "openai.codex-cli"
-                          }
-                        >
-                          Send to Codex ↑
-                        </ActionButton>
-                      </div>
-                      <p className="tiny chat-preset-note" role="note">
-                        {presetBlocked
-                          ? `Not available for this runtime. ${presetBlocked}`
-                          : (autoAcceptNote ?? chatPresetNote(selectedPreset))}
-                      </p>
-                      <p className="tiny muted">
-                        Codex uses an experimental local stdio adapter. Claude
-                        and provider-specific features use the native terminal.
-                        Native terminal history can be imported explicitly.
-                      </p>
-                    </form>
-                    <div className="usage-line">
-                      Native-reported usage:{" "}
-                      {summarizeUsage(
-                        usage,
-                        runs.map((run: any) => run.id),
-                      ).knownInput.toLocaleString()}{" "}
-                      known input ·{" "}
-                      {summarizeUsage(
-                        usage,
-                        runs.map((run: any) => run.id),
-                      ).knownOutput.toLocaleString()}{" "}
-                      known output ·{" "}
-                      {summarizeUsage(
-                        usage,
-                        runs.map((run: any) => run.id),
-                      ).complete
-                        ? "complete recorded coverage"
-                        : "incomplete coverage; missing usage is unknown"}
-                      . Native allowance is unknown until reported; provider
-                      billing remains authoritative.
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-            {page === "history" && (
-              <>
-                <div className="page-heading">
-                  <div>
-                    <div className="eyebrow">LOCAL, SEARCHABLE, ATTRIBUTED</div>
-                    <h1>History</h1>
-                    <p>Pick up the thread without losing where it came from.</p>
-                  </div>
-                </div>
-                <div className="runtime-bar">
-                  <label>
-                    Project
-                    <select
-                      value={projectId}
-                      onChange={(e) => {
-                        setProjectId(e.target.value);
-                        setSearchResults(null);
-                      }}
-                    >
-                      {state.projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="actions">
-                    <ActionButton
-                      disabled={!projectId}
-                      onClick={() =>
-                        void act({
-                          type: "history-import",
-                          projectId,
-                          provider: "codex",
-                        })
-                      }
-                    >
-                      Import Codex JSONL
-                    </ActionButton>
-                    <ActionButton
-                      disabled={!projectId}
-                      onClick={() =>
-                        void act({
-                          type: "history-import",
-                          projectId,
-                          provider: "claude",
-                        })
-                      }
-                    >
-                      Import Claude JSONL
-                    </ActionButton>
-                  </div>
-                </div>
-                <form
-                  className="search"
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const result = await act({
-                      type: "history-page",
-                      projectId,
-                      query,
-                      limit: 80,
-                    });
-                    if (result) {
-                      setSearchResults(result.items);
-                      setSearchCursor(result.nextCursor);
-                    }
-                  }}
-                >
-                  <input
-                    aria-label="Search project history"
-                    placeholder="Search this project’s history…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                  <ActionButton className="primary" disabled={!projectId}>
-                    Search
-                  </ActionButton>
-                </form>
-                {searchResults ? (
-                  <>
-                    <p className="muted">
-                      {searchResults.length} matching messages{" "}
-                      <ActionButton
-                        className="text-button"
-                        onClick={() => setSearchResults(null)}
-                      >
-                        Clear
-                      </ActionButton>
-                    </p>
-                    {searchCursor && (
-                      <ActionButton
-                        disabled={pending["history-page"]}
-                        onClick={async () => {
-                          const result = await act({
-                            type: "history-page",
-                            projectId,
-                            query,
-                            cursor: searchCursor,
-                            limit: 80,
-                          });
-                          if (result) {
-                            setSearchResults((current) => [
-                              ...(current ?? []),
-                              ...result.items,
-                            ]);
-                            setSearchCursor(result.nextCursor);
-                          }
-                        }}
-                      >
-                        Load more search matches
-                      </ActionButton>
-                    )}
-                    {searchResults.map((m) => (
-                      <article key={m.id} className="history-result">
-                        <div className="message-meta">
-                          {m.provider} / {m.role}
-                          <ActionButton
-                            onClick={() => {
-                              setConversationId(m.conversationId);
-                              setPage("workspace");
+                            aria-label="Conversation"
+                            value={conversationId}
+                            onChange={(e) => {
+                              setConversationId(e.target.value);
+                              setAttachedSnapshot(null);
                             }}
                           >
-                            Open conversation →
+                            <option value="">Choose a conversation</option>
+                            {conversations.map((c: any) => (
+                              <option key={c.id} value={c.id}>
+                                {c.title}
+                              </option>
+                            ))}
+                          </select>
+                          <ActionButton onClick={newConversation}>
+                            + New chat
                           </ActionButton>
+                          {scopedData?.conversationCursor && (
+                            <ActionButton
+                              disabled={pending["history-conversations"]}
+                              onClick={async () => {
+                                const result = await act({
+                                  type: "history-conversations",
+                                  projectId,
+                                  cursor: scopedData.conversationCursor,
+                                  limit: 200,
+                                });
+                                if (result)
+                                  setScopedData((current: any) => ({
+                                    ...current,
+                                    conversations: [
+                                      ...current.conversations,
+                                      ...result.items,
+                                    ],
+                                    conversationCursor: result.nextCursor,
+                                  }));
+                              }}
+                            >
+                              Load older chats
+                            </ActionButton>
+                          )}
+                          {conversation && (
+                            <ActionButton
+                              onClick={async () => {
+                                const value = await act({
+                                  type: "handoff-preview",
+                                  conversationId,
+                                  provider: installation?.appId.includes(
+                                    "claude",
+                                  )
+                                    ? "claude"
+                                    : "codex",
+                                  objective:
+                                    prompt ||
+                                    "Continue this work with the selected provider.",
+                                });
+                                if (value) setSnapshot(value);
+                              }}
+                            >
+                              Prepare handoff
+                            </ActionButton>
+                          )}
                         </div>
-                        <pre>{m.text}</pre>
-                      </article>
-                    ))}
+                        {terminalId && (
+                          <TerminalPanel
+                            key={terminalId}
+                            id={terminalId}
+                            mode={(() => {
+                              const open = (
+                                scopedData?.terminals ?? state.terminals
+                              ).find((t: any) => t.id === terminalId);
+                              const mode =
+                                open &&
+                                openedMode(
+                                  open.installationId,
+                                  open.permissionMode,
+                                );
+                              return mode ? terminalModeText(mode) : null;
+                            })()}
+                            close={() => {
+                              void act({
+                                type: "terminal-close",
+                                id: terminalId,
+                              });
+                              setTerminalId("");
+                            }}
+                          />
+                        )}{" "}
+                        {!terminalId &&
+                          (scopedData?.terminals ?? state.terminals)
+                            .filter((t: any) => t.projectId === projectId)
+                            .map((t: any) => (
+                              <ActionButton
+                                key={t.id}
+                                onClick={() => setTerminalId(t.id)}
+                              >
+                                Show active native terminal
+                                {openedLabel(t)}
+                              </ActionButton>
+                            ))}
+                        <div className="conversation">
+                          <div className="conversation-heading">
+                            <span>
+                              {conversation?.title ?? "Shared history"}
+                            </span>
+                            <span className="muted tiny">
+                              PROVIDER ATTRIBUTION PRESERVED
+                            </span>
+                          </div>
+                          <Transcript
+                            key={`${projectId}:${conversationId}`}
+                            projectId={projectId}
+                            conversationId={conversationId}
+                          />
+                        </div>
+                        {runs.map((r: any) => (
+                          <div className="run-status" key={r.id}>
+                            <span>
+                              <Badge
+                                tone={r.status === "completed" ? "good" : ""}
+                              >
+                                {r.status}
+                              </Badge>{" "}
+                              {r.provider} ·{" "}
+                              {r.runtimeVersion ?? "unknown version"} ·{" "}
+                              {r.model}
+                              {requestedMode(r)}
+                              <small>
+                                Run {r.id.slice(0, 8)} · installation revision{" "}
+                                {r.installationRevisionId.slice(0, 10)}
+                              </small>
+                              {r.reportedPermissions && (
+                                <small>
+                                  {reportedPermissionsText(
+                                    r.reportedPermissions,
+                                  )}
+                                </small>
+                              )}
+                              {r.error && <p>{r.error}</p>}
+                            </span>
+                            {r.status === "uncertain" && (
+                              <ActionButton
+                                onClick={() =>
+                                  void act({ type: "run-reconcile", id: r.id })
+                                }
+                              >
+                                Inspect & reconcile
+                              </ActionButton>
+                            )}
+                            {r.id === active?.id && (
+                              <ActionButton
+                                onClick={() =>
+                                  void act({ type: "run-interrupt", id: r.id })
+                                }
+                              >
+                                Interrupt
+                              </ActionButton>
+                            )}
+                          </div>
+                        ))}
+                        {(scopedData?.approvals ?? state.approvals)
+                          .filter((a: any) =>
+                            runs.some((r: any) => r.id === a.runId),
+                          )
+                          .map((a: Approval) => (
+                            <ApprovalCard
+                              key={a.id}
+                              approval={a}
+                              decide={(allow) =>
+                                act({
+                                  type: "approval-decide",
+                                  id: a.id,
+                                  allow,
+                                })
+                              }
+                            />
+                          ))}
+                        <form
+                          className="composer"
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!conversation || !installation) return;
+                            const value = await act({
+                              type: "run-start",
+                              conversationId,
+                              installationId,
+                              prompt,
+                              model,
+                              mode: selectedPreset.mode,
+                              approvalPolicy: selectedPreset.approvalPolicy,
+                              snapshotId: attachedSnapshot,
+                            });
+                            if (value) {
+                              setPrompt("");
+                              setAttachedSnapshot(null);
+                            }
+                          }}
+                        >
+                          <textarea
+                            aria-label="Message"
+                            placeholder="What would you like to work on?"
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                            rows={3}
+                          />
+                          {attachedSnapshot && (
+                            <span className="tiny">
+                              Reviewed handoff attached{" "}
+                              <ActionButton
+                                type="button"
+                                className="text-button"
+                                onClick={() => setAttachedSnapshot(null)}
+                              >
+                                Remove
+                              </ActionButton>
+                            </span>
+                          )}
+                          <div className="composer-controls">
+                            <label>
+                              Model
+                              <select
+                                value={model}
+                                onChange={(e) => setModel(e.target.value)}
+                              >
+                                <option value="">
+                                  Select a requested model
+                                </option>
+                                {model &&
+                                  !models.some((m) => m.model === model) && (
+                                    <option value={model}>
+                                      {model} · unconfirmed
+                                    </option>
+                                  )}
+                                {models.map((m) => (
+                                  <option key={m.id} value={m.model}>
+                                    {m.name ?? m.model}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Permissions
+                              <select
+                                value={chatPresetId}
+                                onChange={(e) =>
+                                  setChatPresetId(
+                                    e.target.value as ChatPresetId,
+                                  )
+                                }
+                              >
+                                {chatPresets.map((preset) => (
+                                  <option key={preset.id} value={preset.id}>
+                                    {presetBlocks.has(preset.id)
+                                      ? `${preset.label} (unavailable)`
+                                      : preset.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <ActionButton
+                              className="primary"
+                              disabled={
+                                !!active ||
+                                !conversation ||
+                                !prompt.trim() ||
+                                !model ||
+                                !!presetBlocked ||
+                                installation?.compatibility !== "compatible" ||
+                                installation?.appId !== "openai.codex-cli"
+                              }
+                            >
+                              Send to Codex ↑
+                            </ActionButton>
+                          </div>
+                          <p className="tiny chat-preset-note" role="note">
+                            {presetBlocked
+                              ? `Not available for this runtime. ${presetBlocked}`
+                              : (autoAcceptNote ??
+                                chatPresetNote(selectedPreset))}
+                          </p>
+                          <p className="tiny muted">
+                            Codex uses an experimental local stdio adapter.
+                            Claude and provider-specific features use the native
+                            terminal. Native terminal history can be imported
+                            explicitly.
+                          </p>
+                        </form>
+                        <div className="usage-line">
+                          Native-reported usage:{" "}
+                          {summarizeUsage(
+                            usage,
+                            runs.map((run: any) => run.id),
+                          ).knownInput.toLocaleString()}{" "}
+                          known input ·{" "}
+                          {summarizeUsage(
+                            usage,
+                            runs.map((run: any) => run.id),
+                          ).knownOutput.toLocaleString()}{" "}
+                          known output ·{" "}
+                          {summarizeUsage(
+                            usage,
+                            runs.map((run: any) => run.id),
+                          ).complete
+                            ? "complete recorded coverage"
+                            : "incomplete coverage; missing usage is unknown"}
+                          . Provider allowance is under Applications → Usage
+                          remaining, as each runtime reports it; provider
+                          billing remains authoritative.
+                        </div>
+                      </>
+                    )}
                   </>
-                ) : conversations.length ? (
-                  conversations.map((c: any) => (
-                    <div className="history-row" key={c.id}>
-                      <ActionButton
-                        className="text-button"
-                        onClick={() => {
-                          setConversationId(c.id);
-                          setPage("workspace");
-                        }}
-                      >
-                        {c.title} →
-                      </ActionButton>
-                      <span>{new Date(c.createdAt).toLocaleDateString()}</span>
-                      <ActionButton
-                        onClick={() =>
-                          void act({ type: "history-delete", id: c.id })
-                        }
-                      >
-                        Delete locally
-                      </ActionButton>
-                    </div>
-                  ))
-                ) : (
-                  <div className="onboarding">
-                    <h2>A clear record of your work.</h2>
-                    <p>
-                      Structured sessions appear here. Import native transcripts
-                      when you want them included in search and handoffs.
-                    </p>
-                  </div>
-                )}
-              </>
-            )}
-            {page === "settings" && (
-              <>
-                <div className="page-heading">
-                  <div>
-                    <div className="eyebrow">SETTINGS / CONNECTIONS</div>
-                    <h1>Make it your workspace.</h1>
-                    <p>
-                      Native configuration stays native. Every write has a
-                      preview.
-                    </p>
-                  </div>
-                </div>
-                <section className="settings-card">
-                  <h2>Appearance</h2>
-                  <p>System follows the computer’s light or dark appearance.</p>
-                  <div className="actions">
-                    {(["paper", "night", "system"] as const).map((theme) => (
-                      <ActionButton
-                        key={theme}
-                        className={state.theme === theme ? "primary" : ""}
-                        onClick={() => void act({ type: "theme", theme })}
-                      >
-                        {theme[0].toUpperCase() + theme.slice(1)}
-                      </ActionButton>
-                    ))}
-                  </div>
-                </section>
-                <section className="settings-card" aria-label="Auto-accept">
-                  <h2>Auto-accept</h2>
-                  <p>
-                    Who answers when Codex or Claude Code would ask for
-                    permission in a session Topsl starts for editing. Reviews
-                    stay read-only, and managed settings can override either
-                    provider.
-                  </p>
-                  <div className="actions">
-                    {autoAcceptOptions.map((option) => (
-                      <ActionButton
-                        key={option.level}
-                        className={
-                          state.autoAccept === option.level ? "primary" : ""
-                        }
-                        aria-pressed={state.autoAccept === option.level}
-                        onClick={() =>
-                          void act({
-                            type: "auto-accept-set",
-                            level: option.level,
-                          })
-                        }
-                      >
-                        {option.label}
-                      </ActionButton>
-                    ))}
-                  </div>
-                  <p className="tiny" role="note">
-                    {
-                      autoAcceptOptions.find(
-                        (option) => option.level === state.autoAccept,
-                      )!.effect
-                    }
-                  </p>
-                </section>
-                <section
-                  className="settings-card"
-                  aria-label="Claude Code transcripts"
-                >
-                  <h2>Claude Code transcripts</h2>
-                  <p>
-                    Whether Topsl may take Claude's final reply from a workflow
-                    step's session transcript, which Claude Code keeps in its
-                    own folder, instead of your paste.
-                  </p>
-                  <div className="actions">
-                    {claudeTranscriptOptions.map((option) => (
-                      <ActionButton
-                        key={option.label}
-                        className={
-                          state.claudeTranscriptRead === option.enabled
-                            ? "primary"
-                            : ""
-                        }
-                        aria-pressed={
-                          state.claudeTranscriptRead === option.enabled
-                        }
-                        onClick={() =>
-                          void act({
-                            type: "claude-transcript-read-set",
-                            enabled: option.enabled,
-                          })
-                        }
-                      >
-                        {option.label}
-                      </ActionButton>
-                    ))}
-                  </div>
-                  <p className="tiny" role="note">
-                    {
-                      claudeTranscriptOptions.find(
-                        (option) =>
-                          option.enabled === state.claudeTranscriptRead,
-                      )!.effect
-                    }
-                  </p>
-                </section>
-                <section className="settings-card">
-                  <div className="section-heading">
-                    <h2>Native capabilities</h2>
-                    <ActionButton onClick={() => setPage("applications")}>
-                      Applications →
-                    </ActionButton>
-                  </div>
-                  <div className="capabilities">
-                    {state.capabilities.map((c) => (
-                      <div key={c.id}>
-                        <strong>{c.name}</strong>
-                        <Badge>{c.route}</Badge>
-                        <p>{c.description}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-                <section className="settings-card">
-                  <h2>Configuration & instructions</h2>
-                  <div className="runtime-bar">
-                    <label>
-                      Provider
-                      <select
-                        value={provider}
-                        onChange={(e) => {
-                          setProvider(e.target.value as Provider);
-                          setConfiguration(null);
-                        }}
-                      >
-                        <option value="codex">Codex</option>
-                        <option value="claude">Claude Code</option>
-                      </select>
-                    </label>
-                    <div className="actions wrap">
-                      <ActionButton
-                        onClick={async () => {
-                          const result = await act({
-                            type: "configuration-read",
-                            provider,
-                            projectId: null,
-                            kind: "native",
-                          });
-                          if (result) setConfiguration(result);
-                        }}
-                      >
-                        Global settings
-                      </ActionButton>
-                      <ActionButton
-                        disabled={!projectId}
-                        onClick={async () => {
-                          const result = await act({
-                            type: "configuration-read",
-                            provider,
-                            projectId,
-                            kind: "native",
-                          });
-                          if (result) setConfiguration(result);
-                        }}
-                      >
-                        Project settings
-                      </ActionButton>
-                      <ActionButton
-                        disabled={!projectId}
-                        onClick={async () => {
-                          const result = await act({
-                            type: "configuration-read",
-                            provider,
-                            projectId,
-                            kind: "instructions",
-                          });
-                          if (result) setConfiguration(result);
-                        }}
-                      >
-                        Project instructions
-                      </ActionButton>
-                    </div>
-                  </div>
-                  {configuration && (
-                    <>
-                      <p className="path">{configuration.path}</p>
-                      <p className="muted tiny">{configuration.ownership}</p>
-                      <textarea
-                        className="config-editor"
-                        aria-label="Native configuration text"
-                        value={configuration.text}
-                        onChange={(e) =>
-                          setConfiguration({
-                            ...configuration,
-                            text: e.target.value,
-                          })
-                        }
-                      />
-                      <ActionButton
-                        onClick={async () => {
-                          const result = await act({
-                            type: "configuration-preview",
-                            path: configuration.path,
-                            expectedHash: configuration.hash,
-                            text: configuration.text,
-                          });
-                          if (result) setConfigPlan(result);
-                        }}
-                      >
-                        Preview changes
-                      </ActionButton>
-                    </>
-                  )}
-                </section>
-                <section className="settings-card">
-                  <h2>Recent configuration writes</h2>
-                  {state.configurationWrites.length ? (
-                    state.configurationWrites.map((write) => (
-                      <div className="history-row" key={write.id}>
-                        <code className="path">{write.path}</code>
-                        <Badge>{write.state}</Badge>
-                      </div>
-                    ))
-                  ) : (
-                    <p>No native files have been changed through Topsl.</p>
-                  )}
-                </section>
-                <section className="settings-card">
-                  <h2>Project context connection</h2>
-                  <p>
-                    Allow a native MCP client to search one project’s Topsl
-                    history. The connection has no administrative authority and
-                    expires when Topsl closes.
-                  </p>
-                  <ActionButton
-                    disabled={!projectId}
-                    onClick={async () => {
-                      const result = await act({
-                        type: "context-enable",
-                        projectId,
-                      });
-                      if (result)
-                        setDetail({
-                          title: "Read-only project context",
-                          text: `Grant file: ${result.file}\n\n${result.expires}\n\nRun the companion with a Node.js installation:\nnode ${JSON.stringify(result.companionPath)} mcp ${JSON.stringify(result.file)}\n\nUse this executable and argument list in your native MCP configuration. Keep the grant file private.`,
-                        });
+                }
+                historyContent={
+                  <HistoryScreen
+                    pending={pending}
+                    projectId={projectId}
+                    act={act}
+                    query={query}
+                    setQuery={setQuery}
+                    searchResults={searchResults}
+                    setSearchResults={setSearchResults}
+                    searchCursor={searchCursor}
+                    setSearchCursor={setSearchCursor}
+                    conversations={conversations}
+                    openConversation={(id) => {
+                      setConversationId(id);
+                      openProjectView("sessions");
                     }}
-                  >
-                    Create grant for {project?.name ?? "a project"}
-                  </ActionButton>
-                </section>
-              </>
+                  />
+                }
+              />
+            </div>
+            {page === "settings" && (
+              <SettingsScreen
+                state={state}
+                act={act}
+                provider={provider}
+                setProvider={setProvider}
+                configuration={configuration}
+                setConfiguration={setConfiguration}
+                projectId={projectId}
+                project={project}
+                setConfigPlan={setConfigPlan}
+                setDetail={setDetail}
+                setPage={setPage}
+              />
             )}
           </main>
           <footer className="statusbar">
@@ -1969,23 +1173,29 @@ function App() {
         {palette && (
           <Modal title="Command palette" close={() => setPalette(false)}>
             <div className="palette">
-              {(
-                [
-                  "workspace",
-                  "projects",
-                  "applications",
-                  "history",
-                  "settings",
-                ] as Page[]
-              ).map((p) => (
+              {(["projects", "applications", "settings"] as GlobalPage[]).map(
+                (target) => (
+                  <ActionButton
+                    key={target}
+                    onClick={() => {
+                      setPage(target);
+                      setPalette(false);
+                    }}
+                  >
+                    {viewLabel(target)} →
+                  </ActionButton>
+                ),
+              )}
+              {projectViews.map((view) => (
                 <ActionButton
-                  key={p}
+                  key={view}
+                  disabled={!projectId}
                   onClick={() => {
-                    setPage(p);
+                    openProjectView(view);
                     setPalette(false);
                   }}
                 >
-                  {p[0].toUpperCase() + p.slice(1)} →
+                  {viewLabel(view)} →
                 </ActionButton>
               ))}
               <ActionButton

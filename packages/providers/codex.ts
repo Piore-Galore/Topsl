@@ -6,6 +6,7 @@ import { nativeEnvironment } from "../platform/system";
 import { RpcPeer } from "../runtime/rpc";
 import { hash, safeError, stable } from "../domain/invariants";
 import type { Installation, ReportedPermissions } from "../domain/types";
+import type { AllowanceReport, ReportedBucket } from "../domain/allowance";
 import { sandboxName } from "../domain/chat-presets";
 import type {
   PreparedTurn,
@@ -35,6 +36,71 @@ const accountSchema = z.object({
     })
     .nullable(),
 });
+// Codex's `RateLimitSnapshot`: a window's used share, its length and its reset
+// time in Unix seconds. Unknown fields, such as spend-control details, are
+// ignored rather than read.
+const rateLimitWindow = z
+  .object({
+    usedPercent: z.number().finite(),
+    windowDurationMins: z.number().finite().nullable().optional(),
+    resetsAt: z.number().finite().nullable().optional(),
+  })
+  .nullable()
+  .optional();
+const rateLimitSnapshot = z.object({
+  limitId: string.nullable().optional(),
+  limitName: string.nullable().optional(),
+  primary: rateLimitWindow,
+  secondary: rateLimitWindow,
+  credits: z
+    .object({
+      hasCredits: z.boolean(),
+      unlimited: z.boolean(),
+      balance: string.nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  planType: string.nullable().optional(),
+  rateLimitReachedType: string.nullable().optional(),
+});
+const rateLimitsReadSchema = z.object({
+  ordinaryUsageAllowed: z.boolean().nullable().optional(),
+  rateLimits: rateLimitSnapshot,
+  rateLimitsByLimitId: z
+    .record(string, rateLimitSnapshot.optional())
+    .nullable()
+    .optional(),
+});
+const rateLimitsUpdatedSchema = z.object({ rateLimits: rateLimitSnapshot });
+function rateLimitBucket(
+  snapshot: z.infer<typeof rateLimitSnapshot>,
+  key?: string,
+): ReportedBucket {
+  const window = (value: z.infer<typeof rateLimitWindow>) =>
+    value
+      ? {
+          usedPercent: value.usedPercent,
+          windowMinutes: value.windowDurationMins ?? null,
+          resetsAtSeconds: value.resetsAt ?? null,
+        }
+      : null;
+  return {
+    // Codex keys its default single-bucket view as `codex`.
+    id: snapshot.limitId ?? key ?? "codex",
+    name: snapshot.limitName ?? null,
+    primary: window(snapshot.primary),
+    secondary: window(snapshot.secondary),
+    credits: snapshot.credits
+      ? {
+          hasCredits: snapshot.credits.hasCredits,
+          unlimited: snapshot.credits.unlimited,
+          balance: snapshot.credits.balance ?? null,
+        }
+      : null,
+    planType: snapshot.planType ?? null,
+    limitReached: snapshot.rateLimitReachedType ?? null,
+  };
+}
 const sessionSchema = z.object({
   thread: z.object({
     id: string.min(1),
@@ -287,6 +353,38 @@ export class CodexAdapter implements ProviderAdapter {
         planType: account.planType ?? null,
       },
     };
+  }
+  /** Codex's supported quota interface; it reads the account's limits, not a model. */
+  async allowance(connection: ProviderConnection): Promise<AllowanceReport> {
+    const read = rateLimitsReadSchema.parse(
+      await connection.request(
+        "account/rateLimits/read",
+        { excludeResetCreditDetails: true },
+        15_000,
+      ),
+    );
+    const byId = Object.entries(read.rateLimitsByLimitId ?? {}).filter(
+      (entry): entry is [string, z.infer<typeof rateLimitSnapshot>] =>
+        entry[1] !== undefined,
+    );
+    return {
+      kind: "read",
+      ordinaryUsageAllowed: read.ordinaryUsageAllowed ?? null,
+      buckets: byId.length
+        ? byId.map(([key, snapshot]) => rateLimitBucket(snapshot, key))
+        : [rateLimitBucket(read.rateLimits)],
+    };
+  }
+  allowanceUpdate(method: string, payload: unknown): AllowanceReport | null {
+    if (method !== "account/rateLimits/updated") return null;
+    const parsed = rateLimitsUpdatedSchema.safeParse(payload);
+    return parsed.success
+      ? {
+          kind: "update",
+          ordinaryUsageAllowed: null,
+          buckets: [rateLimitBucket(parsed.data.rateLimits)],
+        }
+      : null;
   }
   async startSession(
     connection: ProviderConnection,

@@ -11,6 +11,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "icons:build": "node scripts/build-icons.mjs",
     "build": "node scripts/build.mjs",
     "start": "npm run build && electron .",
     "dev": "npm run start",
@@ -64,6 +65,7 @@
     ],
     "afterSign": "./scripts/verify-mac-package.mjs",
     "mac": {
+      "icon": "assets/brand/icons/icon.icns",
       "category": "public.app-category.developer-tools",
       "target": [
         "zip"
@@ -71,11 +73,13 @@
       "identity": "-"
     },
     "win": {
+      "icon": "assets/brand/icons/icon.ico",
       "target": [
         "portable"
       ]
     },
     "linux": {
+      "icon": "assets/brand/icons/png",
       "target": [
         "AppImage"
       ],

@@ -26,6 +26,9 @@ const roots = [
   "CommandExecutionRequestApprovalResponse",
   "FileChangeRequestApprovalParams",
   "FileChangeRequestApprovalResponse",
+  "v2/GetAccountRateLimitsParams",
+  "v2/GetAccountRateLimitsResponse",
+  "v2/AccountRateLimitsUpdatedNotification",
 ];
 const [input, version] = process.argv.slice(2);
 if (!input || !/^\d+\.\d+\.\d+$/.test(version ?? ""))

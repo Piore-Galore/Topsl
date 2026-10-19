@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { type ProjectView } from "../../../packages/domain/navigation";
+export type { ProjectView } from "../../../packages/domain/navigation";
+import { AtlasIcon } from "./components/atlas";
+import { ProjectOverview } from "./screens/project-overview";
 import { ParallelActivity } from "./components/parallel-activity";
 import { CoordinatorTeams } from "./components/coordinator-teams";
 import { OptionalCoordination, UsageBudget } from "./components/reporting";
@@ -10,16 +14,6 @@ import { SynchronizationSummary } from "./components/synchronization-summary";
 import type { Task } from "../../../packages/domain/workflow";
 import type { Command } from "../../../packages/domain/commands";
 import { summarizeUsage, budgetAlerts } from "../../../packages/domain/usage";
-export type ProjectView =
-  "overview" | "tasks" | "changes" | "context" | "history" | "synchronization";
-const views: ProjectView[] = [
-  "overview",
-  "tasks",
-  "changes",
-  "context",
-  "history",
-  "synchronization",
-];
 const label = (value: string) =>
   value.replaceAll("-", " ").replace(/^./, (c) => c.toUpperCase());
 function Identity({ name, value }: { name: string; value?: string | null }) {
@@ -48,10 +42,18 @@ export function Coordination({
   projectId,
   view = "overview",
   onView,
+  projectName,
+  projectPath,
+  sessionsContent,
+  historyContent,
 }: {
   projectId: string;
   view?: ProjectView;
   onView?: (view: ProjectView) => void;
+  projectName?: string;
+  projectPath?: string;
+  sessionsContent?: ReactNode;
+  historyContent?: ReactNode;
 }) {
   const [snapshot, setSnapshot] = useState<any>(null),
     [sync, setSync] = useState<any>(null),
@@ -189,11 +191,11 @@ export function Coordination({
     selectedTask.current = task.id;
     setSelected(task.id);
     setInspection(null);
-    setDrawer(window.matchMedia("(max-width:700px)").matches);
+    setDrawer(window.matchMedia("(max-width:1199px)").matches);
     await readInspection(task.id);
   }
   useEffect(() => {
-    if (drawer && window.matchMedia("(max-width:700px)").matches)
+    if (drawer && window.matchMedia("(max-width:1199px)").matches)
       dialog.current?.showModal();
   }, [drawer]);
   const coordination = snapshot?.coordination,
@@ -456,13 +458,15 @@ export function Coordination({
   );
   return (
     <section className="coordination-view" aria-label="Project activity">
-      <div className="section-heading">
+      <div className="page-heading chart-heading">
         <div>
-          <h1>{label(view)}</h1>
-          <p className="muted">
-            Project responsibility, exact inputs and evidence.
-          </p>
+          <div className="eyebrow">PROJECT COMMAND DESK / {label(view)}</div>
+          <h1>
+            {view === "overview" ? (projectName ?? "Overview") : label(view)}
+          </h1>
+          <p className="path">{projectPath ?? "Select a project to begin."}</p>
         </div>
+        <AtlasIcon name="overview" />
         <button
           disabled={pending.refresh || !projectId}
           onClick={() =>
@@ -472,18 +476,11 @@ export function Coordination({
           Refresh activity
         </button>
       </div>
-      {projectId && <Freshness state={freshness} retry={freshness.retry} />}
-      <nav className="project-tabs" aria-label="Project navigation">
-        {views.map((item) => (
-          <button
-            key={item}
-            aria-current={view === item ? "page" : undefined}
-            onClick={() => onView?.(item)}
-          >
-            {label(item)}
-          </button>
-        ))}
-      </nav>
+      {projectId && !["coordinator", "tasks", "changes"].includes(view) && (
+        <Freshness state={freshness} retry={freshness.retry} />
+      )}
+      <div hidden={view !== "sessions"}>{sessionsContent}</div>
+      <div hidden={view !== "history"}>{historyContent}</div>
       {Object.entries(errors)
         .filter(([, message]) => message)
         .map(([key, message]) => (
@@ -497,8 +494,21 @@ export function Coordination({
         <p>Loading project activity…</p>
       ) : (
         <>
+          <div hidden={view !== "coordinator"}>
+            <CoordinatorTeams projectId={projectId} />
+          </div>
+          <div hidden={view !== "tasks" && view !== "changes"}>
+            <Workflows
+              projectId={projectId}
+              view={view === "changes" ? "changes" : "tasks"}
+              onView={onView}
+            />
+          </div>
           {view === "overview" && (
-            <>
+            <ProjectOverview
+              tasks={coordination.tasks}
+              onView={(next) => onView?.(next)}
+            >
               <div className="project-overview">
                 <article>
                   <h2>Responsibility</h2>
@@ -548,7 +558,10 @@ export function Coordination({
                       : "Incomplete coverage; missing is unknown"}
                   </p>
                   <p>{alert.detail}</p>
-                  <p>Native allowance: unknown. API estimate: unavailable.</p>
+                  <p className="tiny">
+                    Provider allowance: Applications → Usage remaining. API
+                    estimate: unavailable.
+                  </p>
                 </article>
               </div>
               <UsageBudget
@@ -556,14 +569,10 @@ export function Coordination({
                 summary={usage}
                 attempts={coordination.attempts}
               />
-              <CoordinatorTeams projectId={projectId} />
-              <Workflows projectId={projectId} />
-              <OptionalCoordination projectId={projectId} />
-            </>
+            </ProjectOverview>
           )}
           {view === "tasks" && (
             <>
-              <Workflows projectId={projectId} />
               <ParallelActivity projectId={projectId} />
               <div className="coordination-layout">
                 <section aria-label="Task list">
@@ -609,383 +618,377 @@ export function Coordination({
                 Changing captured files invalidates acceptance for a newer
                 candidate.
               </p>
-              <Workflows projectId={projectId} />
             </>
           )}
-          {view === "context" && (
-            <>
-              <h2>Shared context</h2>
-              <p>
-                Published inputs are immutable. Dispatch blocking changes remain
-                visible to existing attempts until explicitly restarted.
-              </p>
-              <form
-                className="workflow-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void run("publish", {
-                    type: "shared-revision-publish",
-                    requestId: crypto.randomUUID(),
-                    projectId,
-                    recordId: crypto.randomUUID(),
-                    kind: revisionKind,
-                    title: revisionTitle,
-                    content: revisionContent,
-                    impact:
-                      revisionKind === "decision"
-                        ? "advisory"
-                        : "dispatch-blocking",
-                    expectedHeadId: null,
-                  });
-                }}
-              >
-                <label>
-                  Context kind
-                  <select
-                    value={revisionKind}
-                    onChange={(e) => setRevisionKind(e.target.value as any)}
-                  >
-                    <option value="decision">Decision</option>
-                    <option value="interface">Interface</option>
-                    <option value="specification">Specification</option>
-                  </select>
-                </label>
-                <label>
-                  Title
-                  <input
-                    value={revisionTitle}
-                    onChange={(e) => setRevisionTitle(e.target.value)}
-                    required
-                  />
-                </label>
-                <label>
-                  Exact context
-                  <textarea
-                    value={revisionContent}
-                    onChange={(e) => setRevisionContent(e.target.value)}
-                    required
-                  />
-                </label>
-                <button disabled={pending.publish}>
-                  Publish captured context
-                </button>
-              </form>
-              {sync?.sharedRevisions.map((revision: any) => (
-                <article className="workflow-card" key={revision.id}>
-                  <h3>{revision.title}</h3>
-                  <p>
-                    {label(revision.kind)} · revision {revision.sequence} ·{" "}
-                    {label(revision.impact)}
-                  </p>
-                  <details>
-                    <summary>Captured input</summary>
-                    <pre>{revision.content}</pre>
-                    <Identity name="Revision" value={revision.id} />
-                  </details>
-                </article>
-              ))}
-              <h3>Task input freshness</h3>
-              {sync?.inputs.map((input: any) => (
-                <p key={input.taskId}>
-                  {coordination.tasks.find((t: Task) => t.id === input.taskId)
-                    ?.title ?? "Historical task"}
-                  : {input.detail ?? JSON.stringify(input.stale ?? [])}
+          <div hidden={view !== "context"} className="">
+            <h2>Shared context</h2>
+            <p>
+              Published inputs are immutable. Dispatch blocking changes remain
+              visible to existing attempts until explicitly restarted.
+            </p>
+            <form
+              className="workflow-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run("publish", {
+                  type: "shared-revision-publish",
+                  requestId: crypto.randomUUID(),
+                  projectId,
+                  recordId: crypto.randomUUID(),
+                  kind: revisionKind,
+                  title: revisionTitle,
+                  content: revisionContent,
+                  impact:
+                    revisionKind === "decision"
+                      ? "advisory"
+                      : "dispatch-blocking",
+                  expectedHeadId: null,
+                });
+              }}
+            >
+              <label>
+                Context kind
+                <select
+                  value={revisionKind}
+                  onChange={(e) => setRevisionKind(e.target.value as any)}
+                >
+                  <option value="decision">Decision</option>
+                  <option value="interface">Interface</option>
+                  <option value="specification">Specification</option>
+                </select>
+              </label>
+              <label>
+                Title
+                <input
+                  value={revisionTitle}
+                  onChange={(e) => setRevisionTitle(e.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Exact context
+                <textarea
+                  value={revisionContent}
+                  onChange={(e) => setRevisionContent(e.target.value)}
+                  required
+                />
+              </label>
+              <button disabled={pending.publish}>
+                Publish captured context
+              </button>
+            </form>
+            {sync?.sharedRevisions.map((revision: any) => (
+              <article className="workflow-card" key={revision.id}>
+                <h3>{revision.title}</h3>
+                <p>
+                  {label(revision.kind)} · revision {revision.sequence} ·{" "}
+                  {label(revision.impact)}
                 </p>
-              ))}
-            </>
-          )}
-          {view === "history" && (
-            <>
-              <p>
-                Use project History for paged transcript search and native
-                imports. Continuous source observation requires selecting one
-                exact file and profile.
+                <details>
+                  <summary>Captured input</summary>
+                  <pre>{revision.content}</pre>
+                  <Identity name="Revision" value={revision.id} />
+                </details>
+              </article>
+            ))}
+            <h3>Task input freshness</h3>
+            {sync?.inputs.map((input: any) => (
+              <p key={input.taskId}>
+                {coordination.tasks.find((t: Task) => t.id === input.taskId)
+                  ?.title ?? "Historical task"}
+                : {input.detail ?? JSON.stringify(input.stale ?? [])}
               </p>
-              <form
-                className="workflow-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void run("source", {
-                    type: "native-history-approve",
-                    requestId: crypto.randomUUID(),
-                    projectId,
-                    provider: historyProvider,
-                    profileId: profile,
-                    sessionId: nativeSession,
-                  });
-                }}
-              >
-                <label>
-                  Provider
-                  <select
-                    value={historyProvider}
-                    onChange={(e) => setHistoryProvider(e.target.value as any)}
-                  >
-                    <option value="codex">Codex</option>
-                    <option value="claude">Claude</option>
-                  </select>
-                </label>
-                <label>
-                  Native profile label
-                  <input
-                    value={profile}
-                    onChange={(e) => setProfile(e.target.value)}
-                    required
-                  />
-                </label>
-                <label>
-                  Native session identity
-                  <input
-                    value={nativeSession}
-                    onChange={(e) => setNativeSession(e.target.value)}
-                    required
-                  />
-                </label>
-                <button disabled={pending.source}>
-                  Select and approve history source…
+            ))}
+          </div>
+          <div hidden={view !== "history"} className="history-sources">
+            <h2>Approved native history sources</h2>
+            <p>
+              Use project History for paged transcript search and native
+              imports. Continuous source observation requires selecting one
+              exact file and profile.
+            </p>
+            <form
+              className="workflow-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run("source", {
+                  type: "native-history-approve",
+                  requestId: crypto.randomUUID(),
+                  projectId,
+                  provider: historyProvider,
+                  profileId: profile,
+                  sessionId: nativeSession,
+                });
+              }}
+            >
+              <label>
+                Provider
+                <select
+                  value={historyProvider}
+                  onChange={(e) => setHistoryProvider(e.target.value as any)}
+                >
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                </select>
+              </label>
+              <label>
+                Native profile label
+                <input
+                  value={profile}
+                  onChange={(e) => setProfile(e.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Native session identity
+                <input
+                  value={nativeSession}
+                  onChange={(e) => setNativeSession(e.target.value)}
+                  required
+                />
+              </label>
+              <button disabled={pending.source}>
+                Select and approve history source…
+              </button>
+            </form>
+            {sync?.historySources.map((source: any) => (
+              <article className="workflow-card" key={source.id}>
+                <h3>
+                  {label(source.provider)} source · {label(source.state)}
+                </h3>
+                <p className="path">{source.selectedFile}</p>
+                <p>
+                  {source.detail} · {source.recordCount} records ·{" "}
+                  {source.pendingBytes} pending bytes
+                </p>
+                <p>{source.coverageLosses.length} recorded coverage gaps</p>
+                <button
+                  disabled={pending[source.id]}
+                  onClick={() =>
+                    void run(source.id, {
+                      ...(source.enabled
+                        ? {
+                            type: "native-history-pause",
+                            requestId: crypto.randomUUID(),
+                            projectId,
+                            id: source.id,
+                            expectedRevision: source.revision,
+                          }
+                        : {
+                            type: "native-history-approve",
+                            requestId: crypto.randomUUID(),
+                            projectId,
+                            provider: source.provider,
+                            profileId: source.profileId,
+                            sessionId: source.sessionId,
+                          }),
+                    })
+                  }
+                >
+                  {source.enabled ? "Pause source" : "Review source again…"}
                 </button>
-              </form>
-              {sync?.historySources.map((source: any) => (
-                <article className="workflow-card" key={source.id}>
-                  <h3>
-                    {label(source.provider)} source · {label(source.state)}
-                  </h3>
-                  <p className="path">{source.selectedFile}</p>
-                  <p>
-                    {source.detail} · {source.recordCount} records ·{" "}
-                    {source.pendingBytes} pending bytes
-                  </p>
-                  <p>{source.coverageLosses.length} recorded coverage gaps</p>
+                {source.enabled && (
                   <button
                     disabled={pending[source.id]}
                     onClick={() =>
                       void run(source.id, {
-                        ...(source.enabled
-                          ? {
-                              type: "native-history-pause",
-                              requestId: crypto.randomUUID(),
-                              projectId,
-                              id: source.id,
-                              expectedRevision: source.revision,
-                            }
-                          : {
-                              type: "native-history-approve",
-                              requestId: crypto.randomUUID(),
-                              projectId,
-                              provider: source.provider,
-                              profileId: source.profileId,
-                              sessionId: source.sessionId,
-                            }),
+                        type: "native-history-reconcile",
+                        requestId: crypto.randomUUID(),
+                        projectId,
+                        id: source.id,
+                        expectedRevision: source.revision,
                       })
                     }
                   >
-                    {source.enabled ? "Pause source" : "Review source again…"}
+                    Refresh source
                   </button>
-                  {source.enabled && (
-                    <button
-                      disabled={pending[source.id]}
-                      onClick={() =>
-                        void run(source.id, {
-                          type: "native-history-reconcile",
-                          requestId: crypto.randomUUID(),
-                          projectId,
-                          id: source.id,
-                          expectedRevision: source.revision,
-                        })
-                      }
-                    >
-                      Refresh source
-                    </button>
-                  )}
-                </article>
-              ))}
-            </>
-          )}
-          {view === "synchronization" && (
-            <>
-              <SynchronizationSummary synchronization={sync} />
-              <h2>Native synchronization</h2>
-              {sync?.observations.map((observation: any) => (
-                <article key={observation.id} className="workflow-card">
-                  <h3>
-                    {label(observation.dimension)} · {label(observation.state)}
-                  </h3>
-                  <p>{observation.detail}</p>
-                  <p>Next action: {observation.suggestedAction}</p>
-                  <p>
-                    Evidence: {observation.evidence.level} ·{" "}
-                    {observation.evidence.detail}
-                  </p>
-                  <p>
-                    Last successful observation:{" "}
-                    {observation.lastSuccessfulObservationAt ?? "Unknown"}
-                  </p>
-                </article>
-              ))}
-              {!sync?.observations.length && (
-                <p>No native readback recorded for this project.</p>
-              )}
-              {sync?.fields.map((field: any) => (
-                <article className="workflow-card" key={field.id}>
-                  <h3>
-                    {label(field.field)} · {label(field.state)}
-                  </h3>
-                  <p>
-                    Authority: {label(field.authority)} · Topsl{" "}
-                    {JSON.stringify(field.local)} · native{" "}
-                    {JSON.stringify(field.remote)}
-                  </p>
-                  {["conflict", "pull-required"].includes(field.state) && (
-                    <button
-                      disabled={pending[field.id]}
-                      onClick={() =>
-                        void run(field.id, {
-                          type: "sync-field-resolve",
-                          requestId: crypto.randomUUID(),
-                          projectId,
-                          id: field.id,
-                          expectedRevision: field.revision,
-                          direction: "follow-native",
-                        })
-                      }
-                    >
-                      Follow native value
-                    </button>
-                  )}
-                  {field.state === "conflict" && (
-                    <button
-                      disabled={pending[field.id]}
-                      onClick={() =>
-                        void run(field.id, {
-                          type: "sync-field-resolve",
-                          requestId: crypto.randomUUID(),
-                          projectId,
-                          id: field.id,
-                          expectedRevision: field.revision,
-                          direction: "keep-topsl",
-                        })
-                      }
-                    >
-                      Keep Topsl intent
-                    </button>
-                  )}
-                  {field.state === "push-required" && (
-                    <button
-                      disabled={pending[field.id]}
-                      onClick={() =>
-                        void run(field.id, {
-                          type: "sync-field-push",
-                          requestId: crypto.randomUUID(),
-                          projectId,
-                          id: field.id,
-                          expectedRevision: field.revision,
-                        })
-                      }
-                    >
-                      Review native name push…
-                    </button>
-                  )}
-                </article>
-              ))}
-              {sync?.links.map((link: any) => (
-                <article className="workflow-card" key={link.id}>
-                  <h3>
-                    {link.name} · {label(link.provider)} · {label(link.state)}
-                  </h3>
-                  {link.roots.map((root: any) => (
-                    <p className="path" key={root.nativeRoot}>
-                      {root.nativeRoot} ·{" "}
-                      {root.trustRevision
-                        ? "Approved root mapping"
-                        : "Unapproved root mapping"}
-                    </p>
-                  ))}
-                </article>
-              ))}
-              <h2>Managed workspaces</h2>
-              <p>
-                Distinct workspaces share logical project identity. Git
-                worktrees share repository metadata; OS isolation is not
-                enforced.
-              </p>
-              <form
-                className="workflow-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void (async () => {
-                    const plan = await run("workspace", {
-                      type: "workspace-create-preview",
-                      sourceWorkspaceId: workspaceSource,
-                      workflowId: workspaceWorkflow,
-                      kind: workspaceKind,
-                      dirtyInputPolicy: "reviewed-snapshot",
-                      selectedPaths: workspacePaths.trim()
-                        ? workspacePaths.split("\n").filter(Boolean)
-                        : undefined,
-                      approvedUntracked: [],
-                    });
-                    if (plan)
-                      await run("workspace", {
-                        type: "workspace-plan-apply",
+                )}
+              </article>
+            ))}
+          </div>
+          <div hidden={view !== "synchronization"} className="">
+            <SynchronizationSummary synchronization={sync} />
+            <h2>Native synchronization</h2>
+            {sync?.observations.map((observation: any) => (
+              <article key={observation.id} className="workflow-card">
+                <h3>
+                  {label(observation.dimension)} · {label(observation.state)}
+                </h3>
+                <p>{observation.detail}</p>
+                <p>Next action: {observation.suggestedAction}</p>
+                <p>
+                  Evidence: {observation.evidence.level} ·{" "}
+                  {observation.evidence.detail}
+                </p>
+                <p>
+                  Last successful observation:{" "}
+                  {observation.lastSuccessfulObservationAt ?? "Unknown"}
+                </p>
+              </article>
+            ))}
+            {!sync?.observations.length && (
+              <p>No native readback recorded for this project.</p>
+            )}
+            {sync?.fields.map((field: any) => (
+              <article className="workflow-card" key={field.id}>
+                <h3>
+                  {label(field.field)} · {label(field.state)}
+                </h3>
+                <p>
+                  Authority: {label(field.authority)} · Topsl{" "}
+                  {JSON.stringify(field.local)} · native{" "}
+                  {JSON.stringify(field.remote)}
+                </p>
+                {["conflict", "pull-required"].includes(field.state) && (
+                  <button
+                    disabled={pending[field.id]}
+                    onClick={() =>
+                      void run(field.id, {
+                        type: "sync-field-resolve",
                         requestId: crypto.randomUUID(),
-                        id: plan.id,
-                      });
-                  })();
-                }}
-              >
-                <label>
-                  Source workspace
-                  <select
-                    value={workspaceSource}
-                    onChange={(e) => setWorkspaceSource(e.target.value)}
-                    required
+                        projectId,
+                        id: field.id,
+                        expectedRevision: field.revision,
+                        direction: "follow-native",
+                      })
+                    }
                   >
-                    <option value="">Select approved workspace</option>
-                    {coordination.workspaces.map((w: any) => (
-                      <option key={w.id} value={w.id}>
-                        {w.canonicalRoot}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Workflow
-                  <select
-                    value={workspaceWorkflow}
-                    onChange={(e) => setWorkspaceWorkflow(e.target.value)}
-                    required
+                    Follow native value
+                  </button>
+                )}
+                {field.state === "conflict" && (
+                  <button
+                    disabled={pending[field.id]}
+                    onClick={() =>
+                      void run(field.id, {
+                        type: "sync-field-resolve",
+                        requestId: crypto.randomUUID(),
+                        projectId,
+                        id: field.id,
+                        expectedRevision: field.revision,
+                        direction: "keep-topsl",
+                      })
+                    }
                   >
-                    <option value="">Select workflow</option>
-                    {coordination.workflows.map((w: any) => (
-                      <option key={w.id} value={w.id}>
-                        {w.objective}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Workspace route
-                  <select
-                    value={workspaceKind}
-                    onChange={(e) => setWorkspaceKind(e.target.value as any)}
+                    Keep Topsl intent
+                  </button>
+                )}
+                {field.state === "push-required" && (
+                  <button
+                    disabled={pending[field.id]}
+                    onClick={() =>
+                      void run(field.id, {
+                        type: "sync-field-push",
+                        requestId: crypto.randomUUID(),
+                        projectId,
+                        id: field.id,
+                        expectedRevision: field.revision,
+                      })
+                    }
                   >
-                    <option value="snapshot">Selected file snapshot</option>
-                    <option value="worktree">Git worktree</option>
-                  </select>
-                </label>
-                <label>
-                  Selected paths · one per line
-                  <textarea
-                    value={workspacePaths}
-                    onChange={(e) => setWorkspacePaths(e.target.value)}
-                  />
-                </label>
-                <button disabled={pending.workspace}>
-                  Review workspace creation…
-                </button>
-              </form>
-            </>
-          )}
+                    Review native name push…
+                  </button>
+                )}
+              </article>
+            ))}
+            {sync?.links.map((link: any) => (
+              <article className="workflow-card" key={link.id}>
+                <h3>
+                  {link.name} · {label(link.provider)} · {label(link.state)}
+                </h3>
+                {link.roots.map((root: any) => (
+                  <p className="path" key={root.nativeRoot}>
+                    {root.nativeRoot} ·{" "}
+                    {root.trustRevision
+                      ? "Approved root mapping"
+                      : "Unapproved root mapping"}
+                  </p>
+                ))}
+              </article>
+            ))}
+            <h2>Managed workspaces</h2>
+            <p>
+              Distinct workspaces share logical project identity. Git worktrees
+              share repository metadata; OS isolation is not enforced.
+            </p>
+            <form
+              className="workflow-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void (async () => {
+                  const plan = await run("workspace", {
+                    type: "workspace-create-preview",
+                    sourceWorkspaceId: workspaceSource,
+                    workflowId: workspaceWorkflow,
+                    kind: workspaceKind,
+                    dirtyInputPolicy: "reviewed-snapshot",
+                    selectedPaths: workspacePaths.trim()
+                      ? workspacePaths.split("\n").filter(Boolean)
+                      : undefined,
+                    approvedUntracked: [],
+                  });
+                  if (plan)
+                    await run("workspace", {
+                      type: "workspace-plan-apply",
+                      requestId: crypto.randomUUID(),
+                      id: plan.id,
+                    });
+                })();
+              }}
+            >
+              <label>
+                Source workspace
+                <select
+                  value={workspaceSource}
+                  onChange={(e) => setWorkspaceSource(e.target.value)}
+                  required
+                >
+                  <option value="">Select approved workspace</option>
+                  {coordination.workspaces.map((w: any) => (
+                    <option key={w.id} value={w.id}>
+                      {w.canonicalRoot}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Workflow
+                <select
+                  value={workspaceWorkflow}
+                  onChange={(e) => setWorkspaceWorkflow(e.target.value)}
+                  required
+                >
+                  <option value="">Select workflow</option>
+                  {coordination.workflows.map((w: any) => (
+                    <option key={w.id} value={w.id}>
+                      {w.objective}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Workspace route
+                <select
+                  value={workspaceKind}
+                  onChange={(e) => setWorkspaceKind(e.target.value as any)}
+                >
+                  <option value="snapshot">Selected file snapshot</option>
+                  <option value="worktree">Git worktree</option>
+                </select>
+              </label>
+              <label>
+                Selected paths · one per line
+                <textarea
+                  value={workspacePaths}
+                  onChange={(e) => setWorkspacePaths(e.target.value)}
+                />
+              </label>
+              <button disabled={pending.workspace}>
+                Review workspace creation…
+              </button>
+            </form>
+            <OptionalCoordination projectId={projectId} />
+          </div>
         </>
       )}
       {drawer && view === "tasks" && (

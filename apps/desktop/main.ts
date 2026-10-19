@@ -93,6 +93,8 @@ let state: AppState = {
   // The settings are stored in the vault too; until it opens, nothing runs.
   autoAccept: "off",
   claudeTranscriptRead: false,
+  allowances: [],
+  providerBudgets: [],
   serviceError: null,
   configurationWrites: [],
   testProfile: isolatedTest,
@@ -112,8 +114,8 @@ let windowBackground = "";
 function themeBackground(): string {
   return state.theme === "night" ||
     (state.theme === "system" && nativeTheme.shouldUseDarkColors)
-    ? "#1e2521"
-    : "#f5f3ed";
+    ? "#101f28"
+    : "#f3ebdd";
 }
 /** Repaints the window behind the page after the theme or the computer's appearance changes. */
 function updateWindowBackground(): void {
@@ -950,11 +952,23 @@ app.on("second-instance", () => {
   window?.focus();
 });
 app.whenReady().then(async () => {
+  const iconPath = path.join(__dirname, "icon.png");
+  app.setAboutPanelOptions({
+    applicationName: "Topsl",
+    applicationVersion: app.getVersion(),
+    credits: "Navigator’s Atlas · pronounced “topsail”",
+    iconPath,
+  });
+  if (process.platform === "darwin") app.dock?.setIcon(iconPath);
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
         label: "Topsl",
-        submenu: [{ role: "about" }, { type: "separator" }, { role: "quit" }],
+        submenu: [
+          { label: "About Topsl", role: "about" },
+          { type: "separator" },
+          { label: "Quit Topsl", role: "quit" },
+        ],
       },
       { role: "editMenu" },
       { role: "viewMenu" },
@@ -968,6 +982,7 @@ app.whenReady().then(async () => {
     minWidth: 780,
     minHeight: 600,
     title: "Topsl",
+    icon: iconPath,
     backgroundColor: windowBackground,
     show: false,
     webPreferences: {

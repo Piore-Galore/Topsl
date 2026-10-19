@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 
 export function verifyMacApp(appPath) {
   if (process.platform !== "darwin")
@@ -12,6 +13,30 @@ export function verifyMacApp(appPath) {
     ["--verify", "--deep", "--strict", "--verbose=2", appPath],
     { stdio: "pipe", timeout: 120_000 },
   );
+  const iconName = execFileSync(
+    "/usr/libexec/PlistBuddy",
+    [
+      "-c",
+      "Print :CFBundleIconFile",
+      path.join(appPath, "Contents", "Info.plist"),
+    ],
+    { encoding: "utf8", timeout: 10_000 },
+  ).trim();
+  if (iconName !== path.basename(iconName))
+    throw new Error("Invalid Mac app icon path.");
+  const actual = readFileSync(
+    path.join(
+      appPath,
+      "Contents",
+      "Resources",
+      iconName.endsWith(".icns") ? iconName : iconName + ".icns",
+    ),
+  );
+  const expected = readFileSync(
+    new URL("../assets/brand/icons/icon.icns", import.meta.url),
+  );
+  if (!actual.equals(expected))
+    throw new Error("The Mac bundle does not contain Topsl's topsail icon.");
 }
 
 // Run before electron-builder archives the app, including for local packages.
@@ -22,7 +47,7 @@ export default function afterSign(context) {
     `${context.packager.appInfo.productFilename}.app`,
   );
   verifyMacApp(appPath);
-  console.log(`Verified Mac bundle signature: ${appPath}`);
+  console.log(`Verified Mac bundle signature and topsail icon: ${appPath}`);
 }
 
 export async function verifyMacArchive(archivePath) {
@@ -50,7 +75,9 @@ if (
       process.argv[2] ?? `release/Topsl-${version}-mac-${process.arch}.zip`,
     );
     await verifyMacArchive(archivePath);
-    console.log(`Verified extracted Mac package signature: ${archivePath}`);
+    console.log(
+      `Verified extracted Mac package signature and topsail icon: ${archivePath}`,
+    );
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

@@ -1,3 +1,4 @@
+import { navigate } from "./desktop-navigation.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -91,8 +92,9 @@ try {
   page = await app.firstWindow();
   page.on("pageerror", (e) => errors.push(e.message));
   await expect(
-    page.getByRole("heading", { name: "Applications", exact: true }),
+    page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible({ timeout: 45000 });
+  await navigate(page, "Applications");
   // Every native confirmation is recorded and answered with its affirmative
   // button, as the owner would.
   await app.evaluate(({ dialog }, selected) => {
@@ -113,7 +115,7 @@ try {
     };
   }, project);
   const confirmations = () => app.evaluate(() => globalThis.topslConfirmations);
-  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await navigate(page, "Projects");
   await page
     .getByRole("button", { name: "+ Add project", exact: true })
     .click();
@@ -161,6 +163,107 @@ try {
     runtime.id,
   );
   expect(qualification).not.toBeNull();
+
+  // Usage remaining: both native read paths, with local stand-ins, and an
+  // owner-set budget saved and removed on screen.
+  await navigate(page, "Applications");
+  const usage = page.getByRole("region", { name: "Usage remaining" });
+  const codexUsage = usage.getByRole("article", {
+    name: "Codex usage remaining",
+  });
+  const claudeUsage = usage.getByRole("article", {
+    name: "Claude usage remaining",
+  });
+  await expect(codexUsage.locator(".badge")).toHaveText("Reported · current");
+  await expect(codexUsage).toContainText("Weekly window");
+  await expect(codexUsage).toContainText("88% left · 12% used, as reported");
+  await expect(codexUsage).toContainText("plan fixture");
+  await expect(codexUsage).toContainText("Credits");
+  await expect(codexUsage).not.toContainText("fixture-account");
+  await expect(claudeUsage.locator(".badge")).toHaveText("Not reported");
+  await expect(claudeUsage).toContainText(
+    "Remaining: unknown. Claude has not reported its allowance to Topsl yet.",
+  );
+  await expect(claudeUsage).toContainText("/usage");
+  // Select a Claude native-only runtime through the same owner controls.
+  const claudeWrapper = path.join(profile, "claude-usage-fixture");
+  await writeFile(path.join(profile, "claude-config", "usage-fixture"), "");
+  await writeFile(
+    claudeWrapper,
+    `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/claude-usage.cjs"))} "$@"\n`,
+  );
+  await chmod(claudeWrapper, 0o700);
+  await app.evaluate(({ dialog }, selected) => {
+    globalThis.topslOpenPath = selected;
+    const previous = dialog.showMessageBox;
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      if (options.message === "Which runtime are you locating?")
+        return { response: 2, checkboxChecked: false };
+      return previous(...args);
+    };
+  }, claudeWrapper);
+  const claudeRuntime = await page.evaluate(() =>
+    window.topsl.command({ type: "select-runtime" }),
+  );
+  await expect.poll(async () => (await page.evaluate(() => window.topsl.command({ type: "state" }))).installations.some((installation) => installation.id === claudeRuntime.id)).toBe(true);
+  await page.evaluate(
+    async ({ runtimeId, projectId }) => {
+      await window.topsl.command({ type: "trust-installation", id: runtimeId });
+      await window.topsl.command({ type: "project-trust", id: projectId });
+    },
+    { runtimeId: claudeRuntime.id, projectId },
+  );
+  await claudeUsage
+    .getByRole("button", { name: "Refresh from Claude", exact: true })
+    .click();
+  await expect(claudeUsage.locator(".badge")).toHaveText("Reported · current");
+  await expect(claudeUsage).toContainText("87% left · 13% used, as reported");
+  await expect(claudeUsage).toContainText("49% left · 51% used, as reported");
+  await expect(claudeUsage).toContainText("Current week (Fable)");
+  await expect(claudeUsage).toContainText("Resets 1:29am (Asia/Shanghai)");
+  await expect(claudeUsage).not.toContainText("private@example");
+  await codexUsage
+    .getByRole("button", { name: "Refresh from Codex", exact: true })
+    .click();
+  await expect(
+    codexUsage.getByRole("button", { name: "Refresh from Codex", exact: true }),
+  ).toBeEnabled();
+  await expect(codexUsage.getByRole("alert")).toHaveCount(0);
+  await expect(
+    codexUsage.getByRole("status", { name: "Codex owner-set budget" }),
+  ).toHaveText("No owner-set budget.");
+  await codexUsage
+    .locator("summary", { hasText: "Set your own budget for Codex" })
+    .click();
+  await codexUsage
+    .getByRole("spinbutton", { name: "Tokens per period", exact: true })
+    .fill("5000");
+  await codexUsage
+    .getByRole("combobox", { name: "Period", exact: true })
+    .selectOption("day");
+  await codexUsage
+    .getByRole("button", { name: "Save budget", exact: true })
+    .click();
+  await expect(
+    codexUsage.getByRole("status", { name: "Codex owner-set budget" }),
+  ).toHaveText(
+    "Owner-set budget: 5,000 tokens today. Topsl observed 0 known tokens · 5,000 tokens left · no runs in Topsl yet.",
+  );
+  await page.screenshot({
+    path: "test-results/usage-remaining.png",
+    fullPage: true,
+  });
+  await codexUsage
+    .getByRole("button", { name: "Remove budget", exact: true })
+    .click();
+  await expect(
+    codexUsage.getByRole("status", { name: "Codex owner-set budget" }),
+  ).toHaveText("No owner-set budget.");
+  expect(
+    (await page.evaluate(() => window.topsl.command({ type: "state" })))
+      .providerBudgets,
+  ).toEqual([]);
   const query = () =>
     page.evaluate(
       (projectId) =>
@@ -168,21 +271,24 @@ try {
       projectId,
     );
   const routes = (await query()).routes;
-  expect(routes).toHaveLength(1);
-  for (const purpose of Object.values(routes[0].purposes))
+  expect(routes.map((route) => route.provider).sort()).toEqual(["claude", "codex"]);
+  const codexRoute = routes.find((route) => route.provider === "codex");
+  const claudeRoute = routes.find((route) => route.provider === "claude");
+  for (const purpose of Object.values(claudeRoute.purposes)) expect(purpose.ready).toBe(false);
+  for (const purpose of Object.values(codexRoute.purposes))
     expect(purpose).toEqual({ ready: true, blockers: [] });
 
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await navigate(page, "Coordinator");
   await page
     .getByRole("navigation", { name: "Project navigation" })
-    .getByRole("button", { name: "Overview", exact: true })
+    .getByRole("button", { name: "Coordinator", exact: true })
     .click();
   const section = page.getByRole("region", {
     name: "Coordinator conversation",
   });
   await expect(
-    section.getByRole("heading", { name: "Coordinator", exact: true }),
+    section.getByRole("heading", { name: "Team conversation", exact: true }),
   ).toBeVisible();
   const defaults = section.locator("details", {
     has: page.getByText("Project role defaults", { exact: true }),
@@ -578,9 +684,7 @@ try {
 const reopened = await launch();
 try {
   const page = await reopened.firstWindow();
-  await expect(
-    page.getByRole("heading", { name: "Applications", exact: true }),
-  ).toBeVisible({ timeout: 45000 });
+  await expect(page.locator(".app-shell")).toBeVisible({ timeout: 45000 });
   const view = await page.evaluate(
     (projectId) =>
       window.topsl.command({ type: "orchestration-query", projectId }),
@@ -604,5 +708,5 @@ try {
   await reopened.close();
 }
 console.log(
-  "Desktop coordinator journey passed: UI-01 role editor and conversation produce the same persisted settings for pin, remove and return to Auto, and the whole role returns to Auto; a goal from the conversation runs to awaiting acceptance with coordinator and reviewer member cards and round progress, and is accepted through Topsl's native dialog; UI-02 a fifth reviewer is added and edited by keyboard in a 560 x 720 window with counts that follow the list; settings survive a restart. Against a qualified Codex stand-in only.",
+  "Desktop coordinator journey passed: UI-01 role editor and conversation produce the same persisted settings for pin, remove and return to Auto, and the whole role returns to Auto; a goal from the conversation runs to awaiting acceptance with coordinator and reviewer member cards and round progress, and is accepted through Topsl's native dialog; UI-02 a fifth reviewer is added and edited by keyboard in a 560 x 720 window with counts that follow the list; settings survive a restart; Applications shows the stand-in's reported Codex allowance, Claude's as unavailable in Topsl, and an owner-set Codex budget saved and removed. Against a qualified Codex stand-in only.",
 );

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="ocean" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#264A5A"/>
+      <stop offset="1" stop-color="#102630"/>
+    </linearGradient>
+    <linearGradient id="canvas" x1="0" y1="0" x2="0.85" y2="1">
+      <stop stop-color="#FFFCED"/>
+      <stop offset="1" stop-color="#E7D5AD"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#ocean)"/>
+  <rect x="17" y="17" width="222" height="222" rx="46" fill="none" stroke="#D1AE6C" stroke-opacity=".36" stroke-width="1.5"/>
+  <path d="M128 42V211" stroke="#D1AE6C" stroke-width="9" stroke-linecap="round"/>
+  <path d="M53 74Q128 61 203 74" fill="none" stroke="#D1AE6C" stroke-width="8" stroke-linecap="round"/>
+  <path d="M61 80Q128 67 195 80Q178 119 191 168Q132 156 65 179Q82 130 61 80Z" fill="url(#canvas)"/>
+  <path d="M65 179Q132 156 191 168Q133 171 76 190Z" fill="#D5BA85"/>
+  <path d="M128 76Q144 115 135 165" fill="none" stroke="#B89A66" stroke-opacity=".58" stroke-width="2"/>
+  <path d="M107 209H149" stroke="#D1AE6C" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -9,7 +9,9 @@ await mkdir(output, { recursive: true });
 const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import{Coordination}from'${path.resolve("apps/desktop/renderer/coordination.tsx")}';
 import'${path.resolve("apps/desktop/renderer/style.css")}';
-function Fixture(){const[project,setProject]=useState('project'),[view,setView]=useState('overview');return <main style={{maxWidth:1100,margin:'auto',padding:20}}><label>Fixture project<select value={project} onChange={e=>setProject(e.target.value)}><option value="project">项目 Alpha · /tmp/路径</option><option value="other">Project Beta</option></select></label><Coordination key={project} projectId={project} view={view} onView={setView}/></main>}createRoot(document.getElementById('root')).render(<Fixture/>);`;
+import'${path.resolve("apps/desktop/renderer/atlas.css")}';
+import{projectViews,viewLabel}from'${path.resolve("packages/domain/navigation.ts")}';
+function Fixture(){const[project,setProject]=useState('project'),[view,setView]=useState('tasks');return <main style={{maxWidth:1100,margin:'auto',padding:20}}><label>Fixture project<select value={project} onChange={e=>setProject(e.target.value)}><option value="project">项目 Alpha · /tmp/路径</option><option value="other">Project Beta</option></select></label><nav aria-label="Project navigation">{projectViews.map(v=><button key={v} onClick={()=>setView(v)}>{viewLabel(v)}</button>)}</nav><Coordination key={project} projectId={project} view={view} onView={setView}/></main>}createRoot(document.getElementById('root')).render(<Fixture/>);`;
 await build({
   stdin: { contents: entry, loader: "tsx", resolveDir: process.cwd() },
   bundle: true,
@@ -17,6 +19,7 @@ await build({
   format: "iife",
   outfile: path.join(directory, "ui.js"),
   jsx: "automatic",
+  loader: { ".svg": "dataurl" },
 });
 await writeFile(
   path.join(directory, "index.html"),
@@ -44,7 +47,7 @@ try {
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
   await expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: "Tasks", exact: true }),
   ).toBeVisible();
   const setup = page.locator(".guided-workflow");
   await setup.locator("summary").first().focus();
@@ -157,22 +160,11 @@ try {
     .first()
     .click();
   await setup
-    .locator("summary")
-    .filter({ hasText: "Explicit assisted model intent" })
-    .last()
-    .click();
-  await setup
     .getByRole("textbox", {
       name: "Unverified builder native model intent",
       exact: true,
     })
     .fill("explicit-native-builder");
-  await setup
-    .getByRole("textbox", {
-      name: "Unverified reviewer native model intent",
-      exact: true,
-    })
-    .fill("explicit-native-reviewer");
   await setup
     .getByRole("button", { name: "3. Environment", exact: true })
     .click();
@@ -206,7 +198,7 @@ try {
     })),
   ).toEqual({
     providers: ["codex", "claude"],
-    models: ["explicit-native-builder", "explicit-native-reviewer"],
+    models: ["explicit-native-builder", "set-in-claude-code"],
     recipe: "fixture-recipe",
   });
   await expect(
@@ -653,6 +645,7 @@ try {
       ),
     )
     .toBe(true);
+  await page.getByRole("navigation", { name: "Project navigation" }).getByRole("button", { name: "Tasks", exact: true }).click();
   await setup.getByRole("heading", { name: "Team", exact: true }).focus();
   await page.screenshot({ path: path.join(output, "guided-compact.png") });
   await artifacts
@@ -759,7 +752,9 @@ try {
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(resolve)),
   );
-  await expect(taskA).toBeDisabled();
+  // A background refresh keeps the inspector action available; stale reads
+  // still cannot replace the evidence from the newer request.
+  await expect(taskA).toBeEnabled();
   await app.evaluate(() => global.fixture.taskInspections[3].complete());
   await expect(taskA).toBeEnabled();
   await expect(taskInspector).toContainText("Evidence for task-a");

@@ -113,6 +113,10 @@ data.workflow = (objective) => ({
   },
   checksStatus: [],
   approvals: [],
+  claudeSteps: [],
+  claudeProvenance: [],
+  claudeStep: null,
+  claudeStepTerminalId: null,
 });
 data.execution = () => ({
   id: "execution",

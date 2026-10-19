@@ -1,0 +1,43 @@
+{
+  "recordedAt": "2026-10-18T16:35:25.822Z",
+  "scope": "Actual Electron with isolated synthetic profile and local terminal stand-in",
+  "reports": [
+    {
+      "theme": "paper",
+      "contrast": {
+        "brassText": 4.825419020993992,
+        "text": 10.106885220533371,
+        "panelText": 11.288649840754406,
+        "muted": 4.942409310765117,
+        "mutedPanel": 5.520308864848013,
+        "primary": 8.580088373078853,
+        "good": 6.026662743901711,
+        "warning": 5.847051930479461,
+        "sidebar": 7.890238245356626,
+        "selectedSidebar": 7.932811765567514,
+        "controlBoundary": 3.7606871233001273,
+        "focus": 6.247364414319691,
+        "sidebarBoundary": 3.6447711154148528
+      }
+    },
+    {
+      "theme": "night",
+      "contrast": {
+        "brassText": 8.47312114842627,
+        "text": 13.457532736158377,
+        "panelText": 11.4211949684507,
+        "muted": 9.683302034993341,
+        "mutedPanel": 8.21806512741392,
+        "primary": 8.322677531423743,
+        "good": 7.188770909252976,
+        "warning": 7.051067914326785,
+        "sidebar": 10.593168878796071,
+        "selectedSidebar": 8.917725042266389,
+        "controlBoundary": 4.60547595087235,
+        "focus": 8.47312114842627,
+        "sidebarBoundary": 4.893347291872853
+      }
+    }
+  ],
+  "errors": []
+}

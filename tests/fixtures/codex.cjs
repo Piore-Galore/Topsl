@@ -21,6 +21,25 @@ const send = (value) => {
   log("fixture", value);
   process.stdout.write(JSON.stringify(value) + "\n");
 };
+// FIXTURE_RESETS_AT sets the weekly window's reset time in Unix seconds.
+const rateLimitSnapshot = (usedPercent) => ({
+  limitId: "codex",
+  limitName: null,
+  normalModelSlug: null,
+  primary: {
+    usedPercent,
+    windowDurationMins: 10080,
+    resetsAt: Number(
+      process.env.FIXTURE_RESETS_AT || Math.floor(Date.now() / 1000) + 86400,
+    ),
+  },
+  secondary: null,
+  credits: { hasCredits: false, unlimited: false, balance: "0" },
+  individualLimit: null,
+  spendControlReached: false,
+  planType: "fixture",
+  rateLimitReachedType: null,
+});
 let pendingApproval = false;
 let pendingTool = null;
 let turn = "turn-fixture";
@@ -119,6 +138,19 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         email: "fixture@example.test",
         planType: "fixture",
       },
+    });
+  else if (
+    request.method === "account/rateLimits/read" &&
+    process.env.FIXTURE_RATE_LIMITS !== "unsupported"
+  )
+    // The shape Codex CLI 0.163.0 returns; the values are synthetic.
+    reply({
+      ordinaryUsageAllowed: true,
+      rateLimits: rateLimitSnapshot(12),
+      rateLimitsByLimitId: { codex: rateLimitSnapshot(12) },
+      rateLimitResetCredits: null,
+      accountId: "fixture-account",
+      rateLimitUpsell: null,
     });
   else if (["thread/start", "thread/resume"].includes(request.method))
     reply(threadResponse(request.params, "thread-fixture"));
@@ -229,6 +261,19 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             ask();
           }, 20);
         }
+      } else if (prompt === "rate limit update") {
+        // A sparse rolling update, as Codex sends while a turn runs.
+        send({
+          method: "account/rateLimits/updated",
+          params: {
+            rateLimits: {
+              ...rateLimitSnapshot(40),
+              credits: null,
+              planType: null,
+            },
+          },
+        });
+        done("Fixture response, no model was contacted.");
       } else done("Fixture response, no model was contacted.");
     }, 20);
   } else if (request.method === "turn/interrupt") {

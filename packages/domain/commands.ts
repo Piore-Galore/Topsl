@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { projectViews } from "./navigation";
 import { workflowDraftCommands } from "./workflow-drafts";
 import { candidateReviewCommands } from "./candidate-reviews";
 import {
@@ -12,6 +13,7 @@ import {
 import { terminalModeIds } from "./terminal-modes";
 import { codexApprovalPolicies } from "./chat-presets";
 import { autoAcceptLevels } from "./auto-accept";
+import { budgetPeriods } from "./allowance";
 import {
   deviceIdentitySchema,
   portableContentSchema,
@@ -410,14 +412,7 @@ export const commandSchema = z.discriminatedUnion("type", [
     type: z.literal("navigation-save"),
     projectId: id.nullable(),
     workflowId: id.nullable(),
-    projectView: z.enum([
-      "overview",
-      "tasks",
-      "changes",
-      "context",
-      "history",
-      "synchronization",
-    ]),
+    projectView: z.enum(projectViews),
   }),
   z.object({ type: z.literal("navigation-query") }),
   z.object({ type: z.literal("managed-workspaces-query"), projectId: id }),
@@ -831,6 +826,19 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("runtime-login"), id }),
   z.object({ type: z.literal("runtime-models"), id }),
   z.object({ type: z.literal("runtime-account"), id }),
+  /** Reads the account's subscription allowance from the runtime. */
+  z.object({
+    type: z.literal("provider-allowance-refresh"),
+    id,
+    projectId: id.optional(),
+  }),
+  /** The owner's own token budget for a provider; null tokens removes it. */
+  z.object({
+    type: z.literal("provider-budget-save"),
+    provider: z.enum(["codex", "claude"]),
+    tokens: z.number().int().positive().max(1e12).nullable(),
+    period: z.enum(budgetPeriods),
+  }),
   z.object({
     type: z.literal("runtime-qualify"),
     id,

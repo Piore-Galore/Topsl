@@ -7,6 +7,7 @@ import type {
 import type { CodexApprovalPolicy } from "../domain/chat-presets";
 import type { Evidence } from "../domain/workflow";
 import type { ProcessEvidence } from "../runtime/process-lifecycle";
+import type { AllowanceReport } from "../domain/allowance";
 export interface ProviderConnection {
   process: { pid?: number; once(event: "exit", callback: () => void): unknown };
   onNotification: (method: string, params: unknown) => void;
@@ -194,6 +195,11 @@ export interface ProviderAdapter {
     connection: ProviderConnection,
     installation: Installation,
   ): Promise<ProviderAccount>;
+  /** Reads the account's subscription allowance through the runtime's
+   * supported quota interface. Absent when the runtime offers none. */
+  allowance?(connection: ProviderConnection): Promise<AllowanceReport>;
+  /** Reads a notification as a rolling allowance update, or returns null. */
+  allowanceUpdate?(method: string, payload: unknown): AllowanceReport | null;
   startSession(
     connection: ProviderConnection,
     turn: PreparedTurn,

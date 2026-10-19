@@ -1,0 +1,30 @@
+{
+  "result": "passed",
+  "scope": "isolated renderer fixtures; no live provider qualification",
+  "assertions": [
+    "keyboard draft setup",
+    "project draft isolation",
+    "late previous-project error isolation",
+    "blocked coordinated route and explicit assisted capture",
+    "same-project response ordering",
+    "retained refresh errors",
+    "epoch restore recovery",
+    "finding decision keyboard navigation and rationale",
+    "protected logs, lifecycle reconciliation and cleanup without rerun",
+    "bounded large manifest and pinned context retrieval feedback",
+    "affirmative manual binary attestation and exact-hash artifact approval with native cancel",
+    "new output capture creates a fresh candidate requiring review",
+    "Paper, Night and System themes",
+    "compact and enlarged reduced-motion layout",
+    "task selection pending recovery and same-task overlapping read fencing"
+  ],
+  "latency": {
+    "p50Ms": 115,
+    "p95Ms": 116,
+    "maxMs": 125,
+    "samples": 30,
+    "targetP95Ms": 250,
+    "report": "/Users/piore/repos/Topsl/test-results/round2-ui/latency.json"
+  },
+  "screenshots": "/Users/piore/repos/Topsl/test-results/round2-ui"
+}

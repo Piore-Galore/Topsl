@@ -34,7 +34,12 @@ test(
 <key>CFBundleIdentifier</key><string>com.piore.topsl.signature-test</string>
 <key>CFBundleExecutable</key><string>Topsl</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>icon.icns</string>
 </dict></plist>`,
+    );
+    await copyFile(
+      new URL("../assets/brand/icons/icon.icns", import.meta.url),
+      path.join(app, "Contents", "Resources", "icon.icns"),
     );
     const resource = path.join(app, "Contents", "Resources", "fixture.txt");
     await writeFile(resource, "sealed resource");

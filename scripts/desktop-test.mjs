@@ -1,3 +1,4 @@
+import { navigate } from "./desktop-navigation.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import {
   mkdtemp,
@@ -120,18 +121,17 @@ let desktopBenchmark = null;
 try {
   const page = await app.firstWindow();
   page.on("pageerror", (e) => errors.push(e.message));
-  await expect(
-    page.getByRole("heading", { name: "Applications", exact: true }),
-  ).toBeVisible({ timeout: 45000 });
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible({ timeout: 45000 });
+  await navigate(page, "Applications");
   await expect(page.getByText("You approve every Topsl update.")).toBeVisible();
-  await expect(page.locator(".application-card")).toHaveCount(4);
+  await expect(page.locator(".application-catalog .application-card")).toHaveCount(4);
   // A test profile never searches for applications, and says so. An
   // application without a native build for this platform keeps its own label.
   await expect(page.getByText("This is a test profile.")).toBeVisible();
   const { applications, platform } = await page.evaluate(() =>
     window.topsl.command({ type: "state" }),
   );
-  const badges = page.locator(".application-card .badge");
+  const badges = page.locator(".application-catalog .application-card .badge");
   await expect(badges.filter({ hasText: "Not searched" })).toHaveCount(
     applications.filter((application) =>
       application.platforms.includes(platform.split("/")[0]),
@@ -168,16 +168,17 @@ try {
       checkboxChecked: false,
     });
   }, project);
-  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await navigate(page, "Projects");
   await page
     .getByRole("button", { name: "+ Add project", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "fixture-project", exact: true }),
   ).toBeVisible();
+  await navigate(page, "Sessions");
   await page.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect(page.locator(".conversation-heading")).toContainText("Chat 1");
-  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await navigate(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
@@ -335,7 +336,7 @@ try {
       filePaths: [selected],
     });
   }, transcript);
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await navigate(page, "History");
   await page
     .getByRole("button", { name: "Import Codex JSONL", exact: true })
     .click();
@@ -416,7 +417,7 @@ try {
       stream,
     });
   }
-  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await navigate(page, "Sessions");
   await page
     .getByRole("combobox", { name: "Conversation", exact: true })
     .selectOption(streamFixtures[0].conversationId);
@@ -596,7 +597,7 @@ try {
       workflowId: workflow.id,
     },
   );
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await navigate(page, "Tasks");
   const projectNav = page.getByRole("navigation", {
     name: "Project navigation",
   });
@@ -606,7 +607,7 @@ try {
     const begin = Date.now();
     await projectNav.getByRole("button", { name, exact: true }).click();
     await expect(
-      page.getByRole("heading", { name, exact: true }).first(),
+      page.getByRole("heading", { name: name === "Overview" ? "fixture-project" : name, exact: true }).first(),
     ).toBeVisible();
     interactions.push(Date.now() - begin);
   }
@@ -872,7 +873,7 @@ try {
     "test-results/desktop-coordination-benchmark.json",
     JSON.stringify(desktopBenchmark, null, 2),
   );
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await navigate(page, "Settings");
   await expect(
     page.getByText("System follows the computer’s light or dark appearance."),
   ).toBeVisible();
@@ -915,7 +916,7 @@ try {
   expect(context.administrativeAuthority).toBe(false);
   await page.getByRole("button", { name: "Paper", exact: true }).click();
   await page.setViewportSize({ width: 800, height: 650 });
-  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await navigate(page, "Projects");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
@@ -925,7 +926,7 @@ try {
     path: "test-results/projects-compact.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Applications", exact: true }).click();
+  await navigate(page, "Applications");
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,
   );
@@ -975,7 +976,7 @@ try {
     const pairing =
       "Codex reviews Codex in a fresh, read-only session. This is not an independent second model.";
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.getByRole("button", { name: "Activity", exact: true }).click();
+    await navigate(page, "Tasks");
     const setup = page.locator(".guided-workflow");
     await setup.locator("summary").first().click();
     await setup
@@ -1147,9 +1148,9 @@ try {
     // committed its records, each synced to disk. A slow CI disk can stretch
     // that past the default five seconds, so these waits allow 30.
     const committed = { timeout: 30000 };
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await navigate(page, "Sessions");
     await expect(
-      page.getByRole("heading", { name: "fixture-project", exact: true }),
+      page.getByRole("heading", { name: "Sessions", exact: true }),
     ).toBeVisible();
     const conversationSelect = page.getByRole("combobox", {
       name: "Conversation",
@@ -1457,7 +1458,7 @@ try {
     ).toEqual([expect.objectContaining({ id: projectIds[0], claude: "plan" })]);
     // Auto-accept in Settings: turning it on takes Topsl's own confirmation,
     // and while it is on, the terminal menu starts in its mode.
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await navigate(page, "Settings");
     const autoAccept = page.getByRole("region", { name: "Auto-accept" });
     const level = (name) =>
       autoAccept.getByRole("button", { name, exact: true });
@@ -1502,13 +1503,13 @@ try {
       "Only use this mode in isolated environments",
     );
     await expect(level("Sandboxed")).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await navigate(page, "Sessions");
     await expect(modeSelect).toHaveValue("sandboxed", committed);
     await expect(modeNote).toContainText(
       "Passes --permission-mode acceptEdits --settings",
     );
     // Turning it off takes no confirmation, and the menu returns to Plan.
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await navigate(page, "Settings");
     await level("Off").click();
     await expect(level("Off")).toHaveAttribute(
       "aria-pressed",
@@ -1516,11 +1517,11 @@ try {
       committed,
     );
     expect(await confirmations()).toBe(beforeAutoAccept + 2);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await navigate(page, "Sessions");
     await expect(modeSelect).toHaveValue("plan", committed);
     // The transcript read in Settings: turning it on takes Topsl's own
     // confirmation, and turning it off takes none.
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await navigate(page, "Settings");
     const transcripts = page.getByRole("region", {
       name: "Claude Code transcripts",
     });
@@ -1604,7 +1605,7 @@ try {
     const stage = (card, text) =>
       expect(card.getByText(text, { exact: true })).toBeVisible(working);
     const activity = async () => {
-      await page.getByRole("button", { name: "Activity", exact: true }).click();
+      await navigate(page, "Tasks");
       await expect(workflowSetup).toBeVisible(committed);
     };
     const settings = () =>
@@ -2200,9 +2201,7 @@ const reopened = await electron.launch({
 });
 try {
   const page = await reopened.firstWindow();
-  await expect(
-    page.getByRole("heading", { name: "Applications", exact: true }),
-  ).toBeVisible({ timeout: 45000 });
+  await expect(page.locator(".app-shell")).toBeVisible({ timeout: 45000 });
   const state = await page.evaluate(() =>
     window.topsl.command({ type: "state" }),
   );

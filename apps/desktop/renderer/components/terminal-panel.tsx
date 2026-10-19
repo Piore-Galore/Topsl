@@ -12,6 +12,33 @@ export function recordTerminalOutput(id: string, data: string): void {
 }
 const terminalOutput = (id: string): string => outputs.get(id) ?? "";
 
+function terminalTheme() {
+  const style = getComputedStyle(document.documentElement);
+  const color = (name: string) => style.getPropertyValue(name).trim();
+  return {
+    background: color("--terminal-bg"),
+    foreground: color("--terminal-fg"),
+    cursor: color("--terminal-cursor"),
+    selectionBackground: "#668d9a66",
+    black: "#9db0b8",
+    red: "#ffaba0",
+    green: "#b4d6ae",
+    yellow: "#e3ca8a",
+    blue: "#9dc7eb",
+    magenta: "#d7b4dc",
+    cyan: "#a1d9d8",
+    white: "#eee5d5",
+    brightBlack: "#a3b7be",
+    brightRed: "#ffc1b8",
+    brightGreen: "#c3e8bd",
+    brightYellow: "#f7dea0",
+    brightBlue: "#b7dbfa",
+    brightMagenta: "#ecd0f0",
+    brightCyan: "#bcebea",
+    brightWhite: "#fff9ed",
+  };
+}
+
 export function TerminalPanel({
   id,
   mode,
@@ -29,16 +56,22 @@ export function TerminalPanel({
       fontSize: 13,
       cursorBlink: true,
       scrollback: 3000,
-      theme: {
-        background: "#202421",
-        foreground: "#e7e7dd",
-        cursor: "#db9b66",
-      },
+      theme: terminalTheme(),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(ref.current!);
     fit.fit();
+    const repaint = () => {
+      terminal.options.theme = terminalTheme();
+    };
+    const appearance = matchMedia("(prefers-color-scheme: dark)");
+    appearance.addEventListener("change", repaint);
+    const themeChanges = new MutationObserver(repaint);
+    themeChanges.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     // The output so far, read just before subscribing below, so output that
     // arrived after the panel rendered is not lost.
     terminal.write(terminalOutput(id));
@@ -49,6 +82,7 @@ export function TerminalPanel({
         .catch(() => {});
     });
     const resize = new ResizeObserver(() => {
+      if (!ref.current?.clientWidth || !ref.current?.clientHeight) return;
       fit.fit();
       void window.topsl
         .command({
@@ -67,12 +101,14 @@ export function TerminalPanel({
     return () => {
       unsubscribe();
       resize.disconnect();
+      themeChanges.disconnect();
+      appearance.removeEventListener("change", repaint);
       input.dispose();
       terminal.dispose();
     };
   }, [id]);
   return (
-    <section className="terminal-panel">
+    <section className="terminal-panel" data-session-id={id}>
       <div className="terminal-heading">
         <span>
           Native session{mode ? ` · ${mode}` : ""} · native permissions and

@@ -1,0 +1,9 @@
+{
+  "packaged": true,
+  "userData": "isolated disposable profile",
+  "name": "topsl",
+  "version": "0.1.2",
+  "dockVisible": true,
+  "recordedAt": "2026-10-18T16:40:13.507Z",
+  "scope": "Packaged startup, signed topsail resource and Dock visibility; no installation or provider execution"
+}

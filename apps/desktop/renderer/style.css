@@ -1,27 +1,8 @@
-/* Paper. Night, and System on a dark computer, redefine these colors below. */
+/* Layout foundations. Navigator’s Atlas tokens and refinements live in atlas.css. */
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--paper);
   font-synthesis: none;
-  --paper: #f5f3ed;
-  --card: #fdfcf8;
-  --nav: #efede5;
-  --ink: #28322b;
-  --muted: #788074;
-  --line: #ddded3;
-  --accent: #ac5336;
-  --accent-soft: #f4e5d8;
-  --green: #3d6652;
-  --primary: var(--accent);
-  --primary-hover: #90452e;
-  --primary-ink: #fff8ee;
-  --good-ink: var(--green);
-  --good-soft: #e6eee4;
-  --good-line: #d5e3d6;
-  --warm-line: #ead6c4;
-  --shadow: 0 20px 80px #151c2226;
-  color-scheme: light;
 }
 * {
   box-sizing: border-box;
@@ -994,47 +975,8 @@ dialog::backdrop {
 /* Night. On a dark computer, System uses the same palette, as does the page
    before the renderer sets a theme, so keep the two lists identical. The
    desktop test checks that System matches Night and Paper. */
-:root[data-theme="night"] {
-  --paper: #1e2521;
-  --card: #242d26;
-  --nav: #19211c;
-  --ink: #e1e7d9;
-  --muted: #9ba895;
-  --line: #3c493d;
-  --accent: #d6a077;
-  --accent-soft: #3c3026;
-  --green: #9bba92;
-  --primary: #a8643f;
-  --primary-hover: #8d5435;
-  --primary-ink: #fff6e7;
-  --good-ink: #a9c6a0;
-  --good-soft: #2d3c2e;
-  --good-line: #485d49;
-  --warm-line: #5f4a39;
-  color-scheme: dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]),
-  :root[data-theme="system"] {
-    --paper: #1e2521;
-    --card: #242d26;
-    --nav: #19211c;
-    --ink: #e1e7d9;
-    --muted: #9ba895;
-    --line: #3c493d;
-    --accent: #d6a077;
-    --accent-soft: #3c3026;
-    --green: #9bba92;
-    --primary: #a8643f;
-    --primary-hover: #8d5435;
-    --primary-ink: #fff6e7;
-    --good-ink: #a9c6a0;
-    --good-soft: #2d3c2e;
-    --good-line: #485d49;
-    --warm-line: #5f4a39;
-    color-scheme: dark;
-  }
-}
+
+
 @media (max-width: 1100px) {
   .sidebar {
     width: 180px;
@@ -1082,7 +1024,8 @@ dialog::backdrop {
   }
 }
 @media (max-width: 850px) {
-  .application-grid {
+  .application-grid,
+  .usage-grid {
     grid-template-columns: 1fr;
   }
   .capabilities {
@@ -1655,3 +1598,35 @@ label.checkbox input {
   font-size: 12px;
   margin: 16px 0 8px;
 }
+.provider-usage {
+  margin: 0 0 28px;
+}
+.provider-usage > .eyebrow + p {
+  margin: 6px 0 14px;
+}
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.usage-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 22px;
+  min-width: 0;
+}
+.usage-card .card-title > .badge {
+  margin-left: auto;
+}
+.usage-account {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+  font-size: 12px;
+}
+.provider-usage meter {
+  width: 120px;
+  vertical-align: middle;
+}
+
