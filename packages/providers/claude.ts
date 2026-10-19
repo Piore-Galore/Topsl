@@ -94,7 +94,20 @@ export class ClaudeStreamParser {
   constructor(
     private emit: (event: ClaudeStreamEvent) => void,
     private maxLineBytes = 2_000_000,
+    /** Told of each record that shows where the turn is: a model message
+     * starting or ending, or Claude Code retrying an API request. */
+    private progress?: (
+      kind: "message-start" | "message-stop" | "retry" | "record",
+    ) => void,
   ) {}
+  /** Whether the turn's final result has arrived. */
+  get completed(): boolean {
+    return this.result;
+  }
+  /** The native session the stream reported, once it did. */
+  get session(): string | null {
+    return this.sessionId;
+  }
   push(chunk: string): void {
     this.pending += chunk;
     const lines = this.pending.split("\n");
@@ -122,6 +135,17 @@ export class ClaudeStreamParser {
         "Malformed Claude stream JSON; dispatch outcome is unknown.",
       );
     }
+    const kind = (raw as { event?: { type?: unknown } })?.event?.type,
+      subtype = (raw as { subtype?: unknown })?.subtype;
+    this.progress?.(
+      kind === "message_start"
+        ? "message-start"
+        : kind === "message_stop"
+          ? "message-stop"
+          : subtype === "api_retry"
+            ? "retry"
+            : "record",
+    );
     const base = envelope.parse(raw),
       body = raw as Record<string, unknown>;
     if (base.parent_tool_use_id)
@@ -475,7 +499,28 @@ export interface ClaudeAdapterOptions {
   transport?: ClaudeTransport;
   /** Replaces the native account read for a test. */
   readAccount?: (executable: string) => Promise<ProviderAccount>;
+  /** Replaces the stall deadlines for a test. */
+  stall?: Partial<typeof claudeStallLimits>;
 }
+
+/**
+ * When Topsl treats a running Claude Code turn as stalled, stops it, and
+ * reports it failed so the coordinator can retry the member within its retry
+ * budget. In live runs on 19 October 2026 Claude Code 2.1.302 sometimes went
+ * silent after a model message had ended, and resumed it by itself about 12.5
+ * minutes later ("Your response above was cut off mid-stream"). Between model
+ * messages Claude Code only runs Topsl's granted tools, which return in
+ * seconds, so a gap longer than `afterMessageMs` with no new message, result
+ * or API retry notice is a stall. `silenceMs` bounds a turn that writes
+ * nothing at all, which also covers a model thinking without streaming; it is
+ * longer than any silent stretch seen in those runs. Values are proposed
+ * tuning, not measured limits.
+ */
+export const claudeStallLimits = {
+  afterMessageMs: 180_000,
+  silenceMs: 600_000,
+  checkMs: 5_000,
+};
 
 /**
  * Claude Code's print/stream-json route. An injected fixture transport always
@@ -839,13 +884,37 @@ export class ClaudeAdapter implements ProviderAdapter {
       }
       emit(event);
     };
-    const parser = new ClaudeStreamParser(checked);
+    // Stall watch: when the last model message ended, and when anything
+    // was last written.
+    const limits = { ...claudeStallLimits, ...this.options.stall };
+    let lastRecord = Date.now(),
+      messageEnded: number | null = null,
+      stalled: string | null = null;
+    const parser = new ClaudeStreamParser(checked, undefined, (kind) => {
+      lastRecord = Date.now();
+      if (kind === "message-stop") messageEnded = lastRecord;
+      else if (kind === "message-start" || kind === "retry")
+        messageEnded = null;
+    });
+    const watch = setInterval(() => {
+      if (stalled || parser.completed) return;
+      const at = Date.now(),
+        minutes = (ms: number) =>
+          ms >= 60_000
+            ? `${Math.round(ms / 60_000)} minutes`
+            : `${Math.round(ms / 1000)} seconds`;
+      if (messageEnded !== null && at - messageEnded > limits.afterMessageMs)
+        stalled = `Claude Code wrote nothing for ${minutes(limits.afterMessageMs)} after the model's message ended, so Topsl treated the turn as stalled, stopped Claude Code and recorded the turn as failed.`;
+      else if (at - lastRecord > limits.silenceMs)
+        stalled = `Claude Code wrote nothing for ${minutes(limits.silenceMs)}, so Topsl treated the turn as stalled, stopped Claude Code and recorded the turn as failed.`;
+      if (stalled) process.kill("SIGTERM");
+    }, limits.checkMs);
     let cancelled = false;
     const done = new Promise<void>((resolve, reject) => {
       let parserError: Error | undefined;
       process.stdout.setEncoding("utf8");
       process.stdout.on("data", (chunk: string) => {
-        if (!parserError)
+        if (!parserError && !stalled)
           try {
             parser.push(chunk);
           } catch (e) {
@@ -855,9 +924,30 @@ export class ClaudeAdapter implements ProviderAdapter {
       });
       // Drain stderr without retaining credential-bearing native diagnostics.
       process.stderr.resume();
-      process.on("error", reject);
+      process.on("error", (error) => {
+        clearInterval(watch);
+        reject(error);
+      });
       process.on("close", (code) => {
+        clearInterval(watch);
         if (parserError) return reject(parserError);
+        // A stalled turn whose process has exited ends as a failure Topsl
+        // knows, not an unknown outcome, so it can be retried.
+        if (stalled && !cancelled) {
+          if (!parser.completed)
+            checked({
+              type: "completed",
+              sourceId: "topsl-stall",
+              sessionId: parser.session ?? input.sessionId,
+              text: "",
+              structuredOutput: null,
+              failed: true,
+              detail: stalled,
+              reportedModel: null,
+              denials: [],
+            });
+          return resolve();
+        }
         if (cancelled)
           return reject(
             new Error("Claude cancellation requested; process exit confirmed."),

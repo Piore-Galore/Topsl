@@ -1,6 +1,8 @@
 import path from "node:path";
+import os from "node:os";
+import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vitest";
 import { Service } from "../apps/service/service";
 import {
@@ -95,7 +97,11 @@ function seedCatalog(
     accountKey,
   });
 }
-async function setup(inject = true, turnDelayMs = 20) {
+async function setup(
+  inject = true,
+  turnDelayMs = 20,
+  claudeStallOnce?: string,
+) {
   const f = await fixture();
   f.store.close();
   const service = new Service(
@@ -120,7 +126,16 @@ async function setup(inject = true, turnDelayMs = 20) {
           claude: new ClaudeAdapter(
             claudeFixtureTransport(process.execPath, [
               path.resolve("tests/fixtures/claude-orchestration.cjs"),
+              ...(claudeStallOnce
+                ? ["--fixture-stall-once", claudeStallOnce]
+                : []),
             ]),
+            undefined,
+            claudeStallOnce
+              ? {
+                  stall: { afterMessageMs: 300, silenceMs: 5_000, checkMs: 50 },
+                }
+              : {},
           ),
         }
       : undefined,
@@ -531,4 +546,31 @@ test("a pinned Claude reviewer reviews the candidate through Topsl's candidate r
       tool: "list",
       outcome: "answered",
     });
+});
+
+test("a stalled Claude coordinator turn is stopped, recorded as failed and retried, and the loop completes", async () => {
+  const stallFile = path.join(
+    await mkdtemp(path.join(os.tmpdir(), "topsl-stall-")),
+    "stalled",
+  );
+  const f = await setup(true, 20, stallFile);
+  await enable(f);
+  await roster(f, "coordinator", ["Opus", "Astra"]);
+  await roster(f, "implementer", ["Opus"]);
+  await roster(f, "reviewer", ["Sol"]);
+  const view = await startLoop(f);
+  expect(view.run.state).toBe("completed");
+  // Exactly one Claude turn stalled; it ended failed, not uncertain, so no
+  // lease was left held and the member was retried.
+  expect(existsSync(stallFile)).toBe(true);
+  const runs = f.service.store.list<{
+    provider: string;
+    status: string;
+    error: string | null;
+  }>("run");
+  const stalled = runs.filter((r) => r.error?.includes("stalled"));
+  expect(stalled).toHaveLength(1);
+  expect(stalled[0]).toMatchObject({ provider: "claude", status: "failed" });
+  expect(stalled[0].error).toContain("after the model's message ended");
+  expect(runs.filter((r) => r.status === "uncertain")).toEqual([]);
 });

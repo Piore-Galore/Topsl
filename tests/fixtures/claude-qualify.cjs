@@ -14,6 +14,12 @@
 // FIXTURE_EXTRA_TOOL=1      init reports a Bash tool nobody granted
 // FIXTURE_MODEL=<id>        the model Claude Code reports instead of --model
 // FIXTURE_LOG=<file>        appends each run's arguments as a JSON line
+// FIXTURE_STALL=silent      writes nothing after init and never ends
+// FIXTURE_STALL=after-message ends the model message, then writes nothing
+//                           and never ends (as Claude Code 2.1.302 did live)
+// FIXTURE_STALL=retrying    after the message, reports API retries every
+//                           FIXTURE_RETRY_MS for FIXTURE_RETRY_FOR_MS, then
+//                           finishes normally
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 if (process.env.FIXTURE_LOG)
@@ -93,6 +99,8 @@ process.stdin.on("end", async () => {
     apiKeySource: process.env.FIXTURE_API_KEY ? "ANTHROPIC_API_KEY" : "none",
     uuid: "init-1",
   });
+  const hang = () => setInterval(() => {}, 1000);
+  if (process.env.FIXTURE_STALL === "silent") return hang();
   const denials = [];
   let text = "fixture reply";
   const marker = /nothing else: (\S+)$/m.exec(input);
@@ -163,6 +171,21 @@ process.stdin.on("end", async () => {
       event: streamed,
       uuid: `stream-${n}`,
     });
+  if (process.env.FIXTURE_STALL === "after-message") return hang();
+  if (process.env.FIXTURE_STALL === "retrying") {
+    const every = Number(process.env.FIXTURE_RETRY_MS ?? 100),
+      until = Date.now() + Number(process.env.FIXTURE_RETRY_FOR_MS ?? 1000);
+    for (let attempt = 1; Date.now() < until; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, every));
+      event({
+        type: "system",
+        subtype: "api_retry",
+        attempt,
+        session_id: sessionId,
+        uuid: `retry-${attempt}`,
+      });
+    }
+  }
   event({
     type: "assistant",
     session_id: sessionId,

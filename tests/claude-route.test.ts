@@ -280,6 +280,70 @@ describe("Claude Code's live route", () => {
   );
 });
 
+describe("stalled Claude Code turns", () => {
+  const stalling = (env: Record<string, string>) =>
+    new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      stall: { afterMessageMs: 300, silenceMs: 800, checkMs: 50 },
+      transport: (_executable, args, cwd) =>
+        spawn(process.execPath, [standIn, ...args], {
+          cwd,
+          env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1", ...env }),
+        }),
+    });
+  async function run(adapter: ClaudeAdapter) {
+    const connection = adapter.connect("claude", process.cwd());
+    let exited: string | null = null;
+    connection.onExit = (detail) => (exited = detail);
+    const session = await adapter.startSession(
+      connection,
+      turn("review", "Reply with nothing else: OK-2"),
+      null,
+    );
+    const done = completion(connection),
+      started = Date.now();
+    await adapter.startTurn(
+      connection,
+      turn("review", "Reply with nothing else: OK-2"),
+      session.nativeSessionId,
+    );
+    const result = await done;
+    const lifecycle = await connection.close();
+    return { result, lifecycle, exited, elapsed: Date.now() - started };
+  }
+
+  test.each([
+    ["after-message", "after the model's message ended"],
+    ["silent", "Claude Code wrote nothing for 1 seconds"],
+  ])(
+    "a turn that stalls (%s) is stopped and ends failed with the reason, not as an unknown outcome",
+    async (stall, reason) => {
+      const { result, lifecycle, exited, elapsed } = await run(
+        stalling({ FIXTURE_STALL: stall }),
+      );
+      expect(result).toMatchObject({ type: "completed", failed: true });
+      expect(result.detail).toContain(reason);
+      expect(result.detail).toContain("stopped Claude Code");
+      expect(lifecycle.state).toBe("quiescent");
+      // The process exit was confirmed, so the outcome is known.
+      expect(exited).toBeNull();
+      expect(elapsed).toBeLessThan(5_000);
+    },
+  );
+
+  test("API retry notices between messages keep a slow turn alive", async () => {
+    const { result } = await run(
+      stalling({
+        FIXTURE_STALL: "retrying",
+        FIXTURE_RETRY_MS: "100",
+        FIXTURE_RETRY_FOR_MS: "700",
+      }),
+    );
+    expect(result).toMatchObject({ type: "completed", failed: false });
+    expect(result.text).toBe("OK-2");
+  });
+});
+
 describe("Topsl's MCP server for Claude Code", () => {
   test("it answers only its own path and token, lists the toolset and routes calls; closed, it serves nothing", async () => {
     const calls: any[] = [];
