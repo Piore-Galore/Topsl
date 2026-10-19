@@ -597,6 +597,10 @@ try {
       workflowId: workflow.id,
     },
   );
+  // The side task inspector is the wide layout; below 1200 px a task opens
+  // in a modal drawer instead. Hosted runners' default windows are narrower
+  // than a developer's, so set the width this section checks.
+  await page.setViewportSize({ width: 1280, height: 900 });
   await navigate(page, "Tasks");
   const projectNav = page.getByRole("navigation", {
     name: "Project navigation",
