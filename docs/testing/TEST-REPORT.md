@@ -7,7 +7,7 @@ Final report for campaign `2026-10-19-comprehensive`, which executed the *Topsl 
 **Qualification failed, and the campaign is incomplete.**
 
 - **Failed:** the local runs confirmed P0 defects. The most serious is D-01: with Recursive Looping turned off, Stop is refused while runs keep working. Others are duplicate publication writes, unsettled promotion recovery, rolling-allowance accounting errors, cancellation cleanup and handoff targeting. Under plan §12.6 no release-qualification or full-support claim can be made for this source.
-- **Follow-up (19 October 2026, after the campaign):** D-01 to D-05 were fixed and their reproductions now pass as plain tests; see [the follow-up record](TEST-DECISIONS.md#follow-up-fixes-d-01-to-d-05). The results in this report remain those of the campaign.
+- **Follow-up (19 October 2026, after the campaign):** D-01 to D-10 and D-12 were fixed and their reproductions now pass as plain tests, and remote CI then ran on all four platforms; see [Follow-up: fixes and four-platform CI](#follow-up-fixes-and-four-platform-ci). The campaign results below remain those of `d4b788e`.
 - **Incomplete:** these cells were not executed: Intel Mac, Windows and Linux; the live Claude Build-and-review pairings and Claude qualification; long soaks; screen-reader acceptance; real first-open.
 
 What *is* established, with evidence, is a delimited set of darwin-arm64 results, listed below. A PASS row means the asserted contract held for this source on this host and layer. It does not qualify other platforms, providers or layers.
@@ -157,6 +157,32 @@ These are listed in priority order in [PHASE-STATE → Blockers and next runnabl
 4. Repair the defects, flipping each reproduction to `test` and rerunning the gate.
 5. Re-review OPS-10 against the corrected documentation.
 6. Run the soaks and the remaining NOT RUN variations.
+
+## Follow-up: fixes and four-platform CI
+
+*Dated follow-up, 19 October 2026 (UTC), after the campaign.* The owner signed in to the GitHub CLI, and the campaign branch was pushed as `codex/test-campaign-2026-10-19`. That name matches the workflow's `codex/**` push trigger; nothing was merged to `main` or released. Two repair sessions fixed D-01 to D-05 and D-06 to D-10 plus D-12. Their changes were merged into `test/comprehensive-campaign` as `43977cb`; each repair is recorded in [TEST-DECISIONS](TEST-DECISIONS.md#defect-repairs--19-october-2026-follow-up).
+
+**Local gate on `43977cb`** (darwin-arm64, session environment): typecheck passed. Vitest: 1,119 passed, 17 expected-fail, 5 skipped, 85 files. Release tests 18/0/0, build passed. All seven desktop harnesses passed: main, coordinator, Atlas, loop, focused usage, Round 2 UI and campaign UI.
+
+**CI runs on the campaign branch:**
+
+| Run (commit) | Linux x64 | macOS Apple silicon | macOS Intel | Windows x64 |
+| --- | --- | --- | --- | --- |
+| 39271847356 (`5b5b0b4`) | check passed; desktop **failed**: loop journey, Endless text box detached by re-render (`desktop-loop-test.mjs:380`) | check passed; desktop **failed**: confirmations 3 of 4 expected (`desktop-test.mjs:1755`) | check **failed**: the campaign OPS-06 test exceeded 600 s | Vitest 969 passed / **17 failed** (campaign tests not Windows-safe) / 36 expected-fail / 113 skipped; job hit the 60-minute limit (OPS-06 took 1,362 s) |
+| 39285908708 (`02aeda5`, OPS-06 opt-in and Windows fixes) | check passed; desktop **failed**: confirmations 3 of 4 expected | **all steps passed** | cancelled by the next push | cancelled by the next push |
+| 39289887882 (`43977cb`, all fixes merged) | **all steps passed**: Vitest 1,119 / 16 expected-fail / 6 skipped; four desktop journeys; AppImage | **all steps passed**: Vitest 1,119 / 17 / 5; four desktop journeys; zip signed and verified | check passed (Vitest 1,119 / 17 / 5; release 18/0); desktop **failed**: confirmations 8 of 9 expected | **all steps passed**: Vitest 1,003 passed / 17 expected-fail / 121 skipped; release 17 passed / 1 skipped; desktop smoke; portable exe |
+
+Round 2 lifecycle stress on `43977cb` (run 39289887713) passed on all four platforms. The Windows job took 68 minutes; the other three took 11 to 21 minutes.
+
+**What this establishes:**
+
+- The four advertised platforms pass the full Vitest suite, campaign tests included, at `43977cb`.
+- The historical Windows failures from plan §10.2 (CL-17 and CL-18 in `tests/claude-route.test.ts`) no longer fail. CL-17 now checks effective ACL access on Windows. On Windows, CL-18's main route test runs, and its `.cmd` diagnostics case is an expected failure, because it exposes D-26.
+- Windows still skips 121 tests on purpose: POSIX shell stand-ins, Codex qualification (unsupported on Windows), and the coordinator and loop desktop journeys. Those cells remain unqualified on Windows (plan §9.1).
+
+**Recurring desktop failure (F-01):** the main desktop journey intermittently loses one native confirmation. The harness counts confirmations after a click, and one never arrives within 5 seconds. It happened in three runs on three platforms: Apple silicon (3 of 4), Linux (3 of 4) and Intel (8 of 9). Each time, the same journey passed on the other platforms in that run, and it passed in every local run. It matches the historical signature in plan §10.3. Neither the harness nor the product code involved changed. It is recorded in [TEST-DECISIONS](TEST-DECISIONS.md#recurring-desktop-confirmation-loss-f-01) and needs controlled-ordering diagnosis.
+
+**Coverage register:** the per-case register still reflects the campaign's darwin-arm64 execution. The CI runs establish suite-level results on the other hosts; their cells were not re-mapped case by case.
 
 ## Evidence locations
 

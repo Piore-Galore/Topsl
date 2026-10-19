@@ -290,7 +290,7 @@ The *Topsl Comprehensive Testing Plan* (359 cases, 14 journeys, 197 commands) wa
 
 **Not established:**
 
-- Intel Mac, Windows and Linux.
+- Intel Mac, Windows and Linux at campaign time. *Follow-up the same day:* remote CI on the merged fixes (`43977cb`) passed the full Vitest suite on all four platforms. Linux, Apple silicon and Windows passed every step. Intel's desktop journey hit the recurring confirmation-loss failure F-01. See the [CI follow-up](testing/TEST-REPORT.md#follow-up-fixes-and-four-platform-ci).
 - The live Claude Build-and-review pairings, which need the owner to answer Claude Code's prompts during the run.
 - Claude live qualification.
 - Long soaks, screen-reader acceptance and real Gatekeeper first-open.

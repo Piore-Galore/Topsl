@@ -118,6 +118,18 @@ The canonical docs below are corrected in this campaign's change set. The correc
 
 Not covered: packaged builds, Windows and Linux, remote CI, and live providers.
 
+## Recurring desktop confirmation loss (F-01)
+
+Not yet classified as a product defect or a harness defect. In remote CI, `scripts/desktop-test.mjs` intermittently records one native confirmation fewer than expected. It clicks a control such as "Approve captured inputs and start", and `expect.poll(confirmations)` then times out after 5 s.
+
+| CI run | Platform | Commit | Observed |
+| --- | --- | --- | --- |
+| 39271847356 | macOS Apple silicon | `5b5b0b4` (no product changes) | 3 of 4, at `desktop-test.mjs:1755` |
+| 39285908708 | Linux x64 | `02aeda5` | 3 of 4 |
+| 39289887882 | macOS Intel | `43977cb` | 8 of 9 |
+
+The same journey passed on the other platforms in each run and in every local run. It matches the historical signature in plan §10.3 ("expected nine native confirmations but observed eight"). A separate first failure in run 39271847356 (Linux, `desktop-loop-test.mjs:380`: the Endless text box was detached from the DOM while being filled) may be a related re-render race. The next step is to reproduce under controlled event ordering and record operation-specific confirmation IDs, as plan §10.3 recommends, before deciding whether the click is lost in the renderer or the dialog is never requested. Raising timeouts would not answer that question.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

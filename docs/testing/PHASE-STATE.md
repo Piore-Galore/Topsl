@@ -39,7 +39,9 @@ Resumable state of the comprehensive test campaign, as plan §0.8 requires. Read
 
 ## Blockers and next runnable packets
 
-1. **Remote CI cells (Windows x64, Linux x64, macOS Intel).** Blocked only on a push with the owner's GitHub credentials. The workflow triggers on `main` and `codex/**`. Run:
+1. **Remote CI cells: done on 19 October 2026.** The branch was pushed as `codex/test-campaign-2026-10-19`. At `43977cb`, Linux, Apple silicon and Windows passed every step; Intel passed its tests but hit F-01 in the desktop journey ([report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci)). The original instructions are kept below for a rerun.
+
+   Original blocker: a push with the owner's GitHub credentials. The workflow triggers on `main` and `codex/**`. Run:
 
    ```bash
    git push origin test/comprehensive-campaign:codex/test-campaign-2026-10-19
