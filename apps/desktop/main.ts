@@ -630,6 +630,61 @@ async function dispatch(command: Command): Promise<any> {
       return null;
     trusted.digest = review.digest;
   }
+  if (
+    command.type === "loop-start" ||
+    (command.type === "loop-policy-update" &&
+      (command.policy.automaticChecks === true ||
+        command.policy.excludedProviders !== undefined))
+  ) {
+    // The run's authority is recorded once, from this dialog; ordinary
+    // iterations are not approved one by one.
+    const review: any = await request({
+      kind: "review",
+      recordKind:
+        command.type === "loop-start" ? "loop-authority" : "loop-policy",
+      recordId:
+        command.type === "loop-start"
+          ? command.runId
+          : `${command.runId}:${Buffer.from(JSON.stringify(command.policy)).toString("base64url")}`,
+    });
+    const goals: Array<{ text: string; required: boolean }> =
+      review.goals ?? [];
+    if (
+      !(await confirm(
+        command.type === "loop-start"
+          ? `Start this ${review.mode === "goal" ? "Goal" : "Endless"} loop? (Experimental)`
+          : "Widen what this loop may run? (Experimental)",
+        `${review.title}\n\n${(review.statements as string[]).join("\n\n")}${goals.length ? `\n\nGoals:\n${goals.map((g) => `- ${g.text}${g.required ? "" : " (optional)"}`).join("\n")}` : ""}\n\nYou can pause or stop the run at any time; stopping fences new work and keeps the accepted checkpoint.`,
+        command.type === "loop-start" ? "Start loop" : "Allow",
+        "warning",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
+  if (command.type === "loop-publication-apply") {
+    const review: any = await request({
+      kind: "review",
+      recordKind: "loop-publication",
+      recordId: command.runId,
+    });
+    const files: Array<{ path: string; change: string }> = review.files ?? [];
+    if (
+      !(await confirm(
+        "Publish the loop's accepted checkpoint to the project folder?",
+        `Folder: ${review.root}\nCheckpoint: ${review.sequence} (${review.basis === "first" ? "first publication from the run's starting folder" : "only the changes since the last publication"})\n\n${files.length} ${files.length === 1 ? "file" : "files"} will be written:\n${files
+          .slice(0, 200)
+          .map((file) => `${file.change}: ${file.path}`)
+          .join(
+            "\n",
+          )}${files.length > 200 ? `\n… and ${files.length - 200} more` : ""}\n\nThis checkpoint was promoted automatically by the loop's policy, not accepted by you. Topsl checked that the folder still matches what it expects and checks again just before writing. Nothing is committed, staged or pushed.`,
+        "Publish to folder",
+        "warning",
+      ))
+    )
+      return null;
+    trusted.digest = review.digest;
+  }
   if (command.type === "configuration-apply") {
     const plan: ConfigurationPlan = await request({
       kind: "review",

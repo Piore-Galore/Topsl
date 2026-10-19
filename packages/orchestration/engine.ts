@@ -11,8 +11,11 @@ import type {
   EffectiveRoleGroup,
   ExecutionPurpose,
   FindingObservation,
+  DependencyBundle,
   Goal,
   GoalApplication,
+  GoalFunctions,
+  GoalLoopBinding,
   GoalCheckDefinition,
   GoalGrant,
   GroupScopeLevel,
@@ -73,6 +76,7 @@ import {
   actionSetDigest,
 } from "./contracts";
 import { reviewSchema } from "../workflows/builder-reviewer";
+import type { TurnProtocol } from "../domain/recursive-loops";
 
 /** One member turn the engine asks a driver to run. */
 export interface MemberTurn {
@@ -91,6 +95,19 @@ export interface MemberTurn {
   candidateId: string | null;
   permittedOutputs: string[];
   retryOfAttemptId: string | null;
+  /**
+   * The versioned output protocol. Ordinary coordinator turns are
+   * coordinator-v1; loop decision turns are recursive-loop-v1 with a stage.
+   * The runtime selects schema enforcement from purpose, protocol and stage.
+   */
+  protocol: TurnProtocol;
+  /**
+   * The read-only content a control or information turn sees. A loop child
+   * goal reads its iteration baseline (the accepted checkpoint), never a
+   * fresh capture of the original folder; a dependent task reads its
+   * assembled predecessor baseline. null: the goal's own context snapshot.
+   */
+  contextCandidateId: string | null;
 }
 
 export interface AttemptObservation {
@@ -136,10 +153,19 @@ export interface OrchestrationDriver {
     baseCandidateId: string;
     candidateIds: string[];
     resolutions?: Array<{ path: string; candidateId: string }>;
+    /**
+     * Candidate ancestry from dependency handoff: a candidate listed here was
+     * built on a baseline that already contained the listed predecessor
+     * candidates, so its version of a path they both changed supersedes
+     * theirs instead of conflicting with it.
+     */
+    ancestry?: Record<string, string[]>;
   }): Promise<
     | { candidateId: string }
     | { conflicts: Array<{ path: string; candidateIds: string[] }> }
   >;
+  /** One file's text in a candidate, for an integration brief. null: absent or binary. */
+  fileText?(candidateId: string, path: string): string | null;
   /** Freezes the check protocol (tests, configuration, scripts) at the goal's baseline. */
   bindChecks?(input: {
     goalId: string;
@@ -242,6 +268,22 @@ function validateChecks(kind: Goal["kind"], checks: GoalCheckDefinition[]) {
     throw new Error("Each required check needs a distinct ID.");
 }
 
+/** The built-in roles that serve each function when a goal has no bindings. */
+export const defaultFunctions: GoalFunctions = {
+  coordination: "coordinator",
+  review: "reviewer",
+  implementation: "implementer",
+  integration: "implementer",
+};
+export const functionsOf = (goal: Pick<Goal, "functions">): GoalFunctions =>
+  goal.functions ?? defaultFunctions;
+
+const coordinatorProtocol: TurnProtocol = {
+  kind: "coordinator-v1",
+  stage: null,
+  mode: null,
+};
+
 const activeStages: ReadonlySet<RoleRound["stage"]> = new Set([
   "collecting",
   "reconciling",
@@ -251,6 +293,13 @@ const activeStages: ReadonlySet<RoleRound["stage"]> = new Set([
 export class Orchestrator {
   readonly repo: OrchestrationRepository;
   private ticking = false;
+  /**
+   * Called after a project-wide stop ("stop everything"), so owners of
+   * longer-lived work, such as loop runs, stop too.
+   */
+  readonly stopListeners: Array<
+    (projectId: string, commandId: string) => Promise<void> | void
+  > = [];
   constructor(
     readonly store: Store,
     private driver: OrchestrationDriver,
@@ -267,22 +316,48 @@ export class Orchestrator {
     goalId: string | null,
     roleId: string,
     taskKey: string | null = null,
+    /** A loop decision round's binding and scope, which has no engine goal. */
+    scope?: { binding: GoalLoopBinding; scopeId: string },
   ): EffectiveRoleGroup {
     const role = this.repo.role(projectId, roleId);
     const policy = this.repo.policy(projectId);
     const goal = goalId ? this.repo.require<Goal>(kinds.goal, goalId) : null;
+    const loop = scope?.binding ?? goal?.loop ?? null;
+    const layers = layersFor(
+      this.repo.groupRevisions(projectId),
+      policy.defaults,
+      roleId,
+      goal?.id ?? null,
+      taskKey,
+    );
+    // The owner's run-scope settings sit between project and goal scope,
+    // with user authority.
+    const override = loop?.overrides?.[roleId];
+    if (override) {
+      const at = layers.filter((l) => l.level.startsWith("project-")).length;
+      layers.splice(at, 0, {
+        level: "goal-policy",
+        revisionId: `${loop!.runId}:overrides`,
+        settings: override,
+        authority: "user",
+      });
+    }
+    // A loop's adaptive organization fills only fields no owner setting
+    // fixes, at any scope.
+    const adaptive = loop?.adaptive[roleId];
+    if (adaptive)
+      layers.push({
+        level: "adaptive",
+        revisionId: loop!.topologyRevisionId,
+        settings: adaptive,
+        authority: "automatic",
+      });
     return effectiveGroup({
       projectId,
-      goalId,
+      goalId: scope?.scopeId ?? goalId,
       role,
       memberLimit: policy.maxMembersPerRole,
-      layers: layersFor(
-        this.repo.groupRevisions(projectId),
-        policy.defaults,
-        roleId,
-        goal?.id ?? null,
-        taskKey,
-      ),
+      layers,
     });
   }
 
@@ -447,15 +522,24 @@ export class Orchestrator {
     goalId: string | null,
     roleId: string,
     taskKey: string | null = null,
+    scope?: { binding: GoalLoopBinding; scopeId: string },
   ) {
     const role = this.repo.role(projectId, roleId);
-    const group = this.effective(projectId, goalId, roleId, taskKey);
+    const group = this.effective(projectId, goalId, roleId, taskKey, scope);
     const goal = goalId ? this.repo.get<Goal>(kinds.goal, goalId) : undefined;
+    const loop = scope?.binding ?? goal?.loop ?? null;
+    const excluded = new Set(loop?.excludedProviders ?? []);
     const result = resolveGroup({
       role,
       group,
-      pool: this.driver.routes(projectId),
-      complexity: goal ? goalComplexity(goal.objective) : "simple",
+      // A run's provider exclusion removes routes; it never adds one.
+      pool: this.driver
+        .routes(projectId)
+        .filter((r) => !excluded.has(r.provider)),
+      // A loop sizes Auto teams from its run, not from a generated brief.
+      complexity:
+        loop?.complexity ?? (goal ? goalComplexity(goal.objective) : "simple"),
+      ranking: loop?.ranking[roleId],
     });
     const assignments = result.assignments.map((a) =>
       this.repo.upsertAssignment(a),
@@ -726,11 +810,19 @@ export class Orchestrator {
     kind: Goal["kind"],
     parentGoalId: string | null,
     checks: GoalCheckDefinition[] = [],
+    options: {
+      goalId?: string;
+      /** false: an internal goal, such as a loop child, outside message routing. */
+      listed?: boolean;
+      loop?: GoalLoopBinding;
+      functions?: GoalFunctions;
+      baselineCandidateId?: string | null;
+    } = {},
   ): Goal {
     validateChecks(kind, checks);
     const at = now();
     const goal: Goal = {
-      id: uid(),
+      id: options.goalId ?? uid(),
       projectId: conversation.projectId,
       conversationId: conversation.id,
       revision: 1,
@@ -743,7 +835,7 @@ export class Orchestrator {
       usage: { turns: 0, delegatedTasks: 0, repairRounds: 0 },
       planId: null,
       planRevision: 0,
-      baselineCandidateId: null,
+      baselineCandidateId: options.baselineCandidateId ?? null,
       pausedFrom: null,
       parentGoalId,
       relatedGoalIds: [],
@@ -757,14 +849,18 @@ export class Orchestrator {
       conflicts: [],
       resolutions: [],
       application: null,
+      ...(options.functions ? { functions: options.functions } : {}),
+      ...(options.loop ? { loop: options.loop, loopDisposition: null } : {}),
       detail: "Forming the coordinator group.",
       createdAt: at,
       updatedAt: at,
     };
     this.store.transaction(() => {
       this.repo.saveRevisioned(kinds.goal, goal);
-      conversation.goalIds = [...conversation.goalIds, goal.id];
-      this.store.put(kinds.conversation, conversation);
+      if (options.listed !== false) {
+        conversation.goalIds = [...conversation.goalIds, goal.id];
+        this.store.put(kinds.conversation, conversation);
+      }
       if (parentGoalId) {
         const parent = this.repo.require<Goal>(kinds.goal, parentGoalId);
         this.store.put(kinds.goal, {
@@ -784,6 +880,13 @@ export class Orchestrator {
     grant?: Partial<GoalGrant>;
     checks?: GoalCheckDefinition[];
     commandId: string;
+    /** Loop children: a pre-generated ID, their binding and preset baseline. */
+    goalId?: string;
+    loop?: GoalLoopBinding;
+    functions?: GoalFunctions;
+    baselineCandidateId?: string;
+    /** The actor recorded on the goal's message; loop children record none. */
+    message?: boolean;
   }) {
     const conversation = this.repo.require<CoordinatorConversation>(
       kinds.conversation,
@@ -794,12 +897,36 @@ export class Orchestrator {
       conversation.projectId,
       "goal-create",
       () => {
+        if (input.functions)
+          this.validateFunctions(conversation.projectId, input.functions);
+        if (input.baselineCandidateId && !input.goalId)
+          throw new Error(
+            "A preset baseline is bound to its goal's identity; pass the goal ID it was captured for.",
+          );
+        const checks = input.checks ?? [];
+        // A preset baseline freezes the check protocol before any member starts.
+        if (input.baselineCandidateId && checks.length) {
+          if (!this.driver.bindChecks)
+            throw new Error("No check route is available for this goal.");
+          this.driver.bindChecks({
+            goalId: input.goalId!,
+            baselineCandidateId: input.baselineCandidateId,
+            checks,
+          });
+        }
         const goal = this.newGoal(
           conversation,
           input.objective,
           input.kind ?? "code",
           null,
-          input.checks ?? [],
+          checks,
+          {
+            goalId: input.goalId,
+            listed: !input.loop,
+            loop: input.loop,
+            functions: input.functions,
+            baselineCandidateId: input.baselineCandidateId ?? null,
+          },
         );
         const next = {
           ...goal,
@@ -807,14 +934,34 @@ export class Orchestrator {
           grant: { ...goal.grant, ...input.grant },
         };
         this.store.put(kinds.goal, next);
-        this.message(conversation, "user", input.objective, {
-          kind: "new-goal",
-          goalId: goal.id,
-        });
+        if (input.message !== false)
+          this.message(conversation, "user", input.objective, {
+            kind: "new-goal",
+            goalId: goal.id,
+          });
         this.changed();
         return next;
       },
     );
+  }
+
+  /** Each function must be served by a defined role whose purpose fits it. */
+  private validateFunctions(projectId: string, functions: GoalFunctions) {
+    const need: Record<keyof GoalFunctions, ExecutionPurpose> = {
+      coordination: "coordinator-contribution",
+      review: "candidate-review",
+      implementation: "implementation",
+      integration: "implementation",
+    };
+    for (const [fn, roleId] of Object.entries(functions) as Array<
+      [keyof GoalFunctions, string]
+    >) {
+      const role = this.repo.role(projectId, roleId);
+      if (role.purpose !== need[fn])
+        throw new Error(
+          `Role ${roleId} has purpose ${role.purpose}; the ${fn} function needs ${need[fn]}. A label cannot turn one output contract into another.`,
+        );
+    }
   }
 
   /**
@@ -889,6 +1036,7 @@ export class Orchestrator {
     text: string;
     constraints?: string[];
     commandId: string;
+    actor?: string;
   }) {
     const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
     return this.repo.receipt(
@@ -928,6 +1076,7 @@ export class Orchestrator {
             null,
             input.commandId,
             input.text.slice(0, 500),
+            input.actor,
           );
           return updated;
         });
@@ -947,6 +1096,7 @@ export class Orchestrator {
     targetId: string | null,
     commandId: string,
     detail: string,
+    actor = "local-user",
   ) {
     const goal = goalId ? this.repo.get<Goal>(kinds.goal, goalId) : undefined;
     this.store.immutable(kinds.control, {
@@ -962,7 +1112,7 @@ export class Orchestrator {
       action,
       targetId,
       generation: goal?.controlGeneration ?? 0,
-      actor: "local-user",
+      actor,
       commandId,
       detail,
       createdAt: now(),
@@ -1120,6 +1270,9 @@ export class Orchestrator {
           for (const goal of goals)
             if (!["stopped", "accepted", "completed"].includes(goal.state))
               this.driver.cancelChecks?.(goal.id);
+        if (input.action === "stop" && !input.goalId)
+          for (const listener of this.stopListeners)
+            await listener(input.projectId, input.commandId);
         for (const attemptId of interrupts)
           try {
             await this.driver.interrupt(attemptId);
@@ -1204,8 +1357,9 @@ export class Orchestrator {
       candidateId?: string | null;
       brief?: string | null;
       partitions?: Array<{ title: string; permittedOutputs: string[] }>;
+      dependency?: { bundleId: string; digest: string } | null;
     },
-  ): RoleRound | { blocked: string } {
+  ): RoleRound | { blocked: string; replan?: boolean } {
     const { group, role, assignments, conflicts } = this.resolve(
       goal.projectId,
       goal.id,
@@ -1226,24 +1380,41 @@ export class Orchestrator {
         ].join(" "),
       };
     let usable = assignments.filter((a) => a.status === "resolved");
-    // A partition plan with fewer partitions than members names only the
-    // members it needs; the others are recorded as not needed for this task.
     const partitions = input.partitions ?? [];
-    if (
+    const partitioned =
       input.kind === "work" &&
       group.collaboration === "parallel-partitioned" &&
-      partitions.length > usable.length
-    )
+      partitions.length > 0;
+    // The plan was made against one resolved roster; executing it against
+    // another is a stale topology, not something to trim silently.
+    if (partitioned) {
+      const planned = this.plannedRoster(goal, input.roleId);
+      const ids = usable.map((a) => a.memberId);
+      if (planned?.memberIds && stable(planned.memberIds) !== stable(ids))
+        return {
+          replan: true,
+          blocked: `Task ${input.taskKey} was planned for ${input.roleId} members ${planned.memberIds.join(", ")}, but the role now resolves to ${ids.join(", ") || "no members"}. Replan this task against the current organization.`,
+        };
+    }
+    if (partitioned && partitions.length > usable.length)
       return {
+        replan: true,
         blocked: `Task ${input.taskKey} has ${partitions.length} partitions for ${usable.length} members. Replan this task.`,
       };
-    if (
-      input.kind === "work" &&
-      group.collaboration === "parallel-partitioned" &&
-      partitions.length &&
-      partitions.length < usable.length
-    )
+    if (partitioned && partitions.length < usable.length) {
+      // Optional members beyond the partitions are not needed for this task;
+      // a required member is never dropped to fit a plan.
+      const extra = usable.slice(partitions.length);
+      const requiredExtra = extra.filter(
+        (a) => required.get(a.memberId) ?? true,
+      );
+      if (requiredExtra.length)
+        return {
+          replan: true,
+          blocked: `Task ${input.taskKey} has ${partitions.length} partitions for ${usable.length} required members; ${requiredExtra.map((a) => a.memberId).join(", ")} would be dropped. Replan this task against the resolved roster.`,
+        };
       usable = usable.slice(0, partitions.length);
+    }
     const { conflicts: policyConflicts, ...frozen } = freezePolicy(
       group.completion,
       usable.map((a) => ({
@@ -1266,21 +1437,38 @@ export class Orchestrator {
         blocked: `The goal's turn allowance (${goal.grant.maxTurns - goal.usage.turns} left) cannot cover ${minimum} required turns for ${usable.length} ${role.title.toLowerCase()}.`,
       };
     const rosters: RoleRound["input"]["rosters"] = {};
-    if (input.kind === "coordination")
+    const roleRevisions: Record<string, number> = { [role.id]: role.revision };
+    if (input.kind === "coordination") {
+      // The complete resolved topology: the same resolution the plan's tasks
+      // will execute with, so prompt, partitions and dispatch agree.
+      const active = goal.loop ? new Set(goal.loop.activeRoles) : null;
       for (const r of this.repo
         .roles(goal.projectId)
-        .filter((r) => r.purpose !== "coordinator-contribution")) {
+        .filter(
+          (r) =>
+            r.purpose !== "coordinator-contribution" &&
+            (!active || active.has(r.id)),
+        )) {
         try {
-          const g = this.effective(goal.projectId, goal.id, r.id);
+          const resolved = this.resolve(goal.projectId, goal.id, r.id);
+          const ok = resolved.conflicts.length
+            ? []
+            : resolved.assignments.filter((a) => a.status === "resolved");
           rosters[r.id] = {
-            members:
-              g.form === "exact"
-                ? g.members.length
-                : (g.count ?? Math.max(g.members.length, g.minCount)),
-            collaboration: g.collaboration,
+            members: ok.length,
+            collaboration: resolved.group.collaboration,
+            memberIds: ok.map((a) => a.memberId),
+            unresolved: Math.max(
+              0,
+              Math.max(resolved.targetCount, resolved.assignments.length) -
+                ok.length,
+            ),
+            purpose: r.purpose,
           };
+          roleRevisions[r.id] = r.revision;
         } catch {}
       }
+    }
     const candidateRevision = input.candidateId
       ? (this.driver.candidateRevision?.(input.candidateId) ?? null)
       : null;
@@ -1304,6 +1492,10 @@ export class Orchestrator {
         ...a.candidateIds,
       ]),
       allowedOperations: goal.grant.taskKinds,
+      roleRevisions,
+      topologyRevisionId: goal.loop?.topologyRevisionId ?? null,
+      dependencyBundleId: input.dependency?.bundleId ?? null,
+      dependencyDigest: input.dependency?.digest ?? null,
     };
     const members: RoundMember[] = usable.map((a) => ({
       memberId: a.memberId,
@@ -1401,8 +1593,64 @@ export class Orchestrator {
       );
       if (current !== round.groupDigest)
         return "The role's membership or policy changed; a new round freezes the new assignments.";
+      if (round.input.roleRevisions) {
+        const roles = this.repo.roles(goal.projectId);
+        for (const [roleId, revision] of Object.entries(
+          round.input.roleRevisions,
+        ))
+          if (roles.find((r) => r.id === roleId)?.revision !== revision)
+            return `Role ${roleId}'s definition changed after this round froze; a decision against the old definition cannot dispatch.`;
+      }
+      if (
+        (round.input.topologyRevisionId ?? null) !==
+        (goal.loop?.topologyRevisionId ?? null)
+      )
+        return "The loop's organization changed after this round froze.";
+      if (round.input.dependencyBundleId) {
+        const bundle = this.repo.get<DependencyBundle>(
+          kinds.dependency,
+          round.input.dependencyBundleId,
+        );
+        if (
+          !bundle ||
+          bundle.digest !== round.input.dependencyDigest ||
+          this.bundleDigest(goal, bundle) !== bundle.digest
+        )
+          return "A predecessor's result changed after this task froze its inputs.";
+      }
     }
     return null;
+  }
+
+  /** The roster a role resolved to when the goal's current plan was decided. */
+  private plannedRoster(goal: Goal, roleId: string) {
+    const plan = this.plan(goal);
+    if (!plan?.roundId) return null;
+    return (
+      this.repo.get<RoleRound>(kinds.round, plan.roundId)?.input.rosters[
+        roleId
+      ] ?? null
+    );
+  }
+
+  /** The digest of a bundle's predecessor results as they stand now. */
+  private bundleDigest(goal: Goal, bundle: DependencyBundle): string {
+    const actions = this.actions(goal);
+    return hash(
+      stable({
+        task: bundle.taskKey,
+        assembled: bundle.assembledCandidateId,
+        predecessors: bundle.predecessors.map((p) => {
+          const a = actions.find((x) => x.taskKey === p.taskKey);
+          return [
+            p.taskKey,
+            a?.state ?? "missing",
+            a?.candidateIds ?? [],
+            a?.artifactIds ?? [],
+          ];
+        }),
+      }),
+    );
   }
 
   private purpose(round: RoleRound, member: RoundMember): ExecutionPurpose {
@@ -1429,9 +1677,10 @@ export class Orchestrator {
         instructions: role.instructions,
         knownRoles: Object.entries(round.input.rosters).map(([id, r]) => ({
           id,
-          purpose: this.repo.role(goal.projectId, id).purpose,
+          purpose: r.purpose ?? this.repo.role(goal.projectId, id).purpose,
           members: r.members,
           collaboration: r.collaboration,
+          unresolved: r.unresolved ?? 0,
         })),
         completed: this.actions(goal)
           .filter((a) => a.state === "completed")
@@ -1510,6 +1759,7 @@ export class Orchestrator {
       instructions: role.instructions,
       inputDigest: round.input.digest,
       handoff: previous,
+      dependencies: this.dependencyText(round),
     });
   }
 
@@ -1570,12 +1820,16 @@ export class Orchestrator {
         };
       else {
         const actions = parsed.value.actions.map(normalizeAction);
+        const roles = this.repo.roles(goal.projectId);
         const problems = validateActions(actions, {
-          knownRoles: this.repo.roles(goal.projectId).map((r) => r.id),
+          knownRoles: roles
+            .filter((r) => !goal.loop || goal.loop.activeRoles.includes(r.id))
+            .map((r) => r.id),
           allowedKinds: goal.grant.taskKinds,
           remainingTasks:
             goal.grant.maxDelegatedTasks - goal.usage.delegatedTasks,
           rosters: round.input.rosters,
+          rolePurposes: Object.fromEntries(roles.map((r) => [r.id, r.purpose])),
         });
         output = { ...parsed.value, actions };
         validation = problems.length
@@ -1818,6 +2072,12 @@ export class Orchestrator {
             ?.permittedOutputs ??
           [],
         retryOfAttemptId: member.attemptIds.at(-1) ?? null,
+        protocol: coordinatorProtocol,
+        contextCandidateId:
+          round.kind === "coordination" || round.kind === "information"
+            ? (this.assembledFor(fresh) ??
+              (goal.loop ? goal.baselineCandidateId : null))
+            : null,
       };
       try {
         const { attemptId } = await this.driver.launch(turn);
@@ -2497,6 +2757,18 @@ export class Orchestrator {
           baselineCandidateId,
         });
       }
+      // Ordering alone is not a data dependency: a dependent task receives its
+      // predecessors' actual results, and code tasks start from them.
+      const bundle = await this.dependencyBundle(goal, plan, task);
+      if (bundle && "blocked" in bundle) {
+        if (action.state !== "blocked" || action.detail !== bundle.blocked)
+          this.saveAction(action, { state: "blocked", detail: bundle.blocked });
+        goal = this.saveGoal(this.repo.require<Goal>(kinds.goal, goal.id), {
+          state: "blocked",
+          detail: bundle.blocked,
+        });
+        continue;
+      }
       const round = this.freeze(goal, {
         roleId: task.roleId,
         kind: task.kind === "implementation" ? "work" : "information",
@@ -2505,12 +2777,25 @@ export class Orchestrator {
           task.kind === "implementation"
             ? task.key.startsWith("repair-")
               ? goal.candidateId
-              : goal.baselineCandidateId
+              : (bundle?.assembledCandidateId ?? goal.baselineCandidateId)
             : null,
         brief: task.brief,
         partitions: task.partitions,
+        dependency: bundle
+          ? { bundleId: bundle.id, digest: bundle.digest }
+          : null,
       });
       if ("blocked" in round) {
+        if (round.replan) {
+          // A plan made against another resolved roster needs a new plan;
+          // the owner or the loop supervisor steers it.
+          this.saveAction(action, { state: "blocked", detail: round.blocked });
+          goal = this.saveGoal(this.repo.require<Goal>(kinds.goal, goal.id), {
+            state: "blocked",
+            detail: `${round.blocked} Steer the goal to replan.`,
+          });
+          continue;
+        }
         if (action.detail !== round.blocked)
           this.saveAction(action, { detail: `Waiting: ${round.blocked}` });
         continue;
@@ -2521,6 +2806,162 @@ export class Orchestrator {
         detail: round.detail,
       });
     }
+  }
+
+  /**
+   * The typed input bundle of a dependent task. Code predecessors are
+   * assembled over the goal baseline into one provisional baseline the task
+   * starts from; information predecessors are passed by artifact reference
+   * and bounded text. Incompatible predecessor changes block the task until
+   * they are resolved. The bundle is keyed by plan and task, so a repeated
+   * dispatch reuses it.
+   */
+  private async dependencyBundle(
+    goal: Goal,
+    plan: CoordinatorPlan,
+    task: PlanTaskAction,
+  ): Promise<DependencyBundle | { blocked: string } | null> {
+    if (!task.dependencies.length || task.key.startsWith("repair-"))
+      return null;
+    const id = `${plan.id}:${task.key}:inputs`;
+    const prior = this.repo.get<DependencyBundle>(kinds.dependency, id);
+    if (prior && this.bundleDigest(goal, prior) === prior.digest) return prior;
+    const actions = this.actions(goal);
+    const predecessors = task.dependencies.map((key) => {
+      const a = actions.find((x) => x.taskKey === key)!;
+      const t = plan.tasks.find((x) => x.key === key)!;
+      return {
+        taskKey: key,
+        actionId: a.id,
+        kind: t.kind,
+        candidateIds: a.candidateIds,
+        artifactIds: a.artifactIds,
+        permittedOutputs: [
+          ...new Set([
+            ...t.permittedOutputs,
+            ...t.partitions.flatMap((p) => p.permittedOutputs),
+          ]),
+        ].sort(),
+      };
+    });
+    const code = this.codeAncestry(
+      goal,
+      plan,
+      predecessors.map((p) => p.taskKey),
+    );
+    let assembledCandidateId: string | null = null;
+    if (code.candidates.length) {
+      if (!this.driver.integrate || !goal.baselineCandidateId)
+        return {
+          blocked: `Task ${task.key} depends on code changes, but no controlled integration route can assemble them.`,
+        };
+      const result = await this.driver.integrate({
+        projectId: goal.projectId,
+        goalId: goal.id,
+        baseCandidateId: goal.baselineCandidateId,
+        candidateIds: code.candidates,
+        ancestry: code.ancestry,
+      });
+      if ("conflicts" in result)
+        return {
+          blocked: `Task ${task.key} cannot start: its predecessors changed ${result.conflicts.map((c) => c.path).join(", ")} incompatibly. Resolve the predecessors' changes before downstream execution.`,
+        };
+      assembledCandidateId = result.candidateId;
+    }
+    const base = {
+      id,
+      projectId: goal.projectId,
+      goalId: goal.id,
+      planId: plan.id,
+      taskKey: task.key,
+      predecessors,
+      assembledCandidateId,
+      digest: "",
+      createdAt: now(),
+    } satisfies DependencyBundle;
+    const bundle = { ...base, digest: this.bundleDigest(goal, base) };
+    this.store.put(kinds.dependency, bundle);
+    return bundle;
+  }
+
+  /**
+   * Code candidates of the given tasks and their predecessors, with each
+   * candidate's ancestry, so integration includes each change once and a
+   * later result is never reverted by an older ancestor.
+   */
+  private codeAncestry(
+    goal: Goal,
+    plan: CoordinatorPlan,
+    keys: string[],
+  ): { candidates: string[]; ancestry: Record<string, string[]> } {
+    const actions = this.actions(goal);
+    const candidates: string[] = [];
+    const ancestry: Record<string, string[]> = {};
+    const seen = new Set<string>();
+    const visit = (key: string): string[] => {
+      const a = actions.find((x) => x.taskKey === key);
+      const t = plan.tasks.find((x) => x.key === key);
+      if (!a || !t) return [];
+      const own = t.kind === "implementation" ? a.candidateIds : [];
+      const bundle = this.repo.get<DependencyBundle>(
+        kinds.dependency,
+        `${plan.id}:${key}:inputs`,
+      );
+      const inherited = bundle
+        ? [...new Set(bundle.predecessors.flatMap((p) => visit(p.taskKey)))]
+        : t.dependencies.length
+          ? [...new Set(t.dependencies.flatMap(visit))]
+          : [];
+      if (!seen.has(key)) {
+        seen.add(key);
+        for (const c of own) {
+          if (!candidates.includes(c)) candidates.push(c);
+          if (bundle?.assembledCandidateId && inherited.length)
+            ancestry[c] = inherited;
+        }
+      }
+      return [...new Set([...inherited, ...own])];
+    };
+    for (const key of keys) visit(key);
+    for (const c of Object.values(ancestry).flat())
+      if (!candidates.includes(c)) candidates.push(c);
+    return { candidates, ancestry };
+  }
+
+  /** The assembled predecessor baseline a frozen round reads, if any. */
+  private assembledFor(round: RoleRound): string | null {
+    if (!round.input.dependencyBundleId) return null;
+    return (
+      this.repo.get<DependencyBundle>(
+        kinds.dependency,
+        round.input.dependencyBundleId,
+      )?.assembledCandidateId ?? null
+    );
+  }
+
+  /** Bounded predecessor results for a dependent task's prompt. */
+  private dependencyText(round: RoleRound): string | null {
+    if (!round.input.dependencyBundleId) return null;
+    const bundle = this.repo.get<DependencyBundle>(
+      kinds.dependency,
+      round.input.dependencyBundleId,
+    );
+    if (!bundle) return null;
+    return bundle.predecessors
+      .map((p) => {
+        const reports = p.artifactIds
+          .map((id) =>
+            this.repo.get<ParticipantContribution>(kinds.contribution, id),
+          )
+          .filter((c): c is ParticipantContribution => !!c)
+          .map((c) => {
+            const o = c.output as { summary?: string; report?: string } | null;
+            const body = `${o?.summary ?? ""}${o?.report ? `\n${o.report}` : ""}`;
+            return `  ${c.id} from ${c.memberId}: ${body.length > 4000 ? `${body.slice(0, 4000)}…` : body}`;
+          });
+        return `- ${p.taskKey} (${p.kind}${p.candidateIds.length ? `; its changes to ${p.permittedOutputs.join(", ") || "its outputs"} are already in your starting files` : ""}):${reports.length ? `\n${reports.join("\n")}` : " no report."}`;
+      })
+      .join("\n");
   }
 
   private completeWork(goal: Goal, round: RoleRound): void {
@@ -2646,6 +3087,15 @@ export class Orchestrator {
     const resolutions = (goal.resolutions ?? []).filter((r) =>
       candidateIds.includes(r.candidateId),
     );
+    // Dependent tasks started from their predecessors' changes; their
+    // ancestry lets the later result supersede, never conflict with, its base.
+    const ancestry = repair
+      ? {}
+      : this.codeAncestry(
+          goal,
+          plan,
+          implementation.map((t) => t.key),
+        ).ancestry;
     const result = await this.driver.integrate({
       projectId: goal.projectId,
       goalId: goal.id,
@@ -2655,6 +3105,7 @@ export class Orchestrator {
         path: r.path,
         candidateId: r.candidateId,
       })),
+      ...(Object.keys(ancestry).length ? { ancestry } : {}),
     });
     if ("conflicts" in result) {
       const owners = this.candidateOwners(goal);
@@ -2946,8 +3397,23 @@ export class Orchestrator {
     );
   }
 
-  /** Admits one bounded repair of the blocking findings; a new review round follows. */
-  async repair(input: { goalId: string; commandId: string }) {
+  /**
+   * Admits one bounded repair; a new review round follows. The cause is
+   * review findings by default. A loop supervisor may also repair failing
+   * required checks or unmet goal criteria; the repair goes to the role bound
+   * to the implementation function (or another active implementation role),
+   * never to a fixed role name.
+   */
+  async repair(input: {
+    goalId: string;
+    commandId: string;
+    cause?:
+      | { kind: "findings" }
+      | { kind: "checks" }
+      | { kind: "criteria"; unmet: string[] };
+    roleId?: string;
+    actor?: string;
+  }) {
     const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
     return this.repo.receipt(
       input.commandId,
@@ -2958,21 +3424,84 @@ export class Orchestrator {
           throw new Error(
             `The goal's repair limit (${goal.grant.maxRepairRounds}) is reached.`,
           );
-        const completion = goal.reviewCompletionId
-          ? this.repo.require<RoleCompletion>(
-              kinds.completion,
-              goal.reviewCompletionId,
+        const cause = input.cause ?? { kind: "findings" as const };
+        const plan = this.plan(goal);
+        if (!plan) throw new Error("This goal has no plan to repair.");
+        const roleId = input.roleId ?? functionsOf(goal).implementation;
+        const role = this.repo.role(goal.projectId, roleId);
+        if (role.purpose !== "implementation")
+          throw new Error(
+            `Role ${roleId} has purpose ${role.purpose}; a repair needs an implementation role.`,
+          );
+        if (goal.loop && !goal.loop.activeRoles.includes(roleId))
+          throw new Error(
+            `Role ${roleId} is not active in this loop iteration.`,
+          );
+        // The scope the plan already authorized; a repair cannot widen it.
+        const planned = [
+          ...new Set(
+            plan.tasks
+              .filter((t) => t.kind === "implementation")
+              .flatMap((t) => [
+                ...t.permittedOutputs,
+                ...t.partitions.flatMap((p) => p.permittedOutputs),
+              ]),
+          ),
+        ].sort();
+        let files: string[];
+        let title: string;
+        let criteria: string[];
+        let brief: string;
+        if (cause.kind === "findings") {
+          const completion = goal.reviewCompletionId
+            ? this.repo.require<RoleCompletion>(
+                kinds.completion,
+                goal.reviewCompletionId,
+              )
+            : null;
+          const blocking =
+            completion?.findings.filter((f) =>
+              blockingDispositions.has(f.disposition),
+            ) ?? [];
+          if (!completion || !blocking.length)
+            throw new Error("There are no blocking findings to repair.");
+          files = [...new Set(blocking.map((f) => f.file))].sort();
+          title = `Repair ${blocking.length} findings`;
+          criteria = blocking.map(
+            (f) => `Resolve: ${f.title} (${f.file}:${f.line})`,
+          );
+          brief = blocking
+            .map(
+              (f) =>
+                `${f.severity} ${f.file}:${f.line} ${f.title}\n${f.observations.map((o) => `${o.memberId}: ${o.behavior}`).join("\n")}`,
             )
-          : null;
-        const blocking =
-          completion?.findings.filter((f) =>
-            blockingDispositions.has(f.disposition),
-          ) ?? [];
-        if (!completion || !blocking.length)
-          throw new Error("There are no blocking findings to repair.");
-        const plan = this.plan(goal)!;
-        const files = [...new Set(blocking.map((f) => f.file))].sort();
-        const group = this.effective(goal.projectId, goal.id, "implementer");
+            .join("\n\n");
+        } else if (cause.kind === "checks") {
+          const status = this.checkStatus(goal);
+          const failing = status.results.filter(
+            (r) => r.result && r.result !== "passed",
+          );
+          if (!goal.candidateId || !failing.length)
+            throw new Error(
+              "No required check failed on the current candidate.",
+            );
+          files = planned;
+          title = `Repair ${failing.length} failing ${failing.length === 1 ? "check" : "checks"}`;
+          criteria = failing.map((r) => `Make "${r.label}" pass`);
+          brief = `Required checks failed on candidate ${goal.candidateId}:\n${failing.map((r) => `- ${r.label}: ${r.result} (verification ${r.verificationId})`).join("\n")}\nFix the product so these checks pass. The check protocol (existing tests, configuration and scripts) is protected and cannot be weakened.`;
+        } else {
+          if (!goal.candidateId || !cause.unmet.length)
+            throw new Error("There are no unmet criteria to repair.");
+          files = planned;
+          title = `Repair ${cause.unmet.length} unmet ${cause.unmet.length === 1 ? "criterion" : "criteria"}`;
+          criteria = cause.unmet;
+          brief = `The candidate does not yet satisfy:\n${cause.unmet.map((c) => `- ${c}`).join("\n")}`;
+        }
+        if (!files.length)
+          throw new Error(
+            "The plan authorizes no outputs a repair could change.",
+          );
+        const group = this.effective(goal.projectId, goal.id, roleId);
         const members =
           group.form === "exact"
             ? group.members.length
@@ -2981,20 +3510,13 @@ export class Orchestrator {
         const key = `repair-${goal.usage.repairRounds + 1}`;
         const task: PlanTaskAction = {
           key,
-          title: `Repair ${blocking.length} findings`,
+          title,
           kind: "implementation",
-          roleId: "implementer",
+          roleId,
           dependencies: [],
           permittedOutputs: files,
-          acceptanceCriteria: blocking.map(
-            (f) => `Resolve: ${f.title} (${f.file}:${f.line})`,
-          ),
-          brief: blocking
-            .map(
-              (f) =>
-                `${f.severity} ${f.file}:${f.line} ${f.title}\n${f.observations.map((o) => `${o.memberId}: ${o.behavior}`).join("\n")}`,
-            )
-            .join("\n\n"),
+          acceptanceCriteria: criteria,
+          brief,
           partitions:
             group.collaboration === "parallel-partitioned" && parts > 1
               ? Array.from({ length: parts }, (_, i) => ({
@@ -3003,59 +3525,217 @@ export class Orchestrator {
                 }))
               : [],
         };
-        this.store.transaction(() => {
-          const planId = `plan:${hash(stable([plan.id, key])).slice(0, 32)}`;
-          const next: CoordinatorPlan = {
-            ...plan,
-            id: planId,
-            revision: goal.planRevision + 1,
-            tasks: [...plan.tasks, task],
-            supersedesPlanId: plan.id,
-            decisionCandidateId: plan.decisionCandidateId,
-            createdAt: now(),
-          };
-          this.repo.immutable(kinds.plan, next);
-          for (const a of this.actions(goal))
-            this.repo.saveRevisioned(kinds.action, {
-              ...a,
-              id: `${planId}:${a.taskKey}`,
-              planId,
-              revision: 1,
-              detail: a.state === "completed" ? a.detail : a.detail,
-            });
-          this.repo.saveRevisioned(kinds.action, {
-            id: `${planId}:${key}`,
-            projectId: goal.projectId,
-            goalId: goal.id,
-            planId,
-            taskKey: key,
-            revision: 1,
-            state: "queued",
-            expectedControlGeneration: goal.controlGeneration,
-            roundId: null,
-            attemptIds: [],
-            candidateIds: [],
-            artifactIds: [],
-            detail: "",
-            createdAt: now(),
-            updatedAt: now(),
-          } satisfies QueuedPlanAction);
-          this.saveGoal(goal, {
-            planId,
-            planRevision: next.revision,
-            state: "running",
-            usage: {
-              ...goal.usage,
-              repairRounds: goal.usage.repairRounds + 1,
-              delegatedTasks: goal.usage.delegatedTasks + 1,
-            },
-            detail: `Repair ${goal.usage.repairRounds + 1} admitted; a new required review round follows the repaired candidate.`,
-          });
-        });
+        this.admitRepairTask(goal, plan, task, input.actor ?? "local-user");
         this.changed();
         return this.repo.require<Goal>(kinds.goal, goal.id);
       },
     );
+  }
+
+  /** Adds one repair-family task to a new plan revision, in one transaction. */
+  private admitRepairTask(
+    goal: Goal,
+    plan: CoordinatorPlan,
+    task: PlanTaskAction,
+    actor: string,
+  ) {
+    this.store.transaction(() => {
+      const planId = `plan:${hash(stable([plan.id, task.key])).slice(0, 32)}`;
+      const next: CoordinatorPlan = {
+        ...plan,
+        id: planId,
+        revision: goal.planRevision + 1,
+        tasks: [...plan.tasks, task],
+        supersedesPlanId: plan.id,
+        decisionCandidateId: plan.decisionCandidateId,
+        createdAt: now(),
+      };
+      this.repo.immutable(kinds.plan, next);
+      for (const a of this.actions(goal))
+        this.repo.saveRevisioned(kinds.action, {
+          ...a,
+          id: `${planId}:${a.taskKey}`,
+          planId,
+          revision: 1,
+        });
+      this.repo.saveRevisioned(kinds.action, {
+        id: `${planId}:${task.key}`,
+        projectId: goal.projectId,
+        goalId: goal.id,
+        planId,
+        taskKey: task.key,
+        revision: 1,
+        state: "queued",
+        expectedControlGeneration: goal.controlGeneration,
+        roundId: null,
+        attemptIds: [],
+        candidateIds: [],
+        artifactIds: [],
+        detail: actor === "local-user" ? "" : `Admitted by ${actor}.`,
+        createdAt: now(),
+        updatedAt: now(),
+      } satisfies QueuedPlanAction);
+      this.saveGoal(goal, {
+        planId,
+        planRevision: next.revision,
+        state: "running",
+        checkTaskId: null,
+        checkCandidateId: null,
+        usage: {
+          ...goal.usage,
+          repairRounds: goal.usage.repairRounds + 1,
+          delegatedTasks: goal.usage.delegatedTasks + 1,
+        },
+        detail: `${task.title}: repair ${goal.usage.repairRounds + 1} admitted; a new required review round follows the repaired candidate.`,
+      });
+    });
+  }
+
+  /**
+   * Autonomous integration of semantically overlapping changes. Compatible
+   * changes are combined deterministically; each conflicting path goes to an
+   * integration task that sees every contributor's version and must keep
+   * their intent. The provisional combination is never the result: the
+   * integrated candidate is reviewed and checked again, and the options stay
+   * recorded with their members.
+   */
+  async integrateConflicts(input: {
+    goalId: string;
+    commandId: string;
+    roleId?: string;
+    actor?: string;
+  }) {
+    const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
+    return this.repo.receipt(
+      input.commandId,
+      goal.projectId,
+      "goal-integrate",
+      async () => {
+        const conflicts = goal.conflicts ?? [];
+        if (goal.state !== "blocked" || !conflicts.length)
+          throw new Error("This goal has no integration conflicts.");
+        if (goal.usage.repairRounds >= goal.grant.maxRepairRounds)
+          throw new Error(
+            `The goal's repair limit (${goal.grant.maxRepairRounds}) is reached.`,
+          );
+        const plan = this.plan(goal)!;
+        const roleId = input.roleId ?? functionsOf(goal).integration;
+        if (this.repo.role(goal.projectId, roleId).purpose !== "implementation")
+          throw new Error(
+            `Integration role ${roleId} must have implementation purpose.`,
+          );
+        const implementation = plan.tasks.filter(
+          (t) => t.kind === "implementation",
+        );
+        const actions = this.actions(goal);
+        const candidateIds = implementation.flatMap(
+          (t) => actions.find((a) => a.taskKey === t.key)?.candidateIds ?? [],
+        );
+        // A provisional base: the first option of each conflicting path, so
+        // every compatible change is present for the integrator.
+        const result = await this.driver.integrate!({
+          projectId: goal.projectId,
+          goalId: goal.id,
+          baseCandidateId: goal.baselineCandidateId!,
+          candidateIds,
+          resolutions: conflicts.map((c) => ({
+            path: c.path,
+            candidateId: c.options[0].candidateId,
+          })),
+        });
+        if ("conflicts" in result)
+          throw new Error("The provisional integration still conflicts.");
+        const versions = conflicts
+          .map((c) => {
+            const options = c.options
+              .map((o) => {
+                const text = this.driver.fileText?.(o.candidateId, c.path);
+                return `  - ${o.memberId} (task ${o.taskKey}, candidate ${o.candidateId})${text === undefined || text === null ? ": content available by candidate ID" : `:\n${text.length > 20000 ? `${text.slice(0, 20000)}…` : text}`}`;
+              })
+              .join("\n");
+            return `${c.path}:\n${options}`;
+          })
+          .join("\n\n");
+        const key = `repair-integrate-${goal.usage.repairRounds + 1}`;
+        const task: PlanTaskAction = {
+          key,
+          title: `Integrate ${conflicts.length} overlapping ${conflicts.length === 1 ? "file" : "files"}`,
+          kind: "implementation",
+          roleId,
+          dependencies: [],
+          permittedOutputs: conflicts.map((c) => c.path).sort(),
+          acceptanceCriteria: conflicts.map(
+            (c) =>
+              `${c.path} keeps the required work of ${c.options.map((o) => o.memberId).join(", ")}`,
+          ),
+          brief: `Several members changed the same files differently. Your starting files contain the first member's version of each. Produce one combined version of each file that keeps every contributor's required work; a majority cannot discard one contributor's change.\n\n${versions}`,
+          partitions: [],
+        };
+        this.store.put(kinds.integration, {
+          id: `${goal.id}:${key}`,
+          projectId: goal.projectId,
+          goalId: goal.id,
+          taskKey: key,
+          provisionalCandidateId: result.candidateId,
+          conflicts,
+          actor: input.actor ?? "local-user",
+          createdAt: now(),
+        });
+        const current = this.saveGoal(
+          this.repo.require<Goal>(kinds.goal, goal.id),
+          {
+            candidateId: result.candidateId,
+            reviewCompletionId: null,
+            conflicts: [],
+          },
+        );
+        this.admitRepairTask(current, plan, task, input.actor ?? "local-user");
+        this.changed();
+        return this.repo.require<Goal>(kinds.goal, goal.id);
+      },
+    );
+  }
+
+  /**
+   * Settles a loop child goal on the loop supervisor's decision. Promotion is
+   * machine-attributed to loop policy; this never records owner acceptance.
+   */
+  settleLoopGoal(input: {
+    goalId: string;
+    outcome: "promoted" | "rejected" | "cancelled";
+    promotionId: string | null;
+    detail: string;
+  }): Goal {
+    const goal = this.repo.require<Goal>(kinds.goal, input.goalId);
+    if (!goal.loop)
+      throw new Error("Only a loop child goal is settled by loop policy.");
+    if (goal.loopDisposition) return goal;
+    const next = this.saveGoal(goal, {
+      state: input.outcome === "promoted" ? "completed" : "stopped",
+      controlGeneration:
+        input.outcome === "promoted"
+          ? goal.controlGeneration
+          : goal.controlGeneration + 1,
+      loopDisposition: {
+        outcome: input.outcome,
+        by: "loop-policy",
+        promotionId: input.promotionId,
+        detail: input.detail,
+        at: now(),
+      },
+      detail: input.detail,
+    });
+    if (input.outcome !== "promoted") {
+      for (const action of this.actions(next))
+        if (["queued", "blocked"].includes(action.state))
+          this.saveAction(action, {
+            state: "cancelled",
+            detail: `Cancelled: ${input.outcome} by loop policy.`,
+          });
+      this.driver.cancelChecks?.(goal.id);
+    }
+    this.changed();
+    return next;
   }
 
   // -------------------------------------------------------------------------
@@ -3471,7 +4151,7 @@ export class Orchestrator {
       );
     if (goal.state === "planning" && !open("coordination")) {
       const round = this.freeze(goal, {
-        roleId: "coordinator",
+        roleId: functionsOf(goal).coordination,
         kind: "coordination",
         taskKey: null,
       });
@@ -3492,7 +4172,7 @@ export class Orchestrator {
     }
     if (goal.state === "reviewing" && goal.candidateId && !open("review")) {
       const round = this.freeze(goal, {
-        roleId: "reviewer",
+        roleId: functionsOf(goal).review,
         kind: "review",
         taskKey: null,
         candidateId: goal.candidateId,
@@ -3718,8 +4398,11 @@ export class Orchestrator {
       projectId,
     );
     const roles = this.repo.roles(projectId);
+    // Loop child goals belong to their run's view (packages/orchestration/
+    // loop-engine.ts), not the ordinary goal list.
     const goals = this.repo
       .all<Goal>(kinds.goal, projectId)
+      .filter((g) => !g.loop)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const routes = this.driver.routes(projectId);
     return {

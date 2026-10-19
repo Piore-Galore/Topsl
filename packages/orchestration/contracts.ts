@@ -9,6 +9,8 @@ import type {
   RoleRound,
 } from "../domain/role-groups";
 import { reviewSchema } from "../workflows/builder-reviewer";
+import type { TurnProtocol } from "../domain/recursive-loops";
+import { loopOutputSchema } from "./loop-contracts";
 
 /**
  * Output contracts per execution purpose. Every purpose parses only the
@@ -87,11 +89,19 @@ export const purposeSchemas = {
   implementation: implementationSummarySchema,
 } as const;
 
-/** The JSON Schema a runtime gets for a purpose, when it can enforce one. */
+/**
+ * The JSON Schema a runtime gets for a purpose, when it can enforce one. The
+ * registry is keyed by purpose, protocol kind and stage: an ordinary
+ * coordinator-v1 contribution keeps its task-plan schema, and a
+ * recursive-loop-v1 turn on the same read-only route gets its stage envelope.
+ */
 export function purposeOutputSchema(
   purpose: ExecutionPurpose,
+  protocol?: TurnProtocol | null,
 ): Record<string, unknown> | null {
   if (purpose === "direct-chat") return null;
+  if (protocol?.kind === "recursive-loop-v1")
+    return loopOutputSchema(purpose, protocol);
   return z.toJSONSchema(purposeSchemas[purpose]) as Record<string, unknown>;
 }
 
@@ -190,6 +200,8 @@ export function validateActions(
       string,
       { members: number; collaboration: CollaborationMode }
     >;
+    /** Each role's execution purpose, for task-kind compatibility. */
+    rolePurposes?: Record<string, ExecutionPurpose>;
   },
 ): string[] {
   const problems: string[] = [];
@@ -199,7 +211,25 @@ export function validateActions(
     keys.add(a.key);
     if (!context.knownRoles.includes(a.roleId))
       problems.push(
-        `Action ${a.key} names role ${a.roleId}, which is not defined. Coordinators cannot invent roles or models.`,
+        `Action ${a.key} names role ${a.roleId}, which is not defined or not active. Coordinators cannot invent roles or models.`,
+      );
+    // A task kind needs a role whose purpose produces its output contract:
+    // an implementation task cannot go to a reviewer or information role.
+    const purpose = context.rolePurposes?.[a.roleId];
+    if (
+      purpose &&
+      ((a.kind === "implementation" && purpose !== "implementation") ||
+        (a.kind === "information" && purpose !== "information"))
+    )
+      problems.push(
+        `Action ${a.key} is ${a.kind} work, but role ${a.roleId} has purpose ${purpose}; its output contract cannot satisfy this task.`,
+      );
+    if (
+      context.knownRoles.includes(a.roleId) &&
+      context.rosters[a.roleId]?.members === 0
+    )
+      problems.push(
+        `Action ${a.key} goes to ${a.roleId}, which has no member that can run now.`,
       );
     if (!context.allowedKinds.includes(a.kind))
       problems.push(
@@ -340,6 +370,7 @@ export function coordinatorPrompt(input: {
     purpose: string;
     members: number;
     collaboration: string;
+    unresolved?: number;
   }>;
   completed: Array<{ key: string; title: string; summary: string }>;
   memberId: string;
@@ -356,7 +387,7 @@ export function coordinatorPrompt(input: {
     `Roles you may delegate to (exact IDs; partitioned groups need one partition per member):\n${input.knownRoles
       .map(
         (r) =>
-          `- ${r.id}: ${r.purpose}, ${r.members} member(s), ${r.collaboration}`,
+          `- ${r.id}: ${r.purpose}, ${r.members} member(s), ${r.collaboration}${r.unresolved ? ` (${r.unresolved} more cannot run now)` : ""}`,
       )
       .join("\n")}`,
     input.completed.length
@@ -418,6 +449,8 @@ export function workPrompt(input: {
   instructions: string;
   inputDigest: string;
   handoff: string | null;
+  /** Predecessor results this task consumes, with their IDs. */
+  dependencies?: string | null;
 }): string {
   return [
     `You are member ${input.memberId}. Goal: ${input.objective}`,
@@ -432,6 +465,9 @@ export function workPrompt(input: {
       ? `Acceptance criteria:\n- ${input.action.acceptanceCriteria.join("\n- ")}`
       : "",
     input.handoff ? `Handoff from the previous member:\n${input.handoff}` : "",
+    input.dependencies
+      ? `Inputs from the tasks this one depends on:\n${input.dependencies}`
+      : "",
     input.purpose === "information"
       ? `Reply with one JSON object only: {"inputDigest": "${input.inputDigest}", "summary": "...", "report": "...", "limitations": []}.`
       : `When done, reply with one JSON object only: {"inputDigest": "${input.inputDigest}", "summary": "..."}.`,

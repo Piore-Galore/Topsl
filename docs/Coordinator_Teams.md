@@ -223,3 +223,17 @@ Reverting only the editor changes made the journey fail at the Return to Auto co
 ### Not covered
 
 Branch choice, findings and dispositions, repair, information goals, stop and steering of a running goal on screen, larger teams in a running goal (E2E-01, E2E-03), Claude members, Linux and Windows (the journey skips Windows, where the stand-in's shell wrapper cannot run), CI, packaged builds and live providers.
+
+## Follow-up: engine prerequisites for Recursive Looping (19 October 2026)
+
+[Recursive Looping](Recursive_Looping.md) runs each iteration as an ordinary coordinator goal. Its prerequisites changed the engine for every goal ([§11 there](Recursive_Looping.md#11-coordinator-engine-changes-rl-0)):
+
+- **Planning sees the resolved roster.** The coordinator prompt now lists each role's resolved members (and how many cannot run now) instead of the configured minimum, so a complex goal's two Auto implementers are planned as two. A partitioned task whose roster changed after planning, or whose partitions would drop a required member, blocks with a replan request instead of trimming members. Three scripted plans in [orchestration.test.ts](../tests/orchestration.test.ts) that encoded the old count now read the roster from the prompt ([rosterPlan](../tests/orchestration-fixture.ts)).
+- **Fencing.** Rounds freeze role-definition revisions; a role redefined while its plan is being decided makes that round stale.
+- **Purpose compatibility.** An implementation action must go to an implementation role and an information action to an information role; an action for a role with no runnable member is invalid.
+- **Dependency handoff.** A dependent task gets a typed bundle of its predecessors' results; a code task starts from an assembled baseline with its predecessors' changes, and final integration uses that ancestry.
+- **Function bindings, repair and integration.** Coordination, review and repair use a goal's function bindings (the built-in roles by default). Repair can be driven by failing checks or unmet criteria, and overlapping changes can go to an integration task. The single-goal conversation still offers only finding repair and per-file choices; loops use the rest automatically.
+- **Owner authority first.** A role-group revision written by anything other than the owner fills only fields no owner setting fixes, at any scope.
+- **Protocol on every turn.** Member turns carry `protocol` (`coordinator-v1` here), which with the purpose selects the runtime's output schema.
+
+Verified by [loop-prerequisites.test.ts](../tests/loop-prerequisites.test.ts) (resolved roster, TM-06, TM-07, TM-08, CP-07, protocol), the unchanged [orchestration.test.ts](../tests/orchestration.test.ts) and [orchestration-service.test.ts](../tests/orchestration-service.test.ts), and the coordinator Electron journey, which now opens behind the **Run mode** selector (Single goal). Results: [Implementation status](Implementation_Status.md#recursive-looping--19-october-2026).

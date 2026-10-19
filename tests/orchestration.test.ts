@@ -26,6 +26,7 @@ import {
 import { completionPolicySchema } from "../packages/domain/role-groups";
 import {
   defaultPlan,
+  rosterPlan,
   defaultReply,
   drive,
   orchestration,
@@ -791,7 +792,7 @@ describe("coordinator goals end to end (scripted driver)", () => {
       if (turn.purpose === "coordinator-contribution") {
         // Three members add a compatible task; their proposals identify the
         // combined candidate. The other two must endorse explicitly, and challenge.
-        const plan: unknown[] = defaultPlan();
+        const plan: unknown[] = rosterPlan(turn);
         if (!dissenters.includes(turn.memberId))
           plan.push({
             key: "docs",
@@ -851,7 +852,7 @@ describe("coordinator goals end to end (scripted driver)", () => {
     const { goal } = await start(f, "Coordinate with Opus and Astra.");
     f.driver.reply = (turn) => {
       if (turn.purpose === "coordinator-contribution") {
-        const plan = defaultPlan();
+        const plan = rosterPlan(turn);
         plan[0].title = turn.memberId.includes("opus")
           ? "Opus build"
           : "Astra build";
@@ -1150,7 +1151,7 @@ describe("coordinator goals end to end (scripted driver)", () => {
     f.driver.reply = (turn) => {
       if (turn.purpose === "coordinator-contribution") {
         // Astra adds a compatible task, so the combined candidate needs Opus's explicit endorsement.
-        const plan: unknown[] = defaultPlan();
+        const plan: unknown[] = rosterPlan(turn);
         if (turn.memberId.includes("astra"))
           plan.push({
             key: "docs",

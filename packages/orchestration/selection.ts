@@ -165,6 +165,14 @@ export function resolveGroup(input: {
   group: EffectiveRoleGroup;
   pool: RouteCandidate[];
   complexity: "simple" | "complex";
+  /**
+   * Outcome-aware model order for Auto slots, best first (packages/
+   * orchestration/adaptation.ts). It ranks eligible options only; it never
+   * replaces a pin or makes an ineligible route eligible. Absent: the
+   * documented cold-start order (explicit preferences, diversity, default
+   * model, stable ordering).
+   */
+  ranking?: string[];
 }): SelectionResult {
   const { role, group, pool } = input;
   const conflicts = [...group.conflicts];
@@ -322,6 +330,11 @@ export function resolveGroup(input: {
           chosen.some((c) => c.route.provider === o.route.provider)
         ),
     );
+    const rankWeight = (o: Option) => {
+      if (!input.ranking?.length) return o.model.isDefault ? 0 : 1;
+      const at = input.ranking.indexOf(o.model.model);
+      return at < 0 ? 1 : at / (input.ranking.length + 1);
+    };
     const score = (o: Option) =>
       (preferences.models.includes(o.model.model) ? 0 : 10) +
       (preferences.providers.includes(o.route.provider) ? 0 : 5) +
@@ -330,7 +343,7 @@ export function resolveGroup(input: {
       chosen.some((c) => c.route.provider === o.route.provider)
         ? 20
         : 0) +
-      (o.model.isDefault ? 0 : 1);
+      rankWeight(o);
     const ranked = [...candidates].sort(
       (a, b) =>
         score(a) - score(b) ||

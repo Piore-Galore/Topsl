@@ -14,12 +14,16 @@ import { ConcurrencyBudget } from "./concurrency";
 import { RevisionRepository } from "../context/revisions";
 import type { ToolBinding } from "../providers/contract";
 import type { ExecutionPurpose } from "../domain/role-groups";
+import type { TurnProtocol } from "../domain/recursive-loops";
 export interface RuntimeExecution {
   attemptId: string;
   freshSession?: boolean;
   /** What this attempt is for; selects its output contract and readiness,
    * separately from its filesystem permission. */
   purpose?: ExecutionPurpose;
+  /** The versioned output protocol (coordinator-v1 or recursive-loop-v1 and
+   * its stage); with the purpose it selects schema enforcement and parsing. */
+  protocol?: TurnProtocol;
   /** Topsl's tools for this attempt's fresh review session. Calls are answered
    * only from the session's own thread and turn. */
   tools?: ToolBinding;

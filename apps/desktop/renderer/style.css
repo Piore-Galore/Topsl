@@ -1630,3 +1630,67 @@ label.checkbox input {
   vertical-align: middle;
 }
 
+/* Recursive Looping (experimental): the Coordinator run mode and loop views. */
+.mode-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 14px;
+}
+.mode-selector legend {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+.mode-selector label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.mode-selector label.selected {
+  background: var(--accent-soft);
+}
+.recursive-loop textarea,
+.recursive-loop input:not([type="checkbox"]):not([type="radio"]) {
+  max-width: 100%;
+}
+.loop-header .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.loop-run section,
+.loop-run > details {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.goal-ledger,
+.loop-roles,
+.loop-timeline {
+  padding-left: 18px;
+}
+.goal-ledger > li,
+.loop-roles > li,
+.loop-timeline > li {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.loop-roles .badge {
+  margin: 2px 4px 2px 0;
+}
+.loop-roles .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.loop-roles input[type="number"] {
+  width: 5em;
+}

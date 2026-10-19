@@ -215,9 +215,15 @@ export interface EffectiveRoleGroup {
     level: string;
     revisionId: string | null;
     fields: string[];
+    /** Set for automatic settings, which fill only fields the owner left open. */
+    authority?: "automatic";
   }>;
   /** Problems that keep this group from executing as configured. */
   conflicts: string[];
+  /** Fields an owner setting fixes at some scope: automation cannot change them. */
+  userFields?: string[];
+  /** Automatic settings that were not applied because an owner setting wins. */
+  ignoredAutomatic?: string[];
 }
 
 export interface RoleDefinition {
@@ -356,14 +362,86 @@ export interface RoundInput {
   /** For a work round: the plan task brief and its partition per member. */
   brief: string | null;
   partitions: Record<string, { title: string; permittedOutputs: string[] }>;
-  /** Each role's resolved roster size and collaboration, as the coordinators saw them. */
-  rosters: Record<
-    string,
-    { members: number; collaboration: CollaborationMode }
-  >;
+  /**
+   * Each role's resolved roster, as the coordinators saw it. The same
+   * resolution executes the plan: a different roster at dispatch is a stale
+   * topology, never a silently trimmed one.
+   */
+  rosters: Record<string, RosterView>;
   artifactRefs: string[];
   allowedOperations: string[];
+  /** Role definition revisions this round froze; a changed definition makes it stale. */
+  roleRevisions?: Record<string, number>;
+  /** A loop child goal's frozen organization. */
+  topologyRevisionId?: string | null;
+  /** The predecessor results this task consumes, and their digest. */
+  dependencyBundleId?: string | null;
+  dependencyDigest?: string | null;
   digest: string;
+}
+
+export interface RosterView {
+  members: number;
+  collaboration: CollaborationMode;
+  /** The resolved member IDs, in assignment order. */
+  memberIds?: string[];
+  /** Members that could not resolve to a qualified route now. */
+  unresolved?: number;
+  purpose?: ExecutionPurpose;
+}
+
+/**
+ * The typed input bundle of a dependent task: its predecessors' results and
+ * the assembled baseline that contains their code. Provisional: it never
+ * advances a loop's accepted checkpoint.
+ */
+export interface DependencyBundle {
+  id: string;
+  projectId: string;
+  goalId: string;
+  planId: string;
+  taskKey: string;
+  predecessors: Array<{
+    taskKey: string;
+    actionId: string;
+    kind: PlanTaskAction["kind"];
+    candidateIds: string[];
+    artifactIds: string[];
+    permittedOutputs: string[];
+  }>;
+  /** The goal baseline plus every predecessor change, or null without code predecessors. */
+  assembledCandidateId: string | null;
+  digest: string;
+  createdAt: string;
+}
+
+/** Which role serves each obligation of a goal. Replaces built-in role-ID assumptions. */
+export interface GoalFunctions {
+  coordination: string;
+  review: string;
+  implementation: string;
+  integration: string;
+}
+
+/** The link from a loop run's child execution goal to its parent. */
+export interface GoalLoopBinding {
+  runId: string;
+  iterationId: string;
+  controlGeneration: number;
+  topologyRevisionId: string;
+  /** Only these roles may receive delegated work. */
+  activeRoles: string[];
+  /** Adaptive settings per role; they fill only fields no user layer set. */
+  adaptive: Record<string, RoleGroupSettings>;
+  excludedProviders: Array<"codex" | "claude">;
+  /** Outcome-aware model order for Auto slots, best first, per role. */
+  ranking: Record<string, string[]>;
+  /**
+   * The owner's run-scope settings per role. They carry user authority, so
+   * no adaptive or task-local automatic setting can override them.
+   */
+  overrides: Record<string, RoleGroupSettings>;
+  complexity?: "simple" | "complex";
 }
 
 export interface ParticipantContribution {
@@ -606,6 +684,21 @@ export interface Goal {
   /** Per-path choices applied on the next integration of the same candidates. */
   resolutions?: ConflictResolution[];
   application?: GoalApplication | null;
+  /** Function bindings; absent goals use the built-in roles. */
+  functions?: GoalFunctions;
+  /** Set for a loop run's child execution goal (docs/Recursive_Looping.md). */
+  loop?: GoalLoopBinding | null;
+  /**
+   * How the loop supervisor settled this child goal. Machine promotion is
+   * attributed to loop policy and is never recorded as owner acceptance.
+   */
+  loopDisposition?: {
+    outcome: "promoted" | "rejected" | "cancelled";
+    by: "loop-policy";
+    promotionId: string | null;
+    detail: string;
+    at: string;
+  } | null;
   detail: string;
   createdAt: string;
   updatedAt: string;

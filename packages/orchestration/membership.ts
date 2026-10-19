@@ -27,10 +27,20 @@ export interface SettingsLayer {
     | "project-role"
     | "goal-policy"
     | "goal-role"
-    | "task";
+    | "task"
+    | "adaptive";
   revisionId: string | null;
   settings: RoleGroupSettings;
+  /**
+   * Who set it. Automatic settings (a loop's adaptive organization, or any
+   * revision not written by the owner) fill only fields that no user layer
+   * set at any scope: authority comes before scope.
+   */
+  authority?: "user" | "automatic";
 }
+
+/** Revisions the owner wrote carry user authority; anything else is automatic. */
+export const userActors: ReadonlySet<string> = new Set(["local-user"]);
 
 export function applicationDefaults(role: RoleDefinition): RoleGroupSettings {
   return {
@@ -60,17 +70,22 @@ export function effectiveGroup(input: {
   memberLimit: number;
   layers: SettingsLayer[];
 }): EffectiveRoleGroup {
-  const ordered = [
+  const automatic = input.layers.filter((l) => l.authority === "automatic");
+  const ordered: SettingsLayer[] = [
     {
       level: "application" as const,
       revisionId: null,
       settings: applicationDefaults(input.role),
     },
-    ...input.layers,
+    ...input.layers.filter((l) => l.authority !== "automatic"),
   ];
   let merged: RoleGroupSettings = {};
   let completion: Partial<CompletionPolicy> = {};
+  const userFields = new Set<string>();
+  const ignored: string[] = [];
   for (const layer of ordered) {
+    if (layer.level !== "application")
+      for (const field of setFields(layer.settings)) userFields.add(field);
     const settings = roleGroupSettingsSchema.parse(layer.settings);
     // A scope that sets a roster closes membership there: it replaces the
     // broader roster and its count, instead of adding to it.
@@ -88,6 +103,44 @@ export function effectiveGroup(input: {
       ...completion,
       ...withoutUndefined(settings.completion ?? {}),
     };
+  }
+  // Adaptive settings fill only what the owner left open. An exact roster is
+  // closed; a required-members roster keeps its pins and may gain Auto slots.
+  for (const layer of automatic) {
+    const settings = roleGroupSettingsSchema.parse(layer.settings);
+    for (const [field, value] of Object.entries(withoutUndefined(settings))) {
+      if (field === "members") continue;
+      if (field === "completion") continue;
+      if (userFields.has(field)) {
+        ignored.push(field);
+        continue;
+      }
+      (merged as Record<string, unknown>)[field] = value;
+    }
+    if (settings.members?.length) {
+      if (merged.form === "exact" && userFields.has("members"))
+        ignored.push("members");
+      else {
+        const pinned = userFields.has("members") ? (merged.members ?? []) : [];
+        const ids = new Set(pinned.map((m) => m.memberId));
+        const limit =
+          (userFields.has("count") ? merged.count : undefined) ??
+          settings.count ??
+          pinned.length + settings.members.length;
+        const extra = settings.members
+          .filter((m) => !m.pin && !ids.has(m.memberId))
+          .slice(0, Math.max(0, limit - pinned.length));
+        merged.members = [...pinned, ...extra];
+        if (!userFields.has("form") && merged.form === "exact")
+          merged.form = "required-plus-auto";
+      }
+    }
+    if (
+      merged.count !== undefined &&
+      !userFields.has("maxCount") &&
+      (merged.maxCount ?? 0) < merged.count
+    )
+      merged.maxCount = merged.count;
   }
   const memberLimit = Math.min(
     MEMBER_LIMIT_CEILING,
@@ -149,11 +202,17 @@ export function effectiveGroup(input: {
     for (const value of values)
       if (form === "exact" && !ids.has(value))
         conflicts.push(`The ${field} name ${value}, which is not a member.`);
-  const sources = ordered
+  const sources = [...ordered, ...automatic]
     .map((layer) => ({
       level: layer.level,
       revisionId: layer.revisionId,
-      fields: setFields(layer.settings),
+      fields:
+        layer.authority === "automatic"
+          ? setFields(layer.settings).filter((f) => !userFields.has(f))
+          : setFields(layer.settings),
+      ...(layer.authority === "automatic"
+        ? { authority: "automatic" as const }
+        : {}),
     }))
     .filter((s) => s.fields.length)
     .reverse();
@@ -176,6 +235,8 @@ export function effectiveGroup(input: {
     memberLimit,
     sources,
     conflicts,
+    userFields: [...userFields].sort(),
+    ignoredAutomatic: [...new Set(ignored)].sort(),
   };
 }
 
@@ -184,6 +245,9 @@ function withoutUndefined<T extends object>(value: T): Partial<T> {
     Object.entries(value).filter(([, v]) => v !== undefined),
   ) as Partial<T>;
 }
+
+const authorityOf = (r: RoleGroupRevision): "user" | "automatic" =>
+  userActors.has(r.source.actor) ? "user" : "automatic";
 
 /** Layers for a role, from stored revisions, most specific last. */
 export function layersFor(
@@ -213,6 +277,7 @@ export function layersFor(
       level: "project-role",
       revisionId: projectRole.id,
       settings: projectRole.settings,
+      authority: authorityOf(projectRole),
     });
   if (goalId) {
     const goalWide = latest(
@@ -226,6 +291,7 @@ export function layersFor(
         level: "goal-policy",
         revisionId: goalWide.id,
         settings: goalWide.settings,
+        authority: authorityOf(goalWide),
       });
     const goalRole = latest(
       (r) =>
@@ -238,6 +304,7 @@ export function layersFor(
         level: "goal-role",
         revisionId: goalRole.id,
         settings: goalRole.settings,
+        authority: authorityOf(goalRole),
       });
     if (taskKey) {
       const task = latest(
@@ -252,6 +319,7 @@ export function layersFor(
           level: "task",
           revisionId: task.id,
           settings: task.settings,
+          authority: authorityOf(task),
         });
     }
   }
@@ -473,6 +541,44 @@ export function parseMembership(
         roleId,
         settings: {
           form: "required-plus-auto",
+          members: labels(m[1]).map((l, i) =>
+            pinned(l, i, roleId, sourceMessageId),
+          ),
+        },
+        matched: clause,
+      });
+      continue;
+    }
+    // "Include Fable among the reviewers": a required member, the rest Auto.
+    if (
+      (m = new RegExp(
+        `^include (.+?) among (?:the )?(${roleAlternation})$`,
+        "i",
+      ).exec(clause))
+    ) {
+      const roleId = roleOf(m[2])!;
+      results.push({
+        roleId,
+        settings: {
+          form: "required-plus-auto",
+          members: labels(m[1]).map((l, i) =>
+            pinned(l, i, roleId, sourceMessageId),
+          ),
+        },
+        matched: clause,
+      });
+      continue;
+    }
+    // "Use Opus and Astra as the exact coordinator team": a closed roster.
+    if (
+      (m = /^use (.+?) as (?:the |an? )?exact (\w+?)s? team$/i.exec(clause)) &&
+      roleOf(m[2])
+    ) {
+      const roleId = roleOf(m[2])!;
+      results.push({
+        roleId,
+        settings: {
+          form: "exact",
           members: labels(m[1]).map((l, i) =>
             pinned(l, i, roleId, sourceMessageId),
           ),

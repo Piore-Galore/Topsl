@@ -46,6 +46,7 @@ import { candidateTools } from "../context/candidate-tools";
 import {
   assertCandidateCurrent,
   assertMaterializedCandidate,
+  candidateFileBytes,
   candidateHasTextLine,
   captureCandidate,
   gitWorkingTreeChanges,
@@ -341,10 +342,13 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     if (edit) this.deps.assertLocalOwner(project.id);
     // Each member gets its own copy, so concurrent members never share a
     // checkout or a workspace lease.
+    // A loop turn reads its iteration's accepted content; it never captures
+    // the original folder again.
     const source =
       turn.purpose === "candidate-review" || edit
         ? turn.candidateId
-        : await this.contextSnapshot(turn.projectId, turn.goalId);
+        : (turn.contextCandidateId ??
+          (await this.contextSnapshot(turn.projectId, turn.goalId)));
     let root: string;
     if (source) {
       const copy = await materializeCandidate(
@@ -538,6 +542,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
           attemptId: attempt.id,
           freshSession: true,
           purpose: turn.purpose,
+          protocol: turn.protocol,
           ...(tools ? { tools } : {}),
         },
       );
@@ -778,8 +783,12 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     baseCandidateId: string;
     candidateIds: string[];
     resolutions?: Array<{ path: string; candidateId: string }>;
+    ancestry?: Record<string, string[]>;
   }) {
     const base = this.snapshot(input.baseCandidateId);
+    const ancestry = input.ancestry ?? {};
+    const descends = (a: string, b: string): boolean =>
+      (ancestry[a] ?? []).includes(b);
     const files = new Map(base.files.map((f) => [f.path, f]));
     const changes = new Map<
       string,
@@ -808,9 +817,19 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
         "Conflict resolutions must select a member candidate that changed that file.",
       );
     const conflicts: Array<{ path: string; candidateIds: string[] }> = [];
-    for (const [name, list] of [...changes].sort(([a], [b]) =>
+    for (const [name, all] of [...changes].sort(([a], [b]) =>
       a.localeCompare(b),
     )) {
+      // A change built on a predecessor's result supersedes that predecessor's
+      // version of the same path: it is included once and never reverted.
+      const list = all.filter(
+        (v) =>
+          !all.some(
+            (o) =>
+              o.candidateId !== v.candidateId &&
+              descends(o.candidateId, v.candidateId),
+          ),
+      );
       const resolution = resolutions.find((r) => r.path === name);
       const distinct = list.filter(
         (v, i) => list.findIndex((o) => fileEqual(o.file, v.file)) === i,
@@ -868,6 +887,18 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       await rm(root, { recursive: true, force: true });
       throw error;
     }
+  }
+
+  fileText(candidateId: string, filePath: string): string | null {
+    const candidate = this.store.get<CandidateSnapshot>(
+      "candidate",
+      candidateId,
+    );
+    const file = candidate?.files.find((f) => f.path === filePath && f.hash);
+    if (!candidate || !file) return null;
+    const bytes = candidateFileBytes(candidate, file, this.store);
+    if (!bytes || bytes.includes(0)) return null;
+    return bytes.toString("utf8");
   }
 
   bindChecks(input: {

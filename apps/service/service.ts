@@ -142,6 +142,9 @@ import {
 import { desktopProjectRoute } from "../../packages/workspace/project-opening";
 import { Orchestrator } from "../../packages/orchestration/engine";
 import { RuntimeOrchestrationDriver } from "../../packages/orchestration/runtime-driver";
+import { LoopSupervisor } from "../../packages/orchestration/loop-engine";
+import { RuntimeLoopDriver } from "../../packages/orchestration/loop-checkpoints";
+import { LOOP_FEATURE_FLAG } from "../../packages/domain/recursive-loops";
 import {
   CodexProjectSync,
   orderLocalProjects,
@@ -180,6 +183,8 @@ export class Service {
   readonly codexProjects: CodexProjectSync;
   /** The coordinator feature: goals, role groups and rounds (docs/Coordinator_Teams.md). */
   readonly orchestration: Orchestrator;
+  /** Recursive Looping (experimental): the loop supervisor above the coordinator engine. */
+  readonly loops: LoopSupervisor;
   private timer?: ReturnType<typeof setInterval>;
   private ownershipTimer?: ReturnType<typeof setInterval>;
   private workflowTimer?: ReturnType<typeof setInterval>;
@@ -411,16 +416,23 @@ export class Service {
           this.replication.assertLocalOwner(projectId, action),
       },
     );
-    this.orchestration = new Orchestrator(
-      this.store,
-      new RuntimeOrchestrationDriver({
-        store: this.store,
-        coordinator: this.coordinator,
-        context: this.context,
-        capabilities: (installation) => this.runtime.capabilities(installation),
-        purposeReadiness: (installation, selection, purpose) =>
-          this.runtime.purposeReadiness(installation, selection, purpose),
-        start: (
+    const orchestrationDriver = new RuntimeOrchestrationDriver({
+      store: this.store,
+      coordinator: this.coordinator,
+      context: this.context,
+      capabilities: (installation) => this.runtime.capabilities(installation),
+      purposeReadiness: (installation, selection, purpose) =>
+        this.runtime.purposeReadiness(installation, selection, purpose),
+      start: (
+        installation,
+        conversation,
+        project,
+        prompt,
+        model,
+        mode,
+        execution,
+      ) =>
+        this.runtime.start(
           installation,
           conversation,
           project,
@@ -428,22 +440,33 @@ export class Service {
           model,
           mode,
           execution,
-        ) =>
-          this.runtime.start(
-            installation,
-            conversation,
-            project,
-            prompt,
-            model,
-            mode,
-            execution,
-          ),
-        interrupt: (runId) => this.runtime.interrupt(runId),
+        ),
+      interrupt: (runId) => this.runtime.interrupt(runId),
+      assertLocalOwner: (projectId) =>
+        this.replication.assertLocalOwner(projectId),
+      integrationRoot: path.join(directory, "orchestration-integrations"),
+    });
+    this.orchestration = new Orchestrator(this.store, orchestrationDriver, () =>
+      this.changed(),
+    );
+    this.loops = new LoopSupervisor(
+      this.store,
+      this.orchestration,
+      orchestrationDriver,
+      new RuntimeLoopDriver({
+        store: this.store,
+        orchestration: orchestrationDriver,
+        loopRoot: path.join(directory, "loop-checkpoints"),
+        ownedRoots: [path.join(directory, "orchestration-integrations")],
         assertLocalOwner: (projectId) =>
           this.replication.assertLocalOwner(projectId),
-        integrationRoot: path.join(directory, "orchestration-integrations"),
+        providerLimits: (providers) => this.loopProviderLimits(providers),
       }),
       () => this.changed(),
+      {
+        enabled: () => this.loopsEnabled(),
+        exportRoot: path.join(directory, "loop-exports"),
+      },
     );
     const projectPaths = isolatedTest
       ? projectSourcePaths(path.join(directory, "native-home"), {})
@@ -471,9 +494,11 @@ export class Service {
   }
   async start(): Promise<void> {
     await this.orchestration.recover();
+    await this.loops.recover();
     this.workflowTimer = setInterval(() => {
       this.background(this.parallel.tick());
-      this.background(this.orchestration.tick());
+      // The loop supervisor reads what the engine settled in the same tick.
+      this.background(this.orchestration.tick().then(() => this.loops.tick()));
       for (const state of this.store.iterate<BuilderReviewerState>(
         "builder-reviewer",
       )) {
@@ -1178,9 +1203,27 @@ export class Service {
       | "assisted-handoff"
       | "claude-step"
       | "goal-acceptance"
-      | "goal-application",
+      | "goal-application"
+      | "loop-authority"
+      | "loop-policy"
+      | "loop-publication",
     id: string,
   ): LifecyclePlan | ConfigurationPlan | Approval | CheckPlan | unknown {
+    if (kind === "loop-authority") return this.loops.authorityReview(id);
+    if (kind === "loop-policy") {
+      // `${runId}:${base64url(JSON policy)}`: the proposed change to confirm.
+      const at = id.indexOf(":");
+      const proposed = JSON.parse(
+        Buffer.from(id.slice(at + 1), "base64url").toString("utf8"),
+      );
+      return this.loops.authorityReview(id.slice(0, at), proposed);
+    }
+    if (kind === "loop-publication")
+      // Refused before any dialog when the folder needs reconciliation.
+      return this.loops.publicationReview(id).then(({ plan: _, ...review }) => {
+        if (review.problems.length) throw new Error(review.problems.join(" "));
+        return review;
+      });
     if (kind === "goal-application")
       // Refused before any dialog when the folder is dirty, changed or not Git.
       return this.orchestration.applicationReview(id).then((review) => {
@@ -1305,6 +1348,56 @@ export class Service {
       () => this.operations.delete(operation),
     );
     return operation;
+  }
+  /** Whether experimental.recursiveLooping is on. */
+  private loopsEnabled(): boolean {
+    return (
+      this.store.get<{ enabled: boolean }>("preference", LOOP_FEATURE_FLAG)
+        ?.enabled ?? false
+    );
+  }
+  /**
+   * Provider quota a runtime reported as reached, and owner allowances used
+   * up, for the providers a loop's next work would use.
+   */
+  private loopProviderLimits(providers: Array<"codex" | "claude">) {
+    const limits: Array<{
+      provider: "codex" | "claude";
+      kind: "quota" | "allowance";
+      detail: string;
+      retryAt: string | null;
+    }> = [];
+    for (const snapshot of this.store.list<AllowanceSnapshot>(
+      "allowance-snapshot",
+    )) {
+      if (!providers.includes(snapshot.provider as "codex")) continue;
+      for (const bucket of snapshot.buckets)
+        if (bucket.limitReached) {
+          const reset = [bucket.primary, bucket.secondary]
+            .map((w) => w?.resetsAtSeconds)
+            .filter((v): v is number => typeof v === "number")
+            .sort()
+            .at(-1);
+          limits.push({
+            provider: snapshot.provider as "codex",
+            kind: "quota",
+            detail: `${bucket.name ?? bucket.id}: ${bucket.limitReached} (reported by the runtime)`,
+            retryAt: reset ? new Date(reset * 1000).toISOString() : null,
+          });
+        }
+    }
+    for (const budget of this.providerBudgets())
+      if (
+        providers.includes(budget.provider as "codex") &&
+        budget.remaining <= 0
+      )
+        limits.push({
+          provider: budget.provider as "codex",
+          kind: "allowance",
+          detail: `Your ${budget.period} budget of ${budget.tokens} tokens is used (${budget.complete ? "complete" : "incomplete"} measurement).`,
+          retryAt: null,
+        });
+    return limits;
   }
   private background(operation: Promise<unknown>): void {
     this.operations.add(operation);
@@ -1987,6 +2080,85 @@ export class Service {
           digest: trusted.digest,
           commandId: command.commandId,
         });
+      case "loop-feature-set":
+        this.store.transaction(() => {
+          this.store.put("preference", {
+            id: LOOP_FEATURE_FLAG,
+            enabled: command.enabled,
+          });
+          this.store.event("loop.feature-set", { enabled: command.enabled });
+        });
+        this.changed();
+        return { enabled: command.enabled };
+      case "loop-query":
+        this.require<Project>("project", command.projectId);
+        return {
+          enabled: this.loopsEnabled(),
+          runs: this.loops.list(command.projectId),
+        };
+      case "loop-inspect":
+        return this.loops.view(command.runId);
+      case "loop-timeline":
+        return this.loops.timeline(
+          command.runId,
+          command.cursor,
+          command.limit,
+        );
+      case "loop-create": {
+        this.require<Project>("project", command.projectId);
+        const { type: _, ...input } = command;
+        return this.loops.create(input);
+      }
+      case "loop-start":
+        if (!trusted.digest)
+          throw new Error(
+            "Starting a loop establishes its authority; it needs your native confirmation of what the run will do.",
+          );
+        return this.loops.start({
+          runId: command.runId,
+          digest: trusted.digest,
+          commandId: command.commandId,
+        });
+      case "loop-goals-update": {
+        const { type: _, ...input } = command;
+        return this.loops.updateGoals(input);
+      }
+      case "loop-policy-update":
+        return this.loops.updatePolicy({
+          runId: command.runId,
+          expectedRevision: command.expectedRevision,
+          policy: command.policy,
+          digest: trusted.digest ?? null,
+          commandId: command.commandId,
+        });
+      case "loop-override-set":
+        return this.loops.setOverride({ ...command, source: "editor" });
+      case "loop-override-release":
+        return this.loops.releaseOverride(command);
+      case "loop-control":
+        return this.loops.control(command);
+      case "loop-message":
+        return this.loops.message(command);
+      case "loop-checkpoint-export":
+        return this.loops.exportCheckpoint(command);
+      case "loop-publication-preview": {
+        const { plan: _, ...review } = await this.loops.publicationReview(
+          command.runId,
+        );
+        return review;
+      }
+      case "loop-publication-apply":
+        if (!trusted.digest)
+          throw new Error(
+            "Publishing writes your project folder; it needs your native confirmation of the exact files.",
+          );
+        return this.loops.publish({
+          runId: command.runId,
+          digest: trusted.digest,
+          commandId: command.commandId,
+        });
+      case "loop-publication-reconcile":
+        return this.loops.reconcilePublication(command);
       case "parallel-create":
         return this.parallel.create(command);
       case "parallel-query":
@@ -3371,6 +3543,10 @@ export class Service {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
+    // Orderly suspension: runs reconcile and resume (or wait) on next start.
+    try {
+      this.loops.suspend();
+    } catch {}
     this.workflows.close();
     clearInterval(this.workflowTimer);
     if (this.timer) clearInterval(this.timer);

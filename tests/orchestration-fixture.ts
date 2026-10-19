@@ -98,19 +98,9 @@ const digestIn = (prompt: string, label: RegExp) =>
 
 /** Default scripted behavior: agreeable coordinators, clean reviewers, working implementers. */
 export function defaultReply(turn: MemberTurn, plan?: unknown[]): Reply {
-  if (!plan) {
-    // Partitioned groups need one partition per member; read the roster the
-    // coordinator was shown.
-    const roster =
-      /- implementer: implementation, (\d+) member\(s\), (\S+)/.exec(
-        turn.prompt,
-      );
-    const members = roster ? Number(roster[1]) : 1;
-    plan = defaultPlan(
-      "implementation",
-      roster?.[2] === "parallel-partitioned" && members > 1 ? members : 0,
-    );
-  }
+  // Partitioned groups need one partition per member; read the roster the
+  // coordinator was shown.
+  if (!plan) plan = rosterPlan(turn);
   switch (turn.purpose) {
     case "coordinator-contribution":
       return {
@@ -169,6 +159,21 @@ export function defaultReply(turn: MemberTurn, plan?: unknown[]): Reply {
   }
 }
 
+/**
+ * The default plan for the implementer roster this coordinator was shown: a
+ * partitioned group of N resolved members needs N partitions.
+ */
+export function rosterPlan(turn: MemberTurn) {
+  const roster = /- implementer: implementation, (\d+) member\(s\), (\S+)/.exec(
+    turn.prompt,
+  );
+  const members = roster ? Number(roster[1]) : 1;
+  return defaultPlan(
+    "implementation",
+    roster?.[2] === "parallel-partitioned" && members > 1 ? members : 0,
+  );
+}
+
 export function defaultPlan(
   kind: "implementation" | "information" = "implementation",
   partitions = 0,
@@ -216,6 +221,7 @@ export class ScriptedDriver implements OrchestrationDriver {
     base: string;
     candidates: string[];
     resolutions: Array<{ path: string; candidateId: string }>;
+    ancestry?: Record<string, string[]>;
   }> = [];
   integrateResult:
     | ((
@@ -345,11 +351,13 @@ export class ScriptedDriver implements OrchestrationDriver {
     baseCandidateId: string;
     candidateIds: string[];
     resolutions?: Array<{ path: string; candidateId: string }>;
+    ancestry?: Record<string, string[]>;
   }) {
     this.integrations.push({
       base: input.baseCandidateId,
       candidates: input.candidateIds,
       resolutions: input.resolutions ?? [],
+      ...(input.ancestry ? { ancestry: input.ancestry } : {}),
     });
     return (
       this.integrateResult?.(input.candidateIds, input.resolutions ?? []) ?? {

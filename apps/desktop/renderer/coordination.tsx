@@ -4,7 +4,7 @@ export type { ProjectView } from "../../../packages/domain/navigation";
 import { AtlasIcon } from "./components/atlas";
 import { ProjectOverview } from "./screens/project-overview";
 import { ParallelActivity } from "./components/parallel-activity";
-import { CoordinatorTeams } from "./components/coordinator-teams";
+import { CoordinatorModes } from "./components/recursive-loop";
 import { OptionalCoordination, UsageBudget } from "./components/reporting";
 import { Workflows } from "./workflows";
 import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
@@ -495,7 +495,7 @@ export function Coordination({
       ) : (
         <>
           <div hidden={view !== "coordinator"}>
-            <CoordinatorTeams projectId={projectId} />
+            <CoordinatorModes projectId={projectId} />
           </div>
           <div hidden={view !== "tasks" && view !== "changes"}>
             <Workflows

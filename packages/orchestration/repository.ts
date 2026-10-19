@@ -35,6 +35,8 @@ export const kinds = {
   control: "control-event",
   receipt: "command-receipt",
   memberSession: "member-session",
+  dependency: "dependency-bundle",
+  integration: "goal-integration",
 } as const;
 
 export class OrchestrationRepository {

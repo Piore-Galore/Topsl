@@ -1148,7 +1148,10 @@ export class RuntimeManager {
           )
             ? execution?.purpose && execution.purpose !== "candidate-review"
               ? (() => {
-                  const schema = purposeOutputSchema(execution.purpose);
+                  const schema = purposeOutputSchema(
+                    execution.purpose,
+                    execution.protocol,
+                  );
                   return schema ? { outputSchema: schema } : {};
                 })()
               : { outputSchema: reviewOutputSchema }
