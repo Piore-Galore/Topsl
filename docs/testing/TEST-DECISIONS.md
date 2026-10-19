@@ -170,7 +170,9 @@ Stress means `TOPSL_TEST_CPU_THROTTLE=4` and eight `yes > /dev/null` processes o
 
 The single `round2-ui-test.mjs` failure is a separate, pre-existing ordering race in that harness. Its first assertion, `getByRole("heading", { name: "Tasks", exact: true })` at line 51, matches both the Coordination view's `<h1>Tasks</h1>` and the Task list's `<h2>Tasks</h2>`. Presumably it passes only when it runs before the task list has rendered; this was inferred from the source, not traced. That run failed with a strict-mode violation naming both headings. It does not involve either changed component and is left as a follow-up.
 
-Not covered: remote CI on the four platforms (the branch needs a push), packaged builds, and Windows, where the loop journey does not run.
+**Remote CI** (run 39308245212, commit `846e14c`, pushed as `codex/f01-lost-click`, not merged): every step passed on Linux x64, macOS Apple silicon, macOS Intel and Windows x64. That covers typecheck, integration tests and build, the desktop journeys (Linux under `xvfb-run`), package compilation, and the macOS signature checks. One passing run is a single sample of an intermittent failure; the local stress results above are the main evidence.
+
+Not covered: packaged builds, and the loop journey on Windows, where it does not run.
 
 ## Open product questions
 

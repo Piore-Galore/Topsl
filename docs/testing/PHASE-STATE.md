@@ -39,7 +39,7 @@ Resumable state of the comprehensive test campaign, as plan §0.8 requires. Read
 
 ## Blockers and next runnable packets
 
-1. **Remote CI cells: done on 19 October 2026.** The branch was pushed as `codex/test-campaign-2026-10-19`. At `43977cb`, Linux, Apple silicon and Windows passed every step; Intel passed its tests but hit F-01 in the desktop journey ([report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci)). F-01 was diagnosed and fixed locally on 20 October 2026 ([record](TEST-DECISIONS.md#recurring-desktop-confirmation-loss-f-01)). The original instructions are kept below for a rerun.
+1. **Remote CI cells: done on 19 October 2026.** The branch was pushed as `codex/test-campaign-2026-10-19`. At `43977cb`, Linux, Apple silicon and Windows passed every step; Intel passed its tests but hit F-01 in the desktop journey ([report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci)). F-01 was diagnosed and fixed on 20 October 2026, and CI on the fix passed every step on all four platforms ([record](TEST-DECISIONS.md#recurring-desktop-confirmation-loss-f-01)). The original instructions are kept below for a rerun.
 
    Original blocker: a push with the owner's GitHub credentials. The workflow triggers on `main` and `codex/**`. Run:
 
