@@ -304,7 +304,7 @@ export function Workflows({
                   projectId={projectId}
                   workflow={workflow}
                   pending={!!pending[workflow.id]}
-                  fresh={freshness.status === "current"}
+                  fresh={freshness.actionable}
                   advance={() =>
                     run(workflow.id, () =>
                       window.topsl.command({

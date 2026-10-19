@@ -1,4 +1,9 @@
 import { navigate } from "./desktop-navigation.mjs";
+import {
+  traceClicks,
+  clickTimeline,
+  throttleRenderer,
+} from "./desktop-click-trace.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import {
   mkdtemp,
@@ -120,6 +125,7 @@ const errors = [];
 let desktopBenchmark = null;
 try {
   const page = await app.firstWindow();
+  await throttleRenderer(page);
   page.on("pageerror", (e) => errors.push(e.message));
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible({ timeout: 45000 });
   await navigate(page, "Applications");
@@ -1610,6 +1616,10 @@ try {
           message: options.message,
           detail: options.detail ?? "",
         });
+        globalThis.topslTraceNote?.({
+          where: "main",
+          what: `dialog "${options.message}"`,
+        });
         // The affirmative button, unless the test declines this message.
         return {
           response: globalThis.topslDeclined?.includes(options.message) ? 0 : 1,
@@ -1617,6 +1627,7 @@ try {
         };
       };
     });
+    await traceClicks(app, page);
     /** The latest confirmation Topsl asked with this message. */
     const confirmed = (message) =>
       app.evaluate(
@@ -1751,8 +1762,22 @@ try {
       });
       await expect(button).toBeEnabled(committed);
       const asked = await confirmations();
+      const since = Date.now();
       await button.click();
-      await expect.poll(confirmations).toBe(asked + 1);
+      try {
+        await expect.poll(confirmations).toBe(asked + 1);
+      } catch (error) {
+        console.error(
+          `No confirmation after "Approve captured inputs and start":\n${(
+            await clickTimeline(app, page, since - 2000)
+          ).join("\n")}`,
+        );
+        throw error;
+      }
+      if (process.env.TOPSL_TEST_TRACE)
+        console.log(
+          `Start:\n${(await clickTimeline(app, page, since)).join("\n")}`,
+        );
       expect(
         await confirmed("Approve captured inputs and start?"),
       ).toBeTruthy();

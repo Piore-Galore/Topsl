@@ -96,7 +96,7 @@ export function RecursiveLoop({
     setView(null);
     setRunId(null);
     setErrors({});
-  }, [projectId, mode]);
+  }, [projectId]);
   async function refresh() {
     const ticket = reads.current.begin();
     const value: any = await window.topsl.command({
@@ -120,6 +120,22 @@ export function RecursiveLoop({
     } else setView(null);
   }
   const freshness = useScopedRefresh(projectId, refresh);
+  // The loop query holds the project's runs of both modes, so switching
+  // between Goal loop and Endless keeps it on screen and only selects a run
+  // of the new mode. That is read now: the project's subscription reads only
+  // after its next change, and clearing the runs here once left the view on
+  // "Loading loop runs…" until one arrived.
+  const shownMode = useRef(mode);
+  useEffect(() => {
+    if (shownMode.current === mode) return;
+    shownMode.current = mode;
+    generation.current++;
+    reads.current.reset(projectId);
+    setView(null);
+    setRunId(null);
+    setErrors({});
+    freshness.reload();
+  }, [mode]);
   async function run(key: string, command: Command) {
     const ticket = generation.current;
     setErrors((current) => ({ ...current, [key]: "" }));
@@ -315,7 +331,7 @@ export function RecursiveLoop({
           records that authority once.
         </p>
       </details>
-      {view && (
+      {view?.run.mode === mode && (
         <RunView
           view={view}
           run={run}

@@ -291,3 +291,73 @@ test("multiple consumers share one active subscription and pending refreshes coa
   b();
   expect(unsubscribe).toHaveBeenCalledTimes(1);
 });
+test("F-01: a routine refresh keeps the shown state actionable; a failure, disconnection or missed change does not", async () => {
+  vi.useFakeTimers();
+  const pending = deferred<any>();
+  let notify!: (page: ChangePage) => void;
+  const transport: ScopeTransport = {
+    snapshot: vi
+      .fn()
+      .mockResolvedValueOnce(snapshot(10))
+      .mockReturnValueOnce(pending.promise)
+      .mockRejectedValueOnce(new Error("vault unavailable"))
+      .mockResolvedValue(snapshot(12)),
+    replay: vi.fn(async (after) => page(after)),
+    subscribe: vi.fn((callback) => {
+      notify = callback;
+      return () => {};
+    }),
+  };
+  const seen: Array<[string, boolean]> = [];
+  const controller = new ScopedRefreshController("project", transport),
+    stop = controller.subscribe((state) =>
+      seen.push([state.status, state.actionable]),
+    );
+  // Nothing has been read yet.
+  expect(controller.state.actionable).toBe(false);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(controller.state).toMatchObject({
+    status: "current",
+    actionable: true,
+  });
+  // A change arrives and the controller refreshes: the status says so, and
+  // the shown state stays actionable throughout, so a gated control stays on.
+  seen.length = 0;
+  notify(page(10, 11, "epoch-a", true));
+  await vi.advanceTimersByTimeAsync(80);
+  expect(controller.state.status).toBe("refreshing");
+  pending.resolve(snapshot(11));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(seen).toEqual([
+    ["refreshing", true],
+    ["current", true],
+  ]);
+  // A failed read clears it, and a later refresh does not restore it until
+  // a read succeeds.
+  await controller.refresh();
+  expect(controller.state).toMatchObject({
+    status: "stale",
+    actionable: false,
+  });
+  seen.length = 0;
+  await controller.refresh();
+  expect(seen[0]).toEqual(["refreshing", false]);
+  expect(controller.state).toMatchObject({
+    status: "current",
+    actionable: true,
+  });
+  // A missed change (a sequence gap) and a lost connection clear it too.
+  notify(page(20, 21, "epoch-a", true));
+  expect(controller.state).toMatchObject({
+    status: "resynchronizing",
+    actionable: false,
+  });
+  await vi.advanceTimersByTimeAsync(80);
+  expect(controller.state.actionable).toBe(true);
+  controller.disconnected();
+  expect(controller.state).toMatchObject({
+    status: "disconnected",
+    actionable: false,
+  });
+  stop();
+});

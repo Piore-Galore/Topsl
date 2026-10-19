@@ -1,6 +1,6 @@
 # Test decisions and defects — campaign 2026-10-19-comprehensive
 
-Coordinator register of confirmed defects, harness corrections, contract decisions and open product questions found while executing the [comprehensive test plan](TEST-REPORT.md#scope-and-source). Every product defect below has a reproducing test kept as `test.fails` with a `// CAMPAIGN DEFECT <case>` comment. Rows marked fixed have had that test turned into a plain, passing `test`. `test.fails` keeps the suite green while the test still runs, and turns red once the defect is fixed, so whoever fixes a defect must also change that test to a plain `test`. No product code was changed in this campaign. Product fixes made afterwards are recorded under [Defect repairs](#defect-repairs--19-october-2026-follow-up) (D-06 to D-12) and [Follow-up fixes D-01 to D-05](#follow-up-fixes-d-01-to-d-05). Test, harness and documentation changes are listed under [Corrections applied](#corrections-applied).
+Coordinator register of confirmed defects, harness corrections, contract decisions and open product questions found while executing the [comprehensive test plan](TEST-REPORT.md#scope-and-source). Every product defect below has a reproducing test kept as `test.fails` with a `// CAMPAIGN DEFECT <case>` comment. Rows marked fixed have had that test turned into a plain, passing `test`. `test.fails` keeps the suite green while the test still runs, and turns red once the defect is fixed, so whoever fixes a defect must also change that test to a plain `test`. No product code was changed in this campaign. Product fixes made afterwards are recorded under [Defect repairs](#defect-repairs--19-october-2026-follow-up) (D-06 to D-12) and [Follow-up fixes D-01 to D-05](#follow-up-fixes-d-01-to-d-05), and the CI failure F-01 under [its own section](#recurring-desktop-confirmation-loss-f-01). Test, harness and documentation changes are listed under [Corrections applied](#corrections-applied).
 
 Source under test: `d4b788efb17adce0ec6362eeb745f62639767d0e` (product code unchanged by the campaign itself), host darwin-arm64. Defects marked fixed were repaired afterwards on `test/comprehensive-campaign`; see the two repair sections below. Run each reproduction from the repository root as `npm test -- <file> -t "<name>"`. Since the [runner fix](#corrections-applied), the agent-session billing variables no longer need to be removed by hand; the campaign itself ran every command through a local `env -i` wrapper (`cleanenv.sh`, untracked).
 
@@ -120,15 +120,57 @@ Not covered: packaged builds, Windows and Linux, remote CI, and live providers.
 
 ## Recurring desktop confirmation loss (F-01)
 
-Not yet classified as a product defect or a harness defect. In remote CI, `scripts/desktop-test.mjs` intermittently records one native confirmation fewer than expected. It clicks a control such as "Approve captured inputs and start", and `expect.poll(confirmations)` then times out after 5 s.
+**Diagnosed and fixed on 20 October 2026: a product defect.** The renderer dropped the click. The start button was disabled for a few tens of milliseconds whenever a change event made the project view refresh. Playwright found it enabled and then sent its click after the refresh had disabled it, so the click went to a disabled button. React never saw it, so nothing reached the main process and no dialog was requested. A person clicking during that window would lose the click in the same way.
+
+### What CI recorded
+
+In remote CI, `scripts/desktop-test.mjs` intermittently recorded one native confirmation fewer than expected. Every failure came from the `start` helper. That helper clicks **Approve captured inputs and start**, and `expect.poll(confirmations)` then timed out after 5 s.
 
 | CI run | Platform | Commit | Observed |
 | --- | --- | --- | --- |
-| 39271847356 | macOS Apple silicon | `5b5b0b4` (no product changes) | 3 of 4, at `desktop-test.mjs:1755` |
-| 39285908708 | Linux x64 | `02aeda5` | 3 of 4 |
-| 39289887882 | macOS Intel | `43977cb` | 8 of 9 |
+| 39271847356 | macOS Apple silicon | `5b5b0b4` (no product changes) | 3 of 4, `start` at `desktop-test.mjs:1755`, called from line 1891 (Claude builds, Codex reviews) |
+| 39285908708 | Linux x64 | `02aeda5` | 3 of 4, the same call |
+| 39289887882 | macOS Intel | `43977cb` | 8 of 9, `start` called from line 2043 (Codex builds, Claude reviews) |
 
-The same journey passed on the other platforms in each run and in every local run. It matches the historical signature in plan §10.3 ("expected nine native confirmations but observed eight"). A separate first failure in run 39271847356 (Linux, `desktop-loop-test.mjs:380`: the Endless text box was detached from the DOM while being filled) may be a related re-render race. The next step is to reproduce under controlled event ordering and record operation-specific confirmation IDs, as plan §10.3 recommends, before deciding whether the click is lost in the renderer or the dialog is never requested. Raising timeouts would not answer that question.
+It never failed in a local unthrottled run, and it matches the historical signature in plan §10.3 ("expected nine native confirmations but observed eight").
+
+### Cause, with evidence
+
+- **The gate.** `WorkflowDispatch` disables the button unless `fresh`, and `fresh` was `freshness.status === "current"` ([workflows.tsx](../../apps/desktop/renderer/workflows.tsx)). The shared project subscription sets the status to `refreshing` for every relevant change: any record of the project, or an app-wide installation, approval, run, conversation or usage record. It does this 80 ms after the change, and keeps it while the snapshot and the view's own reads run ([scoped-controller.ts](../../apps/desktop/renderer/state/scoped-controller.ts), [scoped.ts](../../apps/desktop/renderer/state/scoped.ts)). Capturing a workflow publishes such a change, so the new card's start button was enabled, then disabled about 100 ms later for 30 to 40 ms, then enabled again.
+- **Diagnostics.** The harness now records a click timeline ([desktop-click-trace.mjs](../../scripts/desktop-click-trace.mjs)). In the renderer it logs capture-phase `pointerdown`, `mousedown`, `mouseup` and `click` events, with the target button and whether it was disabled, plus every enable and disable of a button. In the main process it logs when each non-read command was received and when it settled, and when each dialog was requested. When the confirmation does not arrive, `start` prints this timeline.
+- **Reproduction.** `TOPSL_TEST_CPU_THROTTLE=4` slows the renderer through the DevTools protocol (`Emulation.setCPUThrottlingRate`); the stress below adds eight `yes > /dev/null` processes. Before the fix, the main journey failed this way in **4 of 4** serial runs (`env -u ANTHROPIC_BASE_URL TOPSL_TEST_CPU_THROTTLE=4 node scripts/desktop-test.mjs`, about 100 s each). Earlier, three throttled runs in parallel failed it in 6 of 12. The failures were at the starts of the second, third and fourth teams, which include both CI call sites. Every failure showed the same sequence, for example: `+1936ms enabled "Approve captured inputs and start"`, `+2037ms disabled`, `+2040ms pointerdown (disabled)`, `+2070ms enabled`. Each had no `mousedown` or `click` and no `received builder-reviewer-advance`. A passing run shows `received builder-reviewer-advance` at the same millisecond as the click, followed by the dialog.
+- **Ruled out.** The main process never received the command, so the dialog was never requested. The harness counter did not miss a dialog, because none was requested. The button was not replaced by a new element: its `disabled` attribute changed in place.
+- **The parallel runs' other failures** were artifacts of running three instances at once: they share the macOS system clipboard, so a clipboard assertion read another instance's build instructions (same objective, different candidate ID). Verification therefore ran one instance at a time.
+
+### Fix
+
+- `ScopedState.actionable` ([scoped-controller.ts](../../apps/desktop/renderer/state/scoped-controller.ts)) is true once a read has succeeded. It stays true through routine refreshes, and becomes false on a failed read, a lost connection, a sequence gap or an epoch change, until a read succeeds again. The hook also clears it while the view's own read has failed. The start button now uses `fresh={freshness.actionable}`, so a routine refresh no longer disables it. The other disabling conditions are unchanged: a pending action, the rollout gate and route readiness. This does not weaken the check. The main process still shows the service's reviewed inputs in the confirmation, and the service refuses a stale `expectedRevision` ("Workflow changed. Refresh before taking this action."). A refresh had already been kept from disabling the task button on 17 October for the same reason ([Implementation status](../Implementation_Status.md#recorded-engineering-evidence)).
+- Unit test: "F-01: a routine refresh keeps the shown state actionable; a failure, disconnection or missed change does not" in [scoped-ui.test.ts](../../tests/scoped-ui.test.ts).
+- No timeout was raised, and the harness still requires exactly one new confirmation per start.
+
+### The related loop failure (Linux, run 39271847356, `desktop-loop-test.mjs:380`)
+
+This was a separate product defect in the same refresh model. Switching **Run mode** from Goal loop to Endless cleared the loop view's runs (`query`). The project subscription reads again only after the project's next change, so the view stayed on "Loading loop runs…" until one arrived. Before the switch's effect ran, the Endless form was drawn for a few milliseconds, which is the text box that CI found and that was then "detached from the DOM". With a quiet project nothing re-read it, and the fill timed out after 30 s. A probe that waited 5 s for the project to go quiet before switching showed "Loading loop runs…" with no text box for at least 10 s.
+
+- **Fix:** the loop query lists runs of both modes, so a mode switch now keeps it on screen. It only clears the selected run and reads again at once through a new `reload()` on `useScopedRefresh`, which re-runs the view's loader against the snapshot already held ([recursive-loop.tsx](../../apps/desktop/renderer/components/recursive-loop.tsx), [scoped.ts](../../apps/desktop/renderer/state/scoped.ts)). A run's details are drawn only for a run of the selected mode.
+- **Deterministic check:** [desktop-loop-test.mjs](../../scripts/desktop-loop-test.mjs) now holds the main process's change events and project snapshot and change-log replies during the switch (`holdRefreshes`). It waits until no command is in flight, fills the Endless form, waits again, and requires the text box to still hold the text with no "Loading loop runs…". Without the fix this failed in **3 of 3** runs: twice the fill timed out, and once the fill landed in the brief window before the reset and the text box was then gone.
+
+### Verification (darwin-arm64, working tree on `9616ab1` with these changes)
+
+Stress means `TOPSL_TEST_CPU_THROTTLE=4` and eight `yes > /dev/null` processes on the 10-core host, one Electron instance at a time. The commands were run from the repository root with `env -u ANTHROPIC_BASE_URL`, after `npm run build`.
+
+| Check | Before the fix | After the fix |
+| --- | --- | --- |
+| `node scripts/desktop-test.mjs` under stress | 4 of 4 failed with F-01 (11 of 12 confirmations three times, 3 of 4 once) | **8 of 8 passed** (99 to 103 s each), plus 1 more passing run with `TOPSL_TEST_TRACE=1` |
+| `node scripts/desktop-loop-test.mjs` with the refresh hold | 3 of 3 failed (unthrottled) | **4 of 4 passed** under stress |
+| `npm run test:desktop -- scripts/<each>.mjs` unthrottled: `desktop-test`, `desktop-coordinator-test`, `desktop-atlas-test`, `desktop-loop-test`, `desktop-usage-test`, `campaign-ui-test` | — | all passed |
+| Round 2 UI, unthrottled | `node scripts/round2-ui-test.mjs` passed once | `npm run test:desktop -- scripts/round2-ui-test.mjs` failed once; `node scripts/round2-ui-test.mjs` then passed 3 of 3 (see below) |
+| `npm test -- tests/scoped-ui.test.ts` | — | 10 passed |
+| `npm run check` | — | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,120 tests passed, 17 expected fail, 5 skipped; `test:release` 18/0/0; build |
+
+The single `round2-ui-test.mjs` failure is a separate, pre-existing ordering race in that harness. Its first assertion, `getByRole("heading", { name: "Tasks", exact: true })` at line 51, matches both the Coordination view's `<h1>Tasks</h1>` and the Task list's `<h2>Tasks</h2>`. Presumably it passes only when it runs before the task list has rendered; this was inferred from the source, not traced. That run failed with a strict-mode violation naming both headings. It does not involve either changed component and is left as a follow-up.
+
+Not covered: remote CI on the four platforms (the branch needs a push), packaged builds, and Windows, where the loop journey does not run.
 
 ## Open product questions
 

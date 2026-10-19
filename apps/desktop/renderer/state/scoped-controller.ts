@@ -19,6 +19,14 @@ export interface ScopedState {
   lastSuccessAt: string | null;
   error: string | null;
   source: string;
+  /**
+   * The shown state came from a read that succeeded, and since then no read
+   * has failed, the connection has not dropped, and no change was missed.
+   * A routine refresh after a change keeps it, so a control gated on it does
+   * not flicker off for every change and drop a click that lands meanwhile;
+   * the service still refuses an action whose expected revision has moved.
+   */
+  actionable: boolean;
 }
 export function observationOf(value: any): Observation | null {
   const observation = value?.observation ?? value;
@@ -114,6 +122,7 @@ export class ScopedRefreshController {
       lastSuccessAt: null,
       error: null,
       source: "Project snapshot",
+      actionable: false,
     };
   }
   get active() {
@@ -144,9 +153,11 @@ export class ScopedRefreshController {
     this.timer = null;
     this.fence.reset(this.projectId);
     this.buffered = [];
+    this.state = { ...this.state, actionable: false };
   }
   disconnected() {
     this.publish({
+      actionable: false,
       status: "disconnected",
       error: "Connection unavailable. Showing last-known project state.",
     });
@@ -181,13 +192,13 @@ export class ScopedRefreshController {
       return;
     }
     if (page.epoch !== this.state.observation.epoch) {
-      this.publish({ status: "resynchronizing" });
+      this.publish({ status: "resynchronizing", actionable: false });
       this.schedule();
       return;
     }
     const next = advanceSequence(this.cursor, page);
     if (next.resync) {
-      this.publish({ status: "resynchronizing" });
+      this.publish({ status: "resynchronizing", actionable: false });
       this.schedule();
       return;
     }
@@ -254,7 +265,7 @@ export class ScopedRefreshController {
               "Scoped revision kept changing during recovery. Retry project reads.",
             );
           this.again = true;
-          this.publish({ status: "resynchronizing" });
+          this.publish({ status: "resynchronizing", actionable: false });
           return;
         }
         if (!this.fence.accept(ticket, observation)) return;
@@ -268,10 +279,12 @@ export class ScopedRefreshController {
           error: null,
           lastSuccessAt: this.transport.now?.() ?? new Date().toISOString(),
           status: this.again ? "resynchronizing" : "current",
+          actionable: true,
         });
       } catch (error) {
         if (this.stopped || !this.fence.current(ticket)) return;
         this.publish({
+          actionable: false,
           status: this.state.snapshot ? "stale" : "failed",
           error: error instanceof Error ? error.message : String(error),
         });

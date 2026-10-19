@@ -1,4 +1,5 @@
 import { navigate } from "./desktop-navigation.mjs";
+import { throttleRenderer } from "./desktop-click-trace.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -92,6 +93,54 @@ const answerDialogs = (app, selected) =>
     };
   }, selected);
 const confirmations = () => app.evaluate(() => globalThis.topslConfirmations);
+/**
+ * Holds, in the main process and in order, Topsl's change events and the
+ * project snapshot and change-log reads until released, so a screen must
+ * read what it shows itself rather than wait for a project refresh. It also
+ * counts the commands in flight, for `settled` below.
+ */
+const holdRefreshes = (app, hold) =>
+  app.evaluate(({ BrowserWindow, ipcMain }, hold) => {
+    let h = globalThis.topslHold;
+    if (!h) {
+      h = globalThis.topslHold = {
+        holding: false,
+        inFlight: 0,
+        held: [],
+      };
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const send = contents.send.bind(contents);
+      contents.send = (channel, event) =>
+        h.holding && event?.type === "changes"
+          ? h.held.push(() => send(channel, event))
+          : send(channel, event);
+      const handlers = ipcMain._invokeHandlers;
+      const command = handlers.get("topsl:command");
+      handlers.set("topsl:command", async (event, raw) => {
+        let reply;
+        h.inFlight++;
+        try {
+          reply = await command(event, raw);
+        } finally {
+          h.inFlight--;
+        }
+        return h.holding &&
+          ["scope-snapshot", "scope-events"].includes(raw?.type)
+          ? new Promise((resolve) => h.held.push(() => resolve(reply)))
+          : reply;
+      });
+    }
+    h.holding = hold;
+    if (!hold) for (const release of h.held.splice(0)) release();
+  }, hold);
+/** Waits until no command is in flight apart from the held reads. */
+const settled = () =>
+  expect
+    .poll(async () => {
+      await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
+      return app.evaluate(() => globalThis.topslHold.inFlight);
+    })
+    .toBe(0);
 const command = (value) =>
   page.evaluate((value) => window.topsl.command(value), value);
 async function openLoops(mode) {
@@ -111,6 +160,7 @@ const runOf = async (title) =>
   );
 try {
   page = await app.firstWindow();
+  await throttleRenderer(page);
   page.on("pageerror", (e) => errors.push(e.message));
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
@@ -254,6 +304,7 @@ try {
   await app.close();
   app = await launch();
   page = await app.firstWindow();
+  await throttleRenderer(page);
   page.on("pageerror", (e) => errors.push(e.message));
   // The window reopens where it was; wait for the service, not a screen.
   await expect(page.getByRole("contentinfo")).toContainText("Ready", {
@@ -366,18 +417,30 @@ try {
     throw new Error("The publication dialog must name machine promotion.");
 
   // Endless: with the published value there is no worthwhile work, so it monitors.
+  // Switching modes keeps the form and reads the Endless runs itself. It once
+  // cleared the view, and with no project refresh after the switch the view
+  // stayed on "Loading loop runs…" (the loop failure recorded with F-01 in
+  // docs/testing/TEST-DECISIONS.md), so refreshes are held until the form
+  // has settled with the text in it.
+  await holdRefreshes(app, true);
+  await settled();
   // Keyboard: the mode selector is an ordinary radio group.
   await page.getByRole("radio", { name: /^Goal loop/ }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("radio", { name: /^Endless/ })).toBeChecked();
   loops = page.getByRole("region", { name: "Recursive loop" });
   await page.setViewportSize({ width: 760, height: 900 });
-  await loops
-    .getByRole("textbox", {
-      name: "What to improve, and priorities",
-      exact: true,
-    })
-    .fill("Keep improving the fixture. Prioritize correctness.");
+  const improve = loops.getByRole("textbox", {
+    name: "What to improve, and priorities",
+    exact: true,
+  });
+  await improve.fill("Keep improving the fixture. Prioritize correctness.");
+  await settled();
+  await expect(improve).toHaveValue(
+    "Keep improving the fixture. Prioritize correctness.",
+  );
+  await expect(loops.getByText("Loading loop runs…")).toHaveCount(0);
+  await holdRefreshes(app, false);
   await loops.getByRole("button", { name: "Create run", exact: true }).click();
   const c = runArticle("Keep improving the fixture. Prioritize correctness.");
   await c

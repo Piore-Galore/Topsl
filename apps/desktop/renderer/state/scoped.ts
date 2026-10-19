@@ -33,6 +33,7 @@ const empty = (projectId: string): ScopedState => ({
   lastSuccessAt: null,
   error: null,
   source: "Project snapshot",
+  actionable: false,
 });
 /** Shared transport owner; loaders receive the accepted snapshot, never another global read. */
 export function useScopedRefresh(
@@ -41,6 +42,7 @@ export function useScopedRefresh(
 ) {
   const callback = useRef(refresh);
   callback.current = refresh;
+  const reloadView = useRef<() => void>(() => {});
   const [state, setState] = useState<ScopedState>(() => empty(projectId));
   useEffect(() => {
     if (!projectId) {
@@ -53,20 +55,7 @@ export function useScopedRefresh(
       viewError: string | null = null;
     const source = sourceFor(projectId);
     setState(empty(projectId));
-    const unsubscribe = source.subscribe((next) => {
-      if (!alive) return;
-      setState(
-        viewError
-          ? {
-              ...next,
-              status: "stale",
-              source: "Project view",
-              error: viewError,
-            }
-          : next,
-      );
-      if (!next.snapshot || next.snapshot === lastSnapshot) return;
-      lastSnapshot = next.snapshot;
+    const load = (next: ScopedState) => {
       const ticket = ++request;
       setState({ ...next, status: "refreshing" });
       void Promise.resolve()
@@ -88,10 +77,33 @@ export function useScopedRefresh(
               status: "stale",
               source: "Project view",
               error: viewError,
+              actionable: false,
             });
           }
         });
+    };
+    const unsubscribe = source.subscribe((next) => {
+      if (!alive) return;
+      setState(
+        viewError
+          ? {
+              ...next,
+              status: "stale",
+              source: "Project view",
+              error: viewError,
+              actionable: false,
+            }
+          : next,
+      );
+      if (!next.snapshot || next.snapshot === lastSnapshot) return;
+      lastSnapshot = next.snapshot;
+      load(next);
     });
+    // A view whose own selection changed reads again against the snapshot
+    // it already holds; the project's subscription reads only after a change.
+    reloadView.current = () => {
+      if (alive && source.state.snapshot) load(source.state);
+    };
     const reconnect = () => {
       void source.refresh(true);
     };
@@ -106,6 +118,7 @@ export function useScopedRefresh(
     document.addEventListener("visibilitychange", visible);
     return () => {
       alive = false;
+      reloadView.current = () => {};
       request++;
       unsubscribe();
       if (!source.active) sources.delete(projectId);
@@ -120,5 +133,6 @@ export function useScopedRefresh(
     ...(state.projectId === projectId ? state : empty(projectId)),
     retry: () =>
       projectId ? sourceFor(projectId).refresh(true) : Promise.resolve(),
+    reload: () => reloadView.current(),
   };
 }
