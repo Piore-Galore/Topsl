@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   AppState,
   Installation,
@@ -174,11 +175,14 @@ export function ApplicationsScreen({
                             Trust executable
                           </ActionButton>
                         )}
-                        {app.id === "openai.codex-cli" && i.trusted && (
-                          <ActionButton onClick={() => connect(i)}>
-                            Connect / test
-                          </ActionButton>
-                        )}
+                        {(app.id === "openai.codex-cli" ||
+                          (app.id === "anthropic.claude-code-cli" &&
+                            state.claudeStructuredRoute?.enabled)) &&
+                          i.trusted && (
+                            <ActionButton onClick={() => connect(i)}>
+                              Connect / test
+                            </ActionButton>
+                          )}
                         <ActionButton
                           onClick={() =>
                             void act({
@@ -207,6 +211,12 @@ export function ApplicationsScreen({
                           </ActionButton>
                         )}
                       </div>
+                      {app.id === "anthropic.claude-code-cli" &&
+                        i.trusted &&
+                        state.claudeStructuredRoute?.enabled &&
+                        i.compatibility === "compatible" && (
+                          <ClaudeQualification installation={i} act={act} />
+                        )}
                       {check && (
                         <p className="check-detail">
                           {check.detail}
@@ -363,5 +373,70 @@ export function ApplicationsScreen({
         )}
       </section>
     </>
+  );
+}
+
+/** Qualifies a connected Claude Code runtime for one model. Claude Code has
+ * no model list, so the owner names the model; Topsl's own dialog lists the
+ * live turns before any start. */
+function ClaudeQualification({
+  installation,
+  act,
+}: {
+  installation: Installation;
+  act: (command: Command) => Promise<any>;
+}) {
+  const [model, setModel] = useState(""),
+    [summary, setSummary] = useState("");
+  return (
+    <div className="actions wrap">
+      <label>
+        Claude model to qualify
+        <input
+          value={model}
+          placeholder="claude-opus-5-5"
+          onChange={(event) => setModel(event.target.value.trim())}
+        />
+      </label>
+      <ActionButton
+        disabled={!model}
+        title="Runs 4 live Claude Code turns after you review them"
+        onClick={async () => {
+          const result = await act({
+            type: "runtime-qualify",
+            id: installation.id,
+            model,
+          });
+          if (!result) return;
+          const observations: any[] = result.report?.observations ?? [];
+          setSummary(
+            [
+              result.acceptanceId
+                ? `Recorded until ${new Date(result.expiresAt).toLocaleString()}.`
+                : "Nothing was recorded.",
+              `Passed: ${
+                observations
+                  .filter((o) => o.passed)
+                  .map((o) => o.capability)
+                  .join(", ") || "none"
+              }.`,
+              `Not passed: ${
+                observations
+                  .filter((o) => !o.passed)
+                  .map((o) => o.capability)
+                  .join(", ") || "none"
+              }.`,
+              `Claude Code reported model ${result.report?.reportedModel ?? "none"}.`,
+              result.report?.error ? `Stopped: ${result.report.error}` : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+          );
+        }}
+      >
+        Qualify Claude runtime
+      </ActionButton>
+      {summary && <p role="status">{summary}</p>}
+    </div>
   );
 }

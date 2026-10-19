@@ -6,7 +6,7 @@ import type { ProviderCapability } from "./contract";
 export const acceptanceSchemaVersion = 1;
 export const adapterProtocols = {
   codex: "codex-app-server/r2-2/v1",
-  claude: "claude-print-stream-json/r2-2/v1",
+  claude: "claude-print-stream-json/r2-2/v2",
 } as const;
 export interface RuntimeBinding {
   schemaVersion: 1;

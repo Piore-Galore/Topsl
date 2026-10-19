@@ -7,6 +7,7 @@ import type {
 import type { Command } from "../../../../packages/domain/commands";
 import { autoAcceptOptions } from "../../../../packages/domain/auto-accept";
 import { claudeTranscriptOptions } from "../../../../packages/domain/claude-steps";
+import { claudeRouteOptions } from "../../../../packages/domain/claude-route";
 import { ActionButton } from "../components/action-button";
 import { Badge } from "../components/atlas";
 import type { GlobalPage } from "../components/workbench-sidebar";
@@ -139,6 +140,52 @@ export function SettingsScreen({
               (option) => option.enabled === state.claudeTranscriptRead,
             )!.effect
           }
+        </p>
+      </section>
+      <section
+        className="settings-card"
+        aria-label="Claude Code structured route"
+      >
+        <h2>Claude Code structured route</h2>
+        <p>
+          Whether Topsl may start Claude Code itself, with no terminal open, for
+          coordinator, loop and review work. It runs under your Claude Code
+          login and usage. Claude Code's permission lists are not
+          operating-system filesystem isolation.
+        </p>
+        <div className="actions">
+          {claudeRouteOptions.map((option) => (
+            <ActionButton
+              key={option.label}
+              className={
+                state.claudeStructuredRoute?.enabled === option.enabled
+                  ? "primary"
+                  : ""
+              }
+              aria-pressed={
+                state.claudeStructuredRoute?.enabled === option.enabled
+              }
+              onClick={() =>
+                void act({
+                  type: "claude-structured-route-set",
+                  enabled: option.enabled,
+                })
+              }
+            >
+              {option.label}
+            </ActionButton>
+          ))}
+        </div>
+        <p className="tiny" role="note">
+          {
+            claudeRouteOptions.find(
+              (option) =>
+                option.enabled === !!state.claudeStructuredRoute?.enabled,
+            )!.effect
+          }
+          {state.claudeStructuredRoute?.decidedAt
+            ? ` Last changed ${new Date(state.claudeStructuredRoute.decidedAt).toLocaleString()}.`
+            : ""}
         </p>
       </section>
       <section className="settings-card">

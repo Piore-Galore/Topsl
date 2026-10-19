@@ -41,6 +41,7 @@ import {
   type ClaudeStep,
   type ClaudeStepProvenance,
 } from "../../packages/domain/claude-steps";
+import { claudeRouteConfirmation } from "../../packages/domain/claude-route";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
@@ -93,6 +94,7 @@ let state: AppState = {
   // The settings are stored in the vault too; until it opens, nothing runs.
   autoAccept: "off",
   claudeTranscriptRead: false,
+  claudeStructuredRoute: { enabled: false, decidedAt: null },
   allowances: [],
   providerBudgets: [],
   serviceError: null,
@@ -430,22 +432,40 @@ async function dispatch(command: Command): Promise<any> {
   }
   if (command.type === "runtime-connect") {
     const i = state.installations.find((i) => i.id === command.id);
-    trusted.approved = await confirm(
-      "Connect the experimental Codex integration?",
-      `Runtime: ${i?.version ?? "unknown"}\n${i?.realPath}\n\nThis personal pilot probes local stdio initialization, models, and native account status. It does not certify all features of this version. Native configuration remains active. No model request is sent by this check.`,
-      "Connect",
-    );
-    if (!trusted.approved) return null;
+    if (i?.appId === "anthropic.claude-code-cli") {
+      trusted.approved = await confirm(
+        "Connect Claude Code's structured route?",
+        `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\n\nTopsl runs \`claude auth status\` to read which Claude login this runtime uses. No model request is sent by this check. Claude Code has no model list; a model enters Topsl's catalog only when a qualification sees Claude Code report it.`,
+        "Connect",
+      );
+      if (!trusted.approved) return null;
+    } else {
+      trusted.approved = await confirm(
+        "Connect the experimental Codex integration?",
+        `Runtime: ${i?.version ?? "unknown"}\n${i?.realPath}\n\nThis personal pilot probes local stdio initialization, models, and native account status. It does not certify all features of this version. Native configuration remains active. No model request is sent by this check.`,
+        "Connect",
+      );
+      if (!trusted.approved) return null;
+    }
   }
   if (command.type === "runtime-qualify") {
     const i = state.installations.find((i) => i.id === command.id);
     if (!i) throw new Error("Rediscover this installation first.");
-    trusted.approved = await confirm(
-      "Qualify this Codex runtime with live model turns?",
-      `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\nModel: ${command.model}${command.effort ? ` · effort ${command.effort}` : ""}\n\nTopsl will start up to 3 model turns through your native ChatGPT sign-in. They count against your subscription usage. In a disposable folder ${testProfile?.qualificationDirectory ? `in ${testProfile.qualificationDirectory}` : "inside Topsl's profile"} it will:\n• ask a review session for a marker reply (structured turn)\n• ask a second review session to read a marker through the reviewer's candidate reader from a one-file build that only Topsl holds (candidate reader)\n• run a write itself in Codex's sandbox under the read-only policy, and check that nothing was written\n• run two writes itself in Codex's sandbox under the workspace-write policy, one inside the workspace and one outside it, and check that only the inside file exists\n• interrupt a turn that is writing a long answer\n• check that the runtime process exits when the connection closes\n\nThe write checks send nothing to the model, and Topsl declines any approval request a turn makes. The folder is deleted afterwards. The result is recorded for 30 days and only for this executable, account, policy and host. It does not qualify the Claude route.`,
-      "Run qualification",
-    );
-    if (!trusted.approved) return null;
+    if (i.appId === "anthropic.claude-code-cli") {
+      trusted.approved = await confirm(
+        "Qualify this Claude Code runtime with live model turns?",
+        `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\nModel: ${command.model}\n\nTopsl will start 4 Claude Code turns, each a fresh session, under your own Claude login. They count against your Claude subscription usage. In a disposable folder ${testProfile?.qualificationDirectory ? `in ${testProfile.qualificationDirectory}` : "inside Topsl's profile"} it will:\n• ask a review session for a marker reply (structured turn)\n• ask a review session, which Claude Code must report as having no tools, to create a file, and check that nothing was written (read-only)\n• ask an edit session to write one file in the workspace and one outside it, and check that only the inside file exists and that Claude Code reported the outside write as denied (workspace write)\n• ask a review session to read a marker through Topsl's candidate reader, served to Claude Code by Topsl's own local tool server (candidate reader)\n• check the Claude login with claude auth status, that every turn used it and no API key, and that each Claude Code process stopped\n\nThe read-only and workspace-write results are Claude Code's own permission settings, not operating-system isolation. The folder is deleted afterwards. The result is recorded for 30 days and only for this executable, account, arguments and host.`,
+        "Run qualification",
+      );
+      if (!trusted.approved) return null;
+    } else {
+      trusted.approved = await confirm(
+        "Qualify this Codex runtime with live model turns?",
+        `Runtime: ${i.version ?? "unknown"}\n${i.realPath}\nModel: ${command.model}${command.effort ? ` · effort ${command.effort}` : ""}\n\nTopsl will start up to 3 model turns through your native ChatGPT sign-in. They count against your subscription usage. In a disposable folder ${testProfile?.qualificationDirectory ? `in ${testProfile.qualificationDirectory}` : "inside Topsl's profile"} it will:\n• ask a review session for a marker reply (structured turn)\n• ask a second review session to read a marker through the reviewer's candidate reader from a one-file build that only Topsl holds (candidate reader)\n• run a write itself in Codex's sandbox under the read-only policy, and check that nothing was written\n• run two writes itself in Codex's sandbox under the workspace-write policy, one inside the workspace and one outside it, and check that only the inside file exists\n• interrupt a turn that is writing a long answer\n• check that the runtime process exits when the connection closes\n\nThe write checks send nothing to the model, and Topsl declines any approval request a turn makes. The folder is deleted afterwards. The result is recorded for 30 days and only for this executable, account, policy and host. It does not qualify the Claude route.`,
+        "Run qualification",
+      );
+      if (!trusted.approved) return null;
+    }
   }
   if (command.type === "lifecycle-apply") {
     const plan: LifecyclePlan = await request({
@@ -816,6 +836,15 @@ async function dispatch(command: Command): Promise<any> {
     )
       return null;
     trusted.confirmedAutoAccept = command.level;
+  }
+  if (command.type === "claude-structured-route-set" && command.enabled) {
+    // Asked before the service sees the request; the renderer cannot answer it.
+    const text = claudeRouteConfirmation();
+    if (
+      !(await confirm(text.message, text.detail, text.affirmative, "warning"))
+    )
+      return null;
+    trusted.confirmedClaudeRoute = true;
   }
   if (command.type === "claude-transcript-read-set" && command.enabled) {
     // Asked before the service sees the request; the renderer cannot answer it.

@@ -7,6 +7,7 @@ import type { Installation } from "../domain/types";
 import { nativeEnvironment } from "../platform/system";
 import { adapterProtocols, type RuntimeBinding } from "./acceptance";
 import type { ProviderAccount } from "./contract";
+import { claudeArguments } from "./claude";
 /** Only digests of policy files are retained. Credentials and auth responses are never copied. */
 export function runtimeBinding(
   installation: Installation,
@@ -61,13 +62,29 @@ export function runtimeBinding(
       }),
     ),
     sandboxHash: hash(
-      stable({
-        review: "readOnly",
-        edit: "workspaceWrite",
-        networkAccess: false,
-        approvalPolicy: "untrusted",
-        schema: 1,
-      }),
+      stable(
+        provider === "codex"
+          ? {
+              review: "readOnly",
+              edit: "workspaceWrite",
+              networkAccess: false,
+              approvalPolicy: "untrusted",
+              schema: 1,
+            }
+          : {
+              // Claude Code has no OS sandbox here: its profile is the exact
+              // arguments each kind of turn gets, so a change to them voids a
+              // qualification.
+              review: claudeArguments("<model>", "<session>", "review"),
+              reader: claudeArguments("<model>", "<session>", "review", {
+                configPath: "<topsl-mcp-config>",
+                names: ["<topsl-tools>"],
+              }),
+              edit: claudeArguments("<model>", "<session>", "edit"),
+              environment: "topsl-allowlist",
+              schema: 1,
+            },
+      ),
     ),
     hostId: installation.hostId,
     platform: process.platform,

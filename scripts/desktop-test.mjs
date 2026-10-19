@@ -1299,14 +1299,17 @@ try {
           type: options.type,
           buttons: options.buttons,
         });
-        // The runtime picker's third button is Claude Code; Topsl's bypass
-        // confirmation is its only warning.
+        // The runtime picker's third button is Claude Code; apart from the
+        // Claude route's own confirmation, Topsl's bypass confirmation is its
+        // only warning.
         const response =
           options.message === "Which runtime are you locating?"
             ? 2
-            : options.type === "warning"
-              ? globalThis.topslBypassAnswer
-              : 1;
+            : options.message === "Let Topsl run Claude Code unattended?"
+              ? 1
+              : options.type === "warning"
+                ? globalThis.topslBypassAnswer
+                : 1;
         return { response, checkboxChecked: false };
       };
     }, terminalFixture);
@@ -1557,6 +1560,41 @@ try {
       committed,
     );
     expect(await confirmations()).toBe(beforeTranscripts + 1);
+    // Claude Code's structured route in Settings: turning it on takes Topsl's
+    // own warning confirmation, is recorded with its time, and turning it off
+    // takes none.
+    const claudeRoute = page.getByRole("region", {
+      name: "Claude Code structured route",
+    });
+    const routeChoice = (name) =>
+      claudeRoute.getByRole("button", { name, exact: true });
+    await expect(routeChoice("Off")).toHaveAttribute("aria-pressed", "true");
+    const beforeRoute = await confirmations();
+    await routeChoice("On").click();
+    await expect(routeChoice("On")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    expect(await confirmations()).toBe(beforeRoute + 1);
+    expect(
+      await app.evaluate(() => globalThis.topslConfirmations.at(-1)),
+    ).toMatchObject({
+      message: "Let Topsl run Claude Code unattended?",
+      type: "warning",
+      buttons: ["Cancel", "Allow unattended Claude Code"],
+    });
+    await expect(claudeRoute.getByRole("note")).toContainText(
+      "under your Claude Code login and usage",
+    );
+    await expect(claudeRoute.getByRole("note")).toContainText("Last changed");
+    await routeChoice("Off").click();
+    await expect(routeChoice("Off")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+      committed,
+    );
+    expect(await confirmations()).toBe(beforeRoute + 1);
     // All four teams through the setup screen and the workflow page, each to
     // acceptance, against the Codex stand-in qualified above and the Claude
     // Code stand-in. A Claude role is a Claude Code step: the test plays
@@ -1665,7 +1703,7 @@ try {
       }
       await expect(
         workflowSetup.getByText(
-          "Topsl passes it no model or effort, so Claude Code's own settings decide. Claude's structured route stays gated.",
+          "Topsl passes it no model or effort, so Claude Code's own settings decide. Build and review runs Claude only as these steps; Claude's structured route serves coordinator and loop teams.",
         ),
       ).toHaveCount([builder, reviewer].filter((p) => p === "claude").length);
       await expect(

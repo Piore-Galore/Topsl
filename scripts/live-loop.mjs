@@ -22,15 +22,26 @@ import path from "node:path";
 //
 // Run A is a Goal loop with every role on Auto: Codex is qualified (up to 3
 // turns), then the loop runs under a member-turn allowance and its accepted
-// checkpoint is published to the scratch project. Run B pins a Claude reviewer:
-// Claude's managed structured route is gated, so the run must wait visibly on
-// the pin and never substitute another model. Claude Code is registered and
-// trusted but never connected for structured turns.
+// checkpoint is published to the scratch project.
+//
+// Without --claude-model, Run B pins a Claude reviewer while Claude Code's
+// structured route is off: the run must wait visibly on the pin and never
+// substitute another model. Claude Code is registered and trusted but never
+// connected for structured turns.
+//
+// With --claude-model (and --claude), the procedure turns on Claude Code's
+// structured route in Settings, connects Claude Code (`claude auth status`,
+// no model turn), qualifies it with that model (4 Claude turns under the
+// owner's Claude login), and Run C is a Goal loop with a mixed team: Claude
+// and Codex coordinate, Claude implements, and Claude and Codex review, the
+// Claude reviewer through Topsl's candidate reader. Those turns count against
+// the Claude subscription's usage as well as ChatGPT's.
 const usage =
-  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude] [--max-turns 30] [--no-pin-run] [--keep-profile] [--output directory]";
+  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--keep-profile] [--output directory]";
 const options = {
   codex: null,
   claude: null,
+  claudeModel: null,
   maxTurns: 30,
   keepProfile: false,
   output: null,
@@ -44,6 +55,7 @@ for (let i = 2; i < process.argv.length; i++) {
   };
   if (a === "--codex") options.codex = value();
   else if (a === "--claude") options.claude = value();
+  else if (a === "--claude-model") options.claudeModel = value();
   else if (a === "--max-turns") options.maxTurns = Number(value());
   else if (a === "--keep-profile") options.keepProfile = true;
   else if (a === "--no-pin-run") options.noPinRun = true;
@@ -54,6 +66,7 @@ if (
   !options.codex ||
   !path.isAbsolute(options.codex) ||
   (options.claude && !path.isAbsolute(options.claude)) ||
+  (options.claudeModel && !options.claude) ||
   !(options.maxTurns > 4)
 )
   throw new Error(usage);
@@ -146,6 +159,7 @@ const report = {
   executables: {},
   dialogs: [],
   qualification: null,
+  claudeQualification: null,
   routes: null,
   runs: [],
   failure: null,
@@ -205,24 +219,30 @@ try {
               : message === "Allow this native executable?" &&
                   detail.startsWith(`${policy.executableRealPath}\n`)
                 ? "Trust executable"
-                : message === "Connect the experimental Codex integration?" &&
+                : (message === "Connect the experimental Codex integration?" ||
+                      message === "Connect Claude Code's structured route?") &&
                     detail.includes(`\n${policy.executableRealPath}\n`)
                   ? "Connect"
-                  : message ===
-                        "Qualify this Codex runtime with live model turns?" &&
+                  : (message ===
+                        "Qualify this Codex runtime with live model turns?" ||
+                        message ===
+                          "Qualify this Claude Code runtime with live model turns?") &&
                       policy.model &&
                       detail.includes(`\nModel: ${policy.model}`)
                     ? "Run qualification"
-                    : message ===
-                        "Turn on auto-accept for work inside the sandbox?"
-                      ? buttons[1]
-                      : message === "Start this Goal loop? (Experimental)"
-                        ? "Start loop"
-                        : message ===
-                              "Publish the loop's accepted checkpoint to the project folder?" &&
-                            detail.includes(policy.project)
-                          ? "Publish to folder"
-                          : null;
+                    : message === "Let Topsl run Claude Code unattended?" &&
+                        policy.claudeRoute
+                      ? "Allow unattended Claude Code"
+                      : message ===
+                          "Turn on auto-accept for work inside the sandbox?"
+                        ? buttons[1]
+                        : message === "Start this Goal loop? (Experimental)"
+                          ? "Start loop"
+                          : message ===
+                                "Publish the loop's accepted checkpoint to the project folder?" &&
+                              detail.includes(policy.project)
+                            ? "Publish to folder"
+                            : null;
         const response = expected ? Math.max(0, buttons.indexOf(expected)) : 0;
         dialogs.push({ dialog: message, answer: buttons[response] ?? null });
         return { response, checkboxChecked: false };
@@ -234,6 +254,7 @@ try {
       executableRealPath: null,
       runtimeKind: null,
       model: null,
+      claudeRoute: false,
     },
   );
   const policy = (value) =>
@@ -303,8 +324,42 @@ try {
     passed: qualification?.passed ?? null,
     summary: JSON.stringify(qualification ?? null).slice(0, 4000),
   };
-  // Claude Code: located and trusted only; its structured route stays gated.
-  if (options.claude) await locate("claude", options.claude);
+  // Claude Code: located and trusted. Without --claude-model its structured
+  // route stays off; with it, the route is turned on, connected and qualified.
+  let claude = null;
+  if (options.claude) claude = await locate("claude", options.claude);
+  if (claude && options.claudeModel) {
+    await policy({ claudeRoute: true, model: options.claudeModel });
+    const route = await command({
+      type: "claude-structured-route-set",
+      enabled: true,
+    });
+    if (!route?.enabled)
+      throw new Error("Topsl did not turn on Claude Code's structured route.");
+    await command({ type: "runtime-connect", id: claude.id });
+    const claudeQualification = await command({
+      type: "runtime-qualify",
+      id: claude.id,
+      model: options.claudeModel,
+    });
+    report.claudeQualification = {
+      model: options.claudeModel,
+      routeDecidedAt: route.decidedAt,
+      acceptanceId: claudeQualification?.acceptanceId ?? null,
+      reportedModel: claudeQualification?.report?.reportedModel ?? null,
+      turnsStarted: claudeQualification?.report?.turnsStarted ?? null,
+      observations: (claudeQualification?.report?.observations ?? []).map(
+        (o) => ({
+          capability: o.capability,
+          passed: o.passed,
+          meaning: o.meaning,
+          detail: o.detail,
+        }),
+      ),
+      notTested: claudeQualification?.report?.notTested ?? [],
+      error: claudeQualification?.report?.error ?? null,
+    };
+  }
   // Unattended edit turns ask nothing inside Codex's workspace sandbox.
   await command({ type: "auto-accept-set", level: "sandboxed" });
   const routes = (await command({ type: "orchestration-query", projectId }))
@@ -461,8 +516,9 @@ try {
     }).catch(() => {});
   report.runs.push(a.record);
 
-  // Run B: a Claude reviewer pinned. The pin must wait visibly, never be substituted.
-  if (options.claude && !options.noPinRun) {
+  // Run B: a Claude reviewer pinned while the route is off. The pin must wait
+  // visibly, never be substituted.
+  if (options.claude && !options.claudeModel && !options.noPinRun) {
     const b = await runLoop(
       "b-claude-pin",
       {
@@ -483,6 +539,93 @@ try {
       commandId: `live-b-${Date.now()}-stop`,
     }).catch(() => {});
     report.runs.push(b.record);
+  }
+
+  // Run C: a mixed Claude and Codex team on a Goal loop.
+  if (claude && options.claudeModel) {
+    const member = (roleId, i, pin) => ({
+      memberId: `${roleId}-${pin.provider}-${i}`,
+      required: true,
+      pin,
+      fallbacks: [],
+      preferences: { providers: [], models: [] },
+      source: { kind: "ui", reference: null, provenance: "explicit" },
+    });
+    const claudePin = {
+        provider: "claude",
+        installationId: claude.id,
+        model: options.claudeModel,
+      },
+      codexPin = { provider: "codex", installationId: codex.id, model };
+    for (const [roleId, pins] of [
+      ["coordinator", [claudePin, codexPin]],
+      ["implementer", [claudePin]],
+      ["reviewer", [claudePin, codexPin]],
+    ])
+      await command({
+        type: "orchestration-group-set",
+        projectId,
+        goalId: null,
+        level: "project-role",
+        taskKey: null,
+        mode: "replace",
+        roleId,
+        settings: {
+          form: "exact",
+          members: pins.map((pin, i) => member(roleId, i, pin)),
+        },
+        commandId: `live-c-${roleId}-${Date.now()}`,
+      });
+    report.mixedRoutes = (
+      await command({ type: "orchestration-query", projectId })
+    ).routes.map((r) => ({
+      provider: r.provider,
+      models: r.models.map((m) => m.model),
+      ready: Object.fromEntries(
+        Object.entries(r.purposes).map(([p, v]) => [p, v.ready]),
+      ),
+      blockers: [
+        ...new Set(Object.values(r.purposes).flatMap((v) => v.blockers)),
+      ].slice(0, 6),
+    }));
+    const c = await runLoop(
+      "c-mixed",
+      {
+        mode: "goal",
+        goals: [
+          {
+            text: "Add a one-line comment at the top of README.md saying the file was edited by a Topsl loop",
+            criteria: [
+              {
+                text: "README.md starts with a one-line comment saying a Topsl loop edited it",
+                verification: { kind: "inspection" },
+              },
+            ],
+          },
+        ],
+        policy: {
+          scheduling: { reserveForDirectWork: 0 },
+          allowances: { runMemberTurns: options.maxTurns, rolling: null },
+          iteration: {
+            maxTurns: Math.min(25, options.maxTurns),
+            maxDelegatedTasks: 3,
+            maxRepairRounds: 1,
+            maxApproachesPerTarget: 2,
+          },
+        },
+      },
+      (v) =>
+        ["completed", "waiting", "stopped", "monitoring"].includes(v.run.state),
+      40 * 60_000,
+    );
+    if (c.view.run.state !== "completed")
+      await command({
+        type: "loop-control",
+        runId: c.runId,
+        action: "stop",
+        commandId: `live-c-${Date.now()}-stop`,
+      }).catch(() => {});
+    report.runs.push(c.record);
   }
   report.result = "completed";
 } catch (error) {
@@ -514,7 +657,8 @@ try {
   if (
     report.result !== "completed" ||
     report.runs.some(
-      (r) => r.label === "a-goal" && r.finalState !== "completed",
+      (r) =>
+        ["a-goal", "c-mixed"].includes(r.label) && r.finalState !== "completed",
     )
   )
     options.keepProfile = true;

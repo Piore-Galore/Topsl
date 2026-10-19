@@ -752,6 +752,10 @@ export const commandSchema = z.discriminatedUnion("type", [
     type: z.literal("claude-transcript-read-set"),
     enabled: z.boolean(),
   }),
+  z.object({
+    type: z.literal("claude-structured-route-set"),
+    enabled: z.boolean(),
+  }),
   z.object({ type: z.literal("discover") }),
   z.object({ type: z.literal("trust-installation"), id }),
   z.object({ type: z.literal("select-runtime") }),

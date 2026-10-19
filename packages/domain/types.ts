@@ -2,6 +2,7 @@ import type { AllowanceSnapshot, ProviderBudgetStatus } from "./allowance";
 import type { TerminalModeId } from "./terminal-modes";
 import type { ChatPresetBlock, CodexApprovalPolicy } from "./chat-presets";
 import type { AutoAcceptLevel } from "./auto-accept";
+import type { ClaudeRouteDecision } from "./claude-route";
 export type Provider = "codex" | "claude";
 export type Theme = "paper" | "night" | "system";
 export type AppId =
@@ -342,6 +343,8 @@ export interface AppState {
   testProfile: boolean;
   /** Whether a Claude Code step's reply may be read from its session's transcript. */
   claudeTranscriptRead: boolean;
+  /** The owner's decision on Claude Code's structured route, off until they turn it on. */
+  claudeStructuredRoute: ClaudeRouteDecision;
   /** The latest subscription allowance each runtime reported, per account. */
   allowances: AllowanceSnapshot[];
   /** The owner's own token budgets, each with what Topsl observed against it. */

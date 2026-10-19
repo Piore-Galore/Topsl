@@ -873,7 +873,7 @@ describe("runtime manager qualification", () => {
         { model: "fixture-model" },
         f.directory,
       ),
-    ).rejects.toThrow("Claude route remains unapproved");
+    ).rejects.toThrow("structured route is off");
     await expect(
       f.runtime.qualify(
         f.installation,

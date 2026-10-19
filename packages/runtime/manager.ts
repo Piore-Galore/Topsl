@@ -14,6 +14,13 @@ import {
   runCodexQualification,
   type QualificationReport,
 } from "../providers/qualification";
+import { runClaudeQualification } from "../providers/claude-qualification";
+import { ClaudeAdapter } from "../providers/claude";
+import {
+  claudeRouteDecision,
+  claudeRoutePreferenceId,
+  type ClaudeRouteDecision,
+} from "../domain/claude-route";
 import {
   capabilitySatisfies,
   roleRequirements,
@@ -157,7 +164,15 @@ export class RuntimeManager {
     this.fixtureMode = isolatedFixture || peer !== nativePeer;
     this.ownsCoordinator = !coordinator;
     this.coordinator = coordinator ?? new Coordinator(store);
-    this.adapters = { codex: new CodexAdapter(this.peer), ...adapters };
+    this.adapters = {
+      codex: new CodexAdapter(this.peer),
+      // Claude Code itself starts only while the owner's structured-route
+      // setting is on, and never under an injected fixture.
+      claude: new ClaudeAdapter(undefined, undefined, {
+        routeAllowed: () => !this.fixtureMode && this.claudeRoute().enabled,
+      }),
+      ...adapters,
+    };
     for (const run of store.iterate<Run>("run"))
       if (["starting", "running", "awaiting-approval"].includes(run.status))
         store.save("run", {
@@ -368,6 +383,13 @@ export class RuntimeManager {
       ...declared.filter((c) => !qualified.some((q) => q.name === c.name)),
     ];
   }
+  /** The owner's decision on Claude Code's structured route, off until they
+   * turn it on in Settings and confirm it in Topsl's own dialog. */
+  claudeRoute(): ClaudeRouteDecision {
+    return claudeRouteDecision(
+      this.store.get<{ value: unknown }>("preference", claudeRoutePreferenceId),
+    );
+  }
   /** The owner's auto-accept setting, off until they turn it on in Settings. */
   autoAccept(): AutoAcceptLevel {
     return autoAcceptLevel(
@@ -502,13 +524,27 @@ export class RuntimeManager {
         detail: "Structured execution is disabled by service rollout policy.",
         action: "prepare-assisted-handoff",
       });
-    if (!this.fixtureMode && selection.provider === "claude")
-      result.blockers.push({
-        code: "authentication-route-unapproved",
-        detail:
-          "The Claude product authentication route and actual runtime enforcement remain unqualified; use the explicit assisted native workflow.",
-        action: "prepare-assisted-handoff",
-      });
+    // Claude Code's structured route needs the owner's decision, and then a
+    // current qualification of this exact binding; the capability checks
+    // above decide which purposes that qualification covers.
+    if (!this.fixtureMode && selection.provider === "claude") {
+      if (!this.claudeRoute().enabled)
+        result.blockers.push({
+          code: "authentication-route-unapproved",
+          detail:
+            "Claude Code's structured route is off. Turn it on in Settings to let Topsl run Claude Code under your login, or use the assisted native workflow.",
+          action: "enable-claude-route",
+        });
+      else if (result.freshness.state !== "current")
+        result.blockers.push({
+          code: "claude-route-unqualified",
+          detail:
+            result.freshness.state === "stale"
+              ? "This Claude runtime's qualification no longer matches its executable, account, arguments or host. Qualify it again."
+              : "Qualify this Claude runtime before Topsl starts Claude Code for a workflow role.",
+          action: "validate-runtime",
+        });
+    }
     result.ready = result.blockers.length === 0;
     return result;
   }
@@ -547,6 +583,28 @@ export class RuntimeManager {
         readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" "),
       );
     return readiness;
+  }
+  private assertClaudeChatReady(
+    installation: Installation,
+    model: string,
+    mode: "review" | "edit",
+  ) {
+    const readiness = this.readiness(
+      installation,
+      { installationId: installation.id, provider: "claude", model },
+      mode === "review" ? "reviewer" : "implementer",
+      [],
+      [
+        ...purposeRequirements("direct-chat"),
+        "native-subscription",
+        "process-lifecycle",
+        mode === "review" ? "read-only" : "workspace-write",
+      ],
+    );
+    if (!readiness.ready)
+      throw new Error(
+        readiness.blockers.map((b) => `${b.code}: ${b.detail}`).join(" "),
+      );
   }
   assertReady(
     installation: Installation,
@@ -599,9 +657,14 @@ export class RuntimeManager {
       throw new Error(
         "An injected fixture runtime cannot be qualified; only a launched native executable can.",
       );
-    if (installation.appId !== "openai.codex-cli")
+    const claude = installation.appId === "anthropic.claude-code-cli";
+    if (!claude && installation.appId !== "openai.codex-cli")
       throw new Error(
-        "Only the Codex CLI structured route can be qualified. The Claude route remains unapproved; use the assisted native workflow.",
+        "Only the Codex CLI and Claude Code CLI structured routes can be qualified.",
+      );
+    if (claude && !this.claudeRoute().enabled)
+      throw new Error(
+        "Claude Code's structured route is off. Turn it on in Settings before qualifying a Claude runtime.",
       );
     if (installation.compatibility !== "compatible")
       throw new Error("Connect this runtime before qualifying it.");
@@ -617,7 +680,19 @@ export class RuntimeManager {
         catalog.executableIdentity === installation.identity
           ? catalog.models.find((m) => m.model === selection.model)
           : undefined;
-    if (
+    // Claude Code has no model list: the owner names a model, and the
+    // qualification adds it to the catalog only if Claude Code reports
+    // running that exact model. Topsl passes Claude no effort.
+    if (claude) {
+      if (selection.effort)
+        throw new Error(
+          "Topsl passes Claude Code no reasoning effort; qualify a Claude runtime with a model only.",
+        );
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,199}$/.test(selection.model))
+        throw new Error(
+          "Name the Claude model by its full id, such as one Claude Code reports.",
+        );
+    } else if (
       !model ||
       (selection.effort &&
         !model.supportedReasoningEfforts?.includes(selection.effort))
@@ -628,7 +703,7 @@ export class RuntimeManager {
     this.qualifying.set(installation.id, installation.managementUnitId);
     try {
       await this.preflight(installation);
-      const adapter = this.adapters.codex!,
+      const adapter = this.adapters[claude ? "claude" : "codex"]!,
         connections = new Set<ProviderConnection>(),
         // Shutdown closes qualification processes like any other probe.
         tracked: ProviderAdapter = Object.assign(Object.create(adapter), {
@@ -641,13 +716,20 @@ export class RuntimeManager {
         });
       let report: QualificationReport;
       try {
-        report = await runCodexQualification({
-          adapter: tracked,
-          installation,
-          model: selection.model,
-          ...(selection.effort ? { effort: selection.effort } : {}),
-          parent,
-        });
+        report = claude
+          ? await runClaudeQualification({
+              adapter: tracked,
+              installation,
+              model: selection.model,
+              parent,
+            })
+          : await runCodexQualification({
+              adapter: tracked,
+              installation,
+              model: selection.model,
+              ...(selection.effort ? { effort: selection.effort } : {}),
+              parent,
+            });
       } finally {
         for (const client of connections) this.probes.delete(client);
       }
@@ -669,6 +751,7 @@ export class RuntimeManager {
           report.observations,
           expiresAt,
         ).id;
+        if (claude) this.recordClaudeModel(installation, report);
       }
       const sanitized: QualificationReport = {
         ...report,
@@ -694,6 +777,57 @@ export class RuntimeManager {
     } finally {
       this.qualifying.delete(installation.id);
     }
+  }
+  /** Adds the qualified model to a Claude runtime's catalog when its
+   * structured turn passed and Claude Code reported that exact model. */
+  private recordClaudeModel(
+    installation: Installation,
+    report: QualificationReport,
+  ) {
+    const turn = report.observations.find(
+      (o) => o.capability === "structured-turn",
+    );
+    if (
+      !turn?.passed ||
+      report.reportedModel !== report.model ||
+      !report.account
+    )
+      return;
+    const catalog = this.store.get<{
+        models: ProviderModel[];
+        runtimeRevision: string;
+        executableIdentity: string;
+        accountKey?: string;
+      }>("runtime-model-catalog", installation.id),
+      current =
+        catalog?.runtimeRevision === installation.revisionId &&
+        catalog.executableIdentity === installation.identity &&
+        catalog.accountKey === report.account.accountKey;
+    const observedAt = now(),
+      models = (current ? catalog.models : []).filter(
+        (m) => m.model !== report.model,
+      );
+    this.store.put("runtime-model-catalog", {
+      id: installation.id,
+      runtimeRevision: installation.revisionId,
+      executableIdentity: installation.identity,
+      accountKey: report.account.accountKey,
+      profileId: report.account.profileId,
+      models: [
+        ...models,
+        {
+          id: report.model,
+          model: report.model,
+          name: report.model,
+          description:
+            "Claude Code reported this model in a qualification turn.",
+          isDefault: false,
+          metadataSource: "runtime",
+          observedAt,
+        } satisfies ProviderModel,
+      ],
+      observedAt,
+    });
   }
   qualificationReports(installationId: string) {
     return [
@@ -778,6 +912,8 @@ export class RuntimeManager {
     installation: Installation,
   ): Promise<{ models: any[]; account: any; info: any }> {
     await this.preflight(installation);
+    if (installation.appId === "anthropic.claude-code-cli")
+      return this.inspectClaude(installation);
     if (installation.appId !== "openai.codex-cli")
       throw new Error(
         "Use the Claude native terminal for account and model controls.",
@@ -816,6 +952,53 @@ export class RuntimeManager {
           );
         } catch {}
       return result;
+    } finally {
+      await client.close();
+      this.probes.delete(client);
+    }
+  }
+  /** Connects Claude Code's structured route: reads its account through
+   * `claude auth status`, with no model turn. Claude Code has no model list,
+   * so the catalog keeps only models a qualification saw Claude Code report. */
+  private async inspectClaude(installation: Installation) {
+    if (this.fixtureMode)
+      throw new Error(
+        "An injected fixture runtime is not connected; only a launched native executable is.",
+      );
+    if (!this.claudeRoute().enabled)
+      throw new Error(
+        "Claude Code's structured route is off. Turn it on in Settings first.",
+      );
+    const adapter = this.adapters.claude!;
+    const client = adapter.connect(installation.path, os.homedir());
+    this.probes.add(client);
+    try {
+      await client.initialize();
+      const result = await adapter.inspect(client),
+        account = await adapter.account(client, installation);
+      this.observeAccount(installation, account);
+      const catalog = this.store.get<{
+        models: ProviderModel[];
+        runtimeRevision: string;
+        executableIdentity: string;
+        accountKey?: string;
+      }>("runtime-model-catalog", installation.id);
+      const models =
+        catalog?.runtimeRevision === installation.revisionId &&
+        catalog.executableIdentity === installation.identity &&
+        catalog.accountKey === account.accountKey
+          ? catalog.models
+          : [];
+      this.store.put("runtime-model-catalog", {
+        id: installation.id,
+        runtimeRevision: installation.revisionId,
+        executableIdentity: installation.identity,
+        accountKey: account.accountKey,
+        profileId: account.profileId,
+        models,
+        observedAt: now(),
+      });
+      return { ...result, models };
     } finally {
       await client.close();
       this.probes.delete(client);
@@ -872,10 +1055,13 @@ export class RuntimeManager {
       const adapter = this.adapters[provider];
       if (
         !adapter ||
-        (provider === "codex" && installation.compatibility !== "compatible")
+        ((provider === "codex" || !this.fixtureMode) &&
+          installation.compatibility !== "compatible")
       )
         throw new Error(
-          "Connect a compatible Codex runtime first. Claude runs through its native terminal.",
+          provider === "codex"
+            ? "Connect a compatible Codex runtime first."
+            : "Turn on Claude Code's structured route in Settings and connect this runtime first, or run Claude Code in its native terminal.",
         );
       if (
         execution?.tools &&
@@ -959,6 +1145,10 @@ export class RuntimeManager {
           mode,
           execution,
         );
+      // A direct Claude chat starts Claude Code unattended too, so it needs
+      // the route and a qualification that covers its mode.
+      if (!execution && provider === "claude" && !this.fixtureMode)
+        this.assertClaudeChatReady(installation, model, mode);
       const run: Run = {
         id: uid(),
         conversationId: conversation.id,

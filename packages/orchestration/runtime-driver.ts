@@ -150,8 +150,10 @@ const purposes: ExecutionPurpose[] = [
  * The coordinator feature's execution boundary over the existing runtime.
  * Every member turn is an ordinary task and attempt in its own Topsl-owned
  * snapshot copy, admitted through the same leases, concurrency budget and
- * readiness gates as other workflows. Claude's structured route stays gated
- * by its readiness blockers; nothing here lifts that restriction.
+ * readiness gates as other workflows. A Claude member runs only when its
+ * runtime's readiness allows it: the owner's structured-route setting and a
+ * current Claude qualification of what the purpose needs (see the runtime
+ * manager); nothing here lifts those checks.
  */
 export class RuntimeOrchestrationDriver implements OrchestrationDriver {
   constructor(private deps: RuntimeDriverDeps) {}

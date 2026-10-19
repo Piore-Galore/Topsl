@@ -444,7 +444,8 @@ export function WorkflowSetup({
         </p>
         <p>
           Topsl passes it no model or effort, so Claude Code's own settings
-          decide. Claude's structured route stays gated.
+          decide. Build and review runs Claude only as these steps; Claude's
+          structured route serves coordinator and loop teams.
         </p>
         {readiness?.roles?.[role] && (
           <p>

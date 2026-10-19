@@ -436,8 +436,9 @@ test("a Goal loop with Claude and Codex members on one team coordinates, impleme
   const f = await setup();
   await enable(f);
   // Claude's structured route is ready here only because the stand-in
-  // transport is injected; production keeps it gated (claudeStructuredGate).
-  // Claude cannot review a candidate (next test), so Codex reviews.
+  // transport is injected. In production it needs the owner's setting and a
+  // current Claude qualification (tests/claude-route.test.ts). Here Codex
+  // reviews; the next test pins a Claude reviewer.
   await roster(f, "coordinator", ["Opus", "Astra"]);
   await roster(f, "implementer", ["Opus"]);
   await roster(f, "reviewer", ["Sol"]);
@@ -494,22 +495,40 @@ test("a Goal loop with Claude and Codex members on one team coordinates, impleme
   expect(child.loopDisposition!.by).toBe("loop-policy");
 });
 
-test("a pinned Claude reviewer waits visibly: its adapter cannot host Topsl's candidate reader", async () => {
+test("a pinned Claude reviewer reviews the candidate through Topsl's candidate reader", async () => {
   const f = await setup();
   await enable(f);
   await roster(f, "coordinator", ["Opus", "Astra"]);
   await roster(f, "implementer", ["Opus"]);
   await roster(f, "reviewer", ["Opus", "Sol"]);
   const view = await startLoop(f);
-  expect(view.run.state).toBe("waiting");
-  expect(view.run.waitReason).toMatchObject({ kind: "pinned-model" });
-  expect(view.run.waitReason!.detail).toContain("candidate-reader-unavailable");
-  // The child goal never started, so no Claude review was dispatched and failed.
-  expect(view.checkpoint!.sequence).toBe(0);
+  expect(view.run.state).toBe("completed");
+  expect(view.goals[0].status).toBe("satisfied");
+  const turns = memberTurns(f);
   expect(
+    turns.filter(
+      (t) =>
+        t.member.startsWith("reviewer-") && t.provider === "claude" && !t.loop,
+    ).length,
+  ).toBeGreaterThan(0);
+  // Each Claude review called the reader through Topsl's MCP server, and
+  // Topsl answered it under the review attempt's grant.
+  const claudeRuns = new Set(
     f.service.store
-      .list<ExecutionAttempt>("attempt")
-      .filter((a) => a.state === "failed"),
-  ).toEqual([]);
-  expect(memberTurns(f).filter((t) => !t.loop)).toEqual([]);
+      .list<{ id: string; provider: string }>("run")
+      .filter((r) => r.provider === "claude")
+      .map((r) => r.id),
+  );
+  const calls = f.service.store.db
+    .prepare("SELECT body FROM events WHERE kind = 'run.tool-call'")
+    .all()
+    .map((row: any) => JSON.parse(row.body))
+    .filter((call) => claudeRuns.has(call.runId));
+  expect(calls.length).toBeGreaterThan(0);
+  for (const call of calls)
+    expect(call).toMatchObject({
+      namespace: "topsl_candidate",
+      tool: "list",
+      outcome: "answered",
+    });
 });

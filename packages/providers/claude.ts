@@ -10,11 +10,20 @@ import {
 import type { Installation } from "../domain/types";
 import type {
   PreparedTurn,
+  ProviderAccount,
   ProviderAdapter,
   ProviderCapability,
   ProviderConnection,
   ProviderEvent,
+  ProviderToolCall,
+  ProviderToolResult,
 } from "./contract";
+import { readClaudeAccount } from "./claude-allowance";
+import {
+  ClaudeToolServer,
+  mcpToolResult,
+  type ClaudeToolRequest,
+} from "./claude-tools";
 
 const token = z.number().finite().nonnegative().optional();
 const usageSchema = z.object({
@@ -36,6 +45,11 @@ export type ClaudeStreamEvent =
       sessionId: string;
       reportedModel: string | null;
       tools: string[];
+      /** Where Claude Code said its credentials come from; "none" under the
+       * native claude.ai login, null when it did not say. */
+      apiKeySource: string | null;
+      /** Each MCP server Claude Code loaded, with the status it reported. */
+      mcpServers: Array<{ name: string; status: string }>;
     }
   | { type: "delta"; sourceId: string; text: string }
   | {
@@ -60,6 +74,9 @@ export type ClaudeStreamEvent =
       failed: boolean;
       detail: string;
       reportedModel: string | null;
+      /** Each tool use Claude Code's permission settings denied, with the
+       * file it named, if any. Other arguments are not kept. */
+      denials: Array<{ tool: string; path: string | null }>;
     }
   | { type: "notice"; sourceId: string; detail: string };
 
@@ -156,6 +173,10 @@ export class ClaudeStreamParser {
             subtype: z.string(),
             model: z.string().optional(),
             tools: z.array(z.string()).optional(),
+            apiKeySource: z.string().optional(),
+            mcp_servers: z
+              .array(z.object({ name: z.string(), status: z.string() }))
+              .optional(),
           })
           .parse(raw);
         if (value.subtype === "init") {
@@ -168,6 +189,13 @@ export class ClaudeStreamParser {
             sessionId: this.sessionId,
             reportedModel: this.model,
             tools: value.tools ?? [],
+            apiKeySource: value.apiKeySource ?? null,
+            mcpServers: (value.mcp_servers ?? [])
+              .slice(0, 20)
+              .map((server) => ({
+                name: server.name.slice(0, 100),
+                status: server.status.slice(0, 40),
+              })),
           });
         } else
           this.emit({
@@ -265,6 +293,14 @@ export class ClaudeStreamParser {
             structured_output: z.unknown().optional(),
             usage: usageSchema.optional(),
             errors: z.array(z.string()).optional(),
+            permission_denials: z
+              .array(
+                z.object({
+                  tool_name: z.string(),
+                  tool_input: z.unknown().optional(),
+                }),
+              )
+              .optional(),
           })
           .parse(raw);
         if (!this.sessionId)
@@ -287,6 +323,17 @@ export class ClaudeStreamParser {
           failed: value.is_error || value.subtype !== "success",
           detail: safeError((value.errors ?? []).join("\n") || value.subtype),
           reportedModel: this.model,
+          denials: (value.permission_denials ?? [])
+            .slice(0, 50)
+            .map((denial) => {
+              const input = denial.tool_input as
+                  { file_path?: unknown; path?: unknown } | undefined,
+                file = input?.file_path ?? input?.path;
+              return {
+                tool: denial.tool_name.slice(0, 100),
+                path: typeof file === "string" ? file.slice(0, 1000) : null,
+              };
+            }),
         });
         break;
       }
@@ -317,7 +364,7 @@ export const claudeStructuredGate = {
   route: "claude-code/print/stream-json",
   state: "native-only" as const,
   protocolEvidence:
-    "official-documentation + deterministic-fixtures; selected-runtime acceptance pending",
+    "official-documentation + deterministic-fixtures; each binding needs its own Claude runtime qualification",
   observedVersion: null as string | null,
   runtimeRevision: null as string | null,
   observedAt: null as string | null,
@@ -325,14 +372,32 @@ export const claudeStructuredGate = {
   billingRoute: "unconfirmed" as const,
   filesystemIsolation: "unsupported" as const,
   detail:
-    "Structured Claude execution is gated. This profile has no approved product authentication/billing route or live permission/isolation acceptance. Use the native terminal; no API-key or subscription fallback is dispatched.",
+    "Structured Claude execution is gated: the owner has not turned on Claude Code's structured route in Settings. Use the native terminal; no API-key or subscription fallback is dispatched.",
 };
+
+/** The tools a Claude Code turn may report, by mode. A review turn gets none
+ * of Claude Code's own, only Topsl's tools when its session declared them. */
+export const claudeEditTools = ["Read", "Edit", "Write", "Glob", "Grep"];
+
+/** Topsl's own tools for a review session: the MCP configuration file that
+ * names Topsl's server, and the tool names Claude Code gives them. */
+export interface ClaudeTurnTools {
+  configPath: string;
+  names: string[];
+}
 
 export function claudeArguments(
   model: string,
   sessionId: string,
   mode: "review" | "edit",
+  tools?: ClaudeTurnTools,
 ): string[] {
+  if (tools && mode !== "review")
+    throw new Error("Topsl's tools are declared only on a review session.");
+  const allowed =
+    mode === "edit"
+      ? claudeEditTools.join(",")
+      : (tools?.names ?? []).join(",");
   return [
     "--print",
     "--output-format",
@@ -345,27 +410,63 @@ export function claudeArguments(
     model,
     "--session-id",
     sessionId,
-    "--safe-mode",
+    // Claude Code 2.1.302's safe mode also drops the servers --mcp-config
+    // names, so a session with Topsl's tools turns hooks off itself; no
+    // setting source is loaded either way.
+    ...(tools ? ["--settings", '{"disableAllHooks":true}'] : ["--safe-mode"]),
     "--setting-sources",
     "",
     "--strict-mcp-config",
     "--mcp-config",
-    '{"mcpServers":{}}',
+    tools ? tools.configPath : '{"mcpServers":{}}',
     "--disable-slash-commands",
     "--no-chrome",
     "--permission-mode",
     "dontAsk",
     "--tools",
-    mode === "review" ? "" : "Read,Edit,Write,Glob,Grep",
+    mode === "review" ? "" : claudeEditTools.join(","),
     "--allowedTools",
-    mode === "review" ? "" : "Read,Edit,Write,Glob,Grep",
+    allowed,
   ];
 }
 
-/** Production refuses model dispatch. Fixture transport is dependency-injected and has no service-facing activation switch. */
+/** Starts one Claude Code process for a turn. */
+export type ClaudeTransport = (
+  executable: string,
+  args: string[],
+  cwd: string,
+) => ChildProcessWithoutNullStreams;
+
+/** Claude Code itself, with only Topsl's allowlisted environment, so no API
+ * key or third-party provider setting reaches it. */
+export const claudeNativeTransport: ClaudeTransport = (executable, args, cwd) =>
+  spawn(executable, args, {
+    cwd,
+    shell: false,
+    env: nativeEnvironment(),
+    detached: process.platform !== "win32",
+  });
+
+export interface ClaudeAdapterOptions {
+  /** The owner's structured-route decision, read on every use. */
+  routeAllowed?: () => boolean;
+  /** Replaces Claude Code for a test of the live route's own checks. */
+  transport?: ClaudeTransport;
+  /** Replaces the native account read for a test. */
+  readAccount?: (executable: string) => Promise<ProviderAccount>;
+}
+
+/**
+ * Claude Code's print/stream-json route. An injected fixture transport always
+ * runs. Otherwise the adapter starts Claude Code only while the owner's
+ * structured-route setting is on, and refuses before any process is created
+ * while it is off. Being able to connect qualifies nothing: readiness uses
+ * only what a recorded Claude runtime qualification observed.
+ */
 export class ClaudeAdapter implements ProviderAdapter {
   readonly provider = "claude" as const;
   readonly capability: typeof claudeStructuredGate;
+  private options: ClaudeAdapterOptions;
   constructor(
     private fixtureTransport?: (
       args: string[],
@@ -376,7 +477,9 @@ export class ClaudeAdapter implements ProviderAdapter {
       revisionId: string;
       observedAt: string | null;
     },
+    options: ClaudeAdapterOptions = {},
   ) {
+    this.options = options;
     this.capability = {
       ...claudeStructuredGate,
       observedVersion: runtime?.version ?? null,
@@ -384,22 +487,39 @@ export class ClaudeAdapter implements ProviderAdapter {
       observedAt: runtime?.observedAt ?? null,
     };
   }
+  /** Whether this adapter starts the real Claude Code. */
+  get live(): boolean {
+    return !this.fixtureTransport && !!this.options.routeAllowed?.();
+  }
+  private get enabled(): boolean {
+    return !!this.fixtureTransport || this.live;
+  }
   capabilities(installation: Installation): ProviderCapability[] {
+    const live = this.live;
     return [
       "structured-turn",
       "read-only",
       "workspace-write",
       "native-subscription",
+      "fresh-session",
+      "process-lifecycle",
+      "candidate-reader",
       "interrupt",
       "approvals",
     ].map((name) => ({
       name,
       route: "structured",
-      support: this.fixtureTransport ? "enforceable" : "native-only",
+      support: this.fixtureTransport
+        ? "enforceable"
+        : live
+          ? "observable-only"
+          : "native-only",
       versions: installation.version ? [installation.version] : [],
       testedPlatforms: this.fixtureTransport ? ["fixture"] : [],
       restrictions: [
-        this.capability.detail,
+        live
+          ? "The owner turned on Claude Code's structured route. A purpose uses this runtime only when a current Claude qualification observed what it needs."
+          : this.capability.detail,
         "Permission tool lists do not establish OS filesystem isolation. Native subagent fanout is disabled.",
       ],
       evidence: {
@@ -410,34 +530,53 @@ export class ClaudeAdapter implements ProviderAdapter {
         observedAt: this.capability.observedAt,
         detail: this.fixtureTransport
           ? "Injected local fixture only; no live provider/billing capability is inferred."
-          : `Selected runtime revision ${installation.revisionId}; live protocol and billing route remain unvalidated.`,
+          : `Selected runtime revision ${installation.revisionId}; ${live ? "qualify it to record what it enforces" : "the structured route is off"}.`,
       },
     }));
   }
   connect(executable: string, cwd: string): ProviderConnection {
-    if (!this.fixtureTransport) throw new Error(this.capability.detail);
-    return new ClaudeConnection(this, executable, cwd);
+    if (!this.enabled) throw new Error(this.capability.detail);
+    return new ClaudeConnection(this, executable, cwd, this.live);
   }
   async inspect(connection: ProviderConnection) {
-    this.connection(connection);
+    const client = this.connection(connection);
+    if (!client.live)
+      return {
+        models: [],
+        account: { type: "fixture", email: null, planType: null },
+        info: { platformFamily: "fixture", platformOs: process.platform },
+      };
+    const account = await this.readAccount(client.executable);
     return {
+      // Claude Code has no model list. Models enter Topsl's catalog only when
+      // a qualification saw Claude Code report the model it was asked for.
       models: [],
-      account: { type: "fixture", email: null, planType: null },
-      info: { platformFamily: "fixture", platformOs: process.platform },
+      account: account.sanitized,
+      info: {
+        platformFamily: "claude-code-print",
+        platformOs: process.platform,
+      },
     };
   }
   async account(connection: ProviderConnection, installation: Installation) {
-    this.connection(connection);
-    return {
-      accountKey: hash("claude-fixture-account"),
-      profileId: hash(stable([installation.id, "claude-fixture-profile"])),
-      billingRoute: "native-subscription" as const,
-      sanitized: { type: "fixture", email: null, planType: null },
-    };
+    const client = this.connection(connection);
+    if (!client.live)
+      return {
+        accountKey: hash("claude-fixture-account"),
+        profileId: hash(stable([installation.id, "claude-fixture-profile"])),
+        billingRoute: "native-subscription" as const,
+        sanitized: { type: "fixture", email: null, planType: null },
+      };
+    return this.readAccount(client.executable);
+  }
+  private readAccount(executable: string): Promise<ProviderAccount> {
+    return this.options.readAccount
+      ? this.options.readAccount(executable)
+      : readClaudeAccount(executable, AbortSignal.timeout(15_000));
   }
   async startSession(
     connection: ProviderConnection,
-    _turn: PreparedTurn,
+    turn: PreparedTurn,
     nativeSessionId: string | null,
   ) {
     const client = this.connection(connection);
@@ -445,16 +584,29 @@ export class ClaudeAdapter implements ProviderAdapter {
       throw new Error(
         "Coordinated Claude review requires a fresh session; resume is unsupported by this route.",
       );
+    if (client.execution)
+      throw new Error(
+        "This Claude connection already ran a turn; open a new connection for a fresh session.",
+      );
+    if (turn.toolset) {
+      if (turn.mode !== "review")
+        throw new Error("Topsl's tools are declared only on a review session.");
+      await client.tools?.close();
+      client.tools = new ClaudeToolServer(turn.toolset, (request) =>
+        client.toolRequest(request),
+      );
+      await client.tools.start();
+    }
     client.sessionId = uid();
     return {
       nativeSessionId: client.sessionId,
       reportedModel: null,
       evidence: {
         level: "topsl-transaction" as const,
-        source: "claude-fixture-session",
+        source: client.live ? "claude-session" : "claude-fixture-session",
         observedAt: now(),
         detail:
-          "Fresh fixture session prepared; provider creation is not yet acknowledged.",
+          "Fresh session id prepared; Claude Code acknowledges it when its turn starts.",
       },
     };
   }
@@ -468,6 +620,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       throw new Error(
         "Claude session identity or active-turn ownership changed.",
       );
+    if (client.tools && turn.mode !== "review")
+      throw new Error("Topsl's tools are declared only on a review session.");
     client.turnId = uid();
     client.execution = this.start(
       {
@@ -477,6 +631,14 @@ export class ClaudeAdapter implements ProviderAdapter {
         sessionId: nativeSessionId,
         mode: turn.mode,
         prompt: turn.prompt,
+        ...(client.tools?.configPath
+          ? {
+              tools: {
+                configPath: client.tools.configPath,
+                names: client.tools.allowedTools,
+              },
+            }
+          : {}),
       },
       (event) => client.receive(event),
     );
@@ -493,7 +655,10 @@ export class ClaudeAdapter implements ProviderAdapter {
     sessionId: string,
     turnId: string,
   ) {
-    const client = this.connection(connection);
+    // Stopping a running turn never needs the route to still be on.
+    if (!(connection instanceof ClaudeConnection))
+      throw new Error(this.capability.detail);
+    const client = connection;
     if (client.sessionId !== sessionId || client.turnId !== turnId)
       throw new Error("Claude interrupt targets a stale native turn.");
     client.execution?.interrupt();
@@ -569,8 +734,36 @@ export class ClaudeAdapter implements ProviderAdapter {
   approval(): null {
     return null;
   } // dontAsk never silently promotes a denied native permission.
+  /** A call Claude Code made to one of Topsl's tools through Topsl's MCP
+   * server, as the connection reports it. */
+  toolCall(method: string, payload: unknown): ProviderToolCall | null {
+    if (method !== claudeToolMethod) return null;
+    const parsed = z
+      .object({
+        threadId: z.string().min(1),
+        turnId: z.string().min(1),
+        callId: z.string().min(1),
+        namespace: z.string().min(1),
+        tool: z.string().min(1),
+        arguments: z.unknown(),
+      })
+      .safeParse(payload);
+    return parsed.success
+      ? {
+          threadId: parsed.data.threadId,
+          turnId: parsed.data.turnId,
+          callId: parsed.data.callId,
+          namespace: parsed.data.namespace,
+          tool: parsed.data.tool,
+          arguments: parsed.data.arguments ?? null,
+        }
+      : null;
+  }
+  toolResult(result: ProviderToolResult) {
+    return mcpToolResult(result);
+  }
   private connection(connection: ProviderConnection): ClaudeConnection {
-    if (!(connection instanceof ClaudeConnection) || !this.fixtureTransport)
+    if (!(connection instanceof ClaudeConnection) || !this.enabled)
       throw new Error(this.capability.detail);
     return connection;
   }
@@ -582,6 +775,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       sessionId: string;
       mode: "review" | "edit";
       prompt: string;
+      tools?: ClaudeTurnTools;
     },
     emit: (event: ClaudeStreamEvent) => void,
   ): {
@@ -589,12 +783,42 @@ export class ClaudeAdapter implements ProviderAdapter {
     done: Promise<void>;
     interrupt: () => void;
   } {
-    if (!this.fixtureTransport) throw new Error(claudeStructuredGate.detail);
-    const process = this.fixtureTransport(
-      claudeArguments(input.model, input.sessionId, input.mode),
-      input.cwd,
-    );
-    const parser = new ClaudeStreamParser(emit);
+    if (!this.enabled) throw new Error(claudeStructuredGate.detail);
+    const args = claudeArguments(
+        input.model,
+        input.sessionId,
+        input.mode,
+        input.tools,
+      ),
+      live = !this.fixtureTransport,
+      process = this.fixtureTransport
+        ? this.fixtureTransport(args, input.cwd)
+        : (this.options.transport ?? claudeNativeTransport)(
+            input.executable,
+            args,
+            input.cwd,
+          ),
+      granted = new Set(
+        input.mode === "edit" ? claudeEditTools : (input.tools?.names ?? []),
+      );
+    // Claude Code reports the tools and credentials a turn runs with before
+    // it calls a model. A turn with more than Topsl granted, or with an API
+    // key, is stopped there.
+    const checked = (event: ClaudeStreamEvent) => {
+      if (event.type === "session") {
+        const extra = event.tools.filter((tool) => !granted.has(tool));
+        if (extra.length)
+          throw new Error(
+            `Claude Code reported tools Topsl did not grant (${extra.slice(0, 10).join(", ")}). Topsl stopped the turn.`,
+          );
+        if (live && event.apiKeySource && event.apiKeySource !== "none")
+          throw new Error(
+            `Claude Code reported credentials from ${safeError(event.apiKeySource)}, not your Claude login. Topsl stopped the turn.`,
+          );
+      }
+      emit(event);
+    };
+    const parser = new ClaudeStreamParser(checked);
     let cancelled = false;
     const done = new Promise<void>((resolve, reject) => {
       let parserError: Error | undefined;
@@ -648,6 +872,9 @@ export class ClaudeAdapter implements ProviderAdapter {
   }
 }
 
+/** The request method a Claude connection uses for a call to Topsl's tools. */
+export const claudeToolMethod = "claude/tool-call";
+
 /** Only tests call this helper; the production constructor never selects it. */
 export function claudeFixtureTransport(
   executable: string,
@@ -671,32 +898,75 @@ class ClaudeConnection implements ProviderConnection {
   turnId: string | null = null;
   execution?: ReturnType<ClaudeAdapter["start"]>;
   lifecycle?: ProcessLifecycle;
+  /** Topsl's MCP server, when the session declared Topsl's tools. */
+  tools?: ClaudeToolServer;
   private closing?: Promise<ProcessEvidence>;
   private texts = new Map<string, string>();
+  private pending = new Map<string, (result: unknown) => void>();
   constructor(
     readonly adapter: ClaudeAdapter,
     readonly executable: string,
     readonly cwd: string,
+    readonly live: boolean,
   ) {}
   async initialize(): Promise<unknown> {
-    return { platformFamily: "fixture", platformOs: process.platform };
+    return this.live
+      ? { platformFamily: "claude-code-print", platformOs: process.platform }
+      : { platformFamily: "fixture", platformOs: process.platform };
   }
   request(): Promise<unknown> {
     return Promise.reject(
       new Error("Claude print route does not expose arbitrary RPC methods."),
     );
   }
-  reply(): void {
-    throw new Error(
-      "Claude native permission prompts are not enabled by this route.",
-    );
+  /** Hands a call from Topsl's MCP server to whoever runs this connection,
+   * and waits for its reply. A call outside a running turn is refused. */
+  toolRequest(request: ClaudeToolRequest): Promise<unknown> {
+    if (!this.sessionId || !this.turnId || this.closing || !this.tools)
+      return Promise.resolve(
+        mcpToolResult({
+          text: "This tool call is outside the active turn.",
+          success: false,
+        }),
+      );
+    const id = `${this.turnId}:${request.requestId}`;
+    return new Promise((resolve) => {
+      this.pending.set(id, resolve);
+      this.onRequest(id, claudeToolMethod, {
+        threadId: this.sessionId,
+        turnId: this.turnId,
+        callId: id,
+        namespace: this.tools!.toolset.namespace,
+        tool: request.tool,
+        arguments: request.arguments,
+      });
+    });
   }
-  reject(): void {}
+  reply(id: string | number, value: unknown): void {
+    const resolve = this.pending.get(String(id));
+    if (!resolve)
+      throw new Error(
+        "Claude native permission prompts are not enabled by this route.",
+      );
+    this.pending.delete(String(id));
+    resolve(value);
+  }
+  reject(id: string | number, message: string): void {
+    const resolve = this.pending.get(String(id));
+    if (!resolve) return;
+    this.pending.delete(String(id));
+    resolve(mcpToolResult({ text: message, success: false }));
+  }
   close(): Promise<ProcessEvidence> {
     if (this.closing) return this.closing;
-    if (this.lifecycle) return (this.closing = this.lifecycle.stop());
+    for (const [id] of this.pending) this.reject(id, "This run has ended.");
+    const tools = this.tools?.close() ?? Promise.resolve();
+    if (this.lifecycle)
+      return (this.closing = this.lifecycle
+        .stop()
+        .then(async (evidence) => (await tools, evidence)));
     const at = now();
-    return (this.closing = Promise.resolve({
+    return (this.closing = tools.then(() => ({
       version: 1,
       pid: null,
       groupId: null,
@@ -711,7 +981,7 @@ class ClaudeConnection implements ProviderConnection {
       signal: null,
       remainingGroup: "absent",
       detail: "No task process was created.",
-    }));
+    })));
   }
   receive(event: ClaudeStreamEvent): void {
     if (!this.sessionId || !this.turnId)

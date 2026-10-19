@@ -46,6 +46,9 @@ export interface QualificationReport {
   notTested: Array<{ capability: string; reason: string }>;
   approvals: Array<{ probe: string; method: string; decision: string }>;
   error: string | null;
+  /** The model the runtime reported for the structured turn, when the suite
+   * records it (the Claude suite does). */
+  reportedModel?: string | null;
 }
 interface TurnWatch {
   probe: string;

@@ -81,7 +81,7 @@ import {
 import { Lifecycle } from "../../packages/applications/lifecycle";
 import { RuntimeManager } from "../../packages/runtime/manager";
 import { Coordinator } from "../../packages/runtime/coordinator";
-import { ClaudeAdapter } from "../../packages/providers/claude";
+import { claudeRoutePreferenceId } from "../../packages/domain/claude-route";
 import type {
   ProviderAdapter,
   ToolBinding,
@@ -161,6 +161,8 @@ export interface TrustedInput {
   confirmedAutoAccept?: AutoAcceptLevel;
   /** Set only after the owner confirms turning on the transcript read. */
   confirmedTranscriptRead?: boolean;
+  /** Set only after the owner confirms turning on Claude Code's structured route. */
+  confirmedClaudeRoute?: boolean;
 }
 export class Service {
   readonly store: Store;
@@ -244,7 +246,9 @@ export class Service {
       () => this.changed(),
       undefined,
       this.coordinator,
-      { claude: new ClaudeAdapter(), ...fixtureProviders },
+      // The manager's own Claude adapter starts Claude Code only while the
+      // owner's structured-route setting is on.
+      { ...fixtureProviders },
       !!(isolatedTest && fixtureProviders),
     );
     this.configuration = new Configuration(this.store, () =>
@@ -617,6 +621,7 @@ export class Service {
       autoAccept: this.runtime.autoAccept(),
       testProfile: this.isolatedTest,
       claudeTranscriptRead: this.claudeTranscriptRead(),
+      claudeStructuredRoute: this.runtime.claudeRoute(),
       allowances: this.store.list<AllowanceSnapshot>("allowance-snapshot"),
       providerBudgets: this.providerBudgets(),
     };
@@ -2945,6 +2950,28 @@ export class Service {
         });
         this.changed();
         return { level: command.level };
+      case "claude-structured-route-set": {
+        // Turning it on takes the owner's confirmation in Topsl's own dialog,
+        // which the window cannot answer; turning it off takes none.
+        if (command.enabled && trusted.confirmedClaudeRoute !== true)
+          throw new Error(
+            "Turning on Claude Code's structured route needs your confirmation in Topsl's own dialog.",
+          );
+        const decidedAt = now();
+        this.store.transaction(() => {
+          this.store.put("preference", {
+            id: claudeRoutePreferenceId,
+            value: command.enabled,
+            decidedAt,
+          });
+          this.store.event("claude-structured-route.set", {
+            enabled: command.enabled,
+            decidedAt,
+          });
+        });
+        this.changed();
+        return this.runtime.claudeRoute();
+      }
       case "claude-transcript-read-set":
         // Turning it on takes the owner's confirmation in Topsl's own dialog,
         // which the window cannot answer; turning it off takes none.

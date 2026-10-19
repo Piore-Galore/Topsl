@@ -1,27 +1,50 @@
 // A Claude Code print/stream-json stand-in for coordinator and loop service
 // tests. It answers each execution purpose's contract from the prompt alone,
 // with the same replies as the Codex stand-in (orchestration-answers.cjs), and
-// reports the requested model. No model is contacted, and nothing here is
-// evidence for any live model, route or billing path.
+// reports the requested model. A session given Topsl's MCP server (a review
+// that declares the candidate reader) lists the candidate through it first,
+// as a reviewer would. No model is contacted, and nothing here is evidence for
+// any live model, route or billing path.
+const fs = require("node:fs");
 const { answer } = require("./orchestration-answers.cjs");
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (input += chunk));
-process.stdin.on("end", () => {
+async function readerTools(config) {
+  const server = JSON.parse(fs.readFileSync(config, "utf8")).mcpServers
+    .topsl_candidate;
+  const rpc = async (id, method, params) =>
+    (
+      await fetch(server.url, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...server.headers },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+      })
+    ).json();
+  await rpc(1, "initialize", { protocolVersion: "2025-06-18" });
+  const listed = await rpc(2, "tools/list", {});
+  const call = await rpc(3, "tools/call", { name: "list", arguments: {} });
+  if (call.result.isError)
+    throw new Error(`Topsl refused the reader: ${call.result.content[0].text}`);
+  return listed.result.tools.map((t) => `mcp__topsl_candidate__${t.name}`);
+}
+process.stdin.on("end", async () => {
   const arg = (name, fallback) => {
     const i = process.argv.indexOf(name);
     return i >= 0 ? process.argv[i + 1] : fallback;
   };
   const sessionId = arg("--session-id", "claude-fixture-session");
   const model = arg("--model", "fixture-requested");
+  const config = arg("--mcp-config", "{}");
   const event = (v) => process.stdout.write(JSON.stringify(v) + "\n");
   const text = answer(input);
+  const tools = config.trim().startsWith("{") ? [] : await readerTools(config);
   event({
     type: "system",
     subtype: "init",
     session_id: sessionId,
     model,
-    tools: [],
+    tools,
     uuid: "init-1",
   });
   event({
