@@ -294,6 +294,13 @@ export interface LoopIteration {
   resultCheckpointId: string | null;
   assessmentIds: string[];
   outcomeRecordIds: string[];
+  /**
+   * Set in the transaction that promotes or rejects the iteration and cleared
+   * when its child goal is settled and its outcome records, token totals and
+   * reclaim are done, so a crash in between is finished on the next tick.
+   * Absent on records written before this field existed.
+   */
+  settlementPending?: "promoted" | "rejected" | "cancelled" | null;
   promotionId: string | null;
   /** Why it did not promote, classified before any response. */
   failure: {
@@ -666,8 +673,12 @@ export interface LoopUsage {
   iterations: number;
   promoted: number;
   rejected: number;
-  /** Bounded rolling-window history of member turns. */
-  recent: Array<{ at: string; turns: number }>;
+  /**
+   * Rolling-window history of member turns, compacted without loss: `at` is
+   * the latest turn an entry holds and `from`, when entries were merged, the
+   * earliest (see compactRecent in loop-engine.ts).
+   */
+  recent: Array<{ at: string; turns: number; from?: string }>;
   tokens: {
     input: number | null;
     output: number | null;

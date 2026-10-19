@@ -78,9 +78,16 @@ export class OrchestrationRepository {
     if (expected !== undefined && record.revision !== expected)
       throw new Error("This record changed. Refresh and try again.");
   }
+  /** Commands still running, by command ID, so a concurrent repeat joins them. */
+  private inflight = new Map<
+    string,
+    { projectId: string; type: string; promise: Promise<unknown> }
+  >();
   /**
    * Runs a command once per command ID. A repeated request returns the first
-   * result, or repeats its refusal, without running the transition again.
+   * result, or repeats its refusal, without running the transition again. A
+   * repeat that arrives while the first is still running waits for it and
+   * shares its outcome.
    */
   async receipt<T>(
     commandId: string,
@@ -88,16 +95,31 @@ export class OrchestrationRepository {
     type: string,
     run: () => T | Promise<T>,
   ): Promise<T> {
+    const pending = this.inflight.get(commandId);
     const prior = this.store.get<CommandReceipt>(kinds.receipt, commandId);
+    const used = pending ?? prior;
+    if (used && (used.projectId !== projectId || used.type !== type))
+      throw new Error("This command ID was already used for another request.");
+    if (pending) return pending.promise as Promise<T>;
     if (prior) {
-      if (prior.projectId !== projectId || prior.type !== type)
-        throw new Error(
-          "This command ID was already used for another request.",
-        );
       if (!prior.accepted)
         throw new Error(prior.error ?? "This command was refused.");
       return prior.result as T;
     }
+    const promise = this.record(commandId, projectId, type, run);
+    this.inflight.set(commandId, { projectId, type, promise });
+    try {
+      return await promise;
+    } finally {
+      this.inflight.delete(commandId);
+    }
+  }
+  private async record<T>(
+    commandId: string,
+    projectId: string,
+    type: string,
+    run: () => T | Promise<T>,
+  ): Promise<T> {
     try {
       const result = await run();
       this.store.immutable(kinds.receipt, {

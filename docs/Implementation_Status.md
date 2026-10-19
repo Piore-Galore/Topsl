@@ -272,6 +272,8 @@ The *Topsl Comprehensive Testing Plan* (359 cases, 14 journeys, 197 commands) wa
 - A Codex-targeted handoff can be sent to Claude (D-07).
 - Secret-like replication inputs are accepted (D-08).
 
+*Follow-up the same day:* D-01 to D-05 are fixed. Turning Recursive Looping off now pauses running loops and keeps Stop and Pause available; concurrent publication confirmations write once; a crash after promotion is settled on the next tick; the rolling allowance keeps every turn in its window; and a turn charge is one transaction. The disable policy, changes and verification (`npm run check` and the desktop loop journey) are in [the follow-up record](testing/TEST-DECISIONS.md#follow-up-fixes-d-01-to-d-05). The campaign verdict above is unchanged for the other defects.
+
 **Established on darwin-arm64:**
 
 - The clean baseline passed: 635 of 640 Vitest tests passed, with 5 opt-in skips. Release tests passed 18/0/0, and all six desktop harnesses passed.

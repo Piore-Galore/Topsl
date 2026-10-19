@@ -7,6 +7,7 @@ Final report for campaign `2026-10-19-comprehensive`, which executed the *Topsl 
 **Qualification failed, and the campaign is incomplete.**
 
 - **Failed:** the local runs confirmed P0 defects. The most serious is D-01: with Recursive Looping turned off, Stop is refused while runs keep working. Others are duplicate publication writes, unsettled promotion recovery, rolling-allowance accounting errors, cancellation cleanup and handoff targeting. Under plan §12.6 no release-qualification or full-support claim can be made for this source.
+- **Follow-up (19 October 2026, after the campaign):** D-01 to D-05 were fixed and their reproductions now pass as plain tests; see [the follow-up record](TEST-DECISIONS.md#follow-up-fixes-d-01-to-d-05). The results in this report remain those of the campaign.
 - **Incomplete:** these cells were not executed: Intel Mac, Windows and Linux; the live Claude Build-and-review pairings and Claude qualification; long soaks; screen-reader acceptance; real first-open.
 
 What *is* established, with evidence, is a delimited set of darwin-arm64 results, listed below. A PASS row means the asserted contract held for this source on this host and layer. It does not qualify other platforms, providers or layers.

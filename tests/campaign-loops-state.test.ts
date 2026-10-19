@@ -12,6 +12,7 @@ import type {
   PublicationCursor,
 } from "../packages/domain/recursive-loops";
 import {
+  compactRecent,
   LoopSupervisor,
   loopKinds,
 } from "../packages/orchestration/loop-engine";
@@ -967,16 +968,35 @@ describe("OPS-02: accounting updates against immutable attempts", () => {
     return { runId, k, updates };
   }
 
-  test("over 2,000 updates the lifetime counter stays exact; the persisted rolling history is capped at 2,000 entries", async () => {
+  test("over 2,000 updates the lifetime counter stays exact and the compacted rolling history keeps every turn in the window", async () => {
     const t = await setup();
     const { runId, k, updates } = await accounted(t, 2010, 3);
     expect(updates).toBeGreaterThan(2000);
     const usage = usageOf(t, runId);
     expect(usage.memberTurns).toBe(k + updates);
-    // Recorded fact for the rolling-window defect below.
-    expect(usage.recent.length).toBe(2000);
+    expect(usage.recent.length).toBeLessThan(updates);
     const inWindow = usage.recent.reduce((n, r) => n + r.turns, 0);
-    expect(inWindow).toBeLessThan(k + updates);
+    expect(inWindow).toBe(k + updates);
+  });
+
+  test("compacted history stays bounded over 20,000 updates and only ever dates a turn later, by at most 1/64 of its age", () => {
+    const start = Date.parse("2026-10-01T00:00:00Z");
+    let recent: LoopUsage["recent"] = [];
+    let at = start;
+    for (let i = 0; i < 20_000; i++) {
+      at += 60_000;
+      recent = compactRecent(
+        [...recent, { at: new Date(at).toISOString(), turns: 1 }],
+        at,
+      );
+    }
+    expect(recent.reduce((n, r) => n + r.turns, 0)).toBe(20_000);
+    expect(recent.length).toBeLessThan(2000);
+    for (const r of recent) {
+      const latest = Date.parse(r.at);
+      const earliest = Date.parse(r.from ?? r.at);
+      expect(latest - earliest).toBeLessThanOrEqual((at - latest) / 64 + 1);
+    }
   });
 
   test("negative control: with fewer than 2,000 updates in the window, 3 turns left (< 4) waits for the rolling allowance", async () => {
@@ -992,22 +1012,19 @@ describe("OPS-02: accounting updates against immutable attempts", () => {
     expect(runOf(t, runId).waitReason).toMatchObject({ kind: "allowance" });
   });
 
-  // CAMPAIGN DEFECT OPS-02: LoopUsage.recent is sliced to 2,000 entries (loop-engine.ts account()), so the rolling allowance undercounts and admits work after 2,000+ updates in one window.
-  test.fails(
-    "with more than 2,000 updates in the window, 3 turns left (< 4) still waits for the rolling allowance",
-    async () => {
-      const t = await setup();
-      const { runId } = await accounted(t, 2010, 3);
-      const launches = t.driver.launches.length;
-      t.advance(7 * 3_600_000 - 2_100_000);
-      for (let i = 0; i < 6; i++) {
-        await t.supervisor.tick();
-        t.driver.settle();
-      }
-      expect(runOf(t, runId).waitReason).toMatchObject({ kind: "allowance" });
-      expect(t.driver.launches.length).toBe(launches);
-    },
-  );
+  // Regression for D-04 (OPS-02, fixed 2026-10-19): LoopUsage.recent was sliced to 2,000 entries, so the rolling allowance undercounted. It is now compacted without losing turns (compactRecent).
+  test("with more than 2,000 updates in the window, 3 turns left (< 4) still waits for the rolling allowance", async () => {
+    const t = await setup();
+    const { runId } = await accounted(t, 2010, 3);
+    const launches = t.driver.launches.length;
+    t.advance(7 * 3_600_000 - 2_100_000);
+    for (let i = 0; i < 6; i++) {
+      await t.supervisor.tick();
+      t.driver.settle();
+    }
+    expect(runOf(t, runId).waitReason).toMatchObject({ kind: "allowance" });
+    expect(t.driver.launches.length).toBe(launches);
+  });
 
   /** Fails the next iteration-cursor write that only records member turns: a crash right after the usage write. */
   function crashAfterUsageWrite(s: LoopSupervisor) {
@@ -1039,28 +1056,25 @@ describe("OPS-02: accounting updates against immutable attempts", () => {
     expect(view.usage.memberTurns).toBe(launchedTurns(t, started.run.id));
   });
 
-  // CAMPAIGN DEFECT OPS-02: account() writes the usage record and the iteration's memberTurns cursor in two separate writes (no transaction); a crash between them charges the same turns twice on replay.
-  test.fails(
-    "a crash between the usage record and the iteration cursor neither loses nor duplicates a turn charge after restart",
-    async () => {
-      const t = await setup();
-      implementing(t);
-      const crashed = crashAfterUsageWrite(t.supervisor);
-      const started = await startRun(t, {
-        mode: "goal",
-        text: "Add a greeting\nAdd a farewell",
-        policy,
-      });
-      await driveLoop(t, started.run.id, () => crashed(), 200);
-      expect(crashed()).toBe(true);
-      // Restart from the persisted state and replay.
-      const reopened = t.reopenSupervisor();
-      await reopened.recover();
-      const view = await driveLoop(t, started.run.id, resting, 400, reopened);
-      expect(view.run.state).toBe("completed");
-      expect(view.usage.memberTurns).toBe(launchedTurns(t, started.run.id));
-    },
-  );
+  // Regression for D-05 (OPS-02, fixed 2026-10-19): account() wrote the usage record and the iteration's memberTurns cursor separately, so a crash between them double-charged. Both are now one transaction.
+  test("a crash between the usage record and the iteration cursor neither loses nor duplicates a turn charge after restart", async () => {
+    const t = await setup();
+    implementing(t);
+    const crashed = crashAfterUsageWrite(t.supervisor);
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting\nAdd a farewell",
+      policy,
+    });
+    await driveLoop(t, started.run.id, () => crashed(), 200);
+    expect(crashed()).toBe(true);
+    // Restart from the persisted state and replay.
+    const reopened = t.reopenSupervisor();
+    await reopened.recover();
+    const view = await driveLoop(t, started.run.id, resting, 400, reopened);
+    expect(view.run.state).toBe("completed");
+    expect(view.usage.memberTurns).toBe(launchedTurns(t, started.run.id));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1131,58 +1145,55 @@ describe("STATE-04 / STATE-05: promotion and launch crash boundaries", () => {
     ).toHaveLength(1);
   });
 
-  // CAMPAIGN DEFECT STATE-04: after a crash between the promotion transaction and settleLoopGoal, recovery never settles the promoted child goal (no loopDisposition), because the terminal iteration is skipped on the next tick.
-  test.fails(
-    "STATE-04: recovery settles the persisted promotion's child goal",
-    async () => {
-      const t = await setup();
-      implementing(t);
-      const orchestrator = t.orchestrator as unknown as {
-        settleLoopGoal: (input: unknown) => unknown;
-      };
-      const settle = orchestrator.settleLoopGoal.bind(t.orchestrator);
-      let crashed = false;
-      orchestrator.settleLoopGoal = (input: any) => {
-        if (!crashed && input.outcome === "promoted") {
-          crashed = true;
-          throw new Error("campaign crash after the promotion transaction");
-        }
-        return settle(input);
-      };
-      const started = await startRun(t, {
-        mode: "goal",
-        text: "Add a greeting\nAdd a farewell",
-        policy,
-      });
-      await driveLoop(t, started.run.id, () => crashed, 300);
-      const first = t.supervisor
-        .iterations(runOf(t, started.run.id))
-        .find((i) => i.number === 1)!;
-      const reopened = t.reopenSupervisor();
-      await reopened.recover();
-      await driveLoop(t, started.run.id, resting, 400, reopened);
-      const child = t.orchestrator.repo.require<{
-        state: string;
-        loopDisposition: { outcome: string; by: string } | null;
-      }>("goal", first.childExecutionGoalIds[0]);
-      const settled = reopened
-        .iterations(runOf(t, started.run.id))
-        .find((i) => i.number === 1)!;
-      // Both the child's disposition and the iteration's outcome records
-      // (finishIteration) belong to settling the persisted promotion.
-      expect({
-        disposition: child.loopDisposition?.outcome ?? null,
-        by: child.loopDisposition?.by ?? null,
-        childState: child.state,
-        outcomesRecorded: settled.outcomeRecordIds.length > 0,
-      }).toEqual({
-        disposition: "promoted",
-        by: "loop-policy",
-        childState: "completed",
-        outcomesRecorded: true,
-      });
-    },
-  );
+  // Regression for D-03 (STATE-04, fixed 2026-10-19): a crash between the promotion transaction and settleLoopGoal left the child unsettled and skipped finishIteration. The transaction now marks settlementPending, which the next tick completes.
+  test("STATE-04: recovery settles the persisted promotion's child goal", async () => {
+    const t = await setup();
+    implementing(t);
+    const orchestrator = t.orchestrator as unknown as {
+      settleLoopGoal: (input: unknown) => unknown;
+    };
+    const settle = orchestrator.settleLoopGoal.bind(t.orchestrator);
+    let crashed = false;
+    orchestrator.settleLoopGoal = (input: any) => {
+      if (!crashed && input.outcome === "promoted") {
+        crashed = true;
+        throw new Error("campaign crash after the promotion transaction");
+      }
+      return settle(input);
+    };
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting\nAdd a farewell",
+      policy,
+    });
+    await driveLoop(t, started.run.id, () => crashed, 300);
+    const first = t.supervisor
+      .iterations(runOf(t, started.run.id))
+      .find((i) => i.number === 1)!;
+    const reopened = t.reopenSupervisor();
+    await reopened.recover();
+    await driveLoop(t, started.run.id, resting, 400, reopened);
+    const child = t.orchestrator.repo.require<{
+      state: string;
+      loopDisposition: { outcome: string; by: string } | null;
+    }>("goal", first.childExecutionGoalIds[0]);
+    const settled = reopened
+      .iterations(runOf(t, started.run.id))
+      .find((i) => i.number === 1)!;
+    // Both the child's disposition and the iteration's outcome records
+    // (finishIteration) belong to settling the persisted promotion.
+    expect({
+      disposition: child.loopDisposition?.outcome ?? null,
+      by: child.loopDisposition?.by ?? null,
+      childState: child.state,
+      outcomesRecorded: settled.outcomeRecordIds.length > 0,
+    }).toEqual({
+      disposition: "promoted",
+      by: "loop-policy",
+      childState: "completed",
+      outcomesRecorded: true,
+    });
+  });
 
   test("STATE-05: a launch refused before process creation is never counted as launched, and the member is retried once", async () => {
     const t = await setup();
@@ -1505,60 +1516,54 @@ describe("STATE-12: concurrent commands keep one authoritative transition", () =
     ).rejects.toThrow(/stopped/);
   });
 
-  // CAMPAIGN DEFECT STATE-12: CommandReceipt idempotency is check-then-run (repository.ts receipt()), so the same command ID delivered twice concurrently runs publication twice.
-  test.fails(
-    "the same publication command ID sent twice concurrently writes the folder once",
-    async () => {
-      const t = await setup();
-      const runId = await promotedRun(t);
-      const review = await t.supervisor.publicationReview(runId);
-      await Promise.allSettled([
-        t.supervisor.publish({
-          runId,
-          digest: review.digest,
-          commandId: "campaign-s12-pub",
-        }),
-        t.supervisor.publish({
-          runId,
-          digest: review.digest,
-          commandId: "campaign-s12-pub",
-        }),
-      ]);
-      expect(t.loop.published).toHaveLength(1);
-    },
-  );
+  // Regression for D-02 (STATE-12, fixed 2026-10-19): CommandReceipt idempotency was check-then-run. A concurrent repeat of a command ID now joins the run in flight.
+  test("the same publication command ID sent twice concurrently writes the folder once", async () => {
+    const t = await setup();
+    const runId = await promotedRun(t);
+    const review = await t.supervisor.publicationReview(runId);
+    await Promise.allSettled([
+      t.supervisor.publish({
+        runId,
+        digest: review.digest,
+        commandId: "campaign-s12-pub",
+      }),
+      t.supervisor.publish({
+        runId,
+        digest: review.digest,
+        commandId: "campaign-s12-pub",
+      }),
+    ]);
+    expect(t.loop.published).toHaveLength(1);
+  });
 
-  // CAMPAIGN DEFECT STATE-12: publish() checks "already published" before its async preview and write with no in-flight fence, so two concurrent confirmations both write the same increment.
-  test.fails(
-    "two windows publishing the same checkpoint concurrently write it once; the other is refused as already published",
-    async () => {
-      const t = await setup();
-      const runId = await promotedRun(t);
-      const review = await t.supervisor.publicationReview(runId);
-      const results = await Promise.allSettled([
-        t.supervisor.publish({
-          runId,
-          digest: review.digest,
-          commandId: "campaign-s12-pub-a",
-        }),
-        t.supervisor.publish({
-          runId,
-          digest: review.digest,
-          commandId: "campaign-s12-pub-b",
-        }),
-      ]);
-      expect(t.loop.published).toHaveLength(1);
-      expect(results.map((r) => r.status).sort()).toEqual([
-        "fulfilled",
-        "rejected",
-      ]);
-      const cursor = t.store.get<PublicationCursor>(
-        loopKinds.cursor,
-        `${runId}:publication`,
-      )!;
-      expect(cursor.receipts).toHaveLength(1);
-    },
-  );
+  // Regression for D-02 (STATE-12, fixed 2026-10-19): publish() checked "already published" before its async write with no fence. Publication steps now run one at a time per run.
+  test("two windows publishing the same checkpoint concurrently write it once; the other is refused as already published", async () => {
+    const t = await setup();
+    const runId = await promotedRun(t);
+    const review = await t.supervisor.publicationReview(runId);
+    const results = await Promise.allSettled([
+      t.supervisor.publish({
+        runId,
+        digest: review.digest,
+        commandId: "campaign-s12-pub-a",
+      }),
+      t.supervisor.publish({
+        runId,
+        digest: review.digest,
+        commandId: "campaign-s12-pub-b",
+      }),
+    ]);
+    expect(t.loop.published).toHaveLength(1);
+    expect(results.map((r) => r.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    const cursor = t.store.get<PublicationCursor>(
+      loopKinds.cursor,
+      `${runId}:publication`,
+    )!;
+    expect(cursor.receipts).toHaveLength(1);
+  });
 
   test("sequential repeat of the same checkpoint is refused before any write", async () => {
     const t = await setup();
@@ -1673,7 +1678,11 @@ describe("LOOP-14: policy changes during a run follow their actual confirmation 
 });
 
 // ---------------------------------------------------------------------------
-// LOOP-13 (supervisor boundary): the feature flag turned off while runs exist
+// LOOP-13 (supervisor boundary): the feature flag turned off while runs exist.
+// Disable policy (D-01 fix): while the flag is off every started run that is
+// meant to run is paused, nothing new is admitted or dispatched, Stop and
+// Pause stay available, Resume needs the flag, and nothing resumes by itself
+// when the flag is turned back on.
 
 describe("LOOP-13: turning Recursive Looping off while a run is active or monitoring", () => {
   /** The supervisor's flag option, as the service wires it to experimental.recursiveLooping. */
@@ -1685,7 +1694,7 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
     return state;
   }
 
-  test("recorded fact: with the flag off, the supervisor keeps advancing an active run in the background", async () => {
+  test("with the flag off, an active run is paused, its child work stops, and it stays paused when the flag returns", async () => {
     const t = await setup();
     implementing(t);
     const f = flag(t);
@@ -1701,38 +1710,45 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
       300,
     );
     f.enabled = false;
-    const launches = t.driver.launches.length;
-    const view = await driveLoop(t, started.run.id, resting, 400);
-    // Work continued while every control command is refused (next test).
-    expect(t.driver.launches.length).toBeGreaterThan(launches);
-    expect(view.run.state).toBe("completed");
-    expect(view.checkpoint!.sequence).toBe(2);
-    // Inspection still works with the flag off.
-    expect(t.supervisor.view(started.run.id).run.id).toBe(started.run.id);
-  });
-
-  test("recorded fact: with the flag off, a monitoring Endless run still fires its due wakeup and dispatches", async () => {
-    const t = await setup();
-    const f = flag(t);
-    const started = await startRun(t, {
-      mode: "endless",
-      text: "Keep improving.",
-      policy,
-    });
-    await driveLoop(t, started.run.id, (v) => v.run.state === "monitoring");
-    f.enabled = false;
-    const launches = t.driver.launches.length;
-    t.advance(3_600_000);
-    await driveLoop(
+    const paused = await driveLoop(
       t,
       started.run.id,
-      (v) =>
-        v.run.state === "monitoring" && t.driver.launches.length > launches,
+      (v) => v.run.state === "paused",
+      20,
     );
-    expect(t.driver.launches.length).toBeGreaterThan(launches);
+    expect(paused.run.desiredState).toBe("paused");
+    expect(paused.run.detail).toMatch(/Recursive Looping was turned off/);
+    const launches = t.driver.launches.length;
+    const iterations = runOf(t, started.run.id).iterationCount;
+    await driveLoop(t, started.run.id, () => false, 100);
+    expect(t.driver.launches.length).toBe(launches);
+    expect(runOf(t, started.run.id).iterationCount).toBe(iterations);
+    // No owned child goal is left running or planning.
+    for (const id of t.supervisor
+      .iterations(runOf(t, started.run.id))
+      .flatMap((i) => i.childExecutionGoalIds))
+      expect(
+        t.orchestrator.repo.require<{ state: string }>("goal", id).state,
+      ).not.toMatch(/^(running|planning|reviewing)$/);
+    // Inspection still works with the flag off.
+    expect(t.supervisor.view(started.run.id).run.id).toBe(started.run.id);
+    // Turning the flag back on resumes nothing by itself...
+    f.enabled = true;
+    await driveLoop(t, started.run.id, () => false, 20);
+    expect(runOf(t, started.run.id).state).toBe("paused");
+    expect(t.driver.launches.length).toBe(launches);
+    // ...and the owner's Resume continues the run to completion.
+    await t.supervisor.control({
+      runId: started.run.id,
+      action: "resume",
+      commandId: "campaign-l13-resume-on",
+    });
+    const view = await driveLoop(t, started.run.id, resting, 400);
+    expect(view.run.state).toBe("completed");
+    expect(view.checkpoint!.sequence).toBe(2);
   });
 
-  test("recorded fact: with the flag off, Pause, Stop and resume are refused by the supervisor", async () => {
+  test("with the flag off, a monitoring Endless run is paused and its due wakeup never fires", async () => {
     const t = await setup();
     const f = flag(t);
     const started = await startRun(t, {
@@ -1742,85 +1758,88 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
     });
     await driveLoop(t, started.run.id, (v) => v.run.state === "monitoring");
     f.enabled = false;
-    for (const action of ["stop", "pause", "resume"] as const)
-      await expect(
-        t.supervisor.control({
-          runId: started.run.id,
-          action,
-          commandId: `campaign-l13-${action}`,
-        }),
-      ).rejects.toThrow(/experimental and off/);
-    expect(runOf(t, started.run.id).desiredState).toBe("running");
+    const launches = t.driver.launches.length;
+    const iterations = runOf(t, started.run.id).iterationCount;
+    t.advance(3_600_000);
+    await driveLoop(t, started.run.id, () => false, 50);
+    expect(runOf(t, started.run.id).state).toBe("paused");
+    expect(pendingWakeups(t, started.run.id)).toHaveLength(0);
+    expect(t.driver.launches.length).toBe(launches);
+    expect(runOf(t, started.run.id).iterationCount).toBe(iterations);
   });
 
-  // CAMPAIGN DEFECT LOOP-13: LoopSupervisor.control() calls assertEnabled(), so Stop is refused while the flag is off although tick() keeps advancing the run (loop-engine.ts control/tick).
-  test.fails(
-    "Stop remains available for existing work while the flag is off, and fences further dispatch",
-    async () => {
-      const t = await setup();
-      implementing(t);
-      const f = flag(t);
-      const reply = t.driver.reply;
-      t.driver.reply = (turn) =>
-        turn.purpose === "implementation" ? "hang" : reply(turn);
-      const started = await startRun(t, {
-        mode: "goal",
-        text: "Add a greeting",
-        policy,
-      });
-      await driveLoop(t, started.run.id, () =>
-        t.driver.launches.some((l) => l.purpose === "implementation"),
-      );
-      f.enabled = false;
-      await t.supervisor.control({
+  test("with the flag off, Pause and Stop are accepted and Resume is refused", async () => {
+    const t = await setup();
+    const f = flag(t);
+    const started = await startRun(t, {
+      mode: "endless",
+      text: "Keep improving.",
+      policy,
+    });
+    await driveLoop(t, started.run.id, (v) => v.run.state === "monitoring");
+    f.enabled = false;
+    await t.supervisor.control({
+      runId: started.run.id,
+      action: "pause",
+      commandId: "campaign-l13-pause",
+    });
+    expect(runOf(t, started.run.id).desiredState).toBe("paused");
+    await expect(
+      t.supervisor.control({
         runId: started.run.id,
-        action: "stop",
-        commandId: "campaign-l13-stop-off",
-      });
-      const launches = t.driver.launches.length;
-      const view = await driveLoop(
-        t,
-        started.run.id,
-        (v) => v.run.state === "stopped",
-        20,
-      );
-      expect(view.run.state).toBe("stopped");
-      expect(t.driver.launches.length).toBe(launches);
-    },
-  );
+        action: "resume",
+        commandId: "campaign-l13-resume",
+      }),
+    ).rejects.toThrow(/experimental and off/);
+    expect(runOf(t, started.run.id).desiredState).toBe("paused");
+    await t.supervisor.control({
+      runId: started.run.id,
+      action: "stop",
+      commandId: "campaign-l13-stop",
+    });
+    const view = await driveLoop(
+      t,
+      started.run.id,
+      (v) => v.run.state === "stopped",
+      20,
+    );
+    expect(view.run.desiredState).toBe("stopped");
+    expect(view.run.state).toBe("stopped");
+  });
 
-  // CAMPAIGN DEFECT LOOP-13: project-wide "Stop everything" swallows the loop's flag-off refusal (stopProject's .catch), so the loop run is not stopped and keeps running.
-  test.fails(
-    "project-wide Stop everything stops the loop run while the flag is off",
-    async () => {
-      const t = await setup();
-      implementing(t);
-      const f = flag(t);
-      const reply = t.driver.reply;
-      t.driver.reply = (turn) =>
-        turn.purpose === "implementation" ? "hang" : reply(turn);
-      const started = await startRun(t, {
-        mode: "goal",
-        text: "Add a greeting\nAdd a farewell",
-        policy,
-      });
-      await driveLoop(t, started.run.id, () =>
-        t.driver.launches.some((l) => l.purpose === "implementation"),
-      );
-      f.enabled = false;
-      await t.orchestrator.controlCommand({
-        projectId: "p",
-        goalId: null,
-        action: "stop",
-        commandId: "campaign-l13-stop-all",
-      });
-      t.driver.reply = reply;
-      await driveLoop(t, started.run.id, resting, 100);
-      expect(runOf(t, started.run.id).desiredState).toBe("stopped");
-    },
-  );
+  test("Stop remains available for existing work while the flag is off, and fences further dispatch", async () => {
+    const t = await setup();
+    implementing(t);
+    const f = flag(t);
+    const reply = t.driver.reply;
+    t.driver.reply = (turn) =>
+      turn.purpose === "implementation" ? "hang" : reply(turn);
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting",
+      policy,
+    });
+    await driveLoop(t, started.run.id, () =>
+      t.driver.launches.some((l) => l.purpose === "implementation"),
+    );
+    f.enabled = false;
+    await t.supervisor.control({
+      runId: started.run.id,
+      action: "stop",
+      commandId: "campaign-l13-stop-off",
+    });
+    const launches = t.driver.launches.length;
+    const view = await driveLoop(
+      t,
+      started.run.id,
+      (v) => v.run.state === "stopped",
+      20,
+    );
+    expect(view.run.state).toBe("stopped");
+    expect(t.driver.launches.length).toBe(launches);
+  });
 
-  test("recorded fact: after project-wide Stop everything with the flag off, the loop starts new work", async () => {
+  test("project-wide Stop everything stops the loop run while the flag is off, and the loop starts no new work", async () => {
     const t = await setup();
     implementing(t);
     const f = flag(t);
@@ -1842,20 +1861,19 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
       projectId: "p",
       goalId: null,
       action: "stop",
-      commandId: "campaign-l13-stop-all-fact",
+      commandId: "campaign-l13-stop-all",
     });
-    // The engine stopped the child goal it owns...
     expect(
       t.orchestrator.repo.require<{ state: string }>("goal", child).state,
     ).toBe("stopped");
+    expect(runOf(t, started.run.id).desiredState).toBe("stopped");
     t.driver.reply = reply;
     const launches = t.driver.launches.length;
     const iterations = runOf(t, started.run.id).iterationCount;
-    await driveLoop(t, started.run.id, resting, 200);
-    // ...but the loop run was not stopped and dispatched again.
-    expect(runOf(t, started.run.id).desiredState).toBe("running");
-    expect(t.driver.launches.length).toBeGreaterThan(launches);
-    expect(runOf(t, started.run.id).iterationCount).toBeGreaterThan(iterations);
+    const view = await driveLoop(t, started.run.id, resting, 100);
+    expect(view.run.state).toBe("stopped");
+    expect(t.driver.launches.length).toBe(launches);
+    expect(runOf(t, started.run.id).iterationCount).toBe(iterations);
   });
 
   test("negative control: with the flag on, project-wide Stop everything stops the loop run", async () => {
@@ -1890,7 +1908,7 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
     expect(view.run.state).toBe("stopped");
   });
 
-  test("recorded fact: restart with the flag off still recovers and auto-resumes a run whose policy selects it", async () => {
+  test("restart with the flag off does not auto-resume a run whose policy selects it", async () => {
     const t = await setup();
     const f = flag(t);
     const started = await startRun(t, {
@@ -1905,18 +1923,13 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
     const g = flag(t, reopened);
     g.enabled = false;
     await reopened.recover();
-    expect(reopened.run(started.run.id).state).toBe("active");
+    expect(reopened.run(started.run.id).state).toBe("suspended");
     const launches = t.driver.launches.length;
     t.advance(3_600_000);
-    await driveLoop(
-      t,
-      started.run.id,
-      (v) =>
-        v.run.state === "monitoring" && t.driver.launches.length > launches,
-      100,
-      reopened,
-    );
-    expect(t.driver.launches.length).toBeGreaterThan(launches);
+    await driveLoop(t, started.run.id, () => false, 50, reopened);
+    expect(reopened.run(started.run.id).state).toBe("paused");
+    expect(reopened.run(started.run.id).desiredState).toBe("paused");
+    expect(t.driver.launches.length).toBe(launches);
   });
 });
 

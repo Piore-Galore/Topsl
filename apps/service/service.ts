@@ -2093,6 +2093,9 @@ export class Service {
           });
           this.store.event("loop.feature-set", { enabled: command.enabled });
         });
+        // Turning the feature off pauses running loops at once; Stop stays
+        // available for them (docs/Recursive_Looping.md).
+        if (!command.enabled) await this.loops.holdWhileDisabled();
         this.changed();
         return { enabled: command.enabled };
       case "loop-query":
