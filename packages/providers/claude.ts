@@ -264,8 +264,13 @@ export class ClaudeStreamParser {
             event: z.object({
               type: z.string(),
               message: z.object({ id: z.string() }).optional(),
+              // A message_delta's delta has no type (Claude Code 2.1.302
+              // sends stop_reason and usage there); only text deltas count.
               delta: z
-                .object({ type: z.string(), text: z.string().optional() })
+                .object({
+                  type: z.string().optional(),
+                  text: z.string().optional(),
+                })
                 .optional(),
             }),
           })
@@ -379,6 +384,15 @@ export const claudeStructuredGate = {
  * of Claude Code's own, only Topsl's tools when its session declared them. */
 export const claudeEditTools = ["Read", "Edit", "Write", "Glob", "Grep"];
 
+/**
+ * What an edit turn may do without asking. File edits are allowed only inside
+ * the working directory: `Edit(./**)` covers every file-editing tool,
+ * including Write. Under `dontAsk` anything else is denied. A bare `Write`
+ * rule let Claude Code 2.1.302 create a file outside the working directory in
+ * the live qualification of 19 October 2026.
+ */
+export const claudeEditPermissions = ["Read", "Glob", "Grep", "Edit(./**)"];
+
 /** Topsl's own tools for a review session: the MCP configuration file that
  * names Topsl's server, and the tool names Claude Code gives them. */
 export interface ClaudeTurnTools {
@@ -396,7 +410,7 @@ export function claudeArguments(
     throw new Error("Topsl's tools are declared only on a review session.");
   const allowed =
     mode === "edit"
-      ? claudeEditTools.join(",")
+      ? claudeEditPermissions.join(",")
       : (tools?.names ?? []).join(",");
   return [
     "--print",

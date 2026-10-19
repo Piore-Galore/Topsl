@@ -7,7 +7,8 @@
 //
 // FIXTURE_READONLY=broken   the read-only turn writes its file anyway
 // FIXTURE_WRITE=skip-outside the edit turn never tries the outside write
-// FIXTURE_WRITE=escape      the outside write lands
+// FIXTURE_WRITE=escape      the outside write lands (as it does whenever
+//                           --allowedTools grants a bare Write or Edit)
 // FIXTURE_READER=skip       the reader turn never calls the tool
 // FIXTURE_API_KEY=1         init reports an API key source
 // FIXTURE_EXTRA_TOOL=1      init reports a Bash tool nobody granted
@@ -33,6 +34,7 @@ const arg = (name, fallback) => {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : fallback;
 };
+const allowedTools = (arg("--allowedTools", "") || "").split(",");
 const sessionId = arg("--session-id", "claude-fixture-session"),
   model = process.env.FIXTURE_MODEL || arg("--model", "fixture-requested"),
   builtIn = (arg("--tools", "") || "").split(",").filter(Boolean),
@@ -107,7 +109,13 @@ process.stdin.on("end", async () => {
     fs.writeFileSync(inside[1], "inside");
     text = "The inside write succeeded.";
     if (outside && process.env.FIXTURE_WRITE !== "skip-outside") {
-      if (process.env.FIXTURE_WRITE === "escape")
+      // As Claude Code 2.1.302 did live: a bare Write or Edit rule allows a
+      // write anywhere; only a path rule confines it to the folder.
+      if (
+        process.env.FIXTURE_WRITE === "escape" ||
+        allowedTools.includes("Write") ||
+        allowedTools.includes("Edit")
+      )
         fs.writeFileSync(outside[1], "outside");
       else
         denials.push({
@@ -131,6 +139,30 @@ process.stdin.on("end", async () => {
       text = String(body.content ?? "").split("\n")[0];
     }
   }
+  // The partial-message records Claude Code 2.1.302 streams, including a
+  // message_delta whose delta has no type.
+  for (const [n, streamed] of [
+    { type: "message_start", message: { id: "message-1", model } },
+    { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text },
+    },
+    { type: "content_block_stop", index: 0 },
+    {
+      type: "message_delta",
+      delta: { stop_reason: "end_turn", stop_sequence: null },
+      usage: { output_tokens: 3 },
+    },
+    { type: "message_stop" },
+  ].entries())
+    event({
+      type: "stream_event",
+      session_id: sessionId,
+      event: streamed,
+      uuid: `stream-${n}`,
+    });
   event({
     type: "assistant",
     session_id: sessionId,

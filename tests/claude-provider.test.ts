@@ -101,6 +101,22 @@ describe("Claude protocol compatibility and live gate", () => {
       ).rejects.toThrow(/unknown|Malformed/);
     },
   );
+  test("a message_delta stream event, whose delta has no type, is accepted (found live with Claude Code 2.1.302)", () => {
+    const events: ClaudeStreamEvent[] = [],
+      parser = new ClaudeStreamParser((e) => events.push(e));
+    parser.push(
+      [
+        '{"type":"system","subtype":"init","session_id":"s","uuid":"i"}',
+        '{"type":"stream_event","session_id":"s","uuid":"a","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}}',
+        '{"type":"stream_event","session_id":"s","uuid":"b","event":{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}}',
+        '{"type":"result","session_id":"s","uuid":"r","subtype":"success","is_error":false,"result":"hi"}',
+        "",
+      ].join("\n"),
+    );
+    parser.finish();
+    expect(events.filter((e) => e.type === "delta")).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({ type: "completed", failed: false });
+  });
   test("mixed sessions, subagent fanout, negative usage and identity collision fail closed", () => {
     const parser = () => new ClaudeStreamParser(() => {});
     const p = parser();

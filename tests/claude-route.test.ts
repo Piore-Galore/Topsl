@@ -228,6 +228,10 @@ describe("Claude Code's live route", () => {
     );
     const edit = claudeArguments("m", "s", "edit");
     expect(edit[edit.indexOf("--tools") + 1]).toBe(claudeEditTools.join(","));
+    // File edits are allowed only inside the working directory.
+    expect(edit[edit.indexOf("--allowedTools") + 1]).toBe(
+      "Read,Glob,Grep,Edit(./**)",
+    );
     expect(edit.join(" ")).not.toMatch(/Bash|dangerously|bypass|fallback/);
     expect(() =>
       claudeArguments("m", "s", "edit", { configPath: "x", names: [] }),

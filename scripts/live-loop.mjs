@@ -37,7 +37,7 @@ import path from "node:path";
 // Claude reviewer through Topsl's candidate reader. Those turns count against
 // the Claude subscription's usage as well as ChatGPT's.
 const usage =
-  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--keep-profile] [--output directory]";
+  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--mixed-only] [--keep-profile] [--output directory]";
 const options = {
   codex: null,
   claude: null,
@@ -59,6 +59,8 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (a === "--max-turns") options.maxTurns = Number(value());
   else if (a === "--keep-profile") options.keepProfile = true;
   else if (a === "--no-pin-run") options.noPinRun = true;
+  // Skips Run A, the Codex-only loop, so the turns go to Run C.
+  else if (a === "--mixed-only") options.mixedOnly = true;
   else if (a === "--output") options.output = value();
   else throw new Error(usage);
 }
@@ -67,6 +69,7 @@ if (
   !path.isAbsolute(options.codex) ||
   (options.claude && !path.isAbsolute(options.claude)) ||
   (options.claudeModel && !options.claude) ||
+  (options.mixedOnly && !options.claudeModel) ||
   !(options.maxTurns > 4)
 )
   throw new Error(usage);
@@ -467,37 +470,41 @@ try {
   };
 
   // Run A: Goal loop, everything Auto.
-  const a = await runLoop(
-    "a-goal",
-    {
-      mode: "goal",
-      goals: [
+  const a = options.mixedOnly
+    ? null
+    : await runLoop(
+        "a-goal",
         {
-          text: "Change value.ts so that it exports value = 2",
-          criteria: [
+          mode: "goal",
+          goals: [
             {
-              text: "value.ts exports `value = 2`",
-              verification: { kind: "inspection" },
+              text: "Change value.ts so that it exports value = 2",
+              criteria: [
+                {
+                  text: "value.ts exports `value = 2`",
+                  verification: { kind: "inspection" },
+                },
+              ],
             },
           ],
+          policy: {
+            scheduling: { reserveForDirectWork: 0 },
+            allowances: { runMemberTurns: options.maxTurns, rolling: null },
+            iteration: {
+              maxTurns: Math.min(25, options.maxTurns),
+              maxDelegatedTasks: 3,
+              maxRepairRounds: 1,
+              maxApproachesPerTarget: 2,
+            },
+          },
         },
-      ],
-      policy: {
-        scheduling: { reserveForDirectWork: 0 },
-        allowances: { runMemberTurns: options.maxTurns, rolling: null },
-        iteration: {
-          maxTurns: Math.min(25, options.maxTurns),
-          maxDelegatedTasks: 3,
-          maxRepairRounds: 1,
-          maxApproachesPerTarget: 2,
-        },
-      },
-    },
-    (v) =>
-      ["completed", "waiting", "stopped", "monitoring"].includes(v.run.state),
-    35 * 60_000,
-  );
-  if (a.view.run.state === "completed") {
+        (v) =>
+          ["completed", "waiting", "stopped", "monitoring"].includes(
+            v.run.state,
+          ),
+        35 * 60_000,
+      );
+  if (a?.view.run.state === "completed") {
     await command({
       type: "loop-publication-apply",
       runId: a.runId,
@@ -507,14 +514,14 @@ try {
       await readFile(path.join(project, "value.ts"), "utf8")
     ).trim();
     a.record.folderStatus = gitIn(project, "status", "--porcelain");
-  } else
+  } else if (a)
     await command({
       type: "loop-control",
       runId: a.runId,
       action: "stop",
       commandId: `live-a-${Date.now()}-stop`,
     }).catch(() => {});
-  report.runs.push(a.record);
+  if (a) report.runs.push(a.record);
 
   // Run B: a Claude reviewer pinned while the route is off. The pin must wait
   // visibly, never be substituted.
