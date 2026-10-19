@@ -129,7 +129,13 @@ const turnCapabilities = [
 // CQ-01: refusals before any process, canonical aliases, concurrency.
 // ---------------------------------------------------------------------------
 describe("CQ-01 qualification parent folder and refusal before any process", () => {
-  test("system temporary folders and their aliases are refused; a folder under the repository cache is accepted", async () => {
+  // Not applicable on Windows: runCodexQualification refuses win32 before it
+  // ever consults the parent folder ("Runtime qualification probes use POSIX
+  // shell commands..."; the platform-stubbed test below pins that refusal),
+  // and this alias list (/tmp, symlinks into the temp folder) is POSIX-shaped.
+  // Unverified on Windows: assertQualificationParent's handling of %TEMP%
+  // aliases (8.3 short names, junctions), which has no caller there.
+  test.skipIf(!posix)("system temporary folders and their aliases are refused; a folder under the repository cache is accepted", async () => {
     const tmp = os.tmpdir(),
       real = await realpath(tmp),
       parent = await qualificationParent(),
@@ -199,7 +205,10 @@ describe("CQ-01 qualification parent folder and refusal before any process", () 
     },
   );
 
-  test("a folder whose path the shell probes cannot quote is refused before the runtime starts, leaving no workspace", async () => {
+  // Not applicable on Windows: the platform refusal precedes the quoting
+  // check there (pinned by the platform-stubbed test below), so the POSIX
+  // shell-quoting refusal cannot be reached.
+  test.skipIf(!posix)("a folder whose path the shell probes cannot quote is refused before the runtime starts, leaving no workspace", async () => {
     const f = await setup();
     const parent = await qualificationParent("topsl qualify campaign é-");
     await expect(

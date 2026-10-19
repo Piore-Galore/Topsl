@@ -126,6 +126,12 @@ describe("PR-01/02/03 preflight refuses before spawn at every manager entry poin
     const f = await managerSetup();
     const first = await f.runtime.start(f.installation, f.conversation, f.project, "hello", "fixture-model", "review");
     await vi.waitFor(() => expect(f.store.get<Run>("run", first.id)?.status).toBe("completed"));
+    // The run is saved "completed" before the coordinator confirms the child's
+    // exit and releases the workspace lease; on Windows that confirmation can
+    // trail the status, and a held lease would refuse the next dispatch with
+    // the workspace-lease message before preflight is observable. Wait for the
+    // release so only the executable identity can refuse below.
+    await vi.waitFor(() => expect(f.heldLeases()).toEqual([]), { timeout: 15_000 });
     expect(f.spawned).toHaveLength(1);
     const original = f.store.get<Run>("run", first.id)!;
     expect(original.executableIdentity).toBe(f.installation.identity);

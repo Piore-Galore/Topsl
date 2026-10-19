@@ -5,7 +5,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import path from "node:path";
 import os from "node:os";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -155,6 +155,42 @@ async function serverProfile(clock?: () => number) {
   return { ...f, server, writeGrant, A: project("A", f.directory) };
 }
 
+/** Everyone, Authenticated Users, Users, Guests and Anonymous Logon. */
+const broadWindowsGroups = ["S-1-1-0", "S-1-5-11", "S-1-5-32-545", "S-1-5-32-546", "S-1-5-7"];
+/** The current user's security identifier and a file's access rules
+ * (explicit and inherited) through .NET's FileSecurity in Windows PowerShell
+ * 5.1. Same approach and rationale as windowsAccess in claude-route.test.ts:
+ * no module cmdlets, and PSModulePath dropped so a PowerShell 7 parent's
+ * module path cannot break 5.1's module loading. Windows only. */
+function windowsAccess(file: string): { user: string; rules: Array<{ sid: string; type: string }> } {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$acl = [System.Security.AccessControl.FileSecurity]::new($env:TOPSL_ACL_PATH, [System.Security.AccessControl.AccessControlSections]::Access)",
+    "'user ' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    "foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) { 'rule ' + $r.IdentityReference.Value + ' ' + [string]$r.AccessControlType }",
+  ].join("; ");
+  const childEnv: NodeJS.ProcessEnv = { TOPSL_ACL_PATH: file };
+  for (const [key, value] of Object.entries(process.env))
+    if (!/^(psmodulepath|topsl_acl_path)$/i.test(key)) childEnv[key] = value;
+  const output = execFileSync(
+    path.join(process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    { env: childEnv, encoding: "utf8", windowsHide: true, timeout: 30_000 },
+  );
+  const lines = output.replace(/^\uFEFF/, "").split(/\r?\n/).map((line) => line.trim());
+  const user = lines.find((line) => line.startsWith("user "))?.slice(5) ?? "";
+  if (!user) throw new Error(`Windows access rules could not be read: ${output}`);
+  return {
+    user,
+    rules: lines
+      .filter((line) => line.startsWith("rule "))
+      .map((line) => {
+        const [, sid, type] = line.split(" ");
+        return { sid, type };
+      }),
+  };
+}
+
 describe("MCP-01 project-scoped grant through the service approval path", () => {
   test("context-enable needs native confirmation and a trusted project; grants are random, private and project-scoped", async () => {
     const f = await serviceProfile();
@@ -174,10 +210,28 @@ describe("MCP-01 project-scoped grant through the service approval path", () => 
     expect(a.token).toMatch(/^[a-f0-9]{64}$/);
     expect(a.grant).not.toBe(b.grant);
     expect(a.token).not.toBe(b.token);
-    expect((await stat(first.file)).mode & 0o777).toBe(0o600);
-    expect((await stat(path.dirname(first.file))).mode & 0o777).toBe(0o700);
-    expect((await stat(a.endpoint)).mode & 0o777).toBe(0o600);
-    expect(path.dirname(a.endpoint)).toBe(f.directory);
+    // The grant file lives in this profile's own context-grants folder.
+    expect(path.dirname(first.file)).toBe(path.join(f.directory, "context-grants"));
+    if (process.platform === "win32") {
+      // Mode bits do not describe Windows access (Node reports 0o666 for any
+      // writable file), so read the grant file's effective access rules as
+      // security identifiers, as CL-17 in claude-route.test.ts does: the
+      // current user may read it and no rule allows Everyone, Authenticated
+      // Users, Users, Guests or Anonymous. Topsl sets no explicit ACL; this
+      // privacy comes from inheritance from the profile folder (here under
+      // the user's %TEMP%), which is what this assertion verifies.
+      const access = windowsAccess(first.file);
+      expect(access.rules.some((r) => r.sid === access.user && r.type === "Allow")).toBe(true);
+      expect(access.rules.filter((r) => r.type === "Allow" && broadWindowsGroups.includes(r.sid))).toEqual([]);
+      // The endpoint is a per-profile named pipe, not a file with a mode.
+      // Unverified on Windows: the pipe's own security descriptor.
+      expect(a.endpoint).toMatch(/^\\\\\.\\pipe\\topsl-[a-f0-9]{16}$/);
+    } else {
+      expect((await stat(first.file)).mode & 0o777).toBe(0o600);
+      expect((await stat(path.dirname(first.file))).mode & 0o777).toBe(0o700);
+      expect((await stat(a.endpoint)).mode & 0o777).toBe(0o600);
+      expect(path.dirname(a.endpoint)).toBe(f.directory);
+    }
     // Project scope through the real CLI.
     s.store.put("project", project("B", path.join(f.directory, "b")));
     s.store.message(message("a1", { text: "MCP01 alpha shared-term" }));
@@ -288,13 +342,22 @@ describe("MCP-03 CLI modes, malformed grant, unavailable endpoint and timeout", 
     expect(unavailable.stderr).toMatch(/ENOENT|ECONNREFUSED/);
     // A server that accepts and never answers: the CLI's own 10 s timeout ends it.
     const { createServer } = await import("node:net");
-    const silentPath = path.join(f.directory, "silent.sock");
+    // Windows has no Unix-domain socket files (listen on a .sock path fails
+    // with EACCES); the product's endpoint there is a named pipe, so the
+    // silent server is one too.
+    const silentPath =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\topsl-campaign-silent-${process.pid}-${Date.now()}`
+        : path.join(f.directory, "silent.sock");
     const held = new Set<import("node:net").Socket>();
     const silent = createServer((socket) => {
       held.add(socket);
       socket.on("error", () => {});
     });
-    await new Promise<void>((resolve) => silent.listen(silentPath, resolve));
+    await new Promise<void>((resolve, reject) => {
+      silent.once("error", reject);
+      silent.listen(silentPath, resolve);
+    });
     cleanups.push(() => {
       held.forEach((socket) => socket.destroy());
       silent.close();

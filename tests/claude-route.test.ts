@@ -626,13 +626,20 @@ describe("Claude account read diagnostics", () => {
    * shell) failed, for the test log: a spawn error code, or null. */
   const launchCause = (executable: string) =>
     new Promise<string | null>((resolve) => {
-      execFile(
-        executable,
-        ["auth", "status", "--json"],
-        { env: nativeEnvironment(), windowsHide: true, timeout: 10_000 },
-        (error) =>
-          resolve(error ? String((error as any).code ?? error.message) : null),
-      );
+      // Some launch refusals (Node's EINVAL for a .cmd/.bat without a shell
+      // on Windows) are thrown synchronously by execFile, not passed to the
+      // callback; report those the same way.
+      try {
+        execFile(
+          executable,
+          ["auth", "status", "--json"],
+          { env: nativeEnvironment(), windowsHide: true, timeout: 10_000 },
+          (error) =>
+            resolve(error ? String((error as any).code ?? error.message) : null),
+        );
+      } catch (error) {
+        resolve(String((error as any).code ?? (error as Error).message));
+      }
     });
   const unreadable =
     "Claude account status could not be read. Sign in through Claude Code and retry.";
@@ -662,16 +669,32 @@ describe("Claude account read diagnostics", () => {
     const cause = await launchCause(wrapper);
     expect(cause).toBeTruthy();
     if (!windows) expect(cause).toBe("EACCES");
-    if (windows) {
-      // Node refuses to launch a .cmd file without a shell.
+  });
+
+  // CAMPAIGN DEFECT CL-18: on Windows Node refuses to launch a .cmd/.bat
+  // without a shell by throwing "spawn EINVAL" synchronously from execFile
+  // (CVE-2024-27980 hardening). readClaudeAccount
+  // (packages/providers/claude-allowance.ts, the execFile call inside the
+  // Promise executor) sanitizes only errors passed to execFile's callback, so
+  // the synchronous throw rejects with the raw "spawn EINVAL" instead of
+  // Topsl's message (Windows CI run 39271847356, 2026-10-19). The runtime
+  // manager's preflight refuses .cmd installations before this read, which
+  // limits the reachable impact. On POSIX the same file is merely not
+  // executable (EACCES through the callback) and the test passes there.
+  (windows ? test.fails : test)(
+    "a .cmd file, which Node will not launch without a shell, gives Topsl's sanitized message",
+    async () => {
+      const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-claude-account-"));
+      cleanup.push(() => rm(directory, { recursive: true, force: true }));
       const cmd = path.join(directory, "claude.cmd");
       await writeFile(cmd, "@echo {}\r\n");
+      // Precondition: the launch itself is refused.
+      expect(await launchCause(cmd)).toBeTruthy();
       await expect(
         readClaudeAccount(cmd, AbortSignal.timeout(15_000)),
       ).rejects.toThrow(unreadable);
-      expect(await launchCause(cmd)).toBeTruthy();
-    }
-  });
+    },
+  );
 
   test.skipIf(windows)(
     "a malformed response, a signed-out or API-key account and a failing command are distinguished from a launch failure; nothing raw is returned",
@@ -938,16 +961,26 @@ const broadWindowsGroups = [
   "S-1-5-7",
 ];
 /** The current user's security identifier and a file's access rules
- * (explicit and inherited), read with PowerShell's Get-Acl. Windows only. */
+ * (explicit and inherited), read in Windows PowerShell 5.1 through .NET's
+ * FileSecurity. Windows CI run 39271847356 (2026-10-19) showed Get-Acl
+ * failing with "the module could not be loaded": the runner's PowerShell 7
+ * parent exports a PSModulePath that Windows PowerShell 5.1 cannot load
+ * modules from. So the script uses no module cmdlets (no Get-Acl,
+ * ConvertTo-Json or New-Object), prints plain "user"/"rule" lines, and the
+ * child gets the environment without PSModulePath. Windows only. */
 function windowsAccess(file: string): {
   user: string;
   rules: Array<{ sid: string; type: string }>;
 } {
-  const script =
-    "$ErrorActionPreference = 'Stop'; " +
-    "$acl = Get-Acl -LiteralPath $env:TOPSL_ACL_PATH; " +
-    "$rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { @{ sid = $_.IdentityReference.Value; type = [string]$_.AccessControlType } }); " +
-    "@{ user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; rules = $rules } | ConvertTo-Json -Compress -Depth 4";
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$acl = [System.Security.AccessControl.FileSecurity]::new($env:TOPSL_ACL_PATH, [System.Security.AccessControl.AccessControlSections]::Access)",
+    "'user ' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    "foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) { 'rule ' + $r.IdentityReference.Value + ' ' + [string]$r.AccessControlType }",
+  ].join("; ");
+  const env: NodeJS.ProcessEnv = { TOPSL_ACL_PATH: file };
+  for (const [key, value] of Object.entries(process.env))
+    if (!/^(psmodulepath|topsl_acl_path)$/i.test(key)) env[key] = value;
   const output = execFileSync(
     path.join(
       process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows",
@@ -957,18 +990,22 @@ function windowsAccess(file: string): {
       "powershell.exe",
     ),
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-    {
-      env: { ...process.env, TOPSL_ACL_PATH: file },
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 30_000,
-    },
+    { env, encoding: "utf8", windowsHide: true, timeout: 30_000 },
   );
-  const parsed = JSON.parse(output.replace(/^\uFEFF/, ""));
+  const lines = output
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  const user = lines.find((line) => line.startsWith("user "))?.slice(5) ?? "";
+  if (!user)
+    throw new Error(`Windows access rules could not be read: ${output}`);
   return {
-    user: String(parsed.user),
-    rules: (Array.isArray(parsed.rules) ? parsed.rules : [parsed.rules])
-      .filter(Boolean)
-      .map((r: any) => ({ sid: String(r.sid), type: String(r.type) })),
+    user,
+    rules: lines
+      .filter((line) => line.startsWith("rule "))
+      .map((line) => {
+        const [, sid, type] = line.split(" ");
+        return { sid, type };
+      }),
   };
 }

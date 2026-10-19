@@ -43,7 +43,11 @@ function project(id: string, folder: string): Project {
 async function worker(directory: string, name: string, source: string, input: unknown) {
   const entry = path.join(directory, `${name}.ts`),
     outfile = path.join(directory, `${name}.cjs`);
-  await writeFile(entry, source.replaceAll("REPO", repo));
+  // REPO sits inside string-literal import specifiers. A Windows path's
+  // backslashes would be read as escapes there ("D:\a\Topsl" became
+  // "D:aTopsl" in Windows CI run 39271847356), so embed it with forward
+  // slashes, which Windows and esbuild accept as an absolute path.
+  await writeFile(entry, source.replaceAll("REPO", repo.replaceAll("\\", "/")));
   await build({
     entryPoints: [entry],
     outfile,
@@ -57,6 +61,8 @@ async function worker(directory: string, name: string, source: string, input: un
   const child = spawn(process.execPath, [outfile], {
     env: {
       PATH: process.env.PATH,
+      // Windows processes need SystemRoot for system DLL and socket setup.
+      ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
       ELECTRON_RUN_AS_NODE: "1",
       NODE_PATH: path.join(repo, "node_modules"),
       WORKER_INPUT: JSON.stringify(input),

@@ -113,8 +113,14 @@ describe("DATA-01 new profile under a secure OS key store", () => {
     const envelope = await readFile(p.vault, "utf8");
     expect(JSON.parse(envelope).method).toBe("os");
     expect(envelope.includes(key)).toBe(false);
-    expect((await stat(p.vault)).mode & 0o777).toBe(0o600);
-    expect((await stat(p.directory)).mode & 0o077).toBe(0);
+    // POSIX mode bits only: on Windows Node reports 0o666 for any writable
+    // file, whatever its ACL. Unverified on Windows: the vault file's ACL
+    // (Topsl sets none explicitly; it inherits from the profile folder). The
+    // rest of this test, including no plaintext key, runs on every OS.
+    if (process.platform !== "win32") {
+      expect((await stat(p.vault)).mode & 0o777).toBe(0o600);
+      expect((await stat(p.directory)).mode & 0o077).toBe(0);
+    }
     const store = new Store(p.database, key);
     store.message({
       id: "m",

@@ -238,7 +238,7 @@ const submissions = (f: Fixture) =>
   f.store.list<any>("integration-submission").length;
 
 describe("PW-03 specialist ownership variants", () => {
-  test("PW-03: rename into or out of ownership, a mode change and an approved untracked file outside ownership are each rejected; the owned edit alone is accepted", async () => {
+  test("PW-03: rename into or out of ownership and an approved untracked file outside ownership are each rejected; the owned edit alone is accepted", async () => {
     const f = await setup(),
       ready = await dispatchBoth(f),
       root = f.workspaces[1].root,
@@ -270,11 +270,7 @@ describe("PW-03 specialist ownership variants", () => {
     await git(["mv", "a.txt", "moved-a.txt"]);
     await rejectSubmit();
     await git(["mv", "moved-a.txt", "a.txt"]);
-    // Executable-bit change on an unowned file with identical bytes.
-    const mode = (await stat(path.join(root, "b.txt"))).mode & 0o777;
-    await chmod(path.join(root, "b.txt"), mode | 0o111);
-    await rejectSubmit();
-    await chmod(path.join(root, "b.txt"), mode);
+    // The executable-bit variant is the separate POSIX-only test below.
     // An untracked file approved as output but outside ownership.
     await writeFile(path.join(root, "stray.txt"), "stray");
     await expect(
@@ -300,6 +296,33 @@ describe("PW-03 specialist ownership variants", () => {
         .map((file) => file.path),
     ).toEqual(["a.txt"]);
   });
+
+  // Windows has no executable permission bit: chmod there only toggles the
+  // read-only attribute, so a "mode change with identical bytes" cannot be
+  // produced and the candidate correctly sees no change. Unverified on
+  // Windows: whether a git-index-only mode change (update-index --chmod) on an
+  // unowned file is rejected.
+  test.skipIf(process.platform === "win32")(
+    "PW-03: an executable-bit change on an unowned file with identical bytes is rejected; reverted, the owned edit is accepted",
+    async () => {
+      const f = await setup(),
+        ready = await dispatchBoth(f),
+        root = f.workspaces[1].root;
+      expect(ready.stage).toBe("submitted");
+      let state = reopenSubmission(f);
+      const before = submissions(f);
+      const mode = (await stat(path.join(root, "b.txt"))).mode & 0o777;
+      await chmod(path.join(root, "b.txt"), mode | 0o111);
+      await expect(
+        f.parallel.submit(state.id, state.revision, "a"),
+      ).rejects.toThrow(/outside the agreed specialist outputs|agreed outputs/);
+      expect(submissions(f)).toBe(before);
+      expect(f.parallel.state(state.id).tasks[0].candidateId).toBeNull();
+      await chmod(path.join(root, "b.txt"), mode);
+      state = await f.parallel.submit(state.id, state.revision, "a");
+      expect(state.stage).toBe("submitted");
+    },
+  );
 
   test("PW-03: an owned untracked output is accepted only when approved, and an unapproved stray file never enters the candidate or integration", async () => {
     const f = await setup({ outputs: [["a.txt", "new-a.txt"], ["b.txt"]] }),

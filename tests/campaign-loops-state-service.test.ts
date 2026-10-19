@@ -160,6 +160,12 @@ async function setup(turnDelayMs = 20) {
   await writeFile(path.join(project, "file.ts"), "export const value = 1;\n");
   for (const args of [
     ["init", "-q"],
+    // Git for Windows defaults to core.autocrlf=true, so `git checkout` and
+    // `git reset --hard` below would rewrite file.ts with CRLF; the product
+    // then (correctly) sees bytes that differ from the captured base and
+    // refuses with "Candidate bytes changed". Pin LF checkouts so the
+    // fixture's restores reproduce the exact committed bytes on every OS.
+    ["config", "core.autocrlf", "false"],
     ["add", "file.ts"],
     [
       "-c",
@@ -697,8 +703,14 @@ process.stdin.on("end", () => {
   const gone = posix ? ["ESRCH", "ESRCH"] : ["ESRCH"];
   const alive = posix ? ["alive", "alive"] : ["alive"];
 
+  // The ignore-signals variant is POSIX-only: Windows has no catchable
+  // SIGINT/SIGTERM for a child, so Node's kill() there terminates the process
+  // outright and a "child that ignores the interrupt" cannot be built (CI
+  // observed "process exit confirmed" right after interrupt). Unverified on
+  // Windows: the bounded-stop escalation path (no separate SIGKILL step
+  // exists there). The interrupt-confirms-exit variant still runs on Windows.
   for (const ignoreSignals of [false, true])
-    test(`continuous output outlives the stall limits until stopped${ignoreSignals ? "; a child ignoring SIGINT/SIGTERM is killed on close and its exit observed" : "; interrupt confirms the exit"}`, async () => {
+    test.skipIf(ignoreSignals && process.platform === "win32")(`continuous output outlives the stall limits until stopped${ignoreSignals ? "; a child ignoring SIGINT/SIGTERM is killed on close and its exit observed" : "; interrupt confirms the exit"}`, async () => {
       const { dir, script } = await standIn(ignoreSignals);
       const pids: number[] = [];
       const adapter = new ClaudeAdapter(undefined, undefined, {
