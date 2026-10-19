@@ -316,7 +316,7 @@ const publishedEvents = (f: F, runId: string) =>
 // LOOP-13 on the real service flag
 
 describe("LOOP-13 (service): experimental.recursiveLooping turned off while a run is active", () => {
-  test("recorded fact: with the flag off the run stays inspectable and keeps running to completion, while loop-control is refused", async () => {
+  test("with the flag off the run stays inspectable and is paused at once; Pause is accepted, Resume is refused, and no new work starts", async () => {
     const f = await setup(150);
     const runId = await createAndStart(f);
     await untilRun(
@@ -325,53 +325,82 @@ describe("LOOP-13 (service): experimental.recursiveLooping turned off while a ru
       () => f.service.store.list<{ id: string }>("attempt").length > 0,
     );
     await send(f, { type: "loop-feature-set", enabled: false });
+    // The feature-set command itself pauses the running loop.
+    const paused = f.service.store.get<LoopRun>("loop-run", runId)!;
+    expect(paused.desiredState).toBe("paused");
+    expect(paused.state).toBe("paused");
     const query = await send(f, { type: "loop-query", projectId: "p" });
     expect(query.enabled).toBe(false);
     expect(query.runs.map((r: { id: string }) => r.id)).toContain(runId);
     expect((await send(f, { type: "loop-inspect", runId })).run.id).toBe(runId);
-    for (const action of ["stop", "pause"])
-      await expect(
-        send(f, {
-          type: "loop-control",
-          runId,
-          action,
-          commandId: `c-${uid()}`,
-        }),
-      ).rejects.toThrow(/experimental and off/);
-    const attempts = f.service.store.list("attempt").length;
-    const view = await untilRun(f, runId, (r) =>
-      ["completed", "waiting", "stopped"].includes(r.state),
-    );
-    // Background work continued after the flag went off.
-    expect(view.run.state).toBe("completed");
-    expect(f.service.store.list("attempt").length).toBeGreaterThan(attempts);
-    expect(view.run.desiredState).toBe("running");
-  });
-
-  // CAMPAIGN DEFECT LOOP-13: service loop-control is refused while experimental.recursiveLooping is off (LoopSupervisor.control assertEnabled), so an active run cannot be stopped from the service although it keeps running.
-  test.fails(
-    "Stop is accepted for an active run while the flag is off and the run reaches stopped",
-    async () => {
-      const f = await setup(150);
-      const runId = await createAndStart(f);
-      await untilRun(
-        f,
-        runId,
-        () => f.service.store.list("attempt").length > 0,
-      );
-      await send(f, { type: "loop-feature-set", enabled: false });
-      await send(f, {
+    await send(f, {
+      type: "loop-control",
+      runId,
+      action: "pause",
+      commandId: `c-${uid()}`,
+    });
+    await expect(
+      send(f, {
         type: "loop-control",
         runId,
-        action: "stop",
+        action: "resume",
         commandId: `c-${uid()}`,
-      });
-      const view = await untilRun(f, runId, (r) =>
-        ["stopped", "completed"].includes(r.state),
-      );
-      expect(view.run.state).toBe("stopped");
-    },
-  );
+      }),
+    ).rejects.toThrow(/experimental and off/);
+    // Let any interrupted turn settle, then confirm nothing new launches.
+    await new Promise((r) => setTimeout(r, 500));
+    await f.service.orchestration.tick();
+    await f.service.loops.tick();
+    const attempts = f.service.store.list("attempt").length;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      await f.service.orchestration.tick();
+      await f.service.loops.tick();
+    }
+    expect(f.service.store.list("attempt").length).toBe(attempts);
+    expect(f.service.store.get<LoopRun>("loop-run", runId)!.state).toBe(
+      "paused",
+    );
+  });
+
+  test("Stop is accepted for an active run while the flag is off and the run reaches stopped", async () => {
+    const f = await setup(150);
+    const runId = await createAndStart(f);
+    await untilRun(f, runId, () => f.service.store.list("attempt").length > 0);
+    await send(f, { type: "loop-feature-set", enabled: false });
+    await send(f, {
+      type: "loop-control",
+      runId,
+      action: "stop",
+      commandId: `c-${uid()}`,
+    });
+    expect(f.service.store.get<LoopRun>("loop-run", runId)!.desiredState).toBe(
+      "stopped",
+    );
+    // A member turn interrupted by the pause or the stop may be recorded as
+    // uncertain (the Claude route reports every cancelled turn that way).
+    // Stop then waits, naming it, until the owner inspects and reconciles it
+    // (run-reconcile after native confirmation), exactly as after a manual
+    // Pause; it is not refused.
+    const view = await untilRun(f, runId, (r) => {
+      if (["stopped", "completed"].includes(r.state)) return true;
+      for (const run of f.service.store.list<{ id: string; status: string }>(
+        "run",
+      ))
+        if (run.status === "uncertain")
+          void f.service
+            .command(
+              commandSchema.parse({ type: "run-reconcile", id: run.id }),
+              {
+                approved: true,
+              },
+            )
+            .catch(() => {});
+      return false;
+    });
+    expect(view.run.state).toBe("stopped");
+    expect(view.run.desiredState).toBe("stopped");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -617,39 +646,36 @@ describe("STATE-09 / J-10 (service): an interrupted publication stays uncertain 
 // STATE-12 on the real service: two windows confirm the same publication
 
 describe("STATE-12 (service): concurrent publication confirmations", () => {
-  // CAMPAIGN DEFECT STATE-12: two concurrent loop-publication-apply commands for the same checkpoint both pass the "already published" check before either writes, so the increment is written twice with two receipts.
-  test.fails(
-    "two concurrent confirmations of the same checkpoint produce one write and one receipt",
-    async () => {
-      const f = await setup();
-      const { runId } = await completedRun(f);
-      const r = await review(f, runId);
-      // Deterministic interleaving: the first write waits until a second
-      // confirmation also reaches the write (the defect) or 3 s pass (a fixed
-      // product refuses the second before it writes). Without this barrier the
-      // race reproduced only on some runs (combined gate 2026-10-19T13:23Z).
-      const original = RuntimeLoopDriver.prototype.publicationApply;
-      let calls = 0;
-      let release!: () => void;
-      const second = new Promise<void>((resolve) => (release = resolve));
-      const spy = vi
-        .spyOn(RuntimeLoopDriver.prototype, "publicationApply")
-        .mockImplementation(async function (this: RuntimeLoopDriver, input) {
-          calls++;
-          if (calls === 1)
-            await Promise.race([second, new Promise((r) => setTimeout(r, 3000))]);
-          else release();
-          return original.call(this, input);
-        });
-      const results = await Promise.allSettled([
-        apply(f, runId, r.digest),
-        apply(f, runId, r.digest),
-      ]).finally(() => spy.mockRestore());
-      expect(publishedEvents(f, runId)).toHaveLength(1);
-      expect(cursorOf(f, runId)!.receipts).toHaveLength(1);
-      expect(results.filter((x) => x.status === "fulfilled")).toHaveLength(1);
-    },
-  );
+  // Regression for D-02 (STATE-12, fixed 2026-10-19): two concurrent loop-publication-apply commands for the same checkpoint once both passed the "already published" check before either wrote. Publication steps now run one at a time per run.
+  test("two concurrent confirmations of the same checkpoint produce one write and one receipt", async () => {
+    const f = await setup();
+    const { runId } = await completedRun(f);
+    const r = await review(f, runId);
+    // Deterministic interleaving: the first write waits until a second
+    // confirmation also reaches the write (the defect) or 3 s pass (a fixed
+    // product refuses the second before it writes). Without this barrier the
+    // race reproduced only on some runs (combined gate 2026-10-19T13:23Z).
+    const original = RuntimeLoopDriver.prototype.publicationApply;
+    let calls = 0;
+    let release!: () => void;
+    const second = new Promise<void>((resolve) => (release = resolve));
+    const spy = vi
+      .spyOn(RuntimeLoopDriver.prototype, "publicationApply")
+      .mockImplementation(async function (this: RuntimeLoopDriver, input) {
+        calls++;
+        if (calls === 1)
+          await Promise.race([second, new Promise((r) => setTimeout(r, 3000))]);
+        else release();
+        return original.call(this, input);
+      });
+    const results = await Promise.allSettled([
+      apply(f, runId, r.digest),
+      apply(f, runId, r.digest),
+    ]).finally(() => spy.mockRestore());
+    expect(publishedEvents(f, runId)).toHaveLength(1);
+    expect(cursorOf(f, runId)!.receipts).toHaveLength(1);
+    expect(results.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

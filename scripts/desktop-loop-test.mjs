@@ -410,7 +410,24 @@ try {
       `The compact loop view scrolls horizontally by ${overflow}px.`,
     );
   await shot(page, "loop-endless-monitoring-compact");
-  await c.getByRole("button", { name: "Stop", exact: true }).click();
+  // Turning the feature off pauses the run, and Stop stays available for it.
+  await command({ type: "loop-feature-set", enabled: false });
+  await expect
+    .poll(
+      async () =>
+        (await command({ type: "loop-inspect", runId: idC })).run.state,
+      { timeout: 30000 },
+    )
+    .toBe("paused");
+  const existing = loops.getByRole("region", { name: "Existing runs" });
+  await expect(existing).toContainText("Paused");
+  await shot(page, "loop-feature-off-existing-run");
+  await existing
+    .getByRole("button", {
+      name: "Stop Keep improving the fixture. Prioritize correctness.",
+      exact: true,
+    })
+    .click();
   await expect
     .poll(
       async () =>
@@ -420,7 +437,7 @@ try {
     .toBe("stopped");
   if (errors.length) throw new Error(`Page errors: ${errors.join("; ")}`);
   console.log(
-    "Desktop loop journey passed: mode selector, Goal loop with live steering, restart and resume, automatic organization change, stop during child work, publication, Endless monitoring in a compact window.",
+    "Desktop loop journey passed: mode selector, Goal loop with live steering, restart and resume, automatic organization change, stop during child work, publication, Endless monitoring in a compact window, Stop while the feature is off.",
   );
 } catch (error) {
   if (page) await shot(page, "loop-failure").catch(() => {});

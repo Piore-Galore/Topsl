@@ -195,6 +195,13 @@ export function RecursiveLoop({
         >
           Turn on experimental Recursive Looping
         </button>
+        <StoppableRuns
+          runs={(query.runs ?? []).filter(
+            (r: any) =>
+              r.mode === mode && !["completed", "stopped"].includes(r.state),
+          )}
+          run={run}
+        />
         <Errors errors={errors} />
       </section>
     );
@@ -320,6 +327,51 @@ export function RecursiveLoop({
           setLockCounts={setLockCounts}
         />
       )}
+    </section>
+  );
+}
+
+/**
+ * With the feature off, runs that have not stopped are paused and stay
+ * listed here so Stop never disappears behind the flag.
+ */
+function StoppableRuns({
+  runs,
+  run,
+}: {
+  runs: any[];
+  run: (key: string, command: Command) => Promise<unknown>;
+}) {
+  if (!runs.length) return null;
+  return (
+    <section aria-label="Existing runs">
+      <h3>Existing runs</h3>
+      <p className="muted">
+        Runs that have not stopped are paused while Recursive Looping is off.
+        Stop ends a run; turn the feature on to resume one.
+      </p>
+      <ul>
+        {runs.map((r) => (
+          <li key={r.id}>
+            {r.title} · {label(r.state)}{" "}
+            <button
+              type="button"
+              aria-label={`Stop ${r.title}`}
+              disabled={r.desiredState === "stopped"}
+              onClick={() =>
+                void run("control", {
+                  type: "loop-control",
+                  runId: r.id,
+                  action: "stop",
+                  commandId: newCommandId(),
+                })
+              }
+            >
+              Stop
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

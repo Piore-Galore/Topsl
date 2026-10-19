@@ -248,6 +248,39 @@ export function parsePriorities(text: string): string[] {
     .filter(Boolean);
 }
 
+/** The longest rolling window a policy may set (31 days). */
+const RECENT_HORIZON_MS = 31 * 86_400_000;
+
+/**
+ * Keeps the rolling-window history bounded without losing turns. Entries
+ * older than the longest possible window are dropped; adjacent entries are
+ * merged while the merged span is at most 1/64 of its age. A merged entry is
+ * dated by its latest turn, so a window may count a turn slightly longer than
+ * strictly due (by at most 1/64 of the window), never shorter: the allowance
+ * errs toward waiting. Roughly 64 entries per doubling of age remain, so the
+ * history stays near 1,500 entries however many updates a window holds.
+ */
+export function compactRecent(
+  recent: LoopUsage["recent"],
+  nowMs: number,
+): LoopUsage["recent"] {
+  const out: LoopUsage["recent"] = [];
+  for (const r of recent) {
+    const at = Date.parse(r.at);
+    if (at < nowMs - RECENT_HORIZON_MS) continue;
+    const last = out.at(-1);
+    const from = last?.from ?? last?.at;
+    if (last && from && at - Date.parse(from) <= (nowMs - at) / 64)
+      out[out.length - 1] = {
+        at: Date.parse(last.at) > at ? last.at : r.at,
+        turns: last.turns + r.turns,
+        from,
+      };
+    else out.push(r);
+  }
+  return out;
+}
+
 const describeKind = (v: CriterionVerification) =>
   v.kind === "check" ? `check ${v.checkId}` : v.kind;
 
@@ -284,8 +317,11 @@ export class LoopSupervisor {
   private iso(ms = this.ms()) {
     return new Date(ms).toISOString();
   }
+  private enabled() {
+    return !this.options.enabled || this.options.enabled();
+  }
   private assertEnabled() {
-    if (this.options.enabled && !this.options.enabled())
+    if (!this.enabled())
       throw new Error(
         `Recursive Looping is experimental and off. Turn on ${LOOP_FEATURE_FLAG} first.`,
       );
@@ -1334,13 +1370,17 @@ export class LoopSupervisor {
           .catch(() => {});
   }
 
-  /** Pause, resume or stop. None of these waits for or consults a model. */
+  /**
+   * Pause, resume or stop. None of these waits for or consults a model. Stop
+   * and Pause stay available while Recursive Looping is off, so existing runs
+   * can always be ended; Resume needs the feature on.
+   */
   async control(input: {
     runId: string;
     action: "pause" | "resume" | "stop";
     commandId: string;
   }) {
-    this.assertEnabled();
+    if (input.action === "resume") this.assertEnabled();
     const run = this.run(input.runId);
     return this.repo.receipt(
       input.commandId,
@@ -1406,26 +1446,12 @@ export class LoopSupervisor {
         }
         if (input.action === "pause") {
           if (run.desiredState === "paused") return this.view(run.id);
-          this.store.transaction(() => {
-            const next = this.saveRun(run, {
-              desiredState: "paused",
-              controlGeneration: run.controlGeneration + 1,
-              state: "paused",
-              detail: "Paused. Nothing new starts until you resume.",
-            });
-            this.cancelScheduled(next, false);
-            this.event(next, "control-changed", "Paused.");
-          });
-          for (const goalId of children)
-            await this.orchestrator
-              .controlCommand({
-                projectId: run.projectId,
-                goalId,
-                action: "pause",
-                commandId: `${input.commandId}:${goalId}`,
-              })
-              .catch(() => {});
-          await this.interruptRounds(this.run(run.id), "stale");
+          await this.pause(
+            run,
+            children,
+            input.commandId,
+            "Paused. Nothing new starts until you resume.",
+          );
           this.changed();
           return this.view(run.id);
         }
@@ -1467,6 +1493,85 @@ export class LoopSupervisor {
         return this.view(run.id);
       },
     );
+  }
+
+  /**
+   * Durably pauses a run: a new control generation fences dispatch, scheduled
+   * wakeups are cancelled, owned child goals are paused and open decision
+   * rounds are interrupted.
+   */
+  private async pause(
+    run: LoopRun,
+    children: string[],
+    commandId: string,
+    detail: string,
+  ) {
+    this.store.transaction(() => {
+      const next = this.saveRun(run, {
+        desiredState: "paused",
+        controlGeneration: run.controlGeneration + 1,
+        state: "paused",
+        detail,
+      });
+      this.cancelScheduled(next, false);
+      this.event(next, "control-changed", detail);
+    });
+    for (const goalId of children)
+      await this.orchestrator
+        .controlCommand({
+          projectId: run.projectId,
+          goalId,
+          action: "pause",
+          commandId: `${commandId}:${goalId}`,
+        })
+        .catch(() => {});
+    await this.interruptRounds(this.run(run.id), "stale");
+  }
+
+  /**
+   * The disable policy for Recursive Looping. While the feature is off no run
+   * advances: every started run that is still meant to run is paused (as if
+   * the owner pressed Pause), so no iteration is admitted, no wakeup fires and
+   * owned child work stops. A run that was asked to stop still settles. Runs
+   * stay paused after the feature is turned back on until the owner resumes
+   * them. Returns whether the feature is off.
+   */
+  async holdWhileDisabled(): Promise<boolean> {
+    if (this.enabled()) return false;
+    for (const a of [...this.store.iterate<ActiveIndex>(loopKinds.active)]) {
+      let run = this.repo.get<LoopRun>(loopKinds.run, a.runId);
+      if (!run) continue;
+      // Settling committed work is bookkeeping, not new work.
+      await this.settleLatest(run);
+      run = this.run(run.id);
+      if (run.desiredState === "stopped") {
+        await this.settleStop(run);
+        continue;
+      }
+      if (
+        !run.started ||
+        run.desiredState !== "running" ||
+        ["completed", "stopped", "stopping"].includes(run.state)
+      )
+        continue;
+      const it = run.currentIterationId
+        ? this.repo.get<LoopIteration>(
+            loopKinds.iteration,
+            run.currentIterationId,
+          )
+        : undefined;
+      const children = (it?.childExecutionGoalIds ?? []).filter((id) => {
+        const g = this.repo.get<Goal>(kinds.goal, id);
+        return g && !g.loopDisposition;
+      });
+      await this.pause(
+        run,
+        children,
+        `${run.id}:feature-off:${run.controlGeneration}`,
+        "Paused because Recursive Looping was turned off. Turn it on and resume to continue, or stop the run.",
+      );
+    }
+    return true;
   }
 
   /**
@@ -1795,6 +1900,7 @@ export class LoopSupervisor {
     this.ticking = true;
     const head = this.store.controlHead();
     try {
+      if (await this.holdWhileDisabled()) return;
       const at = this.ms();
       const slept = this.lastTick !== null && at - this.lastTick > 10 * 60_000;
       this.lastTick = at;
@@ -1833,6 +1939,8 @@ export class LoopSupervisor {
   }
 
   private async advance(run: LoopRun, admission: { available: boolean }) {
+    await this.settleLatest(run);
+    run = this.run(run.id);
     if (run.desiredState === "stopped") {
       await this.settleStop(run);
       return;
@@ -2143,21 +2251,27 @@ export class LoopSupervisor {
   }
 
   /** Cumulative accounting across bounded children: a child never resets it. */
+  /**
+   * Charges an iteration's new member turns. The usage record and the
+   * iteration's turn cursor are written in one transaction, so a crash
+   * between them can neither lose nor repeat a charge.
+   */
   private account(run: LoopRun, it: LoopIteration, turns: number) {
     if (turns <= it.memberTurns) return it;
     const delta = turns - it.memberTurns;
-    const usage = this.usageRecord(run);
-    const horizon = this.ms() - 31 * 86_400_000;
-    this.store.put(loopKinds.usage, {
-      ...usage,
-      memberTurns: usage.memberTurns + delta,
-      recent: [
-        ...usage.recent.filter((r) => Date.parse(r.at) >= horizon),
-        { at: this.iso(), turns: delta },
-      ].slice(-2000),
-      updatedAt: now(),
-    } satisfies LoopUsage);
-    return this.saveIteration(it, { memberTurns: turns });
+    return this.store.transaction(() => {
+      const usage = this.usageRecord(run);
+      this.store.put(loopKinds.usage, {
+        ...usage,
+        memberTurns: usage.memberTurns + delta,
+        recent: compactRecent(
+          [...usage.recent, { at: this.iso(), turns: delta }],
+          this.ms(),
+        ),
+        updatedAt: now(),
+      } satisfies LoopUsage);
+      return this.saveIteration(it, { memberTurns: turns });
+    });
   }
 
   private roundTurns(run: LoopRun, it: LoopIteration): number {
@@ -4408,6 +4522,7 @@ export class LoopSupervisor {
         state: "promoted",
         resultCheckpointId: checkpointId,
         promotionId,
+        settlementPending: "promoted",
         endedAt: at,
         detail: code
           ? `Promoted to checkpoint ${parent.sequence + 1}.`
@@ -4522,17 +4637,7 @@ export class LoopSupervisor {
       return;
     }
     // Recovery distinguishes "persisted, notification missing" from "not committed".
-    this.orchestrator.settleLoopGoal({
-      goalId: goal.id,
-      outcome: "promoted",
-      promotionId,
-      detail: `Promoted by loop policy into checkpoint ${promotion.checkpointId}. This is internal progress, not owner acceptance or publication.`,
-    });
-    await this.finishIteration(
-      this.run(run.id),
-      this.repo.require<LoopIteration>(loopKinds.iteration, it.id),
-      "promoted",
-    );
+    await this.settleIteration(run.id, it.id);
   }
 
   private async reject(
@@ -4558,6 +4663,8 @@ export class LoopSupervisor {
       this.saveIteration(current, {
         state: "rejected",
         failure,
+        settlementPending:
+          failure.kind === "stopped" ? "cancelled" : "rejected",
         endedAt: now(),
         detail: `Rejected: ${failure.detail}`,
       });
@@ -4612,33 +4719,77 @@ export class LoopSupervisor {
         `${next.detail} ${failure.detail}`,
       );
     });
+    await this.settleIteration(run.id, it.id);
+  }
+
+  /**
+   * The steps after a promotion or rejection commits: settle the child goal
+   * and finish the iteration (outcome records, token totals, reclaim). They
+   * run right after the transaction, and again on a later tick if a crash
+   * interrupted them; each step is idempotent.
+   */
+  private async settleIteration(runId: string, iterationId: string) {
+    const it = this.repo.require<LoopIteration>(
+      loopKinds.iteration,
+      iterationId,
+    );
+    const result = it.settlementPending;
+    if (!result) return;
     const goal = this.childGoal(it);
     if (goal && !goal.loopDisposition) {
-      if (
-        this.orchestrator
-          .rounds(goal.id)
-          .some((r) => r.members.some((m) => m.activeAttemptId))
-      )
-        await this.orchestrator
-          .controlCommand({
-            projectId: run.projectId,
-            goalId: goal.id,
-            action: "stop",
-            commandId: `${goal.id}:reject`,
-          })
-          .catch(() => {});
-      this.orchestrator.settleLoopGoal({
-        goalId: goal.id,
-        outcome: failure.kind === "stopped" ? "cancelled" : "rejected",
-        promotionId: null,
-        detail: `Rejected by loop policy: ${failure.detail}`,
-      });
+      if (result === "promoted") {
+        const promotion = this.repo.require<PromotionDecision>(
+          loopKinds.promotion,
+          it.promotionId!,
+        );
+        this.orchestrator.settleLoopGoal({
+          goalId: goal.id,
+          outcome: "promoted",
+          promotionId: promotion.id,
+          detail: `Promoted by loop policy into checkpoint ${promotion.checkpointId}. This is internal progress, not owner acceptance or publication.`,
+        });
+      } else {
+        if (
+          this.orchestrator
+            .rounds(goal.id)
+            .some((r) => r.members.some((m) => m.activeAttemptId))
+        )
+          await this.orchestrator
+            .controlCommand({
+              projectId: it.projectId,
+              goalId: goal.id,
+              action: "stop",
+              commandId: `${goal.id}:reject`,
+            })
+            .catch(() => {});
+        this.orchestrator.settleLoopGoal({
+          goalId: goal.id,
+          outcome: result,
+          promotionId: null,
+          detail: `Rejected by loop policy: ${it.failure?.detail ?? ""}`,
+        });
+      }
     }
     await this.finishIteration(
-      this.run(run.id),
-      this.repo.require<LoopIteration>(loopKinds.iteration, it.id),
-      failure.kind === "stopped" ? "cancelled" : "rejected",
+      this.run(runId),
+      this.repo.require<LoopIteration>(loopKinds.iteration, iterationId),
+      result,
     );
+  }
+
+  /**
+   * Finishes the latest iteration's settlement if a crash interrupted it
+   * after its promotion or rejection committed (the run has already moved
+   * on, so the iteration is no longer current).
+   */
+  private async settleLatest(run: LoopRun) {
+    if (!run.iterationCount) return;
+    const latest = this.repo.get<LoopIteration>(
+      loopKinds.iteration,
+      `${run.id}:iteration:${run.iterationCount}`,
+    );
+    if (latest?.settlementPending)
+      await this.settleIteration(run.id, latest.id);
   }
 
   /** Outcome records, usage coverage and retention after an iteration ends. */
@@ -4647,7 +4798,11 @@ export class LoopSupervisor {
     it: LoopIteration,
     result: LoopOutcome["iterationResult"],
   ) {
-    if (it.outcomeRecordIds.length) return;
+    if (it.outcomeRecordIds.length) {
+      if (it.settlementPending)
+        this.saveIteration(it, { settlementPending: null });
+      return;
+    }
     it = this.account(run, it, this.childTurns(it) + this.roundTurns(run, it));
     const outcomes = this.recordOutcomes(run, it, result);
     const attempts = this.iterationAttempts(run, it);
@@ -4676,7 +4831,10 @@ export class LoopSupervisor {
       },
       updatedAt: now(),
     } satisfies LoopUsage);
-    this.saveIteration(it, { outcomeRecordIds: outcomes });
+    this.saveIteration(it, {
+      outcomeRecordIds: outcomes,
+      settlementPending: null,
+    });
     await this.reclaim(run, it);
   }
 
@@ -6728,112 +6886,138 @@ export class LoopSupervisor {
    * fabricating owner acceptance. Nothing is committed, staged or pushed.
    */
   async publish(input: { runId: string; digest: string; commandId: string }) {
-    const run = this.run(input.runId);
+    const { projectId } = this.run(input.runId);
     return this.repo.receipt(
       input.commandId,
-      run.projectId,
+      projectId,
       "loop-publication-apply",
-      async () => {
-        const review = await this.publicationReview(run.id);
-        if (input.digest !== review.digest)
-          throw new Error(
-            "The publication confirmation is stale. Review the file list again.",
-          );
-        if (review.problems.length)
-          throw new Error(`Nothing was written: ${review.problems.join(" ")}`);
-        const prior = run.publicationCursorId
-          ? this.repo.get<PublicationCursor>(
-              loopKinds.cursor,
-              run.publicationCursorId,
-            )
-          : undefined;
-        const id = `${run.id}:publication`;
-        const at = now();
-        const base: PublicationCursor = prior ?? {
-          id,
-          runId: run.id,
-          projectId: run.projectId,
-          publicationBaseCandidateId: run.publicationBaseCandidateId!,
-          lastPublishedCheckpointId: run.publicationBaseCheckpointId!,
-          targetRoot: review.root,
-          targetRevision: null,
-          manifest: [],
-          state: "published",
-          receipts: [],
-          updatedAt: at,
-        };
-        // The intent is recorded before any write, so an interrupted write is
-        // reported uncertain and never repeated blindly.
-        this.store.put(loopKinds.cursor, {
-          ...base,
-          state: "uncertain",
-          updatedAt: at,
-        });
-        this.saveRun(run, { publicationCursorId: id });
-        let result: Awaited<ReturnType<LoopDriver["publicationApply"]>>;
-        try {
-          result = await this.loop.publicationApply({
+      () =>
+        this.serialPublication(input.runId, async () => {
+          // Read inside the fence: an earlier publication may have moved the cursor.
+          const run = this.run(input.runId);
+          const review = await this.publicationReview(run.id);
+          if (input.digest !== review.digest)
+            throw new Error(
+              "The publication confirmation is stale. Review the file list again.",
+            );
+          if (review.problems.length)
+            throw new Error(
+              `Nothing was written: ${review.problems.join(" ")}`,
+            );
+          const prior = run.publicationCursorId
+            ? this.repo.get<PublicationCursor>(
+                loopKinds.cursor,
+                run.publicationCursorId,
+              )
+            : undefined;
+          const id = `${run.id}:publication`;
+          const at = now();
+          const base: PublicationCursor = prior ?? {
+            id,
+            runId: run.id,
             projectId: run.projectId,
-            plan: review.plan,
-          });
-        } catch (error) {
+            publicationBaseCandidateId: run.publicationBaseCandidateId!,
+            lastPublishedCheckpointId: run.publicationBaseCheckpointId!,
+            targetRoot: review.root,
+            targetRevision: null,
+            manifest: [],
+            state: "published",
+            receipts: [],
+            updatedAt: at,
+          };
+          // The intent is recorded before any write, so an interrupted write is
+          // reported uncertain and never repeated blindly.
           this.store.put(loopKinds.cursor, {
             ...base,
             state: "uncertain",
+            updatedAt: at,
+          });
+          this.saveRun(run, { publicationCursorId: id });
+          let result: Awaited<ReturnType<LoopDriver["publicationApply"]>>;
+          try {
+            result = await this.loop.publicationApply({
+              projectId: run.projectId,
+              plan: review.plan,
+            });
+          } catch (error) {
+            this.store.put(loopKinds.cursor, {
+              ...base,
+              state: "uncertain",
+              receipts: [
+                ...base.receipts,
+                {
+                  checkpointId: review.checkpointId,
+                  files: review.files.length,
+                  at: now(),
+                  outcome: "uncertain",
+                },
+              ],
+              updatedAt: now(),
+            });
+            throw new Error(
+              `The publication stopped after it may have written files (${safeError(error)}). Inspect the folder; Topsl will not write it again.`,
+            );
+          }
+          if ("refused" in result) {
+            if (prior) this.store.put(loopKinds.cursor, prior);
+            else {
+              this.store.remove(loopKinds.cursor, id);
+              this.saveRun(this.run(run.id), { publicationCursorId: null });
+            }
+            throw new Error(`Nothing was written: ${result.refused}`);
+          }
+          const manifest = new Map(base.manifest.map((m) => [m.path, m]));
+          for (const m of result.manifest) manifest.set(m.path, m);
+          const cursor: PublicationCursor = {
+            ...base,
+            lastPublishedCheckpointId: review.checkpointId,
+            targetRevision: result.targetRevision,
+            manifest: [...manifest.values()].sort((a, b) =>
+              a.path.localeCompare(b.path),
+            ),
+            state: "published",
             receipts: [
               ...base.receipts,
               {
                 checkpointId: review.checkpointId,
-                files: review.files.length,
+                files: result.written.length,
                 at: now(),
-                outcome: "uncertain",
+                outcome: "published",
               },
             ],
             updatedAt: now(),
-          });
-          throw new Error(
-            `The publication stopped after it may have written files (${safeError(error)}). Inspect the folder; Topsl will not write it again.`,
+          };
+          this.store.put(loopKinds.cursor, cursor);
+          this.event(
+            this.run(run.id),
+            "checkpoint-published",
+            `Published checkpoint ${review.sequence}: ${result.written.length} files written and read back. Nothing was committed.`,
           );
-        }
-        if ("refused" in result) {
-          if (prior) this.store.put(loopKinds.cursor, prior);
-          else {
-            this.store.remove(loopKinds.cursor, id);
-            this.saveRun(this.run(run.id), { publicationCursorId: null });
-          }
-          throw new Error(`Nothing was written: ${result.refused}`);
-        }
-        const manifest = new Map(base.manifest.map((m) => [m.path, m]));
-        for (const m of result.manifest) manifest.set(m.path, m);
-        const cursor: PublicationCursor = {
-          ...base,
-          lastPublishedCheckpointId: review.checkpointId,
-          targetRevision: result.targetRevision,
-          manifest: [...manifest.values()].sort((a, b) =>
-            a.path.localeCompare(b.path),
-          ),
-          state: "published",
-          receipts: [
-            ...base.receipts,
-            {
-              checkpointId: review.checkpointId,
-              files: result.written.length,
-              at: now(),
-              outcome: "published",
-            },
-          ],
-          updatedAt: now(),
-        };
-        this.store.put(loopKinds.cursor, cursor);
-        this.event(
-          this.run(run.id),
-          "checkpoint-published",
-          `Published checkpoint ${review.sequence}: ${result.written.length} files written and read back. Nothing was committed.`,
-        );
-        this.changed();
-        return cursor;
-      },
+          this.changed();
+          return cursor;
+        }),
     );
+  }
+
+  /** Publication and reconciliation in flight, by run. */
+  private publications = new Map<string, Promise<unknown>>();
+  /**
+   * Runs one run's publication steps one at a time, so two concurrent
+   * confirmations of the same checkpoint cannot both pass the "already
+   * published" check before either writes: the second sees the first's
+   * cursor and is refused.
+   */
+  private serialPublication<T>(runId: string, step: () => Promise<T>) {
+    const next = (this.publications.get(runId) ?? Promise.resolve())
+      .catch(() => {})
+      .then(step);
+    const tail = next.catch(() => {});
+    this.publications.set(runId, tail);
+    void tail.then(() => {
+      if (this.publications.get(runId) === tail)
+        this.publications.delete(runId);
+    });
+    return next;
   }
 
   /**
@@ -6842,52 +7026,54 @@ export class LoopSupervisor {
    * still holds exactly what it wrote and nothing else changed.
    */
   async reconcilePublication(input: { runId: string; commandId: string }) {
-    const run = this.run(input.runId);
+    const { projectId } = this.run(input.runId);
     return this.repo.receipt(
       input.commandId,
-      run.projectId,
+      projectId,
       "loop-publication-reconcile",
-      async () => {
-        const cursor = run.publicationCursorId
-          ? this.repo.get<PublicationCursor>(
-              loopKinds.cursor,
-              run.publicationCursorId,
-            )
-          : undefined;
-        if (!cursor)
-          throw new Error("Nothing has been published from this run.");
-        const plan = await this.loop.publicationPreview({
-          projectId: run.projectId,
-          baseCandidateId: run.publicationBaseCandidateId!,
-          headCandidateId: this.checkpoint(cursor.lastPublishedCheckpointId)
-            .candidateId,
-          cursor: {
-            lastPublishedCandidateId: this.checkpoint(
-              cursor.lastPublishedCheckpointId,
-            ).candidateId,
-            targetRevision: "__reconcile__",
-            manifest: cursor.manifest,
-          },
-        });
-        const problems = plan.problems.filter(
-          (p) => !p.startsWith("The folder's Git revision changed"),
-        );
-        if (problems.length)
-          throw new Error(
-            `The folder cannot be reconciled automatically: ${problems.join(" ")} A newly reviewed target basis is required (start a new run from the current folder).`,
+      () =>
+        this.serialPublication(input.runId, async () => {
+          const run = this.run(input.runId);
+          const cursor = run.publicationCursorId
+            ? this.repo.get<PublicationCursor>(
+                loopKinds.cursor,
+                run.publicationCursorId,
+              )
+            : undefined;
+          if (!cursor)
+            throw new Error("Nothing has been published from this run.");
+          const plan = await this.loop.publicationPreview({
+            projectId: run.projectId,
+            baseCandidateId: run.publicationBaseCandidateId!,
+            headCandidateId: this.checkpoint(cursor.lastPublishedCheckpointId)
+              .candidateId,
+            cursor: {
+              lastPublishedCandidateId: this.checkpoint(
+                cursor.lastPublishedCheckpointId,
+              ).candidateId,
+              targetRevision: "__reconcile__",
+              manifest: cursor.manifest,
+            },
+          });
+          const problems = plan.problems.filter(
+            (p) => !p.startsWith("The folder's Git revision changed"),
           );
-        const revision =
-          (await this.loop.folderRevision?.(run.projectId)) ?? null;
-        const next = {
-          ...cursor,
-          targetRevision: revision,
-          state: "published" as const,
-          updatedAt: now(),
-        };
-        this.store.put(loopKinds.cursor, next);
-        this.changed();
-        return next;
-      },
+          if (problems.length)
+            throw new Error(
+              `The folder cannot be reconciled automatically: ${problems.join(" ")} A newly reviewed target basis is required (start a new run from the current folder).`,
+            );
+          const revision =
+            (await this.loop.folderRevision?.(run.projectId)) ?? null;
+          const next = {
+            ...cursor,
+            targetRevision: revision,
+            state: "published" as const,
+            updatedAt: now(),
+          };
+          this.store.put(loopKinds.cursor, next);
+          this.changed();
+          return next;
+        }),
     );
   }
 
@@ -6987,7 +7173,8 @@ export class LoopSupervisor {
       });
       if (
         run.desiredState === "running" &&
-        policy.recovery.resumeAfterRestart
+        policy.recovery.resumeAfterRestart &&
+        this.enabled()
       ) {
         const next = this.saveRun(run, {
           state: "active",
