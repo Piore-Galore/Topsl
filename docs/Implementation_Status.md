@@ -221,8 +221,28 @@ The owner decided on 19 October 2026 to let Topsl run Claude Code's structured r
 - `npm run build && npm run test:desktop` with the same variables removed, on the owner's Mac (macOS, Apple silicon): all four journeys passed. The main harness now turns **Settings → Claude Code structured route** on through Topsl's warning confirmation (`Let Topsl run Claude Code unattended?`), checks the recorded time in its note, and turns it off with no confirmation. Electron against the dev build only.
 - Zero-cost local checks with the installed Claude Code 2.1.302 on the owner's Mac, with model calls pointed at `ANTHROPIC_BASE_URL=http://127.0.0.1:9` so that no request could reach a model and no turn was spent; only the `system/init` record was read. Topsl's arguments start a session that reports no tools and `apiKeySource: "none"`; with `--safe-mode`, an `--mcp-config` server is not loaded; without it, Topsl's server is reported `connected` with exactly the three `mcp__topsl_candidate__*` tools. These show argument and init behavior only, not a model turn, permission enforcement or billing.
 
+**Live record (19 October 2026, owner-approved turns)**
+
+On the owner's Mac (macOS 27.0.1, arm64), with Claude Code 2.1.302 under the owner's claude.ai login (Max) and Codex CLI 0.163.0 under their ChatGPT sign-in, each pass ran
+
+```sh
+npm run build
+node scripts/live-loop.mjs --codex /opt/homebrew/bin/codex --claude /opt/homebrew/bin/claude --claude-model claude-opus-5-5 --mixed-only --max-turns 30
+```
+
+with `ANTHROPIC_*`/`CLAUDE_*` removed, from a disposable `topsl-test-*` profile, through the real app's commands and native dialogs (each dialog answered by the procedure is recorded in the report). Every pass turned the route on through its confirmation, connected Claude Code, and ran a fresh Claude qualification (4 Claude turns) and Codex qualification (3 Codex turns) before Run C. Reports: `test-results/live-loop/<time>/report.json` (not committed).
+
+| Pass (revision) | Claude qualification | Run C | Finding and fix |
+| --- | --- | --- | --- |
+| 1 (`aa66602`) | `native-subscription`, `fresh-session`, `process-lifecycle` passed; the other four failed with a parser error | Waited before any member turn: `claude-opus-5-5` was in no catalog | Claude Code streams a `message_delta` record whose `delta` has no `type`, and Topsl's parser stopped every turn there. Up to that point the marker came back, the reader's MCP server was `connected` and answered two `read_range` calls, and the inside write landed. Fixed in `66e90cc`. |
+| 2 (`aa66602` + parser fix) | All passed except `workspace-write` | Both coordinators' boundary and organize decisions valid; waited at child preparation on the Claude implementer (`workspace-write` not qualified) | With a bare `Write` in `--allowedTools`, Claude Code **created a file outside the working directory** with no permission denial. The probe recorded it as unsupported and Topsl refused the Claude implementer, as designed. Edit turns now get `Read,Glob,Grep,Edit(./**)` (`66e90cc`). |
+| 3 (`aa66602` + both fixes) | **All seven passed**, including Claude Code's denial of the outside `Write` | Waited at child preparation on the Codex reviewer | Codex's own `candidate-reader` probe failed this time: it read the marker and replied "I couldn't extract the line from the tool result." It passed in passes 1, 2 and 4. A Codex model result, not a Topsl change. |
+| 4 (`66e90cc`) | All seven passed | Both routes ready for every purpose. Loop boundary and organize decisions valid from both coordinators; 6 valid child plan contributions (initial and reconciliation) from Claude and Codex on their pinned models; then the coordinators still disagreed and the run waited for the owner to choose a branch until the procedure's 40-minute limit | The procedure had no owner branch choice. It now makes one and records the alternatives (`9898a35`). One Claude boundary turn ended as an error result whose subtype read `success`, which Topsl reported as "success"; it now says "Claude Code reported an error result." |
+
+**Claude Code stream stalls.** In passes 2, 3 and 4 the first Claude coordinator turn of the loop stalled inside Claude Code: Claude Code's own session transcript shows 7 output tokens, then about 12.5 minutes later its own message "Your response above was cut off mid-stream. Resume directly from where it stops", after which the turn completed in seconds. Topsl waited the whole time, because it sets no per-turn deadline on a coordinated Claude turn. This is Claude Code or service behaviour, recorded as observed.
+
 **Not established**
 
-- No live Claude qualification, live structured Claude turn or live mixed loop has run; spending those Claude and Codex turns waits for the owner. Claude Code's permission denial of writes outside the working directory, MCP tool use by a live model and the reported model id are therefore unobserved live.
+- LIVE_PASS_5_PLACEHOLDER
 - No packaged build, Windows or Linux run, or remote CI covered this change. The Applications controls for connecting and qualifying a Claude runtime were not driven on screen.
 - Build and review keeps Claude roles as native-terminal steps; the structured route there, native fan-out and interrupts remain unqualified for Claude.

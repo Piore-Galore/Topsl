@@ -664,7 +664,7 @@ try {
           if (chosen)
             await command({
               type: "orchestration-branch-choose",
-              goalId: goal.id,
+              goalId: goal.goal.id,
               roundId: round.id,
               contributionId: chosen.id,
               commandId: `live-c-branch-${Date.now()}`,
