@@ -460,6 +460,22 @@ describe("CA-13 binary manual attestation binds exact bytes", () => {
         accepted: true,
       }),
     ]);
+    // A second, never-applied plan for the same candidate and bytes. It differs
+    // from the consumed one only in not being consumed, so a later refusal of it
+    // is attributable to the byte change alone.
+    const fresh = await previewCandidateReview(f.store, {
+      projectId: "p",
+      candidateId: reviewed.id,
+      outputs: [],
+      binaries: [
+        {
+          path: "image.png",
+          detail: "Owner inspected the pinned image again.",
+        },
+      ],
+    });
+    expect(fresh.binaries[0].hash).toBe(plan.binaries[0].hash);
+    expect(f.store.get("candidate-review-consumed", fresh.id)).toBeUndefined();
     // Changed bytes produce a new candidate that the old attestation does not cover.
     await writeFile(
       path.join(f.root, "image.png"),
@@ -475,15 +491,41 @@ describe("CA-13 binary manual attestation binds exact bytes", () => {
     expect(() => assertCandidateCoverage(changed, f.store)).toThrow(
       "requires explicit manual verification for this candidate",
     );
-    // The reviewed candidate's live bytes changed, so its old plan cannot be replayed either.
+    // The reviewed candidate's live bytes changed, so even an unconsumed plan for
+    // it cannot apply, and the reason is the byte change.
     await expect(
-      applyCandidateReview(f.store, "p", plan.id, plan.digest),
-    ).rejects.toThrow();
+      applyCandidateReview(f.store, "p", fresh.id, fresh.digest),
+    ).rejects.toThrow(
+      "Candidate bytes changed; review and check evidence is stale.",
+    );
+    expect(f.store.get("candidate-review-consumed", fresh.id)).toBeUndefined();
+    expect([
+      ...f.store.iterate("candidate-binary-review", { projectId: "p" }),
+    ]).toHaveLength(1);
     // Reverting to the attested bytes in a fresh capture still needs its own attestation.
     await writeFile(
       path.join(f.root, "image.png"),
       Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 2]),
     );
+    // With the reviewed bytes back on disk, the consumed plan is refused only
+    // because it was consumed...
+    await expect(
+      applyCandidateReview(f.store, "p", plan.id, plan.digest),
+    ).rejects.toThrow("Candidate review was already consumed or expired.");
+    // ...and the unconsumed plan refused above now applies, so its refusal was
+    // the byte change and nothing else about the plan.
+    await expect(
+      applyCandidateReview(f.store, "p", fresh.id, fresh.digest),
+    ).resolves.toMatchObject({
+      candidateId: reviewed.id,
+      candidateRevision: reviewed.revision,
+      planId: fresh.id,
+    });
+    expect(
+      [...f.store.iterate<any>("candidate-binary-review", { projectId: "p" })]
+        .filter((receipt) => receipt.candidateId === reviewed.id)
+        .map((receipt) => receipt.hash),
+    ).toEqual([plan.binaries[0].hash, plan.binaries[0].hash]);
     const reverted = await captureCandidate(f.store, {
       ...selection,
       baseCandidateId: baseline.id,

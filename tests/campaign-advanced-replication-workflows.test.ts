@@ -655,17 +655,41 @@ describe("AD-03 and AD-04 measured evaluation, explicit selection and manual rev
         detail: "",
       },
     });
-    const bad: Array<[string, any[]]> = [
+    // Exact refusal reasons (advanced.ts:1487-1497 and :1519-1530), so each
+    // input is refused for its own defect and not for an incidental one.
+    const dimensionReason =
+      "Every declared rubric dimension requires exactly one measurement.";
+    const evidenceReason =
+      "Measurements need observed evidence bound to this frozen target and the declared protocol.";
+    const validSize = {
+      criterionId: "size",
+      value: 1,
+      evidenceArtifactId: ev[0].id,
+    };
+    const bad: Array<[string, any[], string]> = [
       [
-        "missing dimension",
+        "missing dimension (size omitted, score genuine)",
         [{ criterionId: "score", value: 2, evidenceArtifactId: ev[0].id }],
+        dimensionReason,
       ],
       [
-        "duplicate dimension",
+        // Otherwise valid: both declared dimensions present with genuine
+        // evidence for this submission; the only defect is the second score.
+        "duplicate dimension (score twice, size present)",
         [
           { criterionId: "score", value: 2, evidenceArtifactId: ev[0].id },
           { criterionId: "score", value: 3, evidenceArtifactId: ev[0].id },
+          validSize,
         ],
+        dimensionReason,
+      ],
+      [
+        "undeclared dimension in place of size",
+        [
+          { criterionId: "score", value: 2, evidenceArtifactId: ev[0].id },
+          { criterionId: "speed", value: 1, evidenceArtifactId: ev[0].id },
+        ],
+        dimensionReason,
       ],
       [
         "other submission's evidence",
@@ -673,6 +697,7 @@ describe("AD-03 and AD-04 measured evaluation, explicit selection and manual rev
           { criterionId: "score", value: 2, evidenceArtifactId: ev[1].id },
           { criterionId: "size", value: 1, evidenceArtifactId: ev[1].id },
         ],
+        evidenceReason,
       ],
       [
         "participant self-score",
@@ -680,6 +705,7 @@ describe("AD-03 and AD-04 measured evaluation, explicit selection and manual rev
           { criterionId: "score", value: 9, evidenceArtifactId: selfScore.id },
           { criterionId: "size", value: 1, evidenceArtifactId: selfScore.id },
         ],
+        evidenceReason,
       ],
       [
         "no provenance",
@@ -695,16 +721,24 @@ describe("AD-03 and AD-04 measured evaluation, explicit selection and manual rev
             evidenceArtifactId: unprovenanced.id,
           },
         ],
+        evidenceReason,
       ],
     ];
-    for (const [name, measurements] of bad) {
-      expect(
-        () => f.engine.evaluate(s.id, s.revision, subs[0].id, measurements),
-        name,
-      ).toThrow();
+    const revisionBefore = f.engine.state(s.id).revision;
+    for (const [name, measurements, reason] of bad) {
+      let thrown: unknown;
+      try {
+        f.engine.evaluate(s.id, s.revision, subs[0].id, measurements);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, name).toBeInstanceOf(Error);
+      expect((thrown as Error).message, name).toBe(reason);
       expect(
         f.store.get("advanced-evaluation", `${s.id}:${subs[0].id}`),
+        name,
       ).toBeUndefined();
+      expect(f.engine.state(s.id).revision, name).toBe(revisionBefore);
     }
     const measure = (i: number, score: number) =>
       (s = f.engine.evaluate(s.id, s.revision, subs[i].id, [
@@ -712,6 +746,20 @@ describe("AD-03 and AD-04 measured evaluation, explicit selection and manual rev
         { criterionId: "size", value: 5, evidenceArtifactId: ev[i].id },
       ]));
     measure(0, 1); // fails its threshold
+    // Negative control: the duplicate-dimension input minus its duplicate (one
+    // score and one size, both bound to ev[0]; values do not affect validity)
+    // is accepted and persisted, so the refusal above was caused by the
+    // duplicate alone.
+    expect(
+      f.store.get<any>("advanced-evaluation", `${s.id}:${subs[0].id}`),
+    ).toMatchObject({
+      submissionId: subs[0].id,
+      passed: false,
+      measurements: [
+        { criterionId: "score", value: 1 },
+        { criterionId: "size", value: 5 },
+      ],
+    });
     measure(1, 2);
     // Selection is refused until every submission has the same rubric measured.
     expect(() => f.engine.select(s.id, s.revision, subs[1].id)).toThrow(
@@ -747,23 +795,155 @@ describe("AD-03 and AD-04 measured evaluation, explicit selection and manual rev
 describe("AD-05 and AD-06 independent test design input withholding", () => {
   test("test design requires exactly one participant and never receives a baseline", async () => {
     const f = await setup();
-    expect(() =>
-      f.engine.create({ ...f.input, template: "independent-test-design" }),
-    ).toThrow(/participant count/);
-    const s = f.engine.create({
-      ...f.input,
-      template: "independent-test-design",
-      participants: [f.input.participants[0]],
+    const message = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return "did not throw";
+    };
+    // A real implementation exists on disk and as a captured candidate row in
+    // the same project, so exposure is possible and must be refused.
+    const [alpha, beta] = f.input.participants;
+    const implRoot = f.repository.require<Workspace>(
+      "workspace",
+      beta.workspaceId,
+    ).canonicalRoot;
+    const marker = `IMPLEMENTATION-BYTES-${uid()}`;
+    await writeFile(path.join(implRoot, "impl.txt"), marker);
+    const implementation = await captureCandidate(f.store, {
+      root: implRoot,
+      projectId: "project",
+      workflowId: "implementation-fixture",
+      selectedPaths: ["impl.txt"],
     });
-    const context = f.store.get<any>(
+    expect(f.store.get<any>("candidate", implementation.id)?.projectId).toBe(
+      "project",
+    );
+    const rows = () => ({
+      ...advancedRows(f.store),
+      contexts: [...f.store.iterate("context-package")].length,
+      specifications: [...f.store.iterate("workflow-specification")].length,
+      candidates: [...f.store.iterate("candidate")].length,
+      testCandidates: [...f.store.iterate("advanced-test-candidate")].length,
+    });
+    const before = rows();
+    const design = {
+      ...f.input,
+      template: "independent-test-design" as const,
+      participants: [alpha],
+    };
+    // Two test-design participants: exact count reason, nothing persisted.
+    expect(
+      message(() =>
+        f.engine.create({ ...design, participants: [alpha, beta] }),
+      ),
+    ).toBe("This template has an invalid participant count.");
+    expect(rows()).toEqual(before);
+    // The real captured implementation offered as baseline: exact exposure
+    // reason (advanced.ts:470-476), nothing persisted.
+    expect(
+      message(() =>
+        f.engine.create({ ...design, baselineCandidateId: implementation.id }),
+      ),
+    ).toBe("Independent test design must freeze before seeing implementation.");
+    expect(rows()).toEqual(before);
+    // Accepted without the baseline: the persisted context, specification and
+    // task carry only the approved requirements and interfaces.
+    let s = f.engine.create(design);
+    const contextRow = f.store.get<any>(
       "context-package",
       s.participants[0].contextId,
     );
-    expect(JSON.parse(context.text).baseline).toBeNull();
-    expect(context.sourceRefs).toEqual([s.specificationId]);
+    const taskRow = f.repository.require<Task>(
+      "task",
+      s.participants[0].taskId,
+    );
+    const specRow = f.store.get<any>(
+      "workflow-specification",
+      s.specificationId,
+    );
+    expect(specRow).toMatchObject({
+      objective: f.input.objective,
+      acceptanceCriteria: f.input.acceptanceCriteria,
+      interfaces: f.input.interfaces,
+    });
+    expect(JSON.parse(contextRow.text)).toEqual({
+      objective: f.input.objective,
+      acceptanceCriteria: f.input.acceptanceCriteria,
+      interfaces: f.input.interfaces,
+      rubric: f.input.rubric,
+      protocol: f.input.protocol,
+      protocolChecks: [],
+      baseline: null,
+      visibility: advancedTemplates[1].visibility,
+      instructions: expect.any(String),
+    });
+    for (const leak of [marker, implementation.id, implementation.revision])
+      expect(contextRow.text.includes(leak), leak).toBe(false);
+    expect(contextRow.sourceRefs).toEqual([s.specificationId]);
+    expect(taskRow.inputRefs).toEqual([s.specificationId]);
+    expect(taskRow.role).toBe("tester");
+    // What the dispatched provider receives is that same stored context.
+    const received: string[] = [];
+    const original = f.driver.dispatch;
+    f.driver.dispatch = async (args) => {
+      received.push(args.context.id, args.context.text);
+      return original(args);
+    };
+    s = await f.engine.dispatch(s.id, s.revision, "alpha");
+    expect(received).toEqual([contextRow.id, contextRow.text]);
+    expect(f.policies.at(-1)!.allowedContextIds).toEqual([contextRow.id]);
     expect(
-      f.repository.require<Task>("task", s.participants[0].taskId).role,
-    ).toBe("tester");
+      f.repository.require<ExecutionAttempt>(
+        "attempt",
+        s.participants[0].attemptId!,
+      ).contextPackageId,
+    ).toBe(contextRow.id);
+    // Implementation capture before the design freezes is refused with no
+    // candidate or test-candidate row written.
+    const beforeCapture = rows();
+    await expect(
+      f.engine.captureVerificationCandidate(
+        s.id,
+        s.revision,
+        beta.workspaceId,
+        ["impl.txt"],
+      ),
+    ).rejects.toThrow(
+      /^Freeze the independent test design before exposing implementation to its separate test-run stage\.$/,
+    );
+    expect(rows()).toEqual(beforeCapture);
+    // Negative control: a template that legitimately receives the baseline
+    // stores its id in the same context fields, so the leak checks above
+    // would detect an exposed implementation.
+    const competing = f.engine.create({
+      ...f.input,
+      template: "competing-implementations",
+      baselineCandidateId: implementation.id,
+      protocolChecks: [
+        {
+          id: "regression",
+          label: "Regression",
+          executable: process.execPath,
+          args: ["check.cjs"],
+          timeoutMs: 30_000,
+        },
+      ],
+    });
+    const leaked = f.store.get<any>(
+      "context-package",
+      competing.participants[0].contextId,
+    );
+    expect(JSON.parse(leaked.text).baseline.candidateId).toBe(
+      implementation.id,
+    );
+    expect(leaked.text.includes(implementation.id)).toBe(true);
+    expect(leaked.sourceRefs).toEqual([
+      competing.specificationId,
+      implementation.id,
+    ]);
   });
 });
 
@@ -1294,49 +1474,67 @@ describe("AD-11 catalog availability labels and section 6.2 mode enumeration", (
   test.each(advancedTemplates.map((t) => t.id))(
     "mode %s: disabled refuses creation; enabled creates the declared roles and gates; disabling keeps existing work controllable",
     async (template) => {
+      const buildInput = async (f: Setup): Promise<AdvancedCreate> => {
+        const root = f.repository.require<Workspace>(
+          "workspace",
+          f.input.participants[0].workspaceId,
+        ).canonicalRoot;
+        await writeFile(path.join(root, "result.txt"), "base");
+        const needsBaseline = [
+          "competing-implementations",
+          "pair-debugging",
+        ].includes(template);
+        const baseline = needsBaseline
+          ? await captureCandidate(f.store, {
+              root,
+              projectId: "project",
+              workflowId: "mode-baseline",
+              selectedPaths: ["result.txt"],
+            })
+          : null;
+        return {
+          ...f.input,
+          template,
+          // Plan AD-05: independent test design takes exactly one participant;
+          // pair debugging exactly two; the others at least two.
+          participants:
+            template === "independent-test-design"
+              ? [f.input.participants[0]]
+              : f.input.participants,
+          baselineCandidateId: baseline?.id ?? null,
+          protocolChecks: needsBaseline
+            ? [
+                {
+                  id: "regression",
+                  label: "Regression",
+                  executable: process.execPath,
+                  args: ["check.cjs"],
+                  timeoutMs: 30_000,
+                },
+              ]
+            : [],
+        };
+      };
       const f = await setup({ keys: ["alpha", "beta"], enabled: false });
       const root = f.repository.require<Workspace>(
         "workspace",
         f.input.participants[0].workspaceId,
       ).canonicalRoot;
-      await writeFile(path.join(root, "result.txt"), "base");
-      const needsBaseline = [
-        "competing-implementations",
-        "pair-debugging",
-      ].includes(template);
-      const baseline = needsBaseline
-        ? await captureCandidate(f.store, {
-            root,
-            projectId: "project",
-            workflowId: "mode-baseline",
-            selectedPaths: ["result.txt"],
-          })
-        : null;
-      const input: AdvancedCreate = {
-        ...f.input,
-        template,
-        participants:
-          template === "independent-test-design"
-            ? [f.input.participants[0]]
-            : f.input.participants,
-        baselineCandidateId: baseline?.id ?? null,
-        protocolChecks: needsBaseline
-          ? [
-              {
-                id: "regression",
-                label: "Regression",
-                executable: process.execPath,
-                args: ["check.cjs"],
-                timeoutMs: 30_000,
-              },
-            ]
-          : [],
-      };
-      expect(() => f.engine.create(input)).toThrow(/disabled/);
-      expect(advancedRows(f.store).workflows).toBe(0);
+      const input = await buildInput(f);
+      const rows = () => ({
+        ...advancedRows(f.store),
+        policies: f.policies.length,
+      });
+      expect(() => f.engine.create(input)).toThrow(
+        /^Advanced workflows are disabled by the feature flag\.$/,
+      );
+      expect(advancedRows(f.store)).toMatchObject({
+        workflows: 0,
+        tasks: 0,
+        attempts: 0,
+      });
       f.engine.setEnabled(true);
       let s = f.engine.create(input);
-      const declared = advancedTemplates.find((t) => t.id === template)!;
       const tasks = s.participants.map((p) =>
         f.repository.require<Task>("task", p.taskId),
       );
@@ -1346,19 +1544,79 @@ describe("AD-11 catalog availability labels and section 6.2 mode enumeration", (
         "competing-implementations": ["implementer", "implementer"],
         "pair-debugging": ["implementer", "reviewer"],
       };
+      // Literal gate lists (advanced.ts:37-96), not the product constant, so a
+      // dropped or renamed gate in the catalog is caught here.
+      const isolationGates = [
+        "context-isolation",
+        "filesystem-isolation",
+        "tool-isolation",
+        "fresh-session",
+        "native-fanout-disabled",
+      ];
+      const expectedGates: Record<string, string[]> = {
+        "independent-proposals": isolationGates,
+        "independent-test-design": isolationGates,
+        "competing-implementations": [...isolationGates, "workspace-write"],
+        "pair-debugging": [
+          "read-only",
+          "native-fanout-disabled",
+          "fresh-session",
+        ],
+      };
       expect(tasks.map((t) => t.role)).toEqual(expectedRoles[template]);
       for (const t of tasks)
-        expect(t.requiredCapabilities).toEqual([...declared.gates]);
+        expect(t.requiredCapabilities).toEqual(expectedGates[template]);
       expect(s.writerKey).toBe(template === "pair-debugging" ? "alpha" : null);
       if (template === "pair-debugging")
         expect(tasks[1].permittedOutputs).toEqual([]);
-      s = await f.engine.dispatch(s.id, s.revision, "alpha");
+      // Gate enforcement for this mode: the same input with one of the mode's
+      // gates unproven is refused with the exact missing gate and no rows.
+      const ungated = await setup({ missing: ["fresh-session"] });
+      const ungatedInput = await buildInput(ungated);
+      expect(() => ungated.engine.create(ungatedInput)).toThrow(
+        /^Required independence\/security capabilities are not enforced: fresh-session\. No agent was dispatched\.$/,
+      );
+      expect(advancedRows(ungated.store)).toMatchObject({
+        workflows: 0,
+        tasks: 0,
+      });
+      // Dispatch behind the off flag is refused in every mode, for a valid
+      // undispatched participant, before any isolation policy or attempt.
       f.engine.setEnabled(false);
-      // New dispatch is refused behind the off flag ...
-      if (s.participants.length > 1)
+      const offBefore = rows();
+      await expect(
+        f.engine.dispatch(s.id, s.revision, "alpha"),
+      ).rejects.toThrow(/^Advanced workflows are disabled\.$/);
+      expect(rows()).toEqual(offBefore);
+      expect(f.engine.state(s.id)).toMatchObject({
+        revision: s.revision,
+        stage: "ready",
+      });
+      expect(f.engine.state(s.id).participants[0].attemptId).toBeNull();
+      // Negative control: the identical dispatch succeeds once re-enabled, so
+      // the refusal was caused by the flag alone.
+      f.engine.setEnabled(true);
+      s = await f.engine.dispatch(s.id, s.revision, "alpha");
+      expect(rows().attempts).toBe(offBefore.attempts + 1);
+      expect(s.participants[0].attemptId).not.toBeNull();
+      f.engine.setEnabled(false);
+      if (template === "independent-test-design") {
+        // Single-participant mode: there is no second role to dispatch. A
+        // repeat dispatch while disabled is still refused by the flag check,
+        // which runs before the participant lookup (advanced.ts:664).
+        expect(s.participants).toHaveLength(1);
+        await expect(
+          f.engine.dispatch(s.id, s.revision, "alpha"),
+        ).rejects.toThrow(/^Advanced workflows are disabled\.$/);
+      } else {
+        expect(s.participants).toHaveLength(2);
+        const secondBefore = rows();
         await expect(
           f.engine.dispatch(s.id, s.revision, "beta"),
-        ).rejects.toThrow(/disabled/);
+        ).rejects.toThrow(/^Advanced workflows are disabled\.$/);
+        expect(rows()).toEqual(secondBefore);
+        expect(f.engine.state(s.id).participants[1].attemptId).toBeNull();
+      }
       // ... but the already-dispatched role's output can still be frozen (control remains).
       const p = s.participants[0];
       if (
@@ -1506,9 +1764,25 @@ describe("J-13 independent test design journey through the service commands", ()
       filesystem: true,
       tools: true,
     });
+    // The durable isolation row binds the fixture receipt to this exact task,
+    // context and policy hash (receipt source is the injected fixture driver;
+    // production has no isolation route, AD-01).
+    const isolationRows = [...service.store.iterate<any>("advanced-isolation")];
+    expect(isolationRows).toHaveLength(1);
+    expect(isolationRows[0]).toMatchObject({
+      workflowId: s.id,
+      taskId: s.participants[0].taskId,
+      enforced: true,
+      policyHash: hash(stable(policies[0])),
+      policy: {
+        taskId: s.participants[0].taskId,
+        allowedContextIds: [s.participants[0].contextId],
+        deniedTaskIds: [],
+      },
+    });
     expect(
-      [...service.store.iterate<any>("advanced-isolation")][0].enforced,
-    ).toBe(true);
+      repo.require<ExecutionAttempt>("attempt", s.participants[0].attemptId!),
+    ).toMatchObject({ contextPackageId: s.participants[0].contextId });
     const p = s.participants[0];
     const protocol = JSON.stringify({
       files: [{ path: "regression.cjs", text: testText }],
@@ -1593,6 +1867,168 @@ describe("J-13 independent test design journey through the service commands", ()
     expect(check.result).toBe("passed");
     expect(check.taskId).not.toBe(p.taskId);
     expect(check.targetRevision).toBe(candidate.revision);
+    // The same frozen file and invocation pass against the correct candidate,
+    // observed as exit code 0 and the frozen test's own output.
+    const recorded = (verificationId: string) => {
+      const v = service.store.get<any>("verification", verificationId);
+      return {
+        verification: v,
+        output: service.store.get<any>(
+          "protected-check-output",
+          v.evidenceArtifactId,
+        ),
+        receipt: service.store.get<any>(
+          "advanced-verification-receipt",
+          verificationId,
+        ),
+        task: repo.require<Task>("task", v.taskId),
+      };
+    };
+    const passedRecord = recorded(check.id);
+    expect(passedRecord.verification).toMatchObject({
+      result: "passed",
+      candidateId: candidate.id,
+      targetRevision: candidate.revision,
+      definition: "frozen-regression",
+    });
+    expect(passedRecord.output).toMatchObject({
+      exitCode: 0,
+      result: "passed",
+      targetRevision: candidate.revision,
+    });
+    expect(passedRecord.output.text).toContain("frozen regression passed");
+    expect(passedRecord.receipt).toMatchObject({
+      result: "passed",
+      submissionId: submission.id,
+      candidateId: candidate.id,
+    });
+    expect(passedRecord.task.role).toBe("tester");
+    // Failing control (AD-06): the same frozen protocol genuinely executes
+    // against a defective implementation (result.txt "broken"). It runs in a
+    // second, otherwise identical design workflow because one design workflow
+    // cannot preview a second pinned candidate (the immutable check-input
+    // binding collides, check-inputs.ts:208).
+    const brokenRoot = path.join(f.directory, "impl-broken");
+    const broken = await workspace(service.store, brokenRoot);
+    await writeFile(path.join(brokenRoot, "result.txt"), "broken");
+    await writeFile(path.join(brokenRoot, "regression.cjs"), testText);
+    let s2 = await command({ ...create, requestId: uid() });
+    s2 = await command({
+      type: "advanced-dispatch",
+      requestId: uid(),
+      id: s2.id,
+      expectedRevision: s2.revision,
+      key: "designer",
+    });
+    const p2 = s2.participants[0];
+    s2 = await command({
+      type: "advanced-freeze",
+      requestId: uid(),
+      id: s2.id,
+      expectedRevision: s2.revision,
+      key: "designer",
+      artifactId: artifact(
+        { store: service.store, repository: repo },
+        p2.taskId,
+        p2.attemptId,
+        protocol,
+      ).id,
+    });
+    const [submission2] = await command({
+      type: "advanced-submissions",
+      id: s2.id,
+    });
+    expect(submission2.artifactHash).toBe(submission.artifactHash);
+    const defective = await command({
+      type: "advanced-test-candidate-capture",
+      requestId: uid(),
+      id: s2.id,
+      expectedRevision: s2.revision,
+      workspaceId: broken.id,
+      selectedPaths: ["result.txt"],
+    });
+    expect(defective.revision).not.toBe(candidate.revision);
+    const defectivePlan = await command({
+      type: "advanced-check-preview",
+      id: s2.id,
+      expectedRevision: s2.revision,
+      submissionId: submission2.id,
+      definition,
+      candidateId: defective.id,
+    });
+    const failedCheck = await command(
+      { type: "advanced-check-apply", requestId: uid(), id: defectivePlan.id },
+      { digest: defectivePlan.digest },
+    );
+    const failedRecord = recorded(failedCheck.id);
+    expect(failedRecord.verification).toMatchObject({
+      result: "failed",
+      candidateId: defective.id,
+      targetRevision: defective.revision,
+      definition: "frozen-regression",
+    });
+    expect(failedRecord.output).toMatchObject({
+      exitCode: 3,
+      result: "failed",
+      targetRevision: defective.revision,
+    });
+    expect(failedRecord.output.text).not.toContain("frozen regression passed");
+    expect(failedRecord.receipt).toMatchObject({
+      result: "failed",
+      submissionId: submission2.id,
+      candidateId: defective.id,
+    });
+    expect(failedRecord.task.role).toBe("tester");
+    expect(failedRecord.task.id).not.toBe(p2.taskId);
+    // The failed run cannot become verification evidence. The measurement
+    // value is a declaration that evaluate does not reconcile with the run's
+    // result (advanced.ts:1499-1531), so even a claimed pass reaches
+    // selection; the binding refuses the failed run with its exact reason.
+    s2 = await command({
+      type: "advanced-evaluate",
+      requestId: uid(),
+      id: s2.id,
+      expectedRevision: s2.revision,
+      submissionId: submission2.id,
+      measurements: [
+        {
+          criterionId: "passes",
+          value: 1,
+          evidenceArtifactId: failedCheck.evidenceArtifactId,
+        },
+      ],
+    });
+    s2 = await command({
+      type: "advanced-select",
+      requestId: uid(),
+      id: s2.id,
+      expectedRevision: s2.revision,
+      submissionId: submission2.id,
+    });
+    const bindBefore = {
+      state: service.store.get<any>("advanced-workflow", s2.id),
+      workflow: repo.require<Workflow>("workflow", s2.id),
+    };
+    await expect(
+      command({
+        type: "advanced-bind-verification",
+        requestId: uid(),
+        id: s2.id,
+        expectedRevision: s2.revision,
+        verificationIds: [failedCheck.id],
+        frozenTestSubmissionId: submission2.id,
+      }),
+    ).rejects.toThrow(
+      /^A separate tester task requires current passing observed evidence\.$/,
+    );
+    expect(service.store.get<any>("advanced-workflow", s2.id)).toEqual(
+      bindBefore.state,
+    );
+    expect(bindBefore.state.stage).toBe("awaiting-verification");
+    expect(repo.require<Workflow>("workflow", s2.id)).toEqual(
+      bindBefore.workflow,
+    );
+    expect(bindBefore.workflow.acceptance ?? null).toBeNull();
     // A model's self-score (the designer's own artifact) is not evaluation evidence.
     const selfScore = artifact(
       { store: service.store, repository: repo },

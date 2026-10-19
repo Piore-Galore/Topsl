@@ -192,6 +192,7 @@ packages/workspace/   Configuration previews, imports, handoffs, context grants
 packages/domain/      Contracts, catalog, command validation, invariants
 tests/                Controlled native process, lifecycle, privacy, persistence tests
 docs/                 Full design, review, and implementation acceptance matrix
+docs/testing/         Comprehensive test campaign: report, coverage register, defects, phase state
 ```
 
 ## Round 2 implementation — 15 October 2026

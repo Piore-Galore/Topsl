@@ -1008,8 +1008,65 @@ describe("J-07: automatic team learns, adds a specialist, changes a model, the o
     expect(activeRoles(view)).toContain("perf-specialist");
     const commits = view.adaptations.filter((a) => a.kind === "commit");
     expect(commits.length).toBeGreaterThanOrEqual(2);
+    // The coordinators' stated reason is the scripted text, preserved
+    // verbatim; it is not product-computed evidence.
     for (const c of commits)
       expect((c as { reason: string }).reason).toBe("Evidence suggests it.");
+    // Product-computed measured evidence, read from the durable store: each
+    // adaptation row's evidence equals the outcome rows the run had
+    // measured before that boundary, and its confidence tier follows from
+    // that count. Two boundaries with different measurements must carry
+    // different evidence.
+    const measured = () => {
+      const number = new Map(
+        [
+          ...t.store.iterate<{ id: string; runId: string; number: number }>(
+            loopKinds.iteration,
+          ),
+        ]
+          .filter((i) => i.runId === runId)
+          .map((i) => [i.id, i.number]),
+      );
+      const outcomes = [
+        ...t.store.iterate<{ runId: string; iterationId: string }>(
+          loopKinds.outcome,
+        ),
+      ].filter((o) => o.runId === runId);
+      const adaptations = [
+        ...t.store.iterate<{
+          runId: string;
+          kind: string;
+          reason: string;
+          boundaryIteration: number;
+          evidence: { outcomes: number; confidence: string };
+        }>(loopKinds.adaptation),
+      ].filter((a) => a.runId === runId);
+      return { number, outcomes, adaptations };
+    };
+    const tier = (n: number) => (n < 6 ? "low" : n < 30 ? "moderate" : "high");
+    const before = measured();
+    const storedCommits = before.adaptations
+      .filter((a) => a.kind === "commit")
+      .sort((a, b) => a.boundaryIteration - b.boundaryIteration);
+    expect(storedCommits).toHaveLength(commits.length);
+    for (const c of storedCommits) {
+      const n = before.outcomes.filter(
+        (o) => before.number.get(o.iterationId)! < c.boundaryIteration,
+      ).length;
+      expect([c.boundaryIteration, c.evidence]).toEqual([
+        c.boundaryIteration,
+        { outcomes: n, confidence: tier(n) },
+      ]);
+    }
+    const evidence = storedCommits.map((c) => c.evidence.outcomes);
+    expect(evidence[0]).toBe(0);
+    expect(evidence[evidence.length - 1]).toBeGreaterThan(0);
+    // The bootstrap reason is computed from the project's recorded outcomes:
+    // none existed when this run started.
+    const bootstrap = before.adaptations.filter((a) => a.kind === "bootstrap");
+    expect(bootstrap).toHaveLength(1);
+    expect(bootstrap[0].evidence.outcomes).toBe(0);
+    expect(bootstrap[0].reason).toMatch(/^Bootstrap with no recorded outcomes/);
     // The owner excludes Claude and pins the reviewer to Sol.
     await t.supervisor.setOverride({
       runId,
@@ -1096,5 +1153,40 @@ describe("J-07: automatic team learns, adds a specialist, changes a model, the o
       .filter((l) => l.purpose === "candidate-review");
     expect(later.length).toBeGreaterThan(0);
     expect(later.every((l) => l.assignment.model === "sol-fixture")).toBe(true);
+    // Control with different measurements: a second run in the same project
+    // now bootstraps from the outcome rows the first run recorded, so the
+    // product computes a different reason and evidence from those rows.
+    const projectOutcomes = [
+      ...t.store.iterate<{ projectId: string }>(loopKinds.outcome, {
+        projectId: "p",
+      }),
+    ].length;
+    expect(projectOutcomes).toBeGreaterThan(0);
+    const second = await reopened.create({
+      projectId: "p",
+      mode: "endless",
+      text: "Keep improving.",
+      policy,
+      commandId: "j07-second-create",
+    });
+    await reopened.start({
+      runId: second.run.id,
+      digest: reopened.authorityReview(second.run.id).digest,
+      commandId: "j07-second-start",
+    });
+    const secondBootstrap = [
+      ...t.store.iterate<{
+        runId: string;
+        kind: string;
+        reason: string;
+        evidence: { outcomes: number };
+      }>(loopKinds.adaptation),
+    ].filter((a) => a.runId === second.run.id && a.kind === "bootstrap");
+    expect(secondBootstrap).toHaveLength(1);
+    expect(secondBootstrap[0].evidence.outcomes).toBe(projectOutcomes);
+    expect(secondBootstrap[0].reason).toBe(
+      `Bootstrap from ${projectOutcomes} recorded outcomes in this project; evidence is limited.`,
+    );
+    expect(secondBootstrap[0].reason).not.toBe(bootstrap[0].reason);
   });
 });

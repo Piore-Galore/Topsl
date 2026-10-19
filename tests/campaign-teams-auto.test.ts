@@ -553,15 +553,12 @@ describe("§6.1 membership identity and fallbacks", () => {
 // ---------------------------------------------------------------------------
 // TEAM-01 roles and routes
 
-describe("TEAM-03 (observation): an exact count above maxCount", () => {
-  test("TEAM-03 (observation): count 5 with maxCount 3 at one scope is not reported as a conflict; the count wins", () => {
-    // Recorded as an observed risk, not a confirmed defect: minCount > maxCount
-    // is a conflict, but count > maxCount is silently resolved in favour of count.
-    const role = builtInRoleDefinitions.reviewer;
-    const group = effectiveGroup({
+describe("TEAM-03: an exact count above a maxCount set at the same scope", () => {
+  const countAboveMax = () =>
+    effectiveGroup({
       projectId: "p",
       goalId: "g",
-      role,
+      role: builtInRoleDefinitions.reviewer,
       memberLimit: 8,
       layers: [
         {
@@ -571,7 +568,17 @@ describe("TEAM-03 (observation): an exact count above maxCount", () => {
         },
       ],
     });
-    expect(group).toMatchObject({ count: 5, maxCount: 3, conflicts: [] });
+
+  test("TEAM-03 (observation, not PASS evidence): count 5 with maxCount 3 at one scope retains the requested count; 5 assignments resolve", () => {
+    // Preconditions of the contract test below: the owner set both fields
+    // at the same scope, both are retained as written, and the requested
+    // count is kept (the specification's "retain the requested count").
+    const role = builtInRoleDefinitions.reviewer;
+    const group = countAboveMax();
+    expect(group).toMatchObject({ count: 5, maxCount: 3 });
+    expect(group.userFields).toEqual(
+      expect.arrayContaining(["count", "maxCount"]),
+    );
     expect(
       resolveGroup({
         role,
@@ -597,6 +604,29 @@ describe("TEAM-03 (observation): an exact count above maxCount", () => {
       }).conflicts,
     ).toEqual(["The minimum count 4 exceeds the maximum 3."]);
   });
+
+  // CAMPAIGN DEFECT TEAM-03: an owner-set exact count 5 above an owner-set maxCount 3 at the same scope yields conflicts [] instead of a field-named conflict (membership.ts:171-183 checks memberLimit, members>count and minCount>maxCount, never count>maxCount).
+  test.fails(
+    "TEAM-03: count 5 with maxCount 3 set at the same scope is reported as a conflict naming the count and the maximum",
+    () => {
+      // Contract: plan TEAM-03 ("unavailability reason specifies exact
+      // field") and docs/Coordinator_Feature_Specification.md:96 ("When an
+      // explicit count conflicts with a configured ceiling ... retain the
+      // requested count and explain the conflict"). Retention is shown by
+      // the observation test above; the explanation is what is missing.
+      const conflicts = countAboveMax().conflicts;
+      expect(
+        conflicts.some(
+          (c) =>
+            /\b5\b/.test(c) &&
+            /\b3\b/.test(c) &&
+            /count/i.test(c) &&
+            /max/i.test(c),
+        ),
+        `conflicts were ${JSON.stringify(conflicts)}`,
+      ).toBe(true);
+    },
+  );
 });
 
 describe("TEAM-01: any role on any qualified route", () => {
@@ -684,7 +714,7 @@ describe("TEAM-01: any role on any qualified route", () => {
     }
   });
 
-  test("TEAM-01: swapping coordinator and reviewer providers, with three and five members, records the requested and reported model of every turn", async () => {
+  test("TEAM-01: swapping coordinator and reviewer providers, with three and five members, records the requested and reported model of every turn; a different reported model is stored as reported, invalid, and never substituted", async () => {
     for (const [text, coordinators, reviewers] of [
       [
         "Change the value. Use Opus, Fable and Astra as coordinators. Review with Sol and Vega.",
@@ -732,6 +762,74 @@ describe("TEAM-01: any role on any qualified route", () => {
             r.members.find((m) => m.memberId === c.memberId)!.model,
           );
       }
+
+      // Requested versus reported, discriminating: the last reviewer's
+      // runtime reports a model other than the one requested. The stored
+      // contribution must carry the provider's report verbatim (not an echo
+      // of the request), the durable assignment revision must keep the
+      // request (no substitution to the reported model), and the
+      // contribution must not satisfy the member.
+      const g = await setup();
+      const requested = reviewers[reviewers.length - 1];
+      const reported = "provider-reported-fixture";
+      g.driver.reply = (turn) =>
+        turn.purpose === "candidate-review" &&
+        turn.assignment.model === requested
+          ? ({
+              ...(defaultReply(turn) as object),
+              reportedModel: reported,
+            } as never)
+          : defaultReply(turn);
+      const { goal: other } = await start(g, text);
+      expect(await drive(g.orchestrator, g.driver, other.id)).toBe("blocked");
+      const review = rounds(g, other.id, "review")[0];
+      // The round roster is unchanged: same requested models, in order.
+      expect(review.members.map((m) => m.model)).toEqual(reviewers);
+      const member = review.members.find((m) => m.model === requested)!;
+      const launches = g.driver.launches.filter(
+        (l) => l.roundId === review.id && l.memberId === member.memberId,
+      );
+      expect(launches.length).toBeGreaterThan(0);
+      expect(launches.every((l) => l.assignment.model === requested)).toBe(
+        true,
+      );
+      const stored = g.orchestrator.contributions(review.id, "p");
+      const mismatched = stored.filter((c) => c.memberId === member.memberId);
+      expect(mismatched.length).toBeGreaterThan(0);
+      for (const c of mismatched) {
+        expect(c.reportedModel).toBe(reported);
+        expect(c.reportedModel).not.toBe(requested);
+        expect(c.validation).toEqual({
+          state: "invalid",
+          reason: `The runtime reported ${reported}, not the assigned ${requested}. This contribution cannot satisfy the member.`,
+        });
+        expect(c.assignmentId).toBe(member.assignmentId);
+        expect(
+          g.orchestrator.repo.assignmentRevision(
+            c.assignmentId,
+            c.assignmentRevision,
+          )!.model,
+        ).toBe(requested);
+      }
+      expect(
+        g.orchestrator.repo.require<{ model: string | null }>(
+          kinds.assignment,
+          member.assignmentId,
+        ).model,
+      ).toBe(requested);
+      // Control: the honest reviewers in the same round are valid and
+      // record their own requested model as reported.
+      const honest = stored.filter((c) => c.memberId !== member.memberId);
+      expect(new Set(honest.map((c) => c.memberId)).size).toBe(
+        reviewers.length - 1,
+      );
+      for (const c of honest) {
+        expect(c.validation.state).toBe("valid");
+        expect(c.reportedModel).toBe(
+          review.members.find((m) => m.memberId === c.memberId)!.model,
+        );
+      }
+      expect(goalOf(g, other.id).state).toBe("blocked");
     }
   });
 });
@@ -1667,14 +1765,26 @@ describe("J-04: three coordinators, five reviewers, dependent work, minority fin
       "reviewer-auto-5",
     ]);
     expect(blocked.findings[0].silentMemberIds).toHaveLength(4);
-    // Acceptance is closed while the finding is open.
+    // Acceptance is closed while the finding is open: refused by the
+    // goal-state gate with its exact reason, and the durable goal row is
+    // unchanged (still blocked, no acceptance, same candidate).
+    const beforeRefusal = goalOf(f, goal.id);
+    expect(beforeRefusal.state).toBe("blocked");
+    const blockedDigest = f.orchestrator.acceptanceDigest(goal.id);
     await expect(
       f.orchestrator.accept({
         goalId: goal.id,
-        digest: f.orchestrator.acceptanceDigest(goal.id),
+        digest: blockedDigest,
         commandId: cmd(),
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(
+      /^Acceptance is stale, or the review group has not completed for this candidate\.$/,
+    );
+    const afterRefusal = goalOf(f, goal.id);
+    expect(afterRefusal.state).toBe("blocked");
+    expect(afterRefusal.acceptance ?? null).toBeNull();
+    expect(afterRefusal.candidateId).toBe(beforeRefusal.candidateId);
+    expect(afterRefusal.revision).toBe(beforeRefusal.revision);
     await f.orchestrator.repair({ goalId: goal.id, commandId: cmd() });
     expect(
       await drive(f.orchestrator, f.driver, goal.id, { maxSteps: 200 }),
@@ -1694,6 +1804,20 @@ describe("J-04: three coordinators, five reviewers, dependent work, minority fin
     ]);
     for (const p of plans)
       await f.orchestrator.runCheck({ planId: p.id, digest: p.digest });
+    expect(goalOf(f, goal.id).state).toBe("awaiting-acceptance");
+    // Control for the refusal above: in the accepting state, the digest
+    // captured while blocked is stale and is refused with the same exact
+    // reason; only the current digest is accepted.
+    expect(f.orchestrator.acceptanceDigest(goal.id)).not.toBe(blockedDigest);
+    await expect(
+      f.orchestrator.accept({
+        goalId: goal.id,
+        digest: blockedDigest,
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(
+      /^Acceptance is stale, or the review group has not completed for this candidate\.$/,
+    );
     expect(goalOf(f, goal.id).state).toBe("awaiting-acceptance");
     const accepted = await f.orchestrator.accept({
       goalId: goal.id,

@@ -20,6 +20,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -518,6 +519,13 @@ function groupedAdapter(
   const adapter = new ClaudeAdapter(undefined, undefined, {
     routeAllowed: () => true,
     stall,
+    // Read only when the runtime manager starts a run over this adapter.
+    readAccount: async () => ({
+      accountKey: "campaign-account",
+      profileId: "campaign-profile",
+      billingRoute: "native-subscription",
+      sanitized: { type: "claude.ai", email: null, planType: "max" },
+    }),
     transport: (_executable, args, cwd) => {
       const child = spawn(process.execPath, ["-e", script, "--", ...args], {
         cwd,
@@ -548,6 +556,16 @@ const alive = (pid: number) => {
     return true;
   } catch (error: any) {
     return error.code === "EPERM";
+  }
+};
+/** Independent of Topsl's own lifecycle evidence: signal 0 to a pid, or to
+ * a POSIX process group as -pgid. "alive" or the errno code (ESRCH: gone). */
+const probe = (target: number) => {
+  try {
+    process.kill(target, 0);
+    return "alive";
+  } catch (error: any) {
+    return String(error.code);
   }
 };
 async function scratch(prefix: string) {
@@ -640,6 +658,169 @@ fs.writeFileSync(${JSON.stringify(pidFile)}, String(d.pid));`,
     expect(lifecycle.state).toBe("quiescent");
     expect(lifecycle.remainingGroup).toBe("absent");
     await vi.waitFor(() => expect(alive(descendantPid)).toBe(false));
+  });
+
+  // The adapter's "failed" label above is not the system outcome. These two
+  // tests drive the production RuntimeManager (finish -> settle ->
+  // ProcessLifecycle.stop -> confirmStopped / markUncertain) over the same
+  // grouped stand-in and read the durable run, lease, concurrency-slot and
+  // task-process-lifecycle rows, with the descendant checked by an
+  // independent signal-0 probe. isolatedFixture=true only skips the Claude
+  // route/qualification gate before dispatch; the lifecycle path is unchanged.
+  const descendantScript = (pidFile: string) =>
+    streamScript(
+      `const d = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(
+        `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`,
+      )}], { stdio: "ignore", env: process.env });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(d.pid));`,
+    );
+  async function managedStall() {
+    const f = await fixture();
+    const directory = await realpath(await scratch("campaign-cl13-ws-")),
+      pidFile = path.join(directory, "..", `${path.basename(directory)}.pid`);
+    cleanup.push(() => rm(pidFile, { force: true }));
+    const installation = { ...f.installation, appId: "anthropic.claude-code-cli" as const };
+    f.store.put("installation", installation);
+    const { adapter, spawned } = groupedAdapter(descendantScript(pidFile), {});
+    const runtime = new RuntimeManager(
+      f.store,
+      () => {},
+      () => {},
+      undefined,
+      undefined,
+      { claude: adapter },
+      true,
+    );
+    const state = { descendant: 0 };
+    cleanup.push(async () => {
+      await runtime.close();
+      // Never leave a stand-in group behind, whatever the test observed.
+      for (const pid of spawned)
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {}
+      if (state.descendant)
+        try {
+          process.kill(state.descendant, "SIGKILL");
+        } catch {}
+      f.store.close();
+      await rm(f.directory, { recursive: true, force: true });
+    });
+    const project = {
+      id: uid(),
+      name: "cl13",
+      path: directory,
+      realPath: directory,
+      trusted: true,
+      createdAt: now(),
+    };
+    const conversation = {
+      id: uid(),
+      projectId: project.id,
+      title: "CL-13",
+      nativeSessions: {},
+      createdAt: now(),
+    };
+    f.store.put("project", project);
+    f.store.put("conversation", conversation);
+    const run = await runtime.start(installation, conversation, project, "campaign", "claude-fixture-5", "review");
+    const attempt = runtime.coordinator.attemptForRun(run.id)!;
+    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 10_000 });
+    state.descendant = Number(readFileSync(pidFile, "utf8"));
+    const rows = () => ({
+      run: f.store.get<any>("run", run.id),
+      lease: f.store.db
+        .prepare("SELECT body FROM workspace_leases")
+        .all()
+        .map((row: any) => JSON.parse(row.body))
+        .find((lease: any) => lease.attemptId === attempt.id),
+      slot: f.store.get<any>("concurrency-slot", attempt.id),
+      lifecycle: f.store.get<any>("task-process-lifecycle", run.id),
+    });
+    return { f, runtime, run, attempt, spawned, state, rows, installation, conversation, project };
+  }
+
+  test("CL-13 (manager): after a stall kill the run is labelled failed, but the writer lease and concurrency slot stay held while a group member lives; both are released only after the group is gone", async () => {
+    const m = await managedStall();
+    const leader = m.spawned[0];
+    // The stall SIGTERM ends the leader; the manager records the adapter's
+    // failure at once and starts the lifecycle stop.
+    await vi.waitFor(() => expect(m.rows().run.status).toBe("failed"), { timeout: 10_000, interval: 10 });
+    const window = m.rows();
+    expect(window.run.error).toContain("after the model's message ended");
+    // Positive control: the independent probe sees the descendant and its
+    // process group alive while the leader is already gone.
+    expect(probe(leader)).toBe("ESRCH");
+    expect(probe(m.state.descendant)).toBe("alive");
+    expect(probe(-leader)).toBe("alive");
+    // Negative control: nothing was released while that member lives.
+    expect(window.lease).toMatchObject({ state: "held" });
+    expect(window.slot).toMatchObject({ state: "held" });
+    expect(window.lifecycle).toBeUndefined();
+    expect(m.runtime.coordinator.ownership.forAttempt(m.attempt.id)?.state).toBe("held");
+    // No lease reassignment: a new writer on the same folder is refused.
+    await expect(
+      m.runtime.start(m.installation, m.conversation, m.project, "again", "claude-fixture-5", "review"),
+    ).rejects.toThrow("This workspace already has a native session or writer lease.");
+    // The lifecycle stop escalates to the group SIGKILL after its 5 s grace;
+    // only then are the lease and slot released.
+    await vi.waitFor(() => expect(m.rows().lease.state).toBe("released"), { timeout: 15_000, interval: 25 });
+    const after = m.rows();
+    expect(probe(m.state.descendant)).toBe("ESRCH");
+    expect(probe(-leader)).toBe("ESRCH");
+    expect(after.slot).toMatchObject({ state: "released" });
+    expect(after.lifecycle).toMatchObject({
+      state: "quiescent",
+      scope: "posix-process-group",
+      remainingGroup: "absent",
+      groupId: leader,
+    });
+    expect(after.run).toMatchObject({ status: "failed" });
+  });
+
+  test("CL-13 (manager): when the group signals fail and a member survives, the run becomes uncertain, the lease is held uncertain and reconciliation is refused until the group is really gone", async () => {
+    const m = await managedStall();
+    const leader = m.spawned[0];
+    // Simulate a termination signal that cannot be delivered to the group
+    // (EPERM). Every other process.kill, including signal-0 probes and the
+    // adapter's own ChildProcess.kill, is real.
+    const realKill = process.kill.bind(process);
+    const signals = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => {
+      if (pid === -leader && signal !== 0 && signal !== undefined)
+        throw Object.assign(new Error(`kill EPERM`), { code: "EPERM", errno: -1, syscall: "kill" });
+      return realKill(pid, signal as any);
+    }) as typeof process.kill);
+    cleanup.push(() => signals.mockRestore());
+    await vi.waitFor(() => expect(m.rows().run.status).toBe("failed"), { timeout: 10_000, interval: 10 });
+    // Settle: SIGTERM fails, 5 s grace, SIGKILL fails, group still present.
+    await vi.waitFor(() => expect(m.rows().run.status).toBe("uncertain"), { timeout: 15_000, interval: 25 });
+    const held = m.rows();
+    expect(held.run.error).toContain("Task quiescence is unproven");
+    expect(held.lifecycle).toMatchObject({ state: "uncertain", remainingGroup: "present", groupId: leader });
+    expect(held.lease).toMatchObject({ state: "uncertain" });
+    expect(held.slot).toMatchObject({ state: "held" });
+    expect(probe(m.state.descendant)).toBe("alive");
+    expect(probe(-leader)).toBe("alive");
+    // No automatic reassignment and no reconciliation while the member lives.
+    await expect(
+      m.runtime.start(m.installation, m.conversation, m.project, "again", "claude-fixture-5", "review"),
+    ).rejects.toThrow("Workspace has uncertain ownership; reconcile before starting another writer.");
+    await expect(m.runtime.reconcile(m.run.id)).rejects.toThrow(
+      "Owned descendant group is still present or unknown. Reconciliation cannot release this workspace.",
+    );
+    expect(m.rows().lease).toMatchObject({ state: "uncertain" });
+    expect(m.rows().slot).toMatchObject({ state: "held" });
+    // Control: once the group is really gone, reconciliation releases both.
+    signals.mockRestore();
+    process.kill(-leader, "SIGKILL");
+    await vi.waitFor(() => {
+      expect(probe(-leader)).toBe("ESRCH");
+      expect(probe(m.state.descendant)).toBe("ESRCH");
+    });
+    await m.runtime.reconcile(m.run.id);
+    expect(m.rows().lease).toMatchObject({ state: "released" });
+    expect(m.rows().slot).toMatchObject({ state: "released" });
+    expect(m.rows().run).toMatchObject({ status: "interrupted" });
   });
 });
 
@@ -943,13 +1124,30 @@ describe("CL-04/CL-06 qualification probes that need evidence fail closed when i
         billingRoute: "native-subscription",
         sanitized: { type: "claude.ai", email: null, planType: "max" },
       }),
-      transport: (_executable, args, cwd) =>
-        spawn(process.execPath, [standIn, ...args], {
+      transport: (_executable, args, cwd) => {
+        const child = spawn(process.execPath, [standIn, ...args], {
           cwd,
           shell: false,
           env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1", FIXTURE_STALL: "silent" }),
           detached: posix,
-        }),
+        });
+        const pid = child.pid!;
+        turns.push({ pid, before: null });
+        // Positive control, mid-turn (the turn timeout is 1,000 ms): the same
+        // independent probe used after the stop sees the process and its
+        // group alive before Topsl stops it.
+        setTimeout(() => {
+          turns.find((t) => t.pid === pid)!.before = posix ? [probe(pid), probe(-pid)] : [probe(pid)];
+        }, 400);
+        return child;
+      },
+    });
+    const turns: Array<{ pid: number; before: string[] | null }> = [];
+    cleanup.push(() => {
+      for (const { pid } of turns)
+        try {
+          process.kill(posix ? -pid : pid, "SIGKILL");
+        } catch {}
     });
     const report = await runClaudeQualification({
       adapter,
@@ -964,6 +1162,16 @@ describe("CL-04/CL-06 qualification probes that need evidence fail closed when i
     expect(o["structured-turn"].detail).toContain("structured-turn turn exceeded 1000 ms");
     expect(o["process-lifecycle"]).toMatchObject({ passed: true });
     expect(o["process-lifecycle"].detail).toMatch(/^4 of 4 turn processes stopped/);
+    // The product's "4 of 4 stopped" is checked independently: four turn
+    // processes (plus the account read's connection, which starts none) were
+    // seen alive mid-turn, and after the report every pid and its process
+    // group is gone (ESRCH), not merely reported quiescent.
+    expect(turns).toHaveLength(4);
+    for (const turn of turns) {
+      expect(turn.before, `pid ${turn.pid} before the stop`).toEqual(posix ? ["alive", "alive"] : ["alive"]);
+      expect(probe(turn.pid), `pid ${turn.pid} after the report`).toBe("ESRCH");
+      if (posix) expect(probe(-turn.pid), `group ${turn.pid} after the report`).toBe("ESRCH");
+    }
   });
 });
 

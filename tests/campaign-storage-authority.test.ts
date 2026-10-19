@@ -2,7 +2,7 @@
 // In-process storage and authority cases through the real Store, repositories
 // and Service.command. Child-process and CLI cases are in
 // campaign-storage-authority-process.test.ts.
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import { randomBytes } from "node:crypto";
@@ -18,6 +18,7 @@ import { hash, now, uid } from "../packages/domain/invariants";
 import type { Project } from "../packages/domain/types";
 import type { Task, Workflow } from "../packages/domain/workflow";
 import { Service } from "../apps/service/service";
+import { captureCandidate } from "../packages/workflows/candidates";
 import { fixture } from "./helpers";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -678,7 +679,7 @@ describe("TASK-08 committed versus rolled-back events through the service", () =
         role: "implementer",
         acceptanceCriteria: [],
       }),
-    ).rejects.toThrow("another project");
+    ).rejects.toThrow(/^Task workspace belongs to another project\.$/);
     const afterRollback = await f.service.command({
       type: "scope-events",
       projectId: "A",
@@ -720,7 +721,123 @@ describe("TASK-08 committed versus rolled-back events through the service", () =
         afterSequence: f.service.store.controlHead() + 1,
         limit: 200,
       }),
-    ).rejects.toThrow("resync");
+    ).rejects.toThrow(/^Event cursor belongs to a newer or restored vault; resync required\.$/);
+  });
+
+  test("a command that writes inside its transaction and then fails leaves no partial write in the durable store", async () => {
+    const f = await serviceFixture();
+    const store = f.service.store;
+    const file = path.join(f.directory, "history.sqlite");
+    const canary = "TASK08_ROLLBACK_CANARY";
+    const workflow: Workflow = await f.service.command({
+      type: "workflow-create",
+      requestId: uid(),
+      projectId: "A",
+      objective: "rollback fixture",
+      template: "manual",
+      templateVersion: "v1",
+    });
+    expect(workflow).toMatchObject({ revision: 1, taskIds: [] });
+    const create = () =>
+      f.service.command({
+        type: "task-create",
+        requestId: uid(),
+        projectId: "A",
+        workspaceId: f.workspaceA.id,
+        workflowId: workflow.id,
+        conversationId: null,
+        title: canary,
+        role: "implementer",
+        acceptanceCriteria: [],
+      });
+    /** Rows a second, independent connection sees in the encrypted file (committed state only). */
+    const durable = (after: number) => {
+      const db = rawOpen(file, f.key);
+      try {
+        return {
+          tasks: db
+            .prepare("SELECT id,body FROM documents WHERE kind='task' AND json_extract(body,'$.title')=?")
+            .all(canary) as Array<{ id: string; body: string }>,
+          taskRevisions: db
+            .prepare("SELECT id FROM documents WHERE kind='task-revision' AND json_extract(body,'$.title')=?")
+            .all(canary),
+          workflow: JSON.parse(
+            (db.prepare("SELECT body FROM documents WHERE kind='workflow' AND id=?").get(workflow.id) as any).body,
+          ),
+          workflowRevisions: db
+            .prepare("SELECT id FROM documents WHERE kind='workflow-revision' AND json_extract(body,'$.entityId')=? ORDER BY id")
+            .all(workflow.id)
+            .map((row: any) => row.id),
+          workflowEvents: db
+            .prepare("SELECT kind FROM events WHERE kind='workflow.changed' AND instr(body,?)>0")
+            .all(workflow.id)
+            .map((row: any) => row.kind),
+          canaryEvents: db.prepare("SELECT kind FROM events WHERE instr(body,?)>0").all(canary),
+          changes: db
+            .prepare("SELECT kind FROM control_changes WHERE sequence>? ORDER BY sequence")
+            .all(after)
+            .map((row: any) => row.kind),
+        };
+      } finally {
+        db.close();
+      }
+    };
+    const mark = store.controlHead();
+    const before = durable(mark);
+    expect(before.workflowRevisions).toEqual([`${workflow.id}:1`]);
+    // Fault injection after the command has already written the workflow update,
+    // the task row, its task.changed event and their control_changes rows inside
+    // createTask's single transaction: the final write (the task revision) throws.
+    const immutable = store.immutable.bind(store);
+    const fault = vi.spyOn(store, "immutable").mockImplementation((kind: string, value: any) => {
+      if (kind === "task-revision") {
+        // The partial writes exist inside the open transaction at this moment.
+        expect(store.get<Workflow>("workflow", workflow.id)?.revision).toBe(2);
+        expect(store.get<Task>("task", value.entityId)?.title).toBe(canary);
+        throw new Error("CAMPAIGN TASK-08 injected failure after the task write");
+      }
+      return immutable(kind, value);
+    });
+    try {
+      await expect(create()).rejects.toThrow(/^CAMPAIGN TASK-08 injected failure after the task write$/);
+      expect(fault.mock.calls.some(([kind]) => kind === "task-revision")).toBe(true);
+    } finally {
+      fault.mockRestore();
+    }
+    const rolledBack = durable(mark);
+    expect(rolledBack.tasks).toEqual([]);
+    expect(rolledBack.taskRevisions).toEqual([]);
+    expect(rolledBack.workflow).toEqual(before.workflow);
+    expect(rolledBack.workflow).toMatchObject({ revision: 1, taskIds: [] });
+    expect(rolledBack.workflowRevisions).toEqual([`${workflow.id}:1`]);
+    expect(before.workflowEvents).toEqual(["workflow.changed"]);
+    expect(rolledBack.workflowEvents).toEqual(before.workflowEvents);
+    expect(rolledBack.canaryEvents).toEqual([]);
+    // Only the command receipt (prepared, then failed), written outside the
+    // transaction, reached the change log.
+    expect(rolledBack.changes).toEqual(["command-receipt", "command-receipt"]);
+    const page = await f.service.command({ type: "scope-events", projectId: "A", afterSequence: mark, limit: 200 });
+    expect(page.events.filter((e: any) => e.kind !== "command-receipt")).toEqual([]);
+    expect(page.throughSequence).toBe(store.controlHead());
+    // Control: the same command without the fault persists every write.
+    const markOk = store.controlHead();
+    const task: Task = await create();
+    const persisted = durable(markOk);
+    expect(persisted.tasks.map((row) => row.id)).toEqual([task.id]);
+    expect(persisted.taskRevisions).toEqual([{ id: `${task.id}:1` }]);
+    expect(persisted.workflow).toMatchObject({ revision: 2, taskIds: [task.id] });
+    expect(persisted.workflowRevisions).toEqual([`${workflow.id}:1`, `${workflow.id}:2`]);
+    expect(persisted.workflowEvents).toEqual(["workflow.changed", "workflow.changed"]);
+    expect(persisted.canaryEvents.map((row: any) => row.kind)).toEqual(["task.changed"]);
+    expect(persisted.changes.filter((kind: string) => kind !== "command-receipt").sort()).toEqual([
+      "task",
+      "task-revision",
+      "workflow",
+      "workflow-revision",
+    ]);
+    const committed = await f.service.command({ type: "scope-events", projectId: "A", afterSequence: markOk, limit: 200 });
+    expect(committed.events.some((e: any) => e.kind === "task" && e.id === task.id)).toBe(true);
+    expect(JSON.stringify(committed)).not.toContain(canary);
   });
 });
 
@@ -978,31 +1095,74 @@ describe("BOUND-03 cross-project references through the service", () => {
       revision: "r",
       files: [{ path: "secret.bin", hash: blobHash, bytes: bytes.length, type: "binary" }],
     });
-    const beforeB = structuredClone(store.get<Task>("task", taskB.id));
-    for (const command of [
-      { type: "task-inspect", projectId: "A", id: taskB.id },
-      { type: "task-inputs-inspect", projectId: "A", id: taskB.id },
-      {
-        type: "task-context-bind",
-        requestId: uid(),
-        projectId: "A",
-        id: taskB.id,
-        expectedRevision: taskB.revision,
-        contextPackageId: "x",
-      },
-      { type: "history-message", projectId: "A", id: "mB", offset: 0, limit: 100 },
-      {
-        type: "candidate-diff-query",
-        projectId: "A",
+    // Real captured candidates in project B's workflow (format 2, protected
+    // blobs), so the same diff and preview commands can succeed for B.
+    const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from(`${secret} v1`)]);
+    await writeFile(path.join(f.B.path, "image.png"), png);
+    const capture = (baseCandidateId?: string) =>
+      captureCandidate(store, {
+        root: f.B.path,
+        projectId: "B",
         workflowId: "wB",
-        candidateId: "candB",
-        baseCandidateId: "candB",
-        offset: 0,
-        limit: 20,
-      },
-      { type: "candidate-binary-preview", projectId: "A", candidateId: "candB", path: "secret.bin" },
-    ])
-      await expect(f.service.command(command as any), command.type).rejects.toThrow();
+        selectedPaths: ["image.png"],
+        gitExecutable: "missing-git-fixture",
+        ...(baseCandidateId ? { baseCandidateId } : {}),
+      });
+    const baseB = await capture();
+    const pngV2 = Buffer.concat([png.subarray(0, 8), Buffer.from(`${secret} v2`)]);
+    await writeFile(path.join(f.B.path, "image.png"), pngV2);
+    const nextB = await capture(baseB.id);
+    store.immutable("context-package", {
+      id: "pkgB",
+      projectId: "B",
+      conversationId: null,
+      text: "Package B",
+      hash: hash("Package B"),
+      sourceRefs: [],
+      specificationRevision: null,
+      omissions: [],
+      visibility: "project",
+      completeness: "recorded",
+      createdAt: now(),
+    });
+    const beforeB = structuredClone(store.get<Task>("task", taskB.id));
+    const bindingsBefore = store.list("task-input-binding").length;
+    // The same six operations, parameterised by the requesting project.
+    const operations = (projectId: string) =>
+      [
+        [{ type: "task-inspect", projectId, id: taskB.id }, /^Task belongs to another project\.$/],
+        [{ type: "task-inputs-inspect", projectId, id: taskB.id }, /^Task belongs to another project\.$/],
+        [
+          {
+            type: "task-context-bind",
+            requestId: uid(),
+            projectId,
+            id: taskB.id,
+            expectedRevision: taskB.revision,
+            contextPackageId: "pkgB",
+          },
+          /^Task belongs to another project\.$/,
+        ],
+        [{ type: "history-message", projectId, id: "mB", offset: 0, limit: 100 }, /^Message belongs to another project\.$/],
+        [
+          {
+            type: "candidate-diff-query",
+            projectId,
+            workflowId: "wB",
+            candidateId: nextB.id,
+            baseCandidateId: baseB.id,
+            offset: 0,
+            limit: 20,
+          },
+          /^Candidate diff belongs to another project or workflow\.$/,
+        ],
+        [
+          { type: "candidate-binary-preview", projectId, candidateId: nextB.id, path: "image.png" },
+          /^Candidate belongs to another project or is unavailable\.$/,
+        ],
+      ] as const;
+    for (const [command, reason] of operations("A"))
+      await expect(f.service.command(command as any), command.type).rejects.toThrow(reason);
     // Scoped reads filter instead of leaking.
     const page = await f.service.command({ type: "history-page", projectId: "A", conversationId: "cB", limit: 80 });
     const snapshot = await f.service.command({ type: "scope-snapshot", projectId: "A" });
@@ -1017,12 +1177,25 @@ describe("BOUND-03 cross-project references through the service", () => {
     expect(() =>
       blobs.read("A", "candB", { path: "secret.bin", hash: blobHash, bytes: bytes.length }),
     ).toThrow("No protected blob reference");
-    // Positive controls: project B can read its own records, and nothing changed.
-    expect(blobs.read("B", "candB", { path: "secret.bin", hash: blobHash, bytes: bytes.length })?.equals(bytes)).toBe(true);
-    expect((await f.service.command({ type: "history-message", projectId: "B", id: "mB", offset: 0, limit: 100 })).text).toBe(secret);
+    // Project A's attempts changed nothing in project B.
     expect(store.get("task", taskB.id)).toEqual(beforeB);
     expect(store.get("task-input-head", taskB.id)).toBeUndefined();
+    expect(store.list("task-input-binding")).toHaveLength(bindingsBefore);
     expect(store.get("approval", "apB")).toBeTruthy();
+    // Positive controls: the identical operations succeed for project B, the
+    // owner of every referenced record, so A's rejections are scope refusals.
+    const results: any[] = [];
+    for (const [command] of operations("B")) results.push(await f.service.command(command as any));
+    const [inspected, inputs, binding, message, diff, preview] = results;
+    expect(inspected.task).toMatchObject({ id: taskB.id, projectId: "B", title: secret });
+    expect(inputs).toMatchObject({ observation: { projectId: "B" } });
+    expect(binding).toMatchObject({ taskId: taskB.id, projectId: "B", contextPackageId: "pkgB" });
+    expect(store.get<any>("task-input-head", taskB.id)?.bindingId).toBe(binding.id);
+    expect(message).toMatchObject({ id: "mB", text: secret });
+    expect(diff.files.map((file: any) => [file.path, file.kind, file.binary])).toEqual([["image.png", "modified", true]]);
+    expect(preview).toMatchObject({ candidateId: nextB.id, path: "image.png", mime: "image/png" });
+    expect(Buffer.from(preview.base64, "base64").equals(pngV2)).toBe(true);
+    expect(blobs.read("B", "candB", { path: "secret.bin", hash: blobHash, bytes: bytes.length })?.equals(bytes)).toBe(true);
   });
 });
 

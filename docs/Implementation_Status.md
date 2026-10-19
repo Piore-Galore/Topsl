@@ -257,3 +257,40 @@ with `ANTHROPIC_*`/`CLAUDE_*` removed, from a disposable `topsl-test-*` profile,
 - Live evidence is one host, one Claude Code version (2.1.302), one Claude model (`claude-opus-5-5`) and one completed mixed loop on a one-line change. Coordinators of different providers disagreed on wording in every pass that reached child planning, and the completed run needed the procedure's owner branch choice. Interrupts were not tested live for Claude, the stall deadline has run only against stand-ins, Topsl does not bound a Claude turn that keeps generating (two live turns produced 128,000 output tokens), and the Applications controls were not driven on screen.
 - No packaged build, Windows or Linux run, or remote CI covered this change. The Applications controls for connecting and qualifying a Claude runtime were not driven on screen.
 - Build and review keeps Claude roles as native-terminal steps; the structured route there, native fan-out and interrupts remain unqualified for Claude.
+
+## Comprehensive test campaign — 19 October 2026
+
+The *Topsl Comprehensive Testing Plan* (359 cases, 14 journeys, 197 commands) was executed against `d4b788e` on darwin-arm64 only. Product code was not changed. Full results: the [campaign report](testing/TEST-REPORT.md), the [coverage register](testing/TEST-COVERAGE.md), the [defects and decisions](testing/TEST-DECISIONS.md) and the [phase state](testing/PHASE-STATE.md).
+
+**Verdict:** qualification failed for this source, and the campaign is incomplete. Confirmed P0 defects include these:
+
+- Stop is refused while Recursive Looping is turned off, yet runs continue (D-01).
+- Concurrent publication confirmations write twice (D-02).
+- Crash recovery after promotion leaves the child unsettled (D-03).
+- The rolling allowance undercounts past 2,000 updates, and a crash double-charges turns (D-04, D-05).
+- A failed managed interrupt skips cancellation cleanup (D-06).
+- A Codex-targeted handoff can be sent to Claude (D-07).
+- Secret-like replication inputs are accepted (D-08).
+
+**Established on darwin-arm64:**
+
+- The clean baseline passed: 635 of 640 Vitest tests passed, with 5 opt-in skips. Release tests passed 18/0/0, and all six desktop harnesses passed.
+- The lifecycle stress run passed 20/20 iterations, and the Round 2 stress run passed 6/6.
+- No-inference probes of Codex 0.163.0 passed: project API, reader tools and model catalog.
+- With the owner's sign-ins, a live Claude Code → Codex handoff passed. A live Codex qualification passed on retry after a first attempt timed out under load. A Claude `/usage` read passed.
+- The packaged `Topsl-0.1.2-mac-arm64.zip` passed identity, native modules, terminal, companion CLI, vault-fault and v0.1.1/v0.1.2 profile-upgrade checks.
+
+**Harness corrections:**
+
+- `scripts/test.mjs` now drops the billing variables Topsl refuses. A session exporting `ANTHROPIC_BASE_URL` had failed 143 tests.
+- `scripts/live-session.mjs` follows the Navigator's Atlas navigation; at `d4b788e` it failed before any model turn.
+- The Windows paths of `tests/claude-route.test.ts` were reworked (CL-17, CL-18); they are unverified.
+
+**Not established:**
+
+- Intel Mac, Windows and Linux.
+- The live Claude Build-and-review pairings, which need the owner to answer Claude Code's prompts during the run.
+- Claude live qualification.
+- Long soaks, screen-reader acceptance and real Gatekeeper first-open.
+
+The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

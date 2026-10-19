@@ -11,11 +11,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
 import os from "node:os";
-import { EventEmitter } from "node:events";
 import { writeFileSync } from "node:fs";
 import {
   chmod,
   lstat,
+  mkdtemp,
   mkdir,
   readFile,
   readdir,
@@ -28,6 +28,8 @@ import {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { IPty, spawn as ptySpawn } from "node-pty";
+import { spawn as realPtySpawn } from "node-pty";
+import { z } from "zod";
 import { Service } from "../apps/service/service";
 import { commandSchema } from "../packages/domain/commands";
 import { hash, now } from "../packages/domain/invariants";
@@ -58,6 +60,8 @@ import {
 import { ProviderUsage } from "../apps/desktop/renderer/components/allowance";
 import { readClaudeUsage } from "../packages/providers/claude-allowance";
 import { RuntimeManager } from "../packages/runtime/manager";
+import { Store } from "../packages/persistence/store";
+import { claudeRoutePreferenceId } from "../packages/domain/claude-route";
 import { fixture } from "./helpers";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -440,24 +444,45 @@ describe("CONF-02 malformed, oversized and arbitrary configuration input", () =>
       projectId: "p",
       kind: "native",
     });
-    for (const text of ["{oops", "[]", "null", "7"])
-      await expect(
-        f.send({
-          type: "configuration-preview",
-          path: read.path,
-          expectedHash: read.hash,
-          text,
-        }),
-      ).rejects.toThrow();
-    // Oversized text never reaches the service: the IPC parse refuses it.
-    expect(() =>
+    const preview = (text: string) =>
+      f.send({
+        type: "configuration-preview",
+        path: read.path,
+        expectedHash: read.hash,
+        text,
+      });
+    // Broken JSON is refused by the JSON parser itself (configuration.ts:103),
+    // not by a later check such as the hash or the readable-path guard.
+    const broken = preview("{oops");
+    await expect(broken).rejects.toThrow(SyntaxError);
+    await expect(broken).rejects.toThrow(/in JSON at position 1/);
+    // Valid JSON that is not an object is refused by the object check
+    // (configuration.ts:104-105), with its exact reason.
+    for (const text of ["[]", "null", "7"])
+      await expect(preview(text)).rejects.toThrow(
+        /^Settings must contain a JSON object\.$/,
+      );
+    // Oversized text never reaches the service: the IPC parse refuses it on
+    // the `text` field's 1,000,000-character maximum (commands.ts:905).
+    let oversized: unknown;
+    try {
       f.send({
         type: "configuration-preview",
         path: read.path,
         expectedHash: read.hash,
         text: "{" + " ".repeat(1_000_000) + "}",
+      });
+    } catch (error) {
+      oversized = error;
+    }
+    expect(oversized).toBeInstanceOf(z.ZodError);
+    expect((oversized as z.ZodError).issues).toEqual([
+      expect.objectContaining({
+        code: "too_big",
+        path: ["text"],
+        maximum: 1_000_000,
       }),
-    ).toThrow();
+    ]);
     // An unread path is refused by the service as well.
     await expect(
       f.send({
@@ -471,6 +496,22 @@ describe("CONF-02 malformed, oversized and arbitrary configuration input", () =>
     expect(f.holder.service.store.list("configuration-write")).toEqual([]);
     expect(await readFile(file, "utf8")).toBe('{"kept":true}');
     expect(await readdir(folder)).toEqual(["settings.json"]);
+    // Negative control: the same path, hash and command accept a JSON object
+    // and record exactly one plan, so the refusals above were not caused by a
+    // stale hash, an unread path or a store that cannot record plans.
+    const accepted = await preview('{"kept":false}');
+    expect(accepted).toMatchObject({
+      path: read.path,
+      before: '{"kept":true}',
+      after: '{"kept":false}',
+    });
+    expect(
+      f.holder.service.store
+        .list<ConfigurationPlan>("configuration-plan")
+        .map((p) => p.id),
+    ).toEqual([accepted.id]);
+    expect(f.holder.service.store.list("configuration-write")).toEqual([]);
+    expect(await readFile(file, "utf8")).toBe('{"kept":true}');
   });
 
   test("comments, formatting and unknown fields the owner left unchanged are written byte for byte", async () => {
@@ -932,22 +973,57 @@ describe("CONF-11 transcript-read setting takes effect immediately", () => {
 
   test("the structured route's decision time is kept, and turning it off is persisted across restart", async () => {
     const f = await serviceFixture();
+    // Only Date is faked, so the service's own timers and I/O run normally.
+    // Each decision is made at a distinct, known instant, so a reused (stale)
+    // decision time cannot satisfy the exact assertions below.
+    const onAt = "2026-10-19T08:00:00.000Z",
+      offAt = "2026-10-19T09:30:00.000Z",
+      restartAt = "2026-10-19T11:45:00.000Z";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(onAt));
     const on = await f.send(
       { type: "claude-structured-route-set", enabled: true },
       { confirmedClaudeRoute: true },
     );
-    expect(on.enabled).toBe(true);
+    expect(on).toEqual({ enabled: true, decidedAt: onAt });
+    vi.setSystemTime(new Date(offAt));
     const off = await f.send({
       type: "claude-structured-route-set",
       enabled: false,
     });
-    expect(off.enabled).toBe(false);
-    expect(Date.parse(off.decidedAt)).toBeGreaterThanOrEqual(
-      Date.parse(on.decidedAt),
-    );
+    expect(off).toEqual({ enabled: false, decidedAt: offAt });
+    expect(Date.parse(off.decidedAt)).toBeGreaterThan(Date.parse(on.decidedAt));
+    // The durable preference row holds the latest decision and its own time.
+    expect(
+      f.holder.service.store.get("preference", claudeRoutePreferenceId),
+    ).toMatchObject({ value: false, decidedAt: offAt });
+    // Historical provenance: each decision's event keeps its own time.
+    const history = () =>
+      f.holder.service.store.db
+        .prepare(
+          "SELECT body FROM events WHERE kind = 'claude-structured-route.set' ORDER BY rowid",
+        )
+        .all()
+        .map((row: any) => JSON.parse(row.body));
+    expect(history()).toEqual([
+      { enabled: true, decidedAt: onAt },
+      { enabled: false, decidedAt: offAt },
+    ]);
+    // A restart later neither re-stamps the decision nor loses it.
+    vi.setSystemTime(new Date(restartAt));
     const service = await f.restart();
-    expect(service.state().claudeStructuredRoute).toEqual(off);
-    expect(service.runtime.claudeRoute().enabled).toBe(false);
+    expect(service.state().claudeStructuredRoute).toEqual({
+      enabled: false,
+      decidedAt: offAt,
+    });
+    expect(service.runtime.claudeRoute()).toEqual({
+      enabled: false,
+      decidedAt: offAt,
+    });
+    expect(history()).toEqual([
+      { enabled: true, decidedAt: onAt },
+      { enabled: false, decidedAt: offAt },
+    ]);
   });
 });
 
@@ -1116,42 +1192,195 @@ describe("USAGE-06 allowance freshness boundaries and clock changes", () => {
   });
 });
 
-describe("USAGE-08 Claude display with a login prompt", () => {
-  test("a sign-in prompt is never answered: the read times out with a sign-in hint and closes the terminal", async () => {
-    const events = new EventEmitter();
-    const kill = vi.fn(() =>
-      setImmediate(() => events.emit("exit", { exitCode: 0 })),
-    );
-    const write = vi.fn();
-    const terminal = {
-      kill,
-      write,
-      onData: (callback: (data: string) => void) => {
-        events.on("data", callback);
-        return { dispose: () => events.off("data", callback) };
-      },
-      onExit: (callback: (event: { exitCode: number }) => void) => {
-        events.on("exit", callback);
-        return { dispose: () => events.off("exit", callback) };
-      },
-    } as unknown as IPty;
-    const launch = vi.fn(() => terminal) as unknown as typeof ptySpawn;
-    const reading = readClaudeUsage(
-      "claude",
-      "/trusted",
-      new AbortController().signal,
-      { spawn: launch, timeoutMs: 50 },
-    );
-    events.emit(
-      "data",
-      "\x1b[1mSelect login method:\x1b[0m\r\n❯ 1. Claude account with subscription\r\n  2. Anthropic Console account\r\nPaste code here if prompted >",
-    );
-    await expect(reading).rejects.toThrow(/sign-in/);
-    expect(write).not.toHaveBeenCalled();
-    expect(kill).toHaveBeenCalledOnce();
-    expect(events.listenerCount("data")).toBe(0);
-  });
-});
+describe.skipIf(process.platform === "win32")(
+  "USAGE-08 Claude display with a login prompt",
+  () => {
+    const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
+    const prompt =
+      "\x1b[1mSelect login method:\x1b[0m\r\n\u276f 1. Claude account with subscription\r\n  2. Anthropic Console account\r\nOAuth token: sk-ant-oat01-private-credential-must-not-leak\r\nPaste code here if prompted >";
+    /**
+     * A real PTY stand-in: an executable shell wrapper that runs Node in the
+     * pseudo-terminal node-pty opens, prints a login screen, records its pid,
+     * puts its terminal in raw mode and appends every byte it receives on
+     * stdin to `stdin`. Nothing is answered for it; it never exits by itself.
+     */
+    async function standIn() {
+      const directory = await mkdtemp(
+        path.join(os.tmpdir(), "topsl-usage-08-"),
+      );
+      cleanup.push(() => rm(directory, { recursive: true, force: true }));
+      const script = path.join(directory, "login-prompt.cjs"),
+        executable = path.join(directory, "claude");
+      await writeFile(
+        script,
+        [
+          'const fs = require("node:fs");',
+          `const dir = ${JSON.stringify(directory)};`,
+          'fs.writeFileSync(dir + "/stdin", "");',
+          "if (process.stdin.isTTY) process.stdin.setRawMode(true);",
+          'process.stdin.on("data", (b) => fs.appendFileSync(dir + "/stdin", b));',
+          'fs.writeFileSync(dir + "/args.json", JSON.stringify(process.argv.slice(2)));',
+          `process.stdout.write(${JSON.stringify(prompt)});`,
+          'fs.writeFileSync(dir + "/pid", String(process.pid));',
+          "setInterval(() => {}, 1000);",
+          "",
+        ].join("\n"),
+      );
+      await writeFile(
+        executable,
+        `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+      );
+      await chmod(executable, 0o700);
+      const opened: IPty[] = [];
+      const written: string[] = [];
+      let subscriptions = 0;
+      const output: string[] = [];
+      // The real node-pty spawn. The wrapper only observes: it records what
+      // the reader writes and how many of its subscriptions stay attached.
+      const spawn = ((...args: Parameters<typeof realPtySpawn>) => {
+        const terminal = realPtySpawn(...args);
+        opened.push(terminal);
+        terminal.onData((chunk) => output.push(chunk));
+        // node-pty exposes onData/onExit as prototype getters, so the
+        // observers are defined on this instance rather than assigned. It also
+        // replaces `write` with a no-op when the terminal closes
+        // (node-pty/lib/terminal.js:171); the accessor keeps recording any
+        // write, including one made after that.
+        let inner: (data: string | Buffer) => void =
+          terminal.write.bind(terminal);
+        const recordingWrite = (data: string | Buffer) => {
+          written.push(String(data));
+          inner(data);
+        };
+        Object.defineProperty(terminal, "write", {
+          configurable: true,
+          get: () => recordingWrite,
+          set: (replacement: (data: string | Buffer) => void) => {
+            inner = replacement;
+          },
+        });
+        for (const name of ["onData", "onExit"] as const) {
+          const original = terminal[name];
+          Object.defineProperty(terminal, name, {
+            value: (listener: any) => {
+              subscriptions++;
+              const handle = (original as any)(listener);
+              return {
+                dispose: () => {
+                  subscriptions--;
+                  handle.dispose();
+                },
+              };
+            },
+          });
+        }
+        return terminal;
+      }) as typeof ptySpawn;
+      const pid = async () => {
+        await expect
+          .poll(() =>
+            readFile(path.join(directory, "pid"), "utf8").then(
+              () => true,
+              () => false,
+            ),
+            // Starting Node in a PTY can take seconds on a loaded host.
+            { timeout: 10_000 },
+          )
+          .toBe(true);
+        return Number(await readFile(path.join(directory, "pid"), "utf8"));
+      };
+      const alive = (id: number) => {
+        try {
+          process.kill(id, 0);
+          return true;
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code !== "ESRCH";
+        }
+      };
+      const received = () => readFile(path.join(directory, "stdin"), "utf8");
+      return {
+        directory,
+        executable,
+        spawn,
+        opened,
+        written,
+        output,
+        subscriptions: () => subscriptions,
+        pid,
+        alive,
+        received,
+      };
+    }
+    const timeoutReason =
+      "Claude did not return a supported /usage display. Run /usage in Claude Code to check sign-in, folder trust and runtime compatibility.";
+
+    test("a sign-in prompt is never answered: the read times out with a sign-in hint and closes the terminal", async () => {
+      const s = await standIn();
+      const reading = readClaudeUsage(
+        s.executable,
+        s.directory,
+        new AbortController().signal,
+        { spawn: s.spawn, timeoutMs: 12_000 },
+      );
+      const outcome = reading.then(
+        () => null,
+        (error: Error) => error,
+      );
+      // Preconditions: the stand-in really runs in the PTY node-pty opened,
+      // is alive while the reader waits, and its login screen reached the
+      // reader (so the outcome below is not a start failure).
+      const pid = await s.pid();
+      expect(s.opened).toHaveLength(1);
+      expect(s.opened[0].pid).toBe(pid);
+      expect(s.alive(pid)).toBe(true);
+      await expect
+        .poll(() => s.output.join(""), { timeout: 10_000 })
+        .toContain("Paste code here if prompted >");
+      const args = JSON.parse(
+        await readFile(path.join(s.directory, "args.json"), "utf8"),
+      );
+      expect(args).toContain("--safe-mode");
+      expect(args.at(-1)).toBe("/usage");
+      const error = await outcome;
+      expect(error).toBeInstanceOf(Error);
+      expect(error!.message).toBe(timeoutReason);
+      expect(error!.message).not.toContain("sk-ant");
+      // Authoritative observations: no byte ever reached the stand-in's
+      // stdin, the reader never wrote to the terminal, the stand-in process
+      // is gone, and every subscription the reader made was disposed.
+      expect(await s.received()).toBe("");
+      expect(s.written).toEqual([]);
+      expect(s.alive(pid)).toBe(false);
+      expect(s.subscriptions()).toBe(0);
+    }, 40_000);
+
+    test("control: the same stand-in records any byte written to its terminal, and stays alive until it is closed", async () => {
+      const s = await standIn();
+      const reading = readClaudeUsage(
+        s.executable,
+        s.directory,
+        new AbortController().signal,
+        { spawn: s.spawn, timeoutMs: 12_000 },
+      );
+      const outcome = reading.then(
+        () => null,
+        (error: Error) => error,
+      );
+      const pid = await s.pid();
+      await expect
+        .poll(() => s.output.join(""), { timeout: 10_000 })
+        .toContain("Paste code here if prompted >");
+      // An answer written to the real PTY reaches the stand-in's stdin, so
+      // the empty-stdin assertion above can detect an answered prompt.
+      s.opened[0].write("1\r");
+      await expect.poll(() => s.received()).toBe("1\r");
+      expect(s.alive(pid)).toBe(true);
+      const error = await outcome;
+      expect(error?.message).toBe(timeoutReason);
+      expect(s.alive(pid)).toBe(false);
+    }, 40_000);
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "USAGE-09 Claude profile identity during a usage read",
@@ -1206,6 +1435,17 @@ describe.skipIf(process.platform === "win32")(
       });
       return { ...f, installation, runtime };
     }
+    /** Allowance rows read through a second, independent connection to the
+     * same encrypted store file after the runtime has finished its writes. */
+    async function durableAllowances(f: Awaited<ReturnType<typeof setup>>) {
+      await f.runtime.close();
+      const second = new Store(path.join(f.directory, "history.sqlite"), f.key);
+      try {
+        return second.list<AllowanceSnapshot>("allowance-snapshot");
+      } finally {
+        second.close();
+      }
+    }
     test("a profile that changes during the read is rejected; an unchanged one is stored", async () => {
       const changed = await setup(true);
       const snapshot = (await changed.runtime.refreshAllowance(
@@ -1215,6 +1455,28 @@ describe.skipIf(process.platform === "win32")(
       expect(snapshot.lastError?.detail).toContain("account changed");
       expect(changed.store.list("run")).toHaveLength(0);
       expect(changed.store.list("usage")).toHaveLength(0);
+      // The stand-in really reached the /usage display (so the rejection is
+      // the identity guard at manager.ts:325-332, not a failed start).
+      expect(
+        await readFile(path.join(changed.directory, "usage-starts"), "utf8"),
+      ).toBe("start\n");
+      expect(
+        await readFile(path.join(changed.directory, "profile-changed"), "utf8"),
+      ).toBe("");
+      // At the store: the only allowance row is a failure record that holds
+      // no reading at all; the mismatched 13/51/0 display was not persisted.
+      const rejected = await durableAllowances(changed);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]).toMatchObject({
+        provider: "claude",
+        readAt: null,
+        buckets: [],
+        lastError: {
+          detail:
+            "The Claude account changed during the usage read. Refresh again for the current account.",
+        },
+      });
+      expect(JSON.stringify(rejected[0])).not.toContain("usedPercent");
       // Negative control: the same stand-in without the profile change.
       const same = await setup(false);
       const good = (await same.runtime.refreshAllowance(
@@ -1222,6 +1484,15 @@ describe.skipIf(process.platform === "win32")(
       )) as AllowanceSnapshot;
       expect(good.lastError).toBeNull();
       expect(good.buckets.map((b) => b.primary?.usedPercent)).toEqual([
+        13, 51, 0,
+      ]);
+      // ...and its matching reading is persisted at the store.
+      const stored = await durableAllowances(same);
+      expect(stored).toHaveLength(1);
+      expect(stored[0].lastError).toBeNull();
+      expect(stored[0].readAt).toBe(good.readAt);
+      expect(typeof stored[0].readAt).toBe("string");
+      expect(stored[0].buckets.map((b) => b.primary?.usedPercent)).toEqual([
         13, 51, 0,
       ]);
     });

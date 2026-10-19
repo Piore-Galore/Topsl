@@ -443,8 +443,20 @@ describe("MCP-05 MCP stdio protocol", () => {
       params: { name: "topsl_search", arguments: { query: "q".repeat(20_000) } },
     });
     mcp.send({ jsonrpc: "2.0", id: 31, method: "tools/list" });
-    await mcp.response(31);
-    expect(mcp.responses.find((r) => r.id === 30)?.error).toBeTruthy();
+    // Replies are collected by id, so the result does not depend on whether the
+    // server answers 30 or 31 first once the oversized line is handled.
+    const [oversized, control] = await Promise.allSettled([mcp.response(30, 5_000), mcp.response(31)]);
+    // Control: the client stayed alive and answered the in-bounds request.
+    expect(control.status).toBe("fulfilled");
+    expect((control as PromiseFulfilledResult<any>).value.result.tools.length).toBeGreaterThan(0);
+    // The oversized request gets its own well-formed, bounded error.
+    expect(oversized.status).toBe("fulfilled");
+    const reply = (oversized as PromiseFulfilledResult<any>).value;
+    expect(reply).toMatchObject({ jsonrpc: "2.0", id: 30 });
+    expect(reply.result).toBeUndefined();
+    expect(typeof reply.error.code).toBe("number");
+    expect(typeof reply.error.message).toBe("string");
+    expect(JSON.stringify(reply).length).toBeLessThan(16_000);
   });
 });
 

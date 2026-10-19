@@ -423,7 +423,7 @@ describe("BW-21 builder-reviewer-cancel through the service", () => {
 });
 
 describe("BW-15 forged, absent, failed or stale verification cannot accept", () => {
-  test("BW-15: a model's report without a check run, a forged plan digest, a reused plan and forged verification rows for another candidate, revision, task or invalidated run all leave acceptance blocked", async () => {
+  test("BW-15: a model's report without a check run, a forged plan digest and a reused plan cannot accept, and an actual failing check keeps acceptance blocked after the other check passes", async () => {
     const f = await setup(),
       state = await f.create({
         checks: [
@@ -447,55 +447,137 @@ describe("BW-15 forged, absent, failed or stale verification cannot accept", () 
     const [a, b] = (await f.plans(state.id)) as Array<{
       id: string;
       digest: string;
-      definitionId?: string;
     }>;
-    await expect(f.applyCheck(a, "forged-digest")).rejects.toThrow();
+    await expect(f.applyCheck(a, "forged-digest")).rejects.toThrow(
+      "Check approval is stale. Review a new check plan.",
+    );
     expect(f.service.store.list("verification")).toEqual([]);
     expect((await f.applyCheck(b)).stage).toBe("checking");
-    await expect(f.applyCheck(b)).rejects.toThrow();
+    await expect(f.applyCheck(b)).rejects.toThrow(
+      "Execution authorization is expired, revoked, exhausted, or outside its exact definition/environment/candidate scope. A single-use plan has already been consumed; review a new plan to rerun.",
+    );
     const current = f.workflow(state.id);
     const failing = f.service.store
       .list<Verification>("verification")
-      .find((v) => v.definition === "b-fail")!;
-    expect(failing).toMatchObject({
-      result: "failed",
-      candidateId: current.candidateId,
-      taskId: current.checkTaskId,
-    });
-    // Forged "passed" rows that do not bind the current task, candidate and revision.
-    const forged = [
-      { candidateId: current.baselineId },
-      { targetRevision: "0".repeat(64) },
-      { taskId: current.builderTaskId },
-      { invalidatedAt: now() },
-    ];
-    for (const change of forged)
-      f.service.store.immutable("verification", {
-        ...failing,
-        ...change,
-        id: uid(),
-        result: "passed",
-        evidenceArtifactId: "forged-evidence",
-        createdAt: now(),
-        updatedAt: now(),
-      });
+      .filter((v) => v.definition === "b-fail");
+    expect(failing).toEqual([
+      expect.objectContaining({
+        result: "failed",
+        candidateId: current.candidateId,
+        taskId: current.checkTaskId,
+      }),
+    ]);
+    // The real passing check runs after the real failure; the failure still governs.
+    expect((await f.applyCheck(a)).stage).toBe("checking");
     expect(
       f.service.store
         .list<Verification>("verification")
-        .filter((v) => v.evidenceArtifactId === "forged-evidence"),
-    ).toHaveLength(4);
-    // The real passing check runs after the forged rows; the real failure still governs.
-    expect((await f.applyCheck(a)).stage).toBe("checking");
-    expect(f.workflow(state.id).stage).toBe("checking");
+        .filter((v) => v.definition === "a-pass")
+        .map((v) => v.result),
+    ).toEqual(["passed"]);
     await expect(
       f.accept(
         state.id,
         (f.service.review("workflow-acceptance", state.id) as any).digest,
       ),
-    ).rejects.toThrow("Acceptance is stale or required checks have not passed");
+    ).rejects.toThrow(
+      "Acceptance is stale or required checks have not passed.",
+    );
     expect(
       f.service.store.get<any>("workflow", state.id).acceptance,
     ).toBeNull();
+  });
+
+  test("BW-15: a forged passed row for a never-run check that differs from a current binding only in candidate, revision, task or invalidation does not count; the same row with only that property restored does", async () => {
+    const f = await setup(),
+      state = await f.create({
+        checks: [
+          { ...passing, id: "a-pass", label: "value check" },
+          {
+            ...passing,
+            id: "b-unrun",
+            label: "never run; would fail if it were",
+            args: ["-e", "process.exit(1)"],
+          },
+        ],
+      });
+    await f.toChecking(state.id);
+    const current = f.workflow(state.id),
+      revision = f.service.store.get<any>("candidate", current.candidateId)
+        .revision as string;
+    /** Prepares and applies a fresh plan for the real passing check, which re-evaluates every check. */
+    const rerunA = async () => {
+      const plan = ((await f.plans(state.id)) as any[]).find(
+        (p) => p.definition.id === "a-pass",
+      );
+      return (await f.applyCheck(plan)).stage;
+    };
+    expect(await rerunA()).toBe("checking");
+    const real = f.service.store
+      .list<Verification>("verification")
+      .filter((v) => v.definition === "a-pass");
+    // The real row is the template: it binds the current task, candidate and revision.
+    expect(real).toEqual([
+      expect.objectContaining({
+        result: "passed",
+        taskId: current.checkTaskId,
+        candidateId: current.candidateId,
+        targetRevision: revision,
+      }),
+    ]);
+    expect(real[0].invalidatedAt ?? null).toBeNull();
+    expect(real[0].evidenceArtifactId).toBeTruthy();
+    const forge = (change: Partial<Verification>) =>
+      f.service.store.immutable("verification", {
+        ...real[0],
+        id: uid(),
+        definition: "b-unrun",
+        result: "passed",
+        createdAt: now(),
+        updatedAt: now(),
+        ...change,
+      });
+    const variants: Array<[string, Partial<Verification>]> = [
+      ["another candidate", { candidateId: current.baselineId }],
+      ["a stale revision", { targetRevision: "0".repeat(64) }],
+      ["another task", { taskId: current.builderTaskId }],
+      ["an invalidated row", { invalidatedAt: now() }],
+    ];
+    for (const [label, change] of variants) {
+      // Each variant differs from the template only in its one property.
+      expect(Object.keys(change), label).toHaveLength(1);
+      expect((change as any)[Object.keys(change)[0]], label).not.toEqual(
+        (real[0] as any)[Object.keys(change)[0]] ?? null,
+      );
+      forge(change);
+      expect(await rerunA(), label).toBe("checking");
+      expect(f.workflow(state.id).detail, label).toBe(
+        "Required checks are incomplete or failing; acceptance is blocked.",
+      );
+      await expect(
+        f.accept(
+          state.id,
+          (f.service.review("workflow-acceptance", state.id) as any).digest,
+        ),
+        label,
+      ).rejects.toThrow(
+        "Acceptance is stale or required checks have not passed.",
+      );
+    }
+    expect(
+      f.service.store
+        .list<Verification>("verification")
+        .filter((v) => v.definition === "b-unrun"),
+    ).toHaveLength(4);
+    expect(
+      f.service.store.get<any>("workflow", state.id).acceptance,
+    ).toBeNull();
+    // Discriminating control: the same row with every binding intact is read as
+    // b-unrun's current result, so each refusal above came from its one changed
+    // property. (This row is still a direct store write the check never produced;
+    // see the BW-15 observation in the campaign results.)
+    forge({});
+    expect(await rerunA()).toBe("awaiting-acceptance");
   });
 
   test("BW-15: source changed after passing checks blocks acceptance at the service, and a workflow with no checks cannot be created", async () => {
@@ -734,5 +816,66 @@ describe("BW-01/BW-02 drafts and the captured-input approval through the service
     expect(f.frames().filter((e) => e.frame.method === "thread/start")).toEqual(
       [],
     );
+    // Positive control on the same service, project, stand-in and frame log:
+    // once the changed folder is recaptured as a new workflow and its own inputs
+    // are reviewed, the build is dispatched and the stand-in sees thread/start.
+    // So the empty frame log above is the refusal, not a stand-in that never runs.
+    const recaptured = await f.create();
+    expect(recaptured.id).not.toBe(state.id);
+    const fresh: any = f.service.review(
+      "workflow-dispatch-inputs",
+      recaptured.id,
+    );
+    expect(fresh.digest).not.toBe(reviewed.digest);
+    // The approval of the earlier capture does not carry over to the recapture.
+    await expect(
+      f.service.command(
+        {
+          type: "builder-reviewer-advance",
+          requestId: uid(),
+          id: recaptured.id,
+          expectedRevision: f.revision(recaptured.id),
+        },
+        { digest: reviewed.digest },
+      ),
+    ).rejects.toThrow(
+      "Review and approve the exact captured input manifest and selected agent assignments before the first dispatch.",
+    );
+    expect(f.service.store.list("attempt")).toEqual([]);
+    expect(f.frames().filter((e) => e.frame.method === "thread/start")).toEqual(
+      [],
+    );
+    await f.service.command(
+      {
+        type: "builder-reviewer-advance",
+        requestId: uid(),
+        id: recaptured.id,
+        expectedRevision: f.revision(recaptured.id),
+      },
+      { digest: fresh.digest },
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          f
+            .frames()
+            .filter(
+              (e) => e.from === "topsl" && e.frame.method === "thread/start",
+            ),
+        ).toHaveLength(1),
+      { timeout: 10_000 },
+    );
+    const attempts = f.service.store.list<ExecutionAttempt>("attempt");
+    expect(attempts.length).toBeGreaterThan(0);
+    expect(
+      attempts.every(
+        (attempt) =>
+          f.service.store.get<any>("task", attempt.taskId)?.workflowId ===
+          recaptured.id,
+      ),
+    ).toBe(true);
+    // The refused workflow itself stays blocked and undispatched.
+    expect(f.workflow(state.id).stage).toBe("blocked");
+    expect(f.workflow(state.id).activeAttemptId ?? null).toBeNull();
   });
 });

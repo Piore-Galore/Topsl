@@ -28,6 +28,7 @@ import type {
 } from "../packages/domain/recursive-loops";
 import type { CandidateSnapshot } from "../packages/workflows/candidates";
 import { candidateFileBytes } from "../packages/workflows/candidates";
+import { RuntimeLoopDriver } from "../packages/orchestration/loop-checkpoints";
 import { fixture, gitExecutable } from "./helpers";
 
 /**
@@ -617,10 +618,27 @@ describe("STATE-12 (service): concurrent publication confirmations", () => {
       const f = await setup();
       const { runId } = await completedRun(f);
       const r = await review(f, runId);
+      // Deterministic interleaving: the first write waits until a second
+      // confirmation also reaches the write (the defect) or 3 s pass (a fixed
+      // product refuses the second before it writes). Without this barrier the
+      // race reproduced only on some runs (combined gate 2026-10-19T13:23Z).
+      const original = RuntimeLoopDriver.prototype.publicationApply;
+      let calls = 0;
+      let release!: () => void;
+      const second = new Promise<void>((resolve) => (release = resolve));
+      const spy = vi
+        .spyOn(RuntimeLoopDriver.prototype, "publicationApply")
+        .mockImplementation(async function (this: RuntimeLoopDriver, input) {
+          calls++;
+          if (calls === 1)
+            await Promise.race([second, new Promise((r) => setTimeout(r, 3000))]);
+          else release();
+          return original.call(this, input);
+        });
       const results = await Promise.allSettled([
         apply(f, runId, r.digest),
         apply(f, runId, r.digest),
-      ]);
+      ]).finally(() => spy.mockRestore());
       expect(publishedEvents(f, runId)).toHaveLength(1);
       expect(cursorOf(f, runId)!.receipts).toHaveLength(1);
       expect(results.filter((x) => x.status === "fulfilled")).toHaveLength(1);
@@ -654,19 +672,53 @@ process.stdin.on("end", () => {
     return { dir, script };
   }
 
+  const posix = process.platform !== "win32";
+  /** Independent of Topsl's lifecycle evidence: signal 0 to a pid, or to a
+   * POSIX process group as -pgid. "alive" or the errno code (ESRCH: gone). */
+  const probe = (target: number) => {
+    try {
+      process.kill(target, 0);
+      return "alive";
+    } catch (error: any) {
+      return String(error.code);
+    }
+  };
+  // Whatever the assertions observe, never leave a runaway stand-in behind.
+  const leftovers: Array<{ dir: string; pids: number[] }> = [];
+  afterEach(async () => {
+    for (const { dir, pids } of leftovers.splice(0)) {
+      for (const pid of pids)
+        try {
+          process.kill(posix ? -pid : pid, "SIGKILL");
+        } catch {}
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  const gone = posix ? ["ESRCH", "ESRCH"] : ["ESRCH"];
+  const alive = posix ? ["alive", "alive"] : ["alive"];
+
   for (const ignoreSignals of [false, true])
     test(`continuous output outlives the stall limits until stopped${ignoreSignals ? "; a child ignoring SIGINT/SIGTERM is killed on close and its exit observed" : "; interrupt confirms the exit"}`, async () => {
       const { dir, script } = await standIn(ignoreSignals);
+      const pids: number[] = [];
       const adapter = new ClaudeAdapter(undefined, undefined, {
         routeAllowed: () => true,
         stall: { afterMessageMs: 300, silenceMs: 800, checkMs: 50 },
-        transport: (_executable, args, cwd) =>
-          spawn(process.execPath, [script, ...args], {
+        transport: (_executable, args, cwd) => {
+          const child = spawn(process.execPath, [script, ...args], {
             cwd,
             env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
             detached: process.platform !== "win32",
-          }),
+          });
+          pids.push(child.pid!);
+          return child;
+        },
       });
+      leftovers.push({ dir, pids });
+      const observe = () => {
+        expect(pids).toHaveLength(1);
+        return posix ? [probe(pids[0]), probe(-pids[0])] : [probe(pids[0])];
+      };
       const connection = adapter.connect("claude", process.cwd());
       const turn = {
         prompt: "Reply with nothing else: OK",
@@ -693,6 +745,9 @@ process.stdin.on("end", () => {
       await new Promise((r) => setTimeout(r, 2400));
       expect(completed).toBeNull();
       expect(exited).toBeNull();
+      // Positive control: the same independent probe used after the stop
+      // sees the streaming process and its group alive now.
+      expect(observe()).toEqual(alive);
       await adapter.interrupt(
         connection,
         session.nativeSessionId,
@@ -704,10 +759,15 @@ process.stdin.on("end", () => {
           timeout: 5_000,
           interval: 25,
         });
+        // The confirmation matches the operating system: the pid and its
+        // group are gone before Topsl's own close evidence is taken.
+        expect(observe()).toEqual(gone);
       } else {
-        // The child ignores the interrupt: no exit is claimed.
+        // The child ignores the interrupt: no exit is claimed, and it is
+        // in fact still running.
         await new Promise((r) => setTimeout(r, 500));
         expect(exited).toBeNull();
+        expect(observe()).toEqual(alive);
       }
       const started = Date.now();
       const lifecycle = await connection.close();
@@ -718,6 +778,8 @@ process.stdin.on("end", () => {
         expect(lifecycle.signal).toBe("SIGKILL");
         expect(Date.now() - started).toBeGreaterThanOrEqual(4_500);
       }
+      // Independently of the lifecycle evidence: nothing is left running.
+      expect(observe()).toEqual(gone);
       // No successful result was ever fabricated for the runaway turn.
       expect(completed).toBeNull();
       await rm(dir, { recursive: true, force: true });

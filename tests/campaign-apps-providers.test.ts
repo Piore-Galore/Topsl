@@ -556,7 +556,19 @@ describe("APP-07 approvals cannot execute stale, tampered or consumed plans", ()
       f.lifecycle.approve(p.id, p.digest),
     ]);
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    // Exact reason: both submits pass the consumed-approval check before the
+    // first await (discover); the second then meets the first's live job at the
+    // single-owner guard (lifecycle.ts approve), not a later failure.
+    const refused = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(refused.reason).toBeInstanceOf(Error);
+    expect(refused.reason.message).toBe(
+      "Another job owns this installation. Complete or reconcile it first.",
+    );
     const job = results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<LifecycleJob>;
+    expect(f.store.get<any>("consumed-approval", p.id)).toMatchObject({
+      digest: p.digest,
+      jobId: job.value.id,
+    });
     await outcome(f, job.value.id);
     expect(f.store.list("job")).toHaveLength(1);
     expect(f.store.list("consumed-approval")).toHaveLength(1);

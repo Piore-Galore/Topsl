@@ -9,7 +9,7 @@
  * after cancellation. No Claude Code installation or account is used.
  */
 import path from "node:path";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { Service } from "../apps/service/service";
@@ -25,8 +25,14 @@ import type { ExecutionAttempt } from "../packages/domain/workflow";
 import { now, uid } from "../packages/domain/invariants";
 import {
   claudeStepModel,
+  teamRole,
   type ClaudeStep,
 } from "../packages/domain/claude-steps";
+import {
+  workflowDraftInput,
+  type WorkflowDraft,
+  type WorkflowDraftInput,
+} from "../packages/domain/workflow-drafts";
 import type { BuilderReviewerState } from "../packages/workflows/builder-reviewer";
 import type { CandidateSnapshot } from "../packages/workflows/candidates";
 import { claudeRoutePreferenceId } from "../packages/domain/claude-route";
@@ -57,7 +63,8 @@ afterEach(async () => {
 });
 
 /** The claude-steps.test.ts harness, reduced to what cancellation needs. */
-async function setup() {
+async function setup(options: { fixtureCodex?: boolean } = {}) {
+  const fixtureCodex = options.fixtureCodex ?? true;
   const f = await fixture();
   f.store.close();
   directories.push(f.directory);
@@ -77,17 +84,21 @@ async function setup() {
           );
       },
       true,
-      {
-        codex: new FixtureCodex(
-          (_executable, cwd) =>
-            new RpcPeer(
-              process.execPath,
-              [path.resolve("tests/fixtures/codex-workflow.cjs")],
-              cwd,
-              nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+      // Without the injected Codex stand-in the runtime manager is not in
+      // fixture mode, so the owner's Claude structured-route setting is live.
+      fixtureCodex
+        ? {
+            codex: new FixtureCodex(
+              (_executable, cwd) =>
+                new RpcPeer(
+                  process.execPath,
+                  [path.resolve("tests/fixtures/codex-workflow.cjs")],
+                  cwd,
+                  nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+                ),
             ),
-        ),
-      },
+          }
+        : undefined,
     );
     services.push(service);
     return service;
@@ -269,6 +280,9 @@ async function setup() {
   };
   return {
     ...f,
+    claude,
+    output,
+    read,
     chatEdit,
     get service() {
       return service;
@@ -291,6 +305,130 @@ async function setup() {
     },
   };
 }
+
+/** The draft a Claude-built, Codex-reviewed workflow is saved as. */
+const claudeDraft = (f: { installation: Installation }): WorkflowDraftInput =>
+  workflowDraftInput.parse({
+    objective: "value two (saved Claude draft)",
+    criteria: "value equals two",
+    builder: "claude",
+    reviewer: "codex",
+    builderRuntime: "claude",
+    reviewerRuntime: f.installation.id,
+    reviewerModel: "fixture-requested",
+    selectedPaths: "file.ts",
+    checkExecutable: process.execPath,
+    checkArguments: [
+      "-e",
+      'if(!require("fs").readFileSync("file.ts","utf8").includes("value = 2"))process.exit(1)',
+    ],
+    step: 2,
+  });
+type Harness = Awaited<ReturnType<typeof setup>>;
+const saveDraft = async (
+  f: Harness,
+  draft: WorkflowDraftInput,
+  expectedRevision = 0,
+): Promise<WorkflowDraft> =>
+  (
+    await f.service.command(
+      commandSchema.parse({
+        type: "workflow-draft-save",
+        requestId: uid(),
+        projectId: "p",
+        workflowId: null,
+        expectedRevision,
+        draft,
+      }),
+    )
+  ).draft;
+/** Turns the setting on the way Settings does, with Topsl's own confirmation. */
+const turnOnStructuredRoute = async (f: Harness) => {
+  await expect(
+    f.service.command({ type: "claude-structured-route-set", enabled: true }),
+  ).rejects.toThrow("needs your confirmation in Topsl's own dialog");
+  await f.service.command(
+    { type: "claude-structured-route-set", enabled: true },
+    { confirmedClaudeRoute: true },
+  );
+  expect(f.service.runtime.claudeRoute().enabled).toBe(true);
+  expect(
+    f.service.store.get<any>("preference", claudeRoutePreferenceId),
+  ).toMatchObject({ value: true });
+};
+const draftLines = (value: string) =>
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+/**
+ * Reads the saved draft back through the service and captures it the way the
+ * setup screen does (workflow-setup.tsx capture()): the roles come from the
+ * product's teamRole() over the saved fields, not from this test. The check
+ * carries no environment recipe, which the screen would add.
+ */
+const captureFromSavedDraft = async (
+  f: Harness,
+  expectedRevision: number,
+): Promise<string> => {
+  const stored = (
+    await f.service.command({
+      type: "workflow-draft-query",
+      projectId: "p",
+      workflowId: null,
+    })
+  ).draft as WorkflowDraft;
+  expect(stored.revision).toBe(expectedRevision);
+  const draft = stored.draft;
+  const state: BuilderReviewerState = await f.service.command(
+    commandSchema.parse({
+      type: "builder-reviewer-create",
+      requestId: uid(),
+      projectId: "p",
+      objective: draft.objective,
+      acceptanceCriteria: draftLines(draft.criteria),
+      interfaces: draftLines(draft.interfaces),
+      builder: teamRole(
+        draft.builder,
+        draft.builderRuntime,
+        draft.builderModel,
+        draft.builderEffort,
+      ),
+      reviewer: teamRole(
+        draft.reviewer,
+        draft.reviewerRuntime,
+        draft.reviewerModel,
+        draft.reviewerEffort,
+      ),
+      selectedPaths: draftLines(draft.selectedPaths),
+      approvedUntracked: draftLines(draft.approvedUntracked),
+      maxRepairs: 2,
+      requireIndependence: false,
+      checks: [
+        {
+          id: "required-check",
+          label: "Required project check",
+          executable: draft.checkExecutable,
+          args: draft.checkArguments,
+          timeoutMs: 120000,
+        },
+      ],
+    }),
+  );
+  await f.service.command(
+    {
+      type: "builder-reviewer-advance",
+      requestId: uid(),
+      id: state.id,
+      expectedRevision: f.revision(state.id),
+    },
+    {
+      digest: (f.service.review("workflow-dispatch-inputs", state.id) as any)
+        .digest,
+    },
+  );
+  return state.id;
+};
 
 describe.skipIf(process.platform === "win32")(
   "BW-21 cancel, BW-13 finding decisions and BW-04 route with Claude Code steps (service)",
@@ -535,41 +673,19 @@ describe.skipIf(process.platform === "win32")(
           .filter((step) => step.workflowId === id),
       ).toHaveLength(1);
     });
-    test("BW-04: turning on Claude's structured route while a Claude-built workflow is in draft does not switch its build away from the owner-run terminal step", async () => {
+    test("BW-04: with Claude's structured route turned on after a Claude-built draft was saved, the workflow captured from that saved draft is an owner-run terminal step; a saved Codex-built draft under the same setting dispatches a Codex turn instead", async () => {
       const f = await setup();
-      // Saved as a draft first, then the owner turns the structured route on.
-      await f.service.command({
-        type: "workflow-draft-save",
-        requestId: uid(),
-        projectId: "p",
-        workflowId: null,
-        expectedRevision: 0,
-        draft: {
-          objective: "value two",
-          criteria: "value equals two",
-          interfaces: "",
-          builder: "claude",
-          reviewer: "codex",
-          builderRuntime: "claude",
-          reviewerRuntime: "",
-          builderModel: "",
-          reviewerModel: "",
-          builderEffort: "",
-          reviewerEffort: "",
-          environmentRecipeId: "",
-          selectedPaths: "file.ts",
-          approvedUntracked: "",
-          checkExecutable: "",
-          checkArguments: [],
-          step: 2,
-        },
-      });
-      f.service.store.put("preference", {
-        id: claudeRoutePreferenceId,
-        value: true,
-        decidedAt: now(),
-      });
-      const id = await f.run("claude", "codex");
+      const saved = await saveDraft(f, claudeDraft(f));
+      await turnOnStructuredRoute(f);
+      const id = await captureFromSavedDraft(f, saved.revision);
+      // The persisted roles are the product's decision from the saved draft.
+      expect(f.workflow(id).builder).toEqual(
+        teamRole("claude", "claude", "", ""),
+      );
+      expect(f.workflow(id).builder).toMatchObject({ route: "terminal" });
+      expect(f.service.store.get<any>("workflow", id).objective).toBe(
+        "value two (saved Claude draft)",
+      );
       await f.stage(id, "building");
       const waiting = f.step(id)!;
       expect(waiting).toMatchObject({
@@ -586,7 +702,125 @@ describe.skipIf(process.platform === "win32")(
       });
       // Topsl started no Claude turn of its own.
       expect(f.service.store.list("run")).toEqual([]);
-      expect(f.workflow(id).builder).toMatchObject({ route: "terminal" });
+
+      // Control: the same service and setting, with the saved draft changed to a
+      // Codex builder, yields a Codex turn and no Claude Code step.
+      expect((await f.cancel(id)).stage).toBe("cancelled");
+      const changed = await saveDraft(
+        f,
+        {
+          ...claudeDraft(f),
+          objective: "value two (saved Codex draft)",
+          builder: "codex",
+          builderRuntime: f.installation.id,
+          builderModel: "fixture-requested",
+        },
+        saved.revision,
+      );
+      expect(changed.revision).toBe(saved.revision + 1);
+      const codexId = await captureFromSavedDraft(f, changed.revision);
+      expect(f.workflow(codexId).builder).toEqual({
+        provider: "codex",
+        installationId: f.installation.id,
+        model: "fixture-requested",
+      });
+      await vi.waitFor(
+        () => expect(f.service.store.list("run")).not.toEqual([]),
+        { timeout: 10_000 },
+      );
+      const codexAttempt = f.service.store.get<ExecutionAttempt>(
+        "attempt",
+        f.workflow(codexId).activeAttemptId!,
+      );
+      expect(codexAttempt).toMatchObject({
+        provider: "codex",
+        requestedModel: "fixture-requested",
+      });
+      expect(
+        f.service.store
+          .list<ClaudeStep>("claude-step")
+          .filter((step) => step.workflowId === codexId),
+      ).toEqual([]);
+    });
+
+    test("BW-04: with the structured route on in a service that is not in fixture mode, a workflow captured from a saved Claude/Claude draft still opens Claude Code as the owner's terminal step with only a session id, in the project folder; the saved draft's runtime choice is the one opened", async () => {
+      const f = await setup({ fixtureCodex: false });
+      // A second trusted Claude Code runtime whose wrapper names itself.
+      const alternate = path.join(f.directory, "claude-alternate");
+      await writeFile(
+        alternate,
+        `#!/bin/sh\necho "Wrapper: alternate"\nELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve("tests/fixtures/terminal-stand-in.cjs"))} "$@"\n`,
+      );
+      await chmod(alternate, 0o700);
+      f.service.store.put("installation", {
+        ...f.claude,
+        id: "claude-alternate",
+        path: alternate,
+        ...(await identity(alternate)),
+      });
+      await turnOnStructuredRoute(f);
+      // The structured route is genuinely live here: not an inert fixture setting.
+      expect((f.service.runtime as any).fixtureMode).toBe(false);
+      const opened: string[] = [];
+      for (const [runtime, revision] of [
+        ["claude", 0],
+        ["claude-alternate", 1],
+      ] as const) {
+        const saved = await saveDraft(
+          f,
+          {
+            ...claudeDraft(f),
+            reviewer: "claude",
+            reviewerRuntime: "claude",
+            builderRuntime: runtime,
+          },
+          revision,
+        );
+        const id = await captureFromSavedDraft(f, saved.revision);
+        expect(f.workflow(id).builder).toEqual(
+          teamRole("claude", runtime, "", ""),
+        );
+        await f.stage(id, "building");
+        const waiting = f.step(id)!;
+        expect(waiting).toMatchObject({ role: "builder", state: "waiting" });
+        // No run before the owner opens the step: Topsl started no Claude turn.
+        expect(f.service.store.list("run")).toHaveLength(opened.length);
+        const { terminalId, sessionId } = await f.open(id);
+        const text = await f.read(terminalId, /Stand-in ready/);
+        const args = JSON.parse(
+          /Stand-in arguments: (\[[^\r\n]*\])/.exec(text)![1],
+        ) as string[];
+        expect(args).toContain("--session-id");
+        expect(args[args.indexOf("--session-id") + 1]).toBe(sessionId);
+        for (const flag of ["--print", "-p", "--output-format", "--model"])
+          expect(args, flag).not.toContain(flag);
+        expect(JSON.parse(folderLine.exec(text)![1])).toBe(
+          await realpath(f.project),
+        );
+        opened.push(
+          text.includes("Wrapper: alternate") ? "claude-alternate" : "claude",
+        );
+        await f.exit(terminalId);
+        expect((await f.cancel(id, { stopped: true })).stage).toBe("cancelled");
+      }
+      // Each saved draft's runtime was the executable Topsl opened.
+      expect(opened).toEqual(["claude", "claude-alternate"]);
+      // The only runs are the two owner-opened native terminal sessions, one per
+      // saved runtime; none is a structured Claude turn.
+      expect(
+        f.service.store
+          .list<any>("run")
+          .map((run) => [run.installationId, run.mode, run.model])
+          .sort(),
+      ).toEqual([
+        ["claude", "native", "native-controlled"],
+        ["claude-alternate", "native", "native-controlled"],
+      ]);
+      expect(
+        f.service.store
+          .list<any>("run")
+          .every((run) => String(run.conversationId).startsWith("terminal:")),
+      ).toBe(true);
     });
   },
 );
