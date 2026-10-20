@@ -360,6 +360,63 @@ describe("PR-07/PR-10 a real Claude stand-in process through the runtime manager
   });
 });
 
+describe("D-28 a long partial-message reply through a real Claude stand-in process", () => {
+  test("more than 20,000 identified partial deltas then a valid result complete the run, not uncertain", async () => {
+    const f = await fixture();
+    // Claude Code 2.1.302 with --include-partial-messages gives every
+    // fragment its own uuid. The stand-in writes the stream in large chunks.
+    const script = path.join(f.directory, "long-reply.cjs");
+    await writeFile(
+      script,
+      `process.stdin.resume();
+process.stdin.on("end", () => {
+  const session = process.argv[process.argv.indexOf("--session-id") + 1];
+  const line = (r) => JSON.stringify({ session_id: session, ...r }) + "\\n";
+  let out = line({ type: "system", subtype: "init", model: "fx-effective", tools: [], uuid: "i" });
+  out += line({ type: "stream_event", uuid: "st", event: { type: "message_start", message: { id: "m1" } } });
+  for (let i = 0; i < 20100; i++)
+    out += line({ type: "stream_event", uuid: "p-" + i, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "." } } });
+  out += line({ type: "stream_event", uuid: "ms", event: { type: "message_stop" } });
+  out += line({ type: "assistant", uuid: "a", message: { id: "m1", content: [{ type: "text", text: "long reply" }] } });
+  out += line({ type: "result", uuid: "r", subtype: "success", is_error: false, result: "long reply" });
+  process.stdout.write(out);
+});
+`,
+    );
+    const runtime = new RuntimeManager(
+      f.store,
+      () => {},
+      () => {},
+      () => {
+        throw new Error("no Codex process in this test");
+      },
+      undefined,
+      { claude: new ClaudeAdapter(claudeFixtureTransport(process.execPath, [script])) },
+    );
+    cleanup.push(async () => {
+      await runtime.close();
+      f.store.close();
+      await rm(f.directory, { recursive: true, force: true });
+    });
+    const installation = { ...f.installation, id: "claude", appId: "anthropic.claude-code-cli" as const };
+    const project = { id: "p", name: "fixture", path: f.directory, realPath: f.directory, trusted: true, createdAt: now() };
+    const conversation = { id: "c", projectId: "p", title: "Claude chat", nativeSessions: {}, createdAt: now() };
+    f.store.put("installation", installation);
+    f.store.put("project", project);
+    f.store.put("conversation", conversation);
+    const started = await runtime.start(installation, conversation, project, "prompt", "fx-requested", "review");
+    await vi.waitFor(
+      () => expect(["completed", "failed", "uncertain"]).toContain(f.store.get<Run>("run", started.id)?.status),
+      { timeout: 30_000 },
+    );
+    const run = f.store.get<Run>("run", started.id)!;
+    expect(run).toMatchObject({ status: "completed", error: null });
+    expect(
+      f.store.list<Message>("message").find((m) => m.runId === run.id && m.nativeId === "m1")?.text,
+    ).toBe("long reply");
+  }, 60_000);
+});
+
 // ---------------------------------------------------------------------------
 // PR-07 / PR-08 over a real JSON-RPC child
 // ---------------------------------------------------------------------------

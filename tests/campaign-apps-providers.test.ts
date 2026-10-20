@@ -979,6 +979,52 @@ describe("PR-08 exact parser limits fail closed with bounded errors", () => {
       "exceeds the bounded event limit",
     );
   });
+  // D-28 (live, 20 October 2026): Claude Code launched with
+  // --include-partial-messages gives every streamed fragment its own uuid, so
+  // a long legitimate reply reached the 20,000-identity cap.
+  test("D-28: more than 20,000 identified partial deltas then a valid result complete; replays and collisions of partials are still caught", () => {
+    const events: ClaudeStreamEvent[] = [];
+    const parser = new ClaudeStreamParser((e) => events.push(e));
+    const delta = (i: number, text = "."): string =>
+      JSON.stringify({ type: "stream_event", session_id: "s", uuid: `p${i}`, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+    parser.push(
+      [
+        JSON.stringify({ type: "system", subtype: "init", session_id: "s", uuid: "i" }),
+        JSON.stringify({ type: "stream_event", session_id: "s", uuid: "st", event: { type: "message_start", message: { id: "m1" } } }),
+        ...Array.from({ length: 25_000 }, (_, i) => delta(i)),
+      ].join("\n") + "\n",
+    );
+    // A replay of a recent fragment is skipped, not emitted twice.
+    parser.push(delta(24_999) + "\n");
+    // The same fragment identity with a different body is still a collision.
+    expect(() => new ClaudeStreamParser(() => {}).push(delta(1, "a") + "\n" + delta(1, "b") + "\n")).toThrow(
+      "identity collision",
+    );
+    parser.push(
+      [
+        JSON.stringify({ type: "stream_event", session_id: "s", uuid: "ms", event: { type: "message_stop" } }),
+        JSON.stringify({ type: "assistant", session_id: "s", uuid: "a", message: { id: "m1", content: [{ type: "text", text: "done" }] } }),
+        JSON.stringify({ type: "result", session_id: "s", uuid: "r", subtype: "success", is_error: false, result: "done" }),
+      ].join("\n") + "\n",
+    );
+    parser.finish();
+    expect(events.filter((e) => e.type === "delta")).toHaveLength(25_000);
+    expect(events.filter((e) => e.type === "completed")).toMatchObject([{ failed: false, text: "done" }]);
+  });
+  test("D-28: identities of messages and other records stay capped, and a fragment cannot reuse their identity with a different body", () => {
+    // Distinct message starts count against the cap, so a runaway of new
+    // messages still ends the turn.
+    const starts = new ClaudeStreamParser(() => {});
+    const start = (i: number) =>
+      JSON.stringify({ type: "stream_event", session_id: "s", uuid: `s${i}`, event: { type: "message_start", message: { id: `m${i}` } } });
+    starts.push(Array.from({ length: 20_000 }, (_, i) => start(i)).join("\n") + "\n");
+    expect(() => starts.push(start(20_000) + "\n")).toThrow("exceeds the bounded event limit");
+    const mixed = new ClaudeStreamParser(() => {});
+    mixed.push(`{"type":"user","session_id":"s","uuid":"x"}\n`);
+    expect(() =>
+      mixed.push(JSON.stringify({ type: "stream_event", session_id: "s", uuid: "x", event: { type: "ping" } }) + "\n"),
+    ).toThrow("identity collision");
+  });
   test("1,000 distinct text blocks in one message are accepted; the 1,001st is refused", () => {
     const parser = new ClaudeStreamParser(() => {});
     const block = (i: number) =>

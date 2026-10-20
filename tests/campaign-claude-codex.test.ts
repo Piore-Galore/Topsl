@@ -85,6 +85,7 @@ class FakeChild extends EventEmitter {
   }
 }
 const sid = "campaign-session";
+let deltas = 0;
 const rec = {
   init: () => ({
     type: "system",
@@ -120,12 +121,13 @@ const rec = {
     session_id: sid,
     uuid: `rate-${n}`,
   }),
-  /** A streamed text delta without a uuid, so the parser's identity map
-   * does not grow with it. */
+  /** A streamed text delta with its own uuid, as Claude Code 2.1.302 sends
+   * it under --include-partial-messages (D-28). */
   delta: (text: string) => ({
     type: "stream_event",
     session_id: sid,
     event: { type: "content_block_delta", delta: { type: "text_delta", text } },
+    uuid: `delta-${++deltas}`,
   }),
   result: (text = "OK") => ({
     type: "result",

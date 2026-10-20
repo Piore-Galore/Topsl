@@ -83,10 +83,16 @@ export type ClaudeStreamEvent =
     }
   | { type: "notice"; sourceId: string; detail: string };
 
+/** How many recent partial-fragment identities the parser remembers to
+ * catch replays and identity collisions. */
+const claudeFragmentWindow = 4_096;
+
 /** Versioned NDJSON compatibility reader. Thinking blocks and arbitrary tool arguments never enter persisted telemetry. */
 export class ClaudeStreamParser {
   private pending = "";
   private seen = new Map<string, string>();
+  /** Recent identities of partial stream fragments, oldest first. */
+  private fragments = new Map<string, string>();
   private sequence = 0;
   private sessionId: string | null = null;
   private model: string | null = null;
@@ -163,13 +169,26 @@ export class ClaudeStreamParser {
     const sourceId = base.uuid ?? `${base.type}:${++this.sequence}`;
     if (base.uuid) {
       const bodyHash = hash(stable(raw)),
-        previous = this.seen.get(sourceId);
+        previous = this.seen.get(sourceId) ?? this.fragments.get(sourceId);
       if (previous && previous !== bodyHash)
         throw new Error("Claude event identity collision.");
       if (previous) return;
-      if (this.seen.size >= 20_000)
-        throw new Error("Claude stream exceeds the bounded event limit.");
-      this.seen.set(sourceId, bodyHash);
+      // With --include-partial-messages every streamed fragment carries its
+      // own uuid, so a long legitimate reply has tens of thousands of them.
+      // Fragments are remembered in a bounded window of recent identities and
+      // never count toward the cap. A fragment replayed after leaving the
+      // window would only repeat streamed text, which the message's final
+      // record replaces. Message starts and every other record still count,
+      // so a runaway of new messages or records ends the turn.
+      if (base.type === "stream_event" && kind !== "message_start") {
+        this.fragments.set(sourceId, bodyHash);
+        if (this.fragments.size > claudeFragmentWindow)
+          this.fragments.delete(this.fragments.keys().next().value!);
+      } else {
+        if (this.seen.size >= 20_000)
+          throw new Error("Claude stream exceeds the bounded event limit.");
+        this.seen.set(sourceId, bodyHash);
+      }
     }
     const resultFingerprint = () =>
       hash(
