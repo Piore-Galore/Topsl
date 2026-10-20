@@ -377,29 +377,18 @@ describe("LOOP-13 (service): experimental.recursiveLooping turned off while a ru
     expect(f.service.store.get<LoopRun>("loop-run", runId)!.desiredState).toBe(
       "stopped",
     );
-    // A member turn interrupted by the pause or the stop may be recorded as
-    // uncertain (the Claude route reports every cancelled turn that way).
-    // Stop then waits, naming it, until the owner inspects and reconciles it
-    // (run-reconcile after native confirmation), exactly as after a manual
-    // Pause; it is not refused.
-    const view = await untilRun(f, runId, (r) => {
-      if (["stopped", "completed"].includes(r.state)) return true;
-      for (const run of f.service.store.list<{ id: string; status: string }>(
-        "run",
-      ))
-        if (run.status === "uncertain")
-          void f.service
-            .command(
-              commandSchema.parse({ type: "run-reconcile", id: run.id }),
-              {
-                approved: true,
-              },
-            )
-            .catch(() => {});
-      return false;
-    });
+    // A member turn the pause or the stop interrupted ends interrupted once
+    // its process has exited, so Stop completes with no owner reconciliation.
+    const view = await untilRun(f, runId, (r) =>
+      ["stopped", "completed"].includes(r.state),
+    );
     expect(view.run.state).toBe("stopped");
     expect(view.run.desiredState).toBe("stopped");
+    expect(
+      f.service.store
+        .list<{ status: string }>("run")
+        .filter((run) => run.status === "uncertain"),
+    ).toEqual([]);
   });
 });
 
@@ -792,11 +781,13 @@ process.stdin.on("end", () => {
         native.nativeTurnId,
       );
       if (!ignoreSignals) {
-        // Stop reaches the runaway turn: its exit is observed, not assumed.
-        await vi.waitFor(() => expect(exited).toMatch(/exit confirmed/), {
-          timeout: 5_000,
-          interval: 25,
-        });
+        // Stop reaches the runaway turn: it ends interrupted once its exit
+        // on the interrupt is observed, not assumed.
+        await vi.waitFor(
+          () => expect(completed).toMatchObject({ interrupted: true }),
+          { timeout: 5_000, interval: 25 },
+        );
+        expect(exited).toBeNull();
         // The confirmation matches the operating system: the pid and its
         // group are gone before Topsl's own close evidence is taken.
         expect(observe()).toEqual(gone);
@@ -819,7 +810,13 @@ process.stdin.on("end", () => {
       // Independently of the lifecycle evidence: nothing is left running.
       expect(observe()).toEqual(gone);
       // No successful result was ever fabricated for the runaway turn.
-      expect(completed).toBeNull();
+      if (ignoreSignals) expect(completed).toBeNull();
+      else
+        expect(completed).toMatchObject({
+          failed: true,
+          interrupted: true,
+          text: "",
+        });
       await rm(dir, { recursive: true, force: true });
     });
 });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -26,6 +26,7 @@ import { Service } from "../apps/service/service";
 import { identity, nativeEnvironment } from "../packages/platform/system";
 import { hash, now, stable } from "../packages/domain/invariants";
 import type { ExecutionPurpose } from "../packages/domain/role-groups";
+import type { Message, Run } from "../packages/domain/types";
 import { fixture } from "./helpers";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -438,6 +439,130 @@ describe("stalled Claude Code turns", () => {
     expect(result).toMatchObject({ type: "completed", failed: false });
     expect(result.text).toBe("OK-2");
   });
+});
+
+describe("Claude Code turns Topsl interrupts", () => {
+  /** An edit turn through the runtime manager whose stand-in streams the
+   * start of its message and then holds, so Topsl interrupts it mid-stream. */
+  async function held(env: Record<string, string> = {}) {
+    const f = await fixture();
+    const runtime = new RuntimeManager(
+      f.store,
+      () => {},
+      () => {},
+      () => {
+        throw new Error("no Codex process in this test");
+      },
+      undefined,
+      {
+        claude: new ClaudeAdapter((args, cwd) =>
+          spawn(process.execPath, [standIn, ...args], {
+            cwd,
+            shell: false,
+            env: nativeEnvironment({
+              ELECTRON_RUN_AS_NODE: "1",
+              FIXTURE_HOLD: "1",
+              ...env,
+            }),
+            detached: !windows,
+          }),
+        ),
+      },
+    );
+    cleanup.push(async () => {
+      await runtime.close();
+      f.store.close();
+      await rm(f.directory, { recursive: true, force: true });
+    });
+    const installation = {
+      ...f.installation,
+      id: "claude",
+      appId: "anthropic.claude-code-cli" as const,
+    };
+    const project = {
+      id: "p",
+      name: "fixture",
+      path: f.directory,
+      realPath: f.directory,
+      trusted: true,
+      createdAt: now(),
+    };
+    f.store.put("installation", installation);
+    f.store.put("project", project);
+    // Each writer in the folder is a fresh Claude session.
+    let chats = 0;
+    const start = () => {
+      const conversation = {
+        id: `c-${++chats}`,
+        projectId: "p",
+        title: "Claude chat",
+        nativeSessions: {},
+        createdAt: now(),
+      };
+      f.store.put("conversation", conversation);
+      return runtime.start(
+        installation,
+        conversation,
+        project,
+        "Reply with nothing else: OK-2",
+        "claude-fixture-5",
+        "edit",
+      );
+    };
+    const run = await start();
+    // The partial message has arrived; the turn has not ended.
+    await vi.waitFor(() =>
+      expect(
+        f.store
+          .list<Message>("message")
+          .some((m) => m.runId === run.id && m.text === "OK-2"),
+      ).toBe(true),
+    );
+    expect(f.store.get<Run>("run", run.id)?.status).toBe("running");
+    await runtime.interrupt(run.id);
+    const leases = () => runtime.coordinator.ownership.list();
+    return { f, runtime, run, leases, start };
+  }
+
+  test("a turn interrupted mid-stream whose process exits on the interrupt ends interrupted, and its workspace is released", async () => {
+    const { f, runtime, run, leases, start } = await held();
+    await vi.waitFor(() =>
+      expect(leases().every((l) => l.state === "released")).toBe(true),
+    );
+    expect(f.store.get<Run>("run", run.id)).toMatchObject({
+      status: "interrupted",
+      error:
+        "Topsl interrupted the turn and Claude Code exited on the interrupt.",
+    });
+    expect(runtime.coordinator.attemptForRun(run.id)?.state).toBe(
+      "interrupted",
+    );
+    expect(
+      f.store.get<any>("task-process-lifecycle", run.id),
+    ).toMatchObject({ state: "quiescent", remainingGroup: "absent" });
+    // No reconciliation is needed before another writer starts there.
+    const next = await start();
+    await runtime.interrupt(next.id);
+    await vi.waitFor(() =>
+      expect(f.store.get<Run>("run", next.id)?.status).toBe("interrupted"),
+    );
+  });
+
+  test.skipIf(windows)(
+    "a turn whose process ignores the interrupt and exits by itself stays uncertain, and its workspace stays held",
+    async () => {
+      const { f, run, leases, start } = await held({ FIXTURE_SIGINT: "ignore" });
+      await vi.waitFor(() =>
+        expect(f.store.get<any>("task-process-lifecycle", run.id)).toBeTruthy(),
+      );
+      const ended = f.store.get<Run>("run", run.id)!;
+      expect(ended.status).toBe("uncertain");
+      expect(ended.error).toContain("did not exit on the interrupt");
+      expect(ended.error).toContain("exit code 0");
+      expect(leases().map((l) => l.state)).toEqual(["uncertain"]);
+      await expect(start()).rejects.toThrow(/uncertain/);
+    },
+  );
 });
 
 describe("Topsl's MCP server for Claude Code", () => {

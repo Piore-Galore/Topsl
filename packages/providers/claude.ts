@@ -72,6 +72,9 @@ export type ClaudeStreamEvent =
       text: string;
       structuredOutput: unknown;
       failed: boolean;
+      /** Set only by Topsl, for a turn it interrupted whose process ended on
+       * that interrupt. Such a turn is also `failed`. */
+      interrupted?: true;
       detail: string;
       reportedModel: string | null;
       /** Each tool use Claude Code's permission settings denied, with the
@@ -784,7 +787,11 @@ export class ClaudeAdapter implements ProviderAdapter {
       return {
         type: "completed",
         ...ids,
-        status: event.failed ? "failed" : "completed",
+        status: event.interrupted
+          ? "interrupted"
+          : event.failed
+            ? "failed"
+            : "completed",
         error: event.failed ? event.detail : null,
       };
     if (event.type === "tool")
@@ -928,7 +935,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         clearInterval(watch);
         reject(error);
       });
-      process.on("close", (code) => {
+      process.on("close", (code, signal) => {
         clearInterval(watch);
         if (parserError) return reject(parserError);
         // A stalled turn whose process has exited ends as a failure Topsl
@@ -948,10 +955,35 @@ export class ClaudeAdapter implements ProviderAdapter {
             });
           return resolve();
         }
-        if (cancelled)
+        // The turn's result arrived before the interrupt took effect.
+        if (cancelled && parser.completed) return resolve();
+        if (cancelled) {
+          // Topsl's own interrupt, and the process ended on it: SIGINT's
+          // default action, or the exit code a program that handles SIGINT
+          // conventionally uses. The runtime still confirms the process
+          // group is gone before it releases the workspace.
+          if (signal === "SIGINT" || code === 130) {
+            checked({
+              type: "completed",
+              sourceId: "topsl-interrupt",
+              sessionId: parser.session ?? input.sessionId,
+              text: "",
+              structuredOutput: null,
+              failed: true,
+              interrupted: true,
+              detail:
+                "Topsl interrupted the turn and Claude Code exited on the interrupt.",
+              reportedModel: null,
+              denials: [],
+            });
+            return resolve();
+          }
           return reject(
-            new Error("Claude cancellation requested; process exit confirmed."),
+            new Error(
+              `Topsl interrupted the turn, but Claude Code did not exit on the interrupt (exit code ${code}, signal ${signal ?? "none"}). Its outcome is unknown.`,
+            ),
           );
+        }
         try {
           parser.finish();
           if (code !== 0)

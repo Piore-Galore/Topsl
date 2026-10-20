@@ -443,11 +443,15 @@ describe("CL-09/10/11/14/16 stall clocks at the production defaults (fake clock)
     h.run.interrupt();
     expect(h.child.signals).toEqual(["SIGINT"]);
     await flush();
-    expect(h.completed()).toEqual([]);
-    expect(h.settled()).toEqual({
-      ok: false,
-      error: "Claude cancellation requested; process exit confirmed.",
+    // The process ended on Topsl's interrupt, so the turn ends interrupted.
+    expect(h.completed()).toHaveLength(1);
+    expect(h.completed()[0]).toMatchObject({
+      failed: true,
+      interrupted: true,
+      sourceId: "topsl-interrupt",
+      text: "",
     });
+    expect(h.settled()).toEqual({ ok: true, error: null });
   });
 
   test("CL-14: API retries after message stop, indefinitely (six hours), never stall the turn; Stop still terminates it", async () => {
@@ -463,7 +467,7 @@ describe("CL-09/10/11/14/16 stall clocks at the production defaults (fake clock)
     h.run.interrupt();
     await flush();
     expect(h.child.signals).toEqual(["SIGINT"]);
-    expect(h.settled()?.ok).toBe(false);
+    expect(h.completed()).toMatchObject([{ interrupted: true }]);
   });
 
   test("CL-14/CL-16: telemetry and the partial-record buffer are bounded: 20,001 identified records or a 2 MB partial line end the turn as an unknown outcome", async () => {

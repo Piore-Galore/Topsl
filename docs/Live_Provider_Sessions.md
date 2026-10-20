@@ -171,6 +171,7 @@ The report's `workflow.claudeSteps` keeps, for each step, its role, folder, sess
 - For a workflow run, the review's quality, independence between the roles (Codex reviews Codex in a fresh, read-only session, and Claude reviews Claude in a fresh Claude Code session, and neither is an independent second model), a repair, the owner's acceptance, what an answer to one of Codex's requests did beyond the captured build, or any project but the seeded one.
 - For a Claude step, that Claude Code enforces **Accept edits** or **Plan** beyond what the review copy's read-only files and Topsl's checks of the folder hold, or what Claude Code does after the script declines a plan. The stand-in ends Claude's turn there, so Topsl takes no reply and the run stops. Claude Code 2.1.300 did the same after a **No** to a permission prompt in the first live runs. A permission prompt answered **No** therefore ends the step without a reply that Topsl takes.
 - For a qualification, the user's own Topsl being qualified, as above, or any Codex release, account, managed policy or host other than the one that ran it.
+- Interrupting a Claude Code turn. No route here, and no live run of Claude's structured route, has interrupted a live Claude turn. Since 20 October 2026 Topsl records a structured Claude turn it interrupted as `interrupted` when Claude Code exits on the interrupt, which is established against stand-ins only ([Implementation status](Implementation_Status.md#claude-structured-route--19-october-2026)).
 
 ## Check the procedure without a model
 

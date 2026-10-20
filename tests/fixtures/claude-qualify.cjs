@@ -20,6 +20,11 @@
 // FIXTURE_STALL=retrying    after the message, reports API retries every
 //                           FIXTURE_RETRY_MS for FIXTURE_RETRY_FOR_MS, then
 //                           finishes normally
+// FIXTURE_HOLD=1            streams the start of the model message, then
+//                           waits until a signal ends it (SIGINT's default
+//                           action ends it on the interrupt)
+// FIXTURE_SIGINT=ignore     with FIXTURE_HOLD, ignores SIGINT and exits by
+//                           itself 300 ms later (code 0, no result)
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 if (process.env.FIXTURE_LOG)
@@ -100,6 +105,11 @@ process.stdin.on("end", async () => {
     uuid: "init-1",
   });
   const hang = () => setInterval(() => {}, 1000);
+  const hold = () => {
+    if (process.env.FIXTURE_SIGINT === "ignore")
+      process.on("SIGINT", () => setTimeout(() => process.exit(0), 300));
+    return hang();
+  };
   if (process.env.FIXTURE_STALL === "silent") return hang();
   const denials = [];
   let text = "fixture reply";
@@ -164,13 +174,16 @@ process.stdin.on("end", async () => {
       usage: { output_tokens: 3 },
     },
     { type: "message_stop" },
-  ].entries())
+  ].entries()) {
     event({
       type: "stream_event",
       session_id: sessionId,
       event: streamed,
       uuid: `stream-${n}`,
     });
+    if (process.env.FIXTURE_HOLD && streamed.type === "content_block_delta")
+      return hold();
+  }
   if (process.env.FIXTURE_STALL === "after-message") return hang();
   if (process.env.FIXTURE_STALL === "retrying") {
     const every = Number(process.env.FIXTURE_RETRY_MS ?? 100),
