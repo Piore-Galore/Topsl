@@ -1507,6 +1507,8 @@ Known failures, unresolved questions, and the next action.
 Source/provider/event references for each included passage.
 ```
 
+When size limits leave material out, keep the newest material and drop the oldest first, and state in the snapshot and in its preview what was omitted or shortened, so neither the owner nor the destination mistakes it for the complete history. The pilot's message handoff does this ([Implementation status](Implementation_Status.md#campaign-defect-repairs--20-october-2026-follow-up)); the structured sections above remain planned.
+
 Do not include credentials, hidden reasoning, provider-internal signed state, irrelevant personal history, or attachments the destination cannot accept. An exposed reasoning summary may be retained as attributed text under user policy; it is not a reusable internal state object.
 
 ### 15.4 Transfer sequence
