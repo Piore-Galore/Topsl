@@ -56,7 +56,13 @@ const metadataTypes = new Set([
 /** What Claude Code attaches to a turn as context, as in those live runs.
  * None is a prompt; another kind, such as a message typed while Claude
  * works, might be, so it makes the transcript unrecognized. Attachments
- * must name the session and the step's folder, as conversation records do. */
+ * must name the session and the step's folder, as conversation records do.
+ * The `plan_mode` kinds are Claude Code 2.1.302's Plan-mode reminders:
+ * `plan_mode` was in a live review session's transcript on 20 October 2026
+ * (D-27); `plan_mode_reentry` and `plan_mode_exit` are the reminders the
+ * same version's executable writes on re-entering and leaving Plan mode,
+ * found there by name only. `plan_file_reference`, which carries a plan
+ * file's text, stays unrecognized. */
 const attachmentKinds = new Set([
   "agent_listing_delta",
   "credential_org",
@@ -66,6 +72,9 @@ const attachmentKinds = new Set([
   "environment",
   "mcp_instructions_delta",
   "model",
+  "plan_mode",
+  "plan_mode_exit",
+  "plan_mode_reentry",
   "prompt_snapshot",
   "remote_session_change",
   "session_context",

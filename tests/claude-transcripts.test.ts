@@ -417,6 +417,54 @@ describe("Claude's reply from a step's session transcript", () => {
     );
   });
 
+  // D-27 (live, 20 October 2026): Claude Code 2.1.302 writes a `plan_mode`
+  // attachment into a review session opened in Plan mode, so its hand-back
+  // always fell back to paste.
+  test("Claude Code 2.1.302's plan-mode attachments carry no conversation", async () => {
+    const f = await setup(),
+      records = f.build("The change is correct; no findings.");
+    const [snapshot, prompt, ...rest] = records;
+    const planFilePath = path.join(f.config, "plans", "review.md");
+    await f.write(
+      { type: "mode", mode: "plan", sessionId: session },
+      { type: "permission-mode", permissionMode: "plan", sessionId: session },
+      snapshot,
+      prompt,
+      // The field names of the live run's line 11, with stand-in values.
+      f.attachment("plan_mode"),
+      {
+        ...f.attachment("plan_mode"),
+        attachment: {
+          type: "plan_mode",
+          reminderType: "full",
+          isSubAgent: false,
+          planFilePath,
+          planExists: false,
+        },
+      },
+      {
+        ...f.attachment("plan_mode_reentry"),
+        attachment: { type: "plan_mode_reentry", planFilePath },
+      },
+      ...rest.slice(0, -5),
+      {
+        ...f.attachment("plan_mode_exit"),
+        attachment: { type: "plan_mode_exit", planFilePath, planExists: false },
+      },
+      ...rest.slice(-5),
+    );
+    const result = await f.read();
+    expect(result.ok && result.text).toBe("The change is correct; no findings.");
+    // Unknown kinds are still refused.
+    await f.write(...records, f.attachment("plan_mode_unknown"));
+    await unread(
+      f.read(),
+      new RegExp(
+        `Line ${records.length + 1} of the transcript has an attachment of kind "plan_mode_unknown", which Topsl does not recognize\\.`,
+      ),
+    );
+  });
+
   test("a record of another session or folder, or one naming neither, falls back to paste", async () => {
     const f = await setup(),
       records = f.build();
