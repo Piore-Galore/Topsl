@@ -228,6 +228,8 @@ Two earlier `npm run check` runs failed only in `tests/claude-allowance.test.ts`
 
 Not covered: packaged builds, live providers, and the role editor or loop view showing the new refusals on screen (neither journey enters an impossible count or monitoring policy).
 
+**Remote CI** (workflow "Compile Topsl", run 39384214512, commit `cab50f0`, pushed as `codex/orchestration-defects`, not merged): Linux x64, macOS Intel and Windows x64 passed every step on the first attempt. macOS Apple silicon failed the desktop loop journey twice and passed every step on the third attempt; only the failed job was rerun. Attempt 1 timed out at `scripts/desktop-loop-test.mjs:385`, waiting 30 s for run A's **Accumulated changes** summary. Attempt 2 timed out at `:323`, waiting 180 s for run A's **Completed** badge. The same signatures occur without these changes: main at `9a769e5` (run 39377668255) failed at `:385` on Linux and macOS Intel, and the `codex/loop-run-select` branch (run 39383265082) failed at the badge wait on macOS Intel. The loop-journey intermittent is under separate diagnosis and is not addressed here. The earlier run on `4119437` (39383170728) was cancelled when `cab50f0` was pushed.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.
