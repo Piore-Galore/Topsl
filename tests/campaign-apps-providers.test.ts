@@ -1069,10 +1069,7 @@ describe("PR-13 approval summaries show the real bounded scope", () => {
     // Negative control: ordinary visible text is unchanged.
     expect(visible("a-b é 中 😀")).toBe("a-b é 中 😀");
   });
-  // CAMPAIGN DEFECT PR-13: U+061C ARABIC LETTER MARK (a Unicode Bidi_Control
-  // direction mark) is not in codex-approvals.ts `hidden`, so it reaches the
-  // approval summary unescaped and can reorder the displayed text invisibly.
-  test.fails("every Unicode Bidi_Control character, including U+061C ARABIC LETTER MARK, is escaped", () => {
+  test("every Unicode Bidi_Control character, including U+061C ARABIC LETTER MARK, is escaped", () => {
     const bidi: number[] = [];
     for (let cp = 0; cp <= 0x10ffff; cp++)
       if ((cp < 0xd800 || cp > 0xdfff) && /\p{Bidi_Control}/u.test(String.fromCodePoint(cp))) bidi.push(cp);

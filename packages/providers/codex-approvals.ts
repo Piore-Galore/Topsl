@@ -1,11 +1,11 @@
 import type { ApprovalSummary } from "../domain/types";
 
 /** Characters that change how text looks without showing themselves:
- * controls other than tab and newline, the soft hyphen, zero-width and
- * direction marks, line separators, invisible operators and tag
- * characters. */
+ * controls other than tab and newline, the soft hyphen, zero-width marks,
+ * every Unicode `Bidi_Control` direction mark (including U+061C ARABIC
+ * LETTER MARK), line separators, invisible operators and tag characters. */
 const hidden =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}\p{Bidi_Control}]/gu;
 
 const escape = (character: string) =>
   `\\u{${character.codePointAt(0)!.toString(16)}}`;
