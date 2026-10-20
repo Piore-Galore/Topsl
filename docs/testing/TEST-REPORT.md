@@ -189,6 +189,19 @@ Round 2 lifecycle stress on `43977cb` (run 39289887713) passed on all four platf
 
 **All recorded defects resolved (20 October 2026).** D-01 to D-26 are all fixed, except D-15, which the owner decided is intended behaviour; D-19 was fixed following the owner's decision. The intermittent desktop failures F-01 (a lost click on the workflow start button) and the loop-journey timeout (choosing a loop run left the previous run's details on screen) were real product bugs, now fixed. On `86226e2` the suite has no `test.fails` reproductions left: the local gate passed 1,141 tests with 5 skipped, typecheck, release tests 18/0, build and all seven desktop journeys. CI run 39405382328 passed every step on all four platforms on its first attempt, and lifecycle stress (run 39405382330) passed on all four. Each repair is recorded in [TEST-DECISIONS](TEST-DECISIONS.md). One failure seen once on Apple silicon (a Goal loop staying "Active" for 180 s, CI run 39384214512 attempt 2) did not recur in any later run; it matches a historical signature from plan §10.3 and is kept on record as watched, not diagnosed.
 
+**Live and soak coverage (20 October 2026).** These runs covered the cells still open after the defect repairs. All ran on darwin-arm64 against `main` at `419fd85`, under the owner's authorization.
+
+| Cell | Result |
+| --- | --- |
+| Live Build-and-review pairings (BW-19, J-03) | None reached acceptance. Codex/Codex and Claude/Codex stopped at Codex qualification (the candidate-reader probe failed again). Codex/Claude stopped when its "Run a command" requests went unanswered for 15 minutes. Claude/Claude's Claude Code build passed, then its review stopped on D-27. |
+| Live Claude runtime qualification (CL-05, CL-15) | **Passed:** all 7 capabilities in 4 turns (`claude-opus-5-5`, Claude Code 2.1.302) |
+| Live mixed Claude/Codex Goal loop | **Blocked:** the first Claude turn hit D-28 and ended `uncertain`. The run then sat at "assessing" with no wait reason (D-29) until the procedure's 60-minute limit. |
+| Loop soak, 1,000 boundaries with an accelerated clock (OPS-06, `TOPSL_LOOP_SOAK=1`) | **Passed:** 1,001 boundaries, 67 promotions, 33 rejections, 155 s. Per-boundary cost still grows with retained history (3.3 s for the first 100; slower each 100 after). |
+| Lifecycle stress, 100 iterations (seed `campaign-2026-10-20-soak`) | **Passed:** 100 of 100 |
+| UI soak, one hour (UI-26, `TOPSL_UI_SOAK_MINUTES=60`) | **Passed:** 9,447 cycles and 103,917 navigations; p95 37 ms, maximum 227 ms. After warm-up, DOM nodes −165, listeners −46, heap −1.5%, processes ±0. It ran alongside the loop soak and lifecycle stress, so latency was measured under load. |
+
+Live usage: about 14 Codex turns (four qualifications plus build turns), 4 Claude qualification turns, one Claude coordinator turn, and three Claude Code terminal sessions whose usage Topsl cannot see. The 8-hour and 24-hour real-time soaks in plan §12.7 were not run; the accelerated loop soak covers the same 1,000-boundary workload. New defects D-27 to D-29 are recorded in [TEST-DECISIONS](TEST-DECISIONS.md#live-and-soak-follow-up--20-october-2026).
+
 **Coverage register:** the per-case register still reflects the campaign's darwin-arm64 execution. The CI runs establish suite-level results on the other hosts; their cells were not re-mapped case by case.
 
 ## Evidence locations

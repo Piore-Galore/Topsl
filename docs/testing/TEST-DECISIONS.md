@@ -291,6 +291,29 @@ Not covered: packaged builds, live providers, and the role editor or loop view s
 
 **Remote CI** (workflow "Compile Topsl", run 39384214512, commit `cab50f0`, pushed as `codex/orchestration-defects`, not merged): Linux x64, macOS Intel and Windows x64 passed every step on the first attempt. macOS Apple silicon failed the desktop loop journey twice and passed every step on the third attempt; only the failed job was rerun. Attempt 1 timed out at `scripts/desktop-loop-test.mjs:385`, waiting 30 s for run A's **Accumulated changes** summary. Attempt 2 timed out at `:323`, waiting 180 s for run A's **Completed** badge. The same signatures occur without these changes: main at `9a769e5` (run 39377668255) failed at `:385` on Linux and macOS Intel, and the `codex/loop-run-select` branch (run 39383265082) failed at the badge wait on macOS Intel. The loop-journey intermittent is under separate diagnosis and is not addressed here. The earlier run on `4119437` (39383170728) was cancelled when `cab50f0` was pushed.
 
+## Live and soak follow-up — 20 October 2026
+
+*Dated follow-up, 20 October 2026.* These runs covered the cells still open after the defect repairs. They used `main` at `419fd85`, darwin-arm64, the owner's own sign-ins, and disposable Topsl profiles; Codex CLI 0.163.0 and Claude Code 2.1.302 ran under owner authorization. Three new defects were found. They are open, and none has a reproducing test yet.
+
+| ID | Case | Defect | Source | Evidence |
+| --- | --- | --- | --- | --- |
+| D-27 | BW-09 (P0), live | Claude Code 2.1.302 writes an attachment of kind `plan_mode` into the transcript of a review run in Plan mode. Topsl's transcript reader refuses unknown attachment kinds, so it takes no reply from that transcript. Falling back to "paste Claude's final reply" is the documented safe behaviour, but a transcript hand-back of a Plan-mode review cannot succeed with this Claude Code version. | `packages/history/claude-transcript.ts:282-290` (`attachmentKinds`) | live `--workflow claude-claude`: build passed, then the review stopped with "Line 11 of the transcript has an attachment of kind \"plan_mode\"…" |
+| D-28 | CL-14 / PR-08 (P0), live | A normal live Claude turn ends as an unknown outcome. Topsl launches Claude Code with `--include-partial-messages`, and every streamed fragment carries its own `uuid`, so a long but legitimate reply exceeds the 20,000-record cap. The cap is meant to bound runaways. The parser throws "Claude stream exceeds the bounded event limit.", and the run is recorded `uncertain`, which holds the member's workspace until the owner reconciles it. | `packages/providers/claude.ts:163-172` (cap counts every identified record); launch arguments `:456` | live `scripts/live-loop.mjs --mixed-only`: the first coordinator assessment turn (`claude-opus-5-5`) ended `uncertain` about 2 minutes after it started |
+| D-29 | LOOP / UI-24 (P0), live | A loop whose member turn is `uncertain` shows `Iteration 1: assessing.` with `waitReason: null`. Nothing tells the owner the run is blocked or that a reconciliation is needed, so it looked stuck for 60 minutes. Plan invariant 7 requires an unknown outcome to stay visible. | loop wait-reason derivation in `packages/orchestration/loop-engine.ts` (not yet localized) | same live run: `loop-run` state `active`, `waitReason` null, the only `run` `uncertain` |
+
+**Procedure observation (not a product defect):** `scripts/live-loop.mjs` reported `result: "completed"` although Run C timed out (`timedOut: true`, still `active`). A reader of the report alone could take that as a passed run.
+
+**Positive live results:**
+
+- **Claude runtime qualification passed:** all 7 capabilities in 4 turns, with Claude Code 2.1.302 reporting `claude-opus-5-5` (CL-05, CL-15 at the live layer).
+- **Claude Code build step passed:** in Claude/Claude, Claude Code in Accept edits mode changed only `src/order.mjs` and replied after 559 s.
+- **Codex qualification passed** in the Codex/Claude pairing.
+
+**Other live outcomes:**
+
+- **Codex/Codex and Claude/Codex:** stopped at Codex qualification because the candidate-reader probe failed. Codex called the reader, but its reply did not quote the private marker. This matches the reader's earlier live history; the 19 October retry passed.
+- **Codex/Claude:** stopped because Codex's "Run a command" requests were left unanswered for 15 minutes. One of them asked to read the owner's real `~/.codex/memories/MEMORY.md`, outside the project. Topsl held it for the owner, so nothing ran.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

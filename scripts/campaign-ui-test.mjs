@@ -32,7 +32,10 @@ import { navigate } from "./desktop-navigation.mjs";
 const packet = path.resolve(
   "test-results/agent-testing/2026-10-19-comprehensive/p4b-desktop-ui",
 );
-const evidence = path.join(packet, "evidence");
+// TOPSL_CAMPAIGN_UI_EVIDENCE writes a later run elsewhere, so earlier evidence is kept.
+const evidence = process.env.TOPSL_CAMPAIGN_UI_EVIDENCE
+  ? path.resolve(process.env.TOPSL_CAMPAIGN_UI_EVIDENCE)
+  : path.join(packet, "evidence");
 await mkdir(evidence, { recursive: true });
 const TEST_PASSPHRASE = "Topsl isolated test passphrase"; // apps/desktop/main.ts unlock()
 const steps = [];
@@ -1163,7 +1166,12 @@ await step("UI-26 bounded navigation soak (measured only)", ["UI-26"], async () 
   await cdp.send("HeapProfiler.enable");
   const samples = [];
   const navigationMs = [];
-  const cycles = 12;
+  // TOPSL_UI_SOAK_MINUTES runs the cycles for that long instead of the
+  // default 12 (plan §12.7 asks for a one-hour soak); samples are thinned to
+  // about 60 so the report stays readable.
+  const soakMinutes = Number(process.env.TOPSL_UI_SOAK_MINUTES ?? 0);
+  const soakUntil = soakMinutes > 0 ? Date.now() + soakMinutes * 60_000 : 0;
+  let cycles = 12;
   const sample = async (cycle) => {
     await cdp.send("HeapProfiler.collectGarbage");
     const dom = await cdp.send("Memory.getDOMCounters");
@@ -1180,7 +1188,8 @@ await step("UI-26 bounded navigation soak (measured only)", ["UI-26"], async () 
     });
   };
   await sample(0);
-  for (let cycle = 1; cycle <= cycles; cycle++) {
+  for (let cycle = 1; soakUntil ? Date.now() < soakUntil : cycle <= cycles; cycle++) {
+    cycles = cycle;
     for (const nav of [...projectNames, ...globalPages.map((g) => g.nav)]) {
       const begin = Date.now();
       await navigate(page, nav);
@@ -1191,13 +1200,15 @@ await step("UI-26 bounded navigation soak (measured only)", ["UI-26"], async () 
     await page.keyboard.press(`${mod}+k`);
     await expect(paletteDialog).toBeVisible();
     await page.keyboard.press("Escape");
-    await sample(cycle);
+    if (!soakUntil || cycle % Math.max(1, Math.round(soakMinutes)) === 0) await sample(cycle);
   }
+  if (soakUntil && samples.at(-1).cycle !== cycles) await sample(cycles);
   await cdp.detach();
   const sorted = navigationMs.slice().sort((a, b) => a - b);
   const warm = samples.slice(2);
   measurements.soak = {
     cycles,
+    minutes: soakMinutes || null,
     navigations: navigationMs.length,
     navigationP50Ms: sorted[Math.ceil(sorted.length * 0.5) - 1],
     navigationP95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1],
