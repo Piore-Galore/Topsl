@@ -2,6 +2,7 @@ import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type { Project } from "../domain/types";
 import {
   LOOP_FEATURE_FLAG,
+  activeRoleCountProblem,
   functionPurpose,
   loopPolicySchema,
   requiredFunctions,
@@ -1205,11 +1206,10 @@ export class LoopSupervisor {
           throw new Error("This override needs a role.");
         if (input.kind === "role-settings" && !input.settings)
           throw new Error("A role override needs its settings.");
-        if (
-          input.kind === "active-role-count" &&
-          (typeof input.value !== "number" || input.value < 1)
-        )
-          throw new Error("An active-role count must be a positive number.");
+        if (input.kind === "active-role-count") {
+          const problem = activeRoleCountProblem(input.value);
+          if (problem) throw new Error(problem);
+        }
         if (
           input.kind === "provider-exclusion" &&
           !["codex", "claude"].includes(String(input.value))
@@ -2126,7 +2126,11 @@ export class LoopSupervisor {
           policy.monitoring.maxSeconds,
           Math.round(run.backoffSeconds * policy.monitoring.factor),
         )
-      : policy.monitoring.initialSeconds;
+      : // A policy stored before initialSeconds was bounded by maxSeconds.
+        Math.min(
+          policy.monitoring.maxSeconds,
+          policy.monitoring.initialSeconds,
+        );
     const dueAt = retryAt ?? this.iso(this.ms() + backoff * 1000);
     const fingerprint = await this.inputsFingerprint(run);
     this.store.transaction(() => {
@@ -3599,13 +3603,13 @@ export class LoopSupervisor {
                   Number(b.isDefault) - Number(a.isDefault) ||
                   a.model.localeCompare(b.model),
               )
-              .map((m) => m.model),
+              .map((m) => ({ provider: x.provider, model: m.model })),
           );
         ranking[r.roleId] = rankModels({
           outcomes,
           function: fn,
           taskFamily: family,
-          eligible: [...new Set(eligible)],
+          eligible,
         }).ranking;
       }
       const a = r.adaptive;

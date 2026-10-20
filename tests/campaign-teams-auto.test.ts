@@ -569,24 +569,50 @@ describe("TEAM-03: an exact count above a maxCount set at the same scope", () =>
       ],
     });
 
-  test("TEAM-03 (observation, not PASS evidence): count 5 with maxCount 3 at one scope retains the requested count; 5 assignments resolve", () => {
+  test("TEAM-03: count 5 with maxCount 3 at one scope retains the requested count and is blocked, never truncated to 3", () => {
     // Preconditions of the contract test below: the owner set both fields
     // at the same scope, both are retained as written, and the requested
     // count is kept (the specification's "retain the requested count").
+    // Until the D-25 repair (20 October 2026) 5 assignments resolved with no
+    // conflict; the conflict now blocks the group, as a count above the
+    // per-role limit does.
     const role = builtInRoleDefinitions.reviewer;
     const group = countAboveMax();
     expect(group).toMatchObject({ count: 5, maxCount: 3 });
     expect(group.userFields).toEqual(
       expect.arrayContaining(["count", "maxCount"]),
     );
-    expect(
-      resolveGroup({
-        role,
-        group,
-        pool: [wideRoute(8)],
-        complexity: "simple",
-      }).assignments,
-    ).toHaveLength(5);
+    const resolved = resolveGroup({
+      role,
+      group,
+      pool: [wideRoute(8)],
+      complexity: "simple",
+    });
+    expect(resolved.targetCount).toBe(5);
+    expect(resolved.conflicts).toEqual(group.conflicts);
+    expect(resolved.assignments.filter((a) => a.status === "resolved")).toEqual(
+      [],
+    );
+    // A count set at a narrower scope than the maximum supersedes it.
+    const narrower = effectiveGroup({
+      projectId: "p",
+      goalId: "g",
+      role,
+      memberLimit: 8,
+      layers: [
+        {
+          level: "project-role",
+          revisionId: "x",
+          settings: { form: "auto", maxCount: 3 },
+        },
+        {
+          level: "goal-role",
+          revisionId: "y",
+          settings: { count: 5 },
+        },
+      ],
+    });
+    expect(narrower).toMatchObject({ count: 5, conflicts: [] });
     // Negative control: minCount above maxCount is a conflict.
     expect(
       effectiveGroup({
@@ -605,28 +631,24 @@ describe("TEAM-03: an exact count above a maxCount set at the same scope", () =>
     ).toEqual(["The minimum count 4 exceeds the maximum 3."]);
   });
 
-  // CAMPAIGN DEFECT TEAM-03: an owner-set exact count 5 above an owner-set maxCount 3 at the same scope yields conflicts [] instead of a field-named conflict (membership.ts:171-183 checks memberLimit, members>count and minCount>maxCount, never count>maxCount).
-  test.fails(
-    "TEAM-03: count 5 with maxCount 3 set at the same scope is reported as a conflict naming the count and the maximum",
-    () => {
-      // Contract: plan TEAM-03 ("unavailability reason specifies exact
-      // field") and docs/Coordinator_Feature_Specification.md:96 ("When an
-      // explicit count conflicts with a configured ceiling ... retain the
-      // requested count and explain the conflict"). Retention is shown by
-      // the observation test above; the explanation is what is missing.
-      const conflicts = countAboveMax().conflicts;
-      expect(
-        conflicts.some(
-          (c) =>
-            /\b5\b/.test(c) &&
-            /\b3\b/.test(c) &&
-            /count/i.test(c) &&
-            /max/i.test(c),
-        ),
-        `conflicts were ${JSON.stringify(conflicts)}`,
-      ).toBe(true);
-    },
-  );
+  test("TEAM-03: count 5 with maxCount 3 set at the same scope is reported as a conflict naming the count and the maximum", () => {
+    // Contract: plan TEAM-03 ("unavailability reason specifies exact
+    // field") and docs/Coordinator_Feature_Specification.md:96 ("When an
+    // explicit count conflicts with a configured ceiling ... retain the
+    // requested count and explain the conflict"). Retention is shown by
+    // the observation test above; the explanation is what is missing.
+    const conflicts = countAboveMax().conflicts;
+    expect(
+      conflicts.some(
+        (c) =>
+          /\b5\b/.test(c) &&
+          /\b3\b/.test(c) &&
+          /count/i.test(c) &&
+          /max/i.test(c),
+      ),
+      `conflicts were ${JSON.stringify(conflicts)}`,
+    ).toBe(true);
+  });
 });
 
 describe("TEAM-01: any role on any qualified route", () => {
@@ -1638,35 +1660,40 @@ describe("TEAM-05/TEAM-13: scoped settings, releases and information goals", () 
     expect(f.driver.integrations).toHaveLength(0);
   });
 
-  // CAMPAIGN DEFECT TEAM-13: an explicit status message with no active goal creates a new code goal (engine.ts post: falls through to newGoal).
-  test.fails(
-    "TEAM-13: an explicit status query after the only goal completed creates no goal",
-    async () => {
-      const f = await setup();
-      f.driver.reply = (turn) =>
-        turn.purpose === "coordinator-contribution"
-          ? defaultReply(turn, defaultPlan("information"))
-          : defaultReply(turn);
-      const { conversation, goal } = await start(
-        f,
-        "Research which logging library fits.",
-        "information",
-      );
-      expect(await drive(f.orchestrator, f.driver, goal.id)).toBe("completed");
-      const status = await f.orchestrator.post({
-        conversationId: conversation.id,
-        text: "What is the status?",
-        routing: "status",
-        commandId: cmd(),
-      });
-      // Observed on 2026-10-19: routing "status" is returned together with a
-      // new planning goal whose objective is the status question.
-      expect(status.routing).toBe("status");
-      expect(
-        f.orchestrator.repo.all<Goal>(kinds.goal, "p").map((g) => g.id),
-      ).toEqual([goal.id]);
-    },
-  );
+  test("TEAM-13: an explicit status query after the only goal completed creates no goal", async () => {
+    const f = await setup();
+    f.driver.reply = (turn) =>
+      turn.purpose === "coordinator-contribution"
+        ? defaultReply(turn, defaultPlan("information"))
+        : defaultReply(turn);
+    const { conversation, goal } = await start(
+      f,
+      "Research which logging library fits.",
+      "information",
+    );
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe("completed");
+    const status = await f.orchestrator.post({
+      conversationId: conversation.id,
+      text: "What is the status?",
+      routing: "status",
+      commandId: cmd(),
+    });
+    // Observed on 2026-10-19 (D-13): routing "status" was returned together
+    // with a new planning goal whose objective was the status question, and
+    // "auto" routing classified the question as a new goal.
+    expect(status.routing).toBe("status");
+    expect(status.goal!.id).toBe(goal.id);
+    const auto = await f.orchestrator.post({
+      conversationId: conversation.id,
+      text: "What is the status?",
+      commandId: cmd(),
+    });
+    expect(auto.routing).toBe("status");
+    expect(auto.goal!.id).toBe(goal.id);
+    expect(
+      f.orchestrator.repo.all<Goal>(kinds.goal, "p").map((g) => g.id),
+    ).toEqual([goal.id]);
+  });
 });
 
 // ---------------------------------------------------------------------------

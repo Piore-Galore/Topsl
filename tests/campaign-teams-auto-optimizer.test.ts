@@ -451,31 +451,45 @@ describe("AUTO-09/AUTO-10: revert predicate and provider attribution", () => {
     ]);
   });
 
-  // CAMPAIGN DEFECT AUTO-10: rankModels keys statistics by model ID only, so the same ID on two providers is ranked by whichever provider's records came last (adaptation.ts rankModels `known` map).
-  test.fails(
-    "AUTO-10: ranking the same outcomes does not depend on record order when one model ID exists on two providers",
-    () => {
-      const codex = Array.from({ length: 4 }, () =>
-        outcome("shared", "valid", "promoted"),
-      );
-      const claude = Array.from({ length: 4 }, () =>
-        outcome("shared", "invalid", "rejected", "low", { provider: "claude" }),
-      );
-      const middling = Array.from({ length: 4 }, () =>
-        outcome("other", "valid", "rejected"),
-      );
-      const rank = (outcomes: LoopOutcome[]) =>
+  test("AUTO-10: ranking the same outcomes does not depend on record order when one model ID exists on two providers", () => {
+    const codex = Array.from({ length: 4 }, () =>
+      outcome("shared", "valid", "promoted"),
+    );
+    const claude = Array.from({ length: 4 }, () =>
+      outcome("shared", "invalid", "rejected", "low", { provider: "claude" }),
+    );
+    const middling = Array.from({ length: 4 }, () =>
+      outcome("other", "valid", "rejected"),
+    );
+    const rank = (outcomes: LoopOutcome[]) =>
+      rankModels({
+        outcomes,
+        function: "implementation",
+        taskFamily: "goal:family",
+        eligible: ["other", "shared"],
+      }).ranking;
+    expect(rank([...middling, ...claude, ...codex])).toEqual(
+      rank([...middling, ...codex, ...claude]),
+    );
+    // A provider-qualified entry is ranked by that provider's records only:
+    // only Claude serves "shared" here, and its invalid record ranks it
+    // below "other", however the records are ordered.
+    for (const outcomes of [
+      [...middling, ...claude, ...codex],
+      [...middling, ...codex, ...claude],
+    ])
+      expect(
         rankModels({
           outcomes,
           function: "implementation",
           taskFamily: "goal:family",
-          eligible: ["other", "shared"],
-        }).ranking;
-      expect(rank([...middling, ...claude, ...codex])).toEqual(
-        rank([...middling, ...codex, ...claude]),
-      );
-    },
-  );
+          eligible: [
+            { provider: "claude", model: "shared" },
+            { provider: "codex", model: "other" },
+          ],
+        }).ranking,
+      ).toEqual(["other", "shared"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -655,7 +669,11 @@ describe("AUTO-11: active-role-count override validation", () => {
   test("AUTO-11: 0, a negative number and a string are refused before anything is stored", async () => {
     const t = await setup();
     const { run } = await created(t);
-    for (const value of [0, -2, "4"])
+    for (const [value, reason] of [
+      [0, /must be at least 3/],
+      [-2, /must be at least 3/],
+      ["4", /must be a whole number/],
+    ] as const)
       await expect(
         t.supervisor.setOverride({
           runId: run.id,
@@ -663,7 +681,7 @@ describe("AUTO-11: active-role-count override validation", () => {
           value,
           commandId: `ov-${Math.random()}`,
         }),
-      ).rejects.toThrow(/positive number/);
+      ).rejects.toThrow(reason);
     expect(t.supervisor.overrides(run)).toEqual([]);
     expect(t.supervisor.run(run.id).overrideRevision).toBe(
       run.overrideRevision,
@@ -671,7 +689,7 @@ describe("AUTO-11: active-role-count override validation", () => {
     expect([...t.store.iterate(loopKinds.override)]).toHaveLength(0);
   });
 
-  test("AUTO-11: the public command parses 1.5 and very large counts (observed input surface)", () => {
+  test("AUTO-11: the public command refuses fractional, too-small and too-large counts with the reason", () => {
     const command = (value: unknown) => ({
       type: "loop-override-set",
       runId: "r",
@@ -681,17 +699,38 @@ describe("AUTO-11: active-role-count override validation", () => {
       value,
       commandId: "override-command",
     });
-    const ok = (v: unknown) => commandSchema.safeParse(command(v)).success;
-    expect(ok(4)).toBe(true);
-    // The schema accepts any number: fraction, zero and huge values reach the engine.
-    expect(ok(1.5)).toBe(true);
-    expect(ok(0)).toBe(true);
-    expect(ok(1e300)).toBe(true);
-    expect(ok(Number.POSITIVE_INFINITY)).toBe(false);
-    expect(ok(Number.NaN)).toBe(false);
+    const parse = (v: unknown) => commandSchema.safeParse(command(v));
+    for (const value of [3, 4, 64]) expect(parse(value).success).toBe(true);
+    // Until the D-14 repair (20 October 2026) the schema accepted any finite
+    // number, so 1.5, 0 and 1e300 reached the engine.
+    for (const [value, reason] of [
+      [1.5, "must be a whole number"],
+      [0, "must be at least 3"],
+      [2, "must be at least 3"],
+      [65, "can be at most 64"],
+      [1e300, "can be at most 64"],
+    ] as const) {
+      const result = parse(value);
+      expect(result.success).toBe(false);
+      expect(result.error!.issues.map((i) => i.message).join(" ")).toContain(
+        reason,
+      );
+    }
+    expect(parse(Number.POSITIVE_INFINITY).success).toBe(false);
+    expect(parse(Number.NaN).success).toBe(false);
+    // Other override kinds keep their own value rules.
+    expect(
+      commandSchema.safeParse({
+        ...command("codex"),
+        kind: "provider-exclusion",
+      }).success,
+    ).toBe(true);
   });
 
-  test("AUTO-11 (observed effect): a stored 1.5 count makes every automatic reorganization impossible; the organization stays unchanged", async () => {
+  test("AUTO-11: a refused 1.5 count is never stored, so automatic reorganization still runs", async () => {
+    // Observed on 2026-10-19 (D-14): a stored 1.5 made every reorganization
+    // fail with "You asked for exactly 1.5 active roles; this organization
+    // has 5." and the organization stayed at revision 1.
     const t = await setup();
     implementing(t);
     organizeOnce(t, [
@@ -706,58 +745,62 @@ describe("AUTO-11: active-role-count override validation", () => {
       ]),
     ]);
     const { run } = await created(t);
-    const stored = await t.supervisor.setOverride({
-      runId: run.id,
-      kind: "active-role-count",
-      value: 1.5,
-      commandId: "ov-fraction",
-    });
-    expect(stored).toMatchObject({ kind: "active-role-count", value: 1.5 });
+    await expect(
+      t.supervisor.setOverride({
+        runId: run.id,
+        kind: "active-role-count",
+        value: 1.5,
+        commandId: "ov-fraction",
+      }),
+    ).rejects.toThrow(/whole number/);
     await startCreated(t, run.id);
     const view = await driveLoop(t, run.id, done, 300);
-    expect(rejections(view)).toContain(
-      "You asked for exactly 1.5 active roles; this organization has 5.",
-    );
-    expect(activeRoles(view)).not.toContain("ui-specialist");
-    expect(view.topology!.revision).toBe(1);
+    expect(rejections(view)).not.toContain("active roles");
+    expect(activeRoles(view)).toContain("ui-specialist");
   });
 
-  // CAMPAIGN DEFECT AUTO-11: setOverride accepts a fractional active-role count (loop-engine.ts setOverride checks only `typeof value === "number" && value >= 1`).
-  test.fails(
-    "AUTO-11: a fractional active-role count is rejected before it is stored",
-    async () => {
-      const t = await setup();
-      const { run } = await created(t);
+  test("AUTO-11: a fractional active-role count is rejected before it is stored", async () => {
+    const t = await setup();
+    const { run } = await created(t);
+    await expect(
+      t.supervisor.setOverride({
+        runId: run.id,
+        kind: "active-role-count",
+        value: 1.5,
+        commandId: "ov-fraction-refused",
+      }),
+    ).rejects.toThrow("An active-role count must be a whole number, not 1.5.");
+    expect(t.supervisor.overrides(run)).toEqual([]);
+  });
+
+  test("AUTO-11: an impossible active-role count (1, 2 or 1e9) is rejected before it is stored", async () => {
+    const t = await setup();
+    const { run } = await created(t);
+    for (const [value, reason] of [
+      [1, /at least 3: the required functions need 3 distinct purposes/],
+      [2, /at least 3: the required functions need 3 distinct purposes/],
+      [1e9, /at most 64; 1000000000 is too many/],
+    ] as const)
       await expect(
         t.supervisor.setOverride({
           runId: run.id,
           kind: "active-role-count",
-          value: 1.5,
-          commandId: "ov-fraction-refused",
+          value,
+          commandId: `ov-impossible-${value}`,
         }),
-      ).rejects.toThrow();
-      expect(t.supervisor.overrides(run)).toEqual([]);
-    },
-  );
-
-  // CAMPAIGN DEFECT AUTO-11: an active-role count no organization can satisfy (1 or 2, below the three distinct purposes the required functions need, or 1e9) is stored as a hard override.
-  test.fails(
-    "AUTO-11: an impossible active-role count (1, 2 or 1e9) is rejected before it is stored",
-    async () => {
-      const t = await setup();
-      const { run } = await created(t);
-      for (const value of [1, 2, 1e9])
-        await expect(
-          t.supervisor.setOverride({
-            runId: run.id,
-            kind: "active-role-count",
-            value,
-            commandId: `ov-impossible-${value}`,
-          }),
-        ).rejects.toThrow();
-      expect(t.supervisor.overrides(run)).toEqual([]);
-    },
-  );
+      ).rejects.toThrow(reason);
+    expect(t.supervisor.overrides(run)).toEqual([]);
+    // The lower bound itself is accepted (64 is covered at the schema).
+    await t.supervisor.setOverride({
+      runId: run.id,
+      kind: "active-role-count",
+      value: 3,
+      commandId: "ov-bound-3",
+    });
+    expect(
+      t.supervisor.overrides(t.supervisor.run(run.id)).map((o) => o.value),
+    ).toEqual([3]);
+  });
 });
 
 describe("AUTO-02/AUTO-05: owner locks and atomic topology proposals", () => {

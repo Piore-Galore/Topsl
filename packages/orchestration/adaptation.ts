@@ -109,12 +109,17 @@ export function aggregateOutcomes(
  * with no outcomes keep the documented cold-start order the caller supplies
  * (explicit preferences, diversity, default model, stable provider/model
  * order). Ranking reorders eligible routes only.
+ *
+ * Statistics belong to a provider and model together: the same model ID on
+ * two providers is two records. An eligible entry names its provider; a bare
+ * model ID stands for that ID on any provider. The ranking lists model IDs,
+ * each at the position of its best eligible provider.
  */
 export function rankModels(input: {
   outcomes: LoopOutcome[];
   function: LoopFunction;
   taskFamily: string;
-  eligible: string[];
+  eligible: Array<string | { provider: string; model: string }>;
 }): {
   ranking: string[];
   basis: "task-family" | "function" | "cold-start";
@@ -133,9 +138,22 @@ export function rankModels(input: {
     : stats.length
       ? "function"
       : "cold-start";
-  const known = new Map(stats.map((s) => [s.model, s]));
+  const known = new Map(stats.map((s) => [`${s.provider}\0${s.model}`, s]));
   const ranked = input.eligible
-    .map((model, index) => ({ model, index, stat: known.get(model) }))
+    .flatMap((entry, index) => {
+      if (typeof entry !== "string")
+        return [
+          {
+            model: entry.model,
+            index,
+            stat: known.get(`${entry.provider}\0${entry.model}`),
+          },
+        ];
+      const matching = stats.filter((s) => s.model === entry);
+      return matching.length
+        ? matching.map((stat) => ({ model: entry, index, stat }))
+        : [{ model: entry, index, stat: undefined }];
+    })
     .sort((a, b) => {
       // Known models rank by their lower estimate. An unknown model sits at
       // the prior's lower estimate (0), the same as a model with no credited
@@ -146,7 +164,7 @@ export function rankModels(input: {
       return lb - la || a.index - b.index;
     })
     .map((r) => r.model);
-  return { ranking: ranked, basis, stats };
+  return { ranking: [...new Set(ranked)], basis, stats };
 }
 
 /** A content identity for an organization, ignoring revision bookkeeping. */

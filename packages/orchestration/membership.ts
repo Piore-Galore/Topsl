@@ -83,10 +83,19 @@ export function effectiveGroup(input: {
   let completion: Partial<CompletionPolicy> = {};
   const userFields = new Set<string>();
   const ignored: string[] = [];
-  for (const layer of ordered) {
+  // Where the owner last set count and maxCount. A count set at a narrower
+  // scope than the maximum supersedes it; at the same or a broader scope the
+  // two conflict.
+  let countScope = -1;
+  let maxScope = -1;
+  for (const [index, layer] of ordered.entries()) {
     if (layer.level !== "application")
       for (const field of setFields(layer.settings)) userFields.add(field);
     const settings = roleGroupSettingsSchema.parse(layer.settings);
+    if (layer.level !== "application") {
+      if (settings.count !== undefined) countScope = index;
+      if (settings.maxCount !== undefined) maxScope = index;
+    }
     // A scope that sets a roster closes membership there: it replaces the
     // broader roster and its count, instead of adding to it.
     if (settings.members !== undefined && settings.form === undefined)
@@ -176,6 +185,16 @@ export function effectiveGroup(input: {
   if (count !== null && members.length > count)
     conflicts.push(
       `${members.length} required members do not fit an exact count of ${count}. Change the count or the members; nothing was removed.`,
+    );
+  if (
+    form !== "exact" &&
+    count !== null &&
+    countScope >= 0 &&
+    maxScope >= countScope &&
+    count > maxCount
+  )
+    conflicts.push(
+      `The exact count ${count} exceeds the maximum count ${maxCount}. The requested count is kept; change the count or the maximum to run it.`,
     );
   if (form !== "exact" && minCount > maxCount)
     conflicts.push(

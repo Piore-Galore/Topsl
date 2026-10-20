@@ -649,11 +649,13 @@ export class Orchestrator {
         if (routing === "auto") {
           if (/^\s*(stop everything|stop all)\b/i.test(text))
             routing = "status";
+          // An explicit status question is a status request with or without
+          // an active goal; any other question is one only while a goal runs.
           else if (
-            target &&
-            /^\s*(status|what(?:'s| is) (?:the )?(?:status|progress)|how is it going)\b|\?\s*$/i.test(
+            /^\s*(status|what(?:'s| is) (?:the )?(?:status|progress)|how is it going)\b/i.test(
               text,
-            )
+            ) ||
+            (target && /\?\s*$/.test(text))
           )
             routing = "status";
           else if (
@@ -731,6 +733,24 @@ export class Orchestrator {
             goalId: target.id,
           });
           return { message, routing, goal: target };
+        }
+        if (routing === "status") {
+          // No active goal: report on the latest goal, if any. A status
+          // request never creates a goal.
+          const latest = goals.at(-1) ?? null;
+          const message = this.message(conversation, "user", text, {
+            kind: "status",
+            goalId: latest?.id ?? null,
+          });
+          this.message(
+            conversation,
+            "service",
+            latest
+              ? this.statusText(latest.id)
+              : "No goal in this conversation yet.",
+            { kind: "status", goalId: latest?.id ?? null },
+          );
+          return { message, routing, goal: latest };
         }
         if (routing === "update-goal" && target) {
           const message = this.message(conversation, "user", text, {

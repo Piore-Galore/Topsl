@@ -309,4 +309,16 @@ After the campaign, D-06, D-07, D-08, D-09, D-10 and D-12 were repaired on top o
 
 The campaign verdict above remains a snapshot of `d4b788e`. The status of every other defect is kept in [TEST-DECISIONS](testing/TEST-DECISIONS.md).
 
+### Orchestration defect repairs — 20 October 2026 follow-up
+
+D-13, D-14, D-16, D-24 and D-25 were repaired on top of `9a769e5`; each reproduction now passes as a plain test. Changes, decisions and verification (`npm run check` and the coordinator and loop desktop journeys, darwin-arm64) are in [Orchestration defect repairs](testing/TEST-DECISIONS.md#orchestration-defect-repairs--20-october-2026). In short:
+
+- A coordinator status request never creates a goal; with no active goal it reports on the latest one (D-13).
+- An active-role-count override must be a whole number from 3 to 64 and is refused with the reason before anything is stored (D-14).
+- Loop model ranking keeps separate statistics for the same model ID on two providers (D-16).
+- A monitoring policy with `initialSeconds` above `maxSeconds` is refused (D-24).
+- An owner count above an owner maximum at the same scope is reported as a conflict that keeps the requested count (D-25).
+
+D-15 (AUTO-06) is unchanged and waits for the owner's decision.
+
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

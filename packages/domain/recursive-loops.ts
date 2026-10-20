@@ -84,6 +84,28 @@ export const requiredFunctions: readonly LoopFunction[] = [
   "review",
 ];
 
+/**
+ * The active-role counts an owner may require. The required functions need
+ * this many distinct execution purposes, so no organization has fewer roles;
+ * the ceiling matches a role's member-limit ceiling, since an organization
+ * cannot usefully run more roles than that.
+ */
+export const ACTIVE_ROLE_COUNT_MIN = new Set(
+  requiredFunctions.map((fn) => functionPurpose[fn]),
+).size;
+export const ACTIVE_ROLE_COUNT_MAX = 64;
+
+/** Why an active-role count cannot be stored, or null when it can. */
+export function activeRoleCountProblem(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isInteger(value))
+    return `An active-role count must be a whole number, not ${String(value)}.`;
+  if (value < ACTIVE_ROLE_COUNT_MIN)
+    return `An active-role count must be at least ${ACTIVE_ROLE_COUNT_MIN}: the required functions need ${ACTIVE_ROLE_COUNT_MIN} distinct purposes (coordination, implementation and review). ${value} is too few.`;
+  if (value > ACTIVE_ROLE_COUNT_MAX)
+    return `An active-role count can be at most ${ACTIVE_ROLE_COUNT_MAX}; ${value} is too many.`;
+  return null;
+}
+
 /** One active role's binding to one function, with an immutable revision. */
 export interface ActiveRolePurposeBinding {
   /** Stable across revisions: lineage and function. */
@@ -633,6 +655,11 @@ export const loopPolicySchema = z
         factor: z.number().min(1).max(10).default(2),
       })
       .strict()
+      .refine((m) => m.initialSeconds <= m.maxSeconds, {
+        path: ["initialSeconds"],
+        message:
+          "The first monitoring delay (initialSeconds) cannot be longer than the maximum delay (maxSeconds).",
+      })
       .default({ initialSeconds: 300, maxSeconds: 21600, factor: 2 }),
     scheduling: z
       .object({
