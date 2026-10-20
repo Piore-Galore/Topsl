@@ -72,7 +72,7 @@ export function RecursiveLoop({
   mode: "goal" | "endless";
 }) {
   const [query, setQuery] = useState<any>(null),
-    [runId, setRunId] = useState<string | null>(null),
+    [runId, setShownRun] = useState<string | null>(null),
     [view, setView] = useState<any>(null),
     [errors, setErrors] = useState<Record<string, string>>({}),
     [text, setText] = useState(""),
@@ -88,7 +88,16 @@ export function RecursiveLoop({
     [newGoal, setNewGoal] = useState(""),
     [lockCounts, setLockCounts] = useState<Record<string, string>>({});
   const generation = useRef(0),
-    reads = useRef(new ScopedReadFence(projectId));
+    reads = useRef(new ScopedReadFence(projectId)),
+    // The run the owner chose, read by refresh() at once. A refresh started
+    // right after choosing still holds the previous render, so reading the
+    // state there re-read the run chosen before and showed it until the
+    // project's next change.
+    chosenRun = useRef<string | null>(null);
+  const setRunId = (id: string | null) => {
+    chosenRun.current = id;
+    setShownRun(id);
+  };
   useEffect(() => {
     generation.current++;
     reads.current.reset(projectId);
@@ -106,17 +115,23 @@ export function RecursiveLoop({
     if (!reads.current.accept(ticket, value)) return;
     setQuery(value);
     const runs = (value.runs ?? []).filter((r: any) => r.mode === mode);
+    const chosen = chosenRun.current;
     const selected =
-      runId && runs.some((r: any) => r.id === runId)
-        ? runId
+      chosen && runs.some((r: any) => r.id === chosen)
+        ? chosen
         : (runs[0]?.id ?? null);
-    if (selected !== runId) setRunId(selected);
+    if (selected !== chosen) setRunId(selected);
     if (selected) {
       const inspected = await window.topsl.command({
         type: "loop-inspect",
         runId: selected,
       });
-      if (reads.current.accept(ticket, inspected)) setView(inspected);
+      // A slower read of a run chosen earlier never replaces the chosen one.
+      if (
+        chosenRun.current === selected &&
+        reads.current.accept(ticket, inspected)
+      )
+        setView(inspected);
     } else setView(null);
   }
   const freshness = useScopedRefresh(projectId, refresh);

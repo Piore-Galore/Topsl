@@ -192,6 +192,24 @@ Not covered: packaged builds, and the loop journey on Windows, where it does not
 
 Not covered: remote CI, and other platforms. This harness is not in the default `npm run test:desktop` set.
 
+### Follow-up: choosing a loop run showed the run chosen before (20 October 2026)
+
+**A product defect.** CI run 39369761570 (push to `main` at `4303711`) failed on macOS Apple silicon at `scripts/desktop-loop-test.mjs:385`. After run B was stopped, the harness chose "Change the value to two · Completed" in the **Run** picker. It then timed out after 30 s waiting for that run's **Accumulated changes**. The same code had passed every desktop journey on all four platforms in run 39363648985 (`a055657`). The macOS Intel job of 39369761570 failed elsewhere: the EPERM process probe in `tests/campaign-claude-codex.test.ts`, which `9a769e5` addresses.
+
+- **Cause.** The picker's `onChange` set the chosen run's id in state and called `refresh()` straight away ([recursive-loop.tsx](../../apps/desktop/renderer/components/recursive-loop.tsx)). That `refresh` belonged to the render before the choice, so it still read the previous `runId`: it inspected run B again and kept B's details on screen under the picker's "Change the value to two". Only the project's next change ran a refresh that read the new choice. `create()` had the same pattern, so a newly created run could stay unselected. A person choosing a run in a quiet project would see the wrong run's details. The coordinator's suspicion, the `view?.run.mode === mode` gate from the F-01 fix, was not involved: both runs are Goal loops.
+- **Why the harness did not say so.** `runArticle("Change the value to two")` matched accessible names by substring, so B's article, "Loop run Change the value to two in a second run", also matched. B was stopped with no accepted changes, so it had no **Accumulated changes** summary and the click waited 30 s.
+- **Evidence.** With project refreshes held during the choice (the `holdRefreshes` and `settled` helpers from the F-01 work), the unfixed build failed 3 of 3 runs with CI's signature. A probe at that point read the picker as "Change the value to two · Completed" and the only run article as "Loop run Change the value to two in a second run".
+- **Fix.** The chosen run is kept in a ref (`chosenRun`) that `refresh()` reads. The picker, a newly created run and the mode switch all set it together with the state. An inspection that returns after a different run was chosen no longer replaces the view.
+- **Harness.** `runArticle` matches names exactly. The run choice is made with project refreshes held, then the view settles before the checkpoint is checked, so this step now fails without the fix instead of depending on a trailing change event.
+
+| Check (darwin-arm64, working tree on `9a769e5` with these changes, one Electron instance at a time, `env -u ANTHROPIC_BASE_URL`, after `npm run build`) | Before the fix | After the fix |
+| --- | --- | --- |
+| `node scripts/desktop-loop-test.mjs` with the hold, unthrottled | 3 of 3 failed at the run choice | 2 of 2 passed |
+| The same under stress (`TOPSL_TEST_CPU_THROTTLE=4` and eight `yes > /dev/null` processes) | — | **8 of 8 passed** (30 to 33 s each) |
+| `npm run check` | — | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,122 tests passed, 17 expected fail, 5 skipped; `test:release` 18/0/0; build |
+
+The default `npm run test:desktop` set (main, coordinator, Atlas and loop journeys) also passed unthrottled. Remote CI had not yet run on this change when it was recorded.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

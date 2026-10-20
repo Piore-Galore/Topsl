@@ -152,8 +152,10 @@ async function openLoops(mode) {
   await page.getByRole("radio", { name: new RegExp(`^${mode}`) }).check();
   return page.getByRole("region", { name: "Recursive loop" });
 }
+// Exact: one run's title can begin another's ("Change the value to two" and
+// "Change the value to two in a second run").
 const runArticle = (title) =>
-  page.getByRole("article", { name: `Loop run ${title}` });
+  page.getByRole("article", { name: `Loop run ${title}`, exact: true });
 const runOf = async (title) =>
   (await command({ type: "loop-query", projectId })).runs.find(
     (r) => r.title === title,
@@ -374,9 +376,16 @@ try {
   ).toBeDisabled();
 
   // Inspect and publish run A's accumulated checkpoint into the folder.
+  // Choosing a run shows that run by itself. It once re-read the previously
+  // selected run and showed it until the project's next change, so project
+  // refreshes are held while A is chosen (the loop failure recorded with F-01
+  // in docs/testing/TEST-DECISIONS.md).
+  await holdRefreshes(app, true);
+  await settled();
   await loops
     .getByRole("combobox", { name: "Run" })
     .selectOption({ label: "Change the value to two · Completed" });
+  await settled();
   const checkpoint = runArticle("Change the value to two").getByRole("region", {
     name: "Accepted checkpoint",
   });
@@ -384,6 +393,7 @@ try {
     .locator("summary", { hasText: "Accumulated changes" })
     .click();
   await expect(checkpoint).toContainText("modified: file.ts");
+  await holdRefreshes(app, false);
   await checkpoint
     .getByRole("button", { name: "Publish to folder…", exact: true })
     .click();
