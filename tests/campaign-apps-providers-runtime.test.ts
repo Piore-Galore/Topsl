@@ -374,8 +374,12 @@ process.stdin.on("end", () => {
   const line = (r) => JSON.stringify({ session_id: session, ...r }) + "\\n";
   let out = line({ type: "system", subtype: "init", model: "fx-effective", tools: [], uuid: "i" });
   out += line({ type: "stream_event", uuid: "st", event: { type: "message_start", message: { id: "m1" } } });
-  for (let i = 0; i < 20100; i++)
-    out += line({ type: "stream_event", uuid: "p-" + i, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "." } } });
+  // Thinking deltas are identified fragments too, but store nothing, so the
+  // test passes the cap without 20,000 message writes (slow on Windows CI).
+  for (let i = 0; i < 20000; i++)
+    out += line({ type: "stream_event", uuid: "t-" + i, event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "." } } });
+  for (let i = 0; i < 100; i++)
+    out += line({ type: "stream_event", uuid: "p-" + i, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "." } } });
   out += line({ type: "stream_event", uuid: "ms", event: { type: "message_stop" } });
   out += line({ type: "assistant", uuid: "a", message: { id: "m1", content: [{ type: "text", text: "long reply" }] } });
   out += line({ type: "result", uuid: "r", subtype: "success", is_error: false, result: "long reply" });
