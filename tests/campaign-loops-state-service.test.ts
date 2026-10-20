@@ -701,6 +701,10 @@ process.stdin.on("end", () => {
       process.kill(target, 0);
       return "alive";
     } catch (error: any) {
+      // EPERM means the target exists but cannot be signalled; macOS can
+      // answer that for a process group whose member still runs (CI run
+      // 39369761570, macOS Intel). Only ESRCH means it is gone.
+      if (error.code === "EPERM") return "alive";
       return String(error.code);
     }
   };
