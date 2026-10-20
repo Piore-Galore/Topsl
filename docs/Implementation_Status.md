@@ -311,7 +311,7 @@ The campaign verdict above remains a snapshot of `d4b788e`. The status of every 
 
 ### Campaign defect repairs — 20 October 2026 follow-up
 
-D-11, D-17, D-18, D-20, D-21, D-22, D-23 and D-26 were repaired on top of `9a769e5`, and each reproduction now passes as a plain test. The repairs, the tests whose expectations changed, and the commands and results are in [Defect repairs — 20 October 2026 follow-up](testing/TEST-DECISIONS.md#defect-repairs--20-october-2026-follow-up). In short:
+D-11, D-17, D-18, D-19, D-20, D-21, D-22, D-23 and D-26 were repaired on top of `9a769e5`, and each reproduction now passes as a plain test. The repairs, the tests whose expectations changed, and the commands and results are in [Defect repairs — 20 October 2026 follow-up](testing/TEST-DECISIONS.md#defect-repairs--20-october-2026-follow-up). In short:
 
 - The qualification also refuses another name for the system temporary folder, such as the macOS firmlink `/System/Volumes/Data/private/tmp`, by comparing device and inode (D-11).
 - A handoff keeps the newest messages that fit its limits and drops the oldest first. The snapshot (`omissions`), its text and the handoff dialog say what was omitted or shortened (D-17).
@@ -321,7 +321,6 @@ D-11, D-17, D-18, D-20, D-21, D-22, D-23 and D-26 were repaired on top of `9a769
 - Approval summaries escape every Unicode `Bidi_Control` character, including U+061C (D-22).
 - Expired replication approval previews, which hold full portable content, are removed at startup and before each new preview (D-23).
 - On Windows, a Claude executable that Node refuses to launch (such as a `.cmd`) gives Topsl's sanitized account message (D-26). Only remote Windows CI covers this: run 39381532671 passed on all four platforms.
-
-D-19 (TASK-01) stays open for the owner's decision.
+- *Owner decision, 20 October 2026:* finished tasks must not change. An accepted or cancelled task refuses every `task-transition`, including a same-state one that would only rewrite its detail, and nothing is recorded (D-19).
 
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

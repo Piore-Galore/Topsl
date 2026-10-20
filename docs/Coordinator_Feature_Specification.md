@@ -318,7 +318,7 @@ Replace provider-keyed continuation for group work with member/session records. 
 
 Resume a worker only when the provider, account/profile, installation, model/settings, instruction profile, workspace, purpose, and permitted context are compatible. A change requiring new authority or context starts a fresh session with a bounded handoff. Reviews start fresh for their review round and receive a new candidate-bound grant. Coordinator contribution/endorsement sessions may continue only within the validated purpose and round binding; otherwise open a fresh control session.
 
-Do not reopen a terminal task state to obtain reuse. Create linked follow-up tasks/attempts while preserving terminal history and the relationship to the earlier member.
+Do not reopen a terminal task state to obtain reuse. Create linked follow-up tasks/attempts while preserving terminal history and the relationship to the earlier member. An accepted or cancelled task refuses every transition, including one that would only change its detail (owner decision, 20 October 2026; [D-19](testing/TEST-DECISIONS.md#defect-repairs--20-october-2026-follow-up)).
 
 ### Parallel implementation and integration
 
