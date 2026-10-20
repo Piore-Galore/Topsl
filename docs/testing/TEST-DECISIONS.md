@@ -293,7 +293,7 @@ Not covered: packaged builds, live providers, and the role editor or loop view s
 
 ## Live and soak follow-up — 20 October 2026
 
-*Dated follow-up, 20 October 2026.* These runs covered the cells still open after the defect repairs. They used `main` at `419fd85`, darwin-arm64, the owner's own sign-ins, and disposable Topsl profiles; Codex CLI 0.163.0 and Claude Code 2.1.302 ran under owner authorization. Three new defects were found. They are open, and none has a reproducing test yet.
+*Dated follow-up, 20 October 2026.* These runs covered the cells still open after the defect repairs. They used `main` at `419fd85`, darwin-arm64, the owner's own sign-ins, and disposable Topsl profiles; Codex CLI 0.163.0 and Claude Code 2.1.302 ran under owner authorization. Three new defects were found. They are open, and none has a reproducing test yet. *Follow-up, 20 October 2026:* all three are repaired with reproducing tests; see [Live defect repairs](#live-defect-repairs--20-october-2026).
 
 | ID | Case | Defect | Source | Evidence |
 | --- | --- | --- | --- | --- |
@@ -313,6 +313,39 @@ Not covered: packaged builds, live providers, and the role editor or loop view s
 
 - **Codex/Codex and Claude/Codex:** stopped at Codex qualification because the candidate-reader probe failed. Codex called the reader, but its reply did not quote the private marker. This matches the reader's earlier live history; the 19 October retry passed.
 - **Codex/Claude:** stopped because Codex's "Run a command" requests were left unanswered for 15 minutes. One of them asked to read the owner's real `~/.codex/memories/MEMORY.md`, outside the project. Topsl held it for the owner, so nothing ran.
+
+## Live defect repairs — 20 October 2026
+
+*Dated follow-up, 20 October 2026.* D-27, D-28 and D-29 were repaired on top of `8fa59ee`, on branch `codex/live-defects-d27-d29`. Each repair started with a reproducing test, which failed on `8fa59ee` with the defect's own symptom and passes after the repair. The table above keeps what the live runs found.
+
+| ID | Repair | Source | Reproduction (failed before, passes after) |
+| --- | --- | --- | --- |
+| D-28 | Partial stream records (`stream_event` other than `message_start`) no longer count toward the 20,000-identity cap. Their identities go into a window of the 4,096 most recent, which still skips a replayed fragment and refuses a fragment whose identity reappears with a different body or matches a counted record's. Message starts, messages, results, notices and every other identified record still count, so a stream that keeps opening new messages or emitting other records still ends the turn at 20,001. A fragment replayed after it left the window would only repeat streamed text in the message's draft, which the message's final record replaces. Stored text stays bounded as before: each message keeps at most 2,000,000 characters. The CL-14 continuous-output test now gives each delta its own `uuid`, as Claude Code does; before, its deltas had none, which is why it missed this defect. | `ClaudeStreamParser.record` and `claudeFragmentWindow` in `packages/providers/claude.ts` | `tests/campaign-apps-providers.test.ts` (PR-08, two `D-28` tests: 25,000 identified deltas then a result complete; replay skipped; collisions refused; message starts still capped) and `tests/campaign-apps-providers-runtime.test.ts` (`D-28`: a real stand-in process streams 20,100 identified deltas then a valid result, and the run is `completed`, not `uncertain`) |
+| D-29 | While any member turn of the current iteration is `uncertain`, in a decision round or in a child goal's round, the loop keeps the run `active` with the new wait reason `reconciliation`. It names each member and its runtime run (`runIds`, and the first 8 characters of each in the text) and says that each turn holds its workspace until the owner inspects and reconciles that run under Runs. The run's detail reads `Waiting: …`, and the loop view labels it **Reconciliation needed**. The loop does not advance the iteration meanwhile, since the stage cannot use that turn's result. Once no member is uncertain, the reason is cleared and the detail returns to `Iteration N: <state>.` The runtime driver's observation of an uncertain attempt now carries its run (`legacyRunId`) and error. | `uncertainTurns` and `advance` in `packages/orchestration/loop-engine.ts`; `LoopWaitReason` in `packages/domain/recursive-loops.ts`; `AttemptObservation.runId` in `engine.ts`; `observe` in `runtime-driver.ts`; `recursive-loop.tsx` | `tests/recursive-loops.test.ts` (`D-29`, loop fixture: the wait reason appears, names the run, and clears after reconciliation) and `tests/campaign-loops-state-service.test.ts` (`D-29 (service)`: through the real service and runtime driver, the wait reason names the attempt's real run) |
+| D-27 | `plan_mode`, `plan_mode_reentry` and `plan_mode_exit` are recognized attachment kinds. `plan_mode` is the kind on line 11 of the live transcript. The other two are the reminders the Claude Code 2.1.302 executable writes on re-entering and leaving Plan mode, found in it by name (`strings` on `/opt/homebrew/Caskroom/claude-code@latest/2.1.302/claude`), not yet seen in a transcript. `plan_file_reference`, which the same executable writes with a plan file's text, stays unrecognized. Every other unknown kind is still refused. | `attachmentKinds` in `packages/history/claude-transcript.ts` | `tests/claude-transcripts.test.ts` (`plan-mode attachments`: a review transcript with `plan_mode` and the two related kinds yields the final reply; an unknown kind is still refused) |
+
+**Decisions made here.** The 4,096-identity window and the choice to count `message_start` toward the cap are this repair's choices. Leaving `plan_file_reference` unrecognized is deliberate: it was not in the live transcript, and it carries document text. A Plan-mode session that writes it, which appears to happen after a compaction (inferred from the executable, not observed), still falls back to paste.
+
+**Supporting check, not a test.** With the D-27 repair, `readClaudeStepReply` took the reply from the live run's own Plan-mode review transcript (session `605d832d…`, 67 records, still on the owner's Mac with its candidate folder). This was a one-off local read; the transcript is the owner's data and is not committed.
+
+### Verification
+
+darwin-arm64, Node with Electron's ABI as `npm test` sets it up, run from the repository root in an agent session (`scripts/test.mjs` drops the billing variables itself; direct `npx vitest` runs used `env -u ANTHROPIC_BASE_URL`).
+
+| Command | Result |
+| --- | --- |
+| `npx vitest run tests/campaign-apps-providers.test.ts tests/campaign-apps-providers-runtime.test.ts -t "D-28"` on `8fa59ee` plus the new tests | 2 failed as recorded: "Claude stream exceeds the bounded event limit." in the parser, and the stand-in run `uncertain` with that error |
+| `env -u ANTHROPIC_BASE_URL npx vitest run tests/campaign-apps-providers.test.ts tests/campaign-apps-providers-runtime.test.ts tests/campaign-claude-codex.test.ts tests/claude-provider.test.ts` after the D-28 repair | 99 passed, including PR-07, PR-08 and CL-14 |
+| `env -u ANTHROPIC_BASE_URL npx vitest run tests/campaign-loops-state-service.test.ts tests/recursive-loops.test.ts -t "D-29"` with the D-29 source change reverted | 2 failed: `waitReason` was `null` in the fixture test; the service test timed out waiting for a wait reason |
+| `env -u ANTHROPIC_BASE_URL npx vitest run` over the seven loop test files (`recursive-loops`, `campaign-loops-state`, `campaign-loops-state-service`, `loop-service`, `loop-checkpoints`, `recursive-loop-contracts`, `loop-prerequisites`) after the D-29 repair, before the service test was added | 164 passed |
+| `npx vitest run tests/claude-transcripts.test.ts -t "plan-mode"` before the D-27 repair | 1 failed: no reply taken |
+| `env -u ANTHROPIC_BASE_URL npx vitest run tests/claude-transcripts.test.ts tests/claude-steps.test.ts tests/claude-step-screens.test.ts` after the D-27 repair | 42 passed |
+| `npm run check` on `d0c0f20` (all three repairs) | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,147 tests passed, 5 skipped; `test:release` 18/0/0; build passed with its existing large-chunk warning |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` on `d0c0f20` after that build | passed: the main desktop journey (all four teams against stand-ins), encrypted restart persistence, the coordinator journey, the Atlas journey and the loop journey, in actual Electron sessions against stand-ins |
+
+The desktop journeys do not reach an uncertain member turn, a long Claude stream or a Plan-mode transcript, so they show only that these repairs broke none of the existing flows on screen. The **Reconciliation needed** label is not inspected on screen.
+
+**Not established:** live re-verification. `node scripts/live-loop.mjs --mixed-only` would confirm that a live Claude coordinator turn with partial messages completes instead of ending `uncertain` (D-28), and, if a live turn does end `uncertain`, that the loop view shows **Reconciliation needed** (D-29). `node scripts/live-session.mjs --workflow claude-claude` would confirm that a Plan-mode review's reply is taken from its transcript (D-27). Both need the owner's sign-ins and live turns, so neither was run. Packaged builds are also not covered.
 
 ## Open product questions
 

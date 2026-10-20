@@ -335,4 +335,14 @@ D-13, D-14, D-16, D-24 and D-25 were repaired on top of `9a769e5`; each reproduc
 
 D-15 (AUTO-06) is not a defect: the owner decided on 20 October 2026 that ranking on the conservative lower estimate is intended ([record](testing/TEST-DECISIONS.md#not-a-defect-intended-behaviour)).
 
+### Live defect repairs — 20 October 2026 follow-up
+
+The live runs of 20 October 2026 found D-27, D-28 and D-29 ([record](testing/TEST-DECISIONS.md#live-and-soak-follow-up--20-october-2026)). They were repaired on top of `8fa59ee`, each starting from a reproducing test. Changes, decisions and verification are in [Live defect repairs](testing/TEST-DECISIONS.md#live-defect-repairs--20-october-2026). In short:
+
+- A long Claude reply streamed with partial messages no longer ends the turn `uncertain`. Partial fragments no longer count toward the parser's 20,000-identity cap; a window of recent fragment identities still catches replays and collisions, and message starts and all other records still count (D-28).
+- A loop whose member turn is `uncertain` now shows the wait reason `reconciliation`, **Reconciliation needed** in the loop view, naming the member and its run until the owner reconciles it, as plan invariant 7 requires (D-29).
+- A Plan-mode review's reply can again come from its transcript: Claude Code 2.1.302's `plan_mode`, `plan_mode_reentry` and `plan_mode_exit` attachments are recognized; other unknown kinds still fall back to paste (D-27).
+
+These are verified with stand-ins, the loop fixture, the real service, and the transcript reader on the live run's own transcript. They are not yet re-verified in a live run.
+
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).
