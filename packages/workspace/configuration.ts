@@ -15,6 +15,18 @@ import { hash, now, stable, uid } from "../domain/invariants";
 import { exists, isWithin, projectPath, readBounded } from "../platform/system";
 import { parse as parseToml } from "smol-toml";
 
+/** Topsl reads configuration through `readBounded`, which refuses files over
+ * this many bytes, so an edit larger than this could be written but never read
+ * back. The IPC schema bounds characters; this bounds UTF-8 bytes. */
+export const configurationByteLimit = 1_000_000;
+const assertWithinByteLimit = (text: string) => {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > configurationByteLimit)
+    throw new Error(
+      `The edited configuration is ${bytes.toLocaleString("en-US")} bytes. Topsl reads configuration files up to ${configurationByteLimit.toLocaleString("en-US")} bytes, so it was not written.`,
+    );
+};
+
 export class Configuration {
   private readable = new Map<string, string>();
   private writing = false;
@@ -74,7 +86,9 @@ export class Configuration {
       throw new Error(
         "Edit symlinked configuration in the native application. Topsl does not replace symlinks.",
       );
-    const text = (await exists(file)) ? await readBounded(file) : "";
+    const text = (await exists(file))
+      ? await readBounded(file, configurationByteLimit)
+      : "";
     const destination = await this.destination(file);
     if (project && !isWithin(project.realPath, destination))
       throw new Error("Configuration escapes the approved project.");
@@ -94,7 +108,10 @@ export class Configuration {
   ): Promise<ConfigurationPlan> {
     if (!this.readable.has(file))
       throw new Error("Read this provider configuration through Topsl first.");
-    const before = (await exists(file)) ? await readBounded(file) : "";
+    assertWithinByteLimit(text);
+    const before = (await exists(file))
+      ? await readBounded(file, configurationByteLimit)
+      : "";
     if (hash(before) !== expectedHash)
       throw new Error(
         "Configuration changed externally. Read it again before editing.",
@@ -132,6 +149,7 @@ export class Configuration {
       throw new Error("Configuration approval does not match this preview.");
     if (Date.now() - Date.parse(plan.createdAt) > 15 * 60_000)
       throw new Error("Configuration approval expired.");
+    assertWithinByteLimit(plan.after);
     if (
       !this.readable.has(plan.path) ||
       this.store.get("configuration-write", id)
@@ -152,7 +170,7 @@ export class Configuration {
           "Configuration parent changed after preview. No file was written.",
         );
       const current = (await exists(plan.path))
-        ? await readBounded(plan.path)
+        ? await readBounded(plan.path, configurationByteLimit)
         : "";
       if (hash(current) !== plan.expectedHash)
         throw new Error(
