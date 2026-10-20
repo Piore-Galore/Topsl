@@ -168,11 +168,27 @@ Stress means `TOPSL_TEST_CPU_THROTTLE=4` and eight `yes > /dev/null` processes o
 | `npm test -- tests/scoped-ui.test.ts` | — | 10 passed |
 | `npm run check` | — | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,120 tests passed, 17 expected fail, 5 skipped; `test:release` 18/0/0; build |
 
-The single `round2-ui-test.mjs` failure is a separate, pre-existing ordering race in that harness. Its first assertion, `getByRole("heading", { name: "Tasks", exact: true })` at line 51, matches both the Coordination view's `<h1>Tasks</h1>` and the Task list's `<h2>Tasks</h2>`. Presumably it passes only when it runs before the task list has rendered; this was inferred from the source, not traced. That run failed with a strict-mode violation naming both headings. It does not involve either changed component and is left as a follow-up.
+The single `round2-ui-test.mjs` failure is a separate, pre-existing ordering race in that harness. Its first assertion, `getByRole("heading", { name: "Tasks", exact: true })` at line 51, matches both the Coordination view's `<h1>Tasks</h1>` and the Task list's `<h2>Tasks</h2>`. Presumably it passes only when it runs before the task list has rendered; this was inferred from the source, not traced. That run failed with a strict-mode violation naming both headings. It does not involve either changed component and is left as a follow-up. *Fixed in the [follow-up of 20 October 2026](#follow-up-round-2-ui-heading-locator-20-october-2026).*
 
 **Remote CI** (run 39308245212, commit `846e14c`, pushed as `codex/f01-lost-click`, not merged): every step passed on Linux x64, macOS Apple silicon, macOS Intel and Windows x64. That covers typecheck, integration tests and build, the desktop journeys (Linux under `xvfb-run`), package compilation, and the macOS signature checks. One passing run is a single sample of an intermittent failure; the local stress results above are the main evidence.
 
 Not covered: packaged builds, and the loop journey on Windows, where it does not run.
+
+### Follow-up: Round 2 UI heading locator (20 October 2026)
+
+**Harness correction, not a product defect.** On commit `7977427`, `scripts/round2-ui-test.mjs` checked that the Tasks view had rendered with `getByRole("heading", { name: "Tasks", exact: true })`. Once the Task list renders, that locator matches two elements: the view's page heading `<h1>Tasks</h1>` ([coordination.tsx](../../apps/desktop/renderer/coordination.tsx), `page-heading`) and the list's `<h2>Tasks</h2>` inside the `Task list` region. Playwright's strict mode then fails the assertion.
+
+- **Steady state confirmed.** A throwaway copy of the harness waited for the `Task list` region to be visible, then counted matches. It found 2 (`<h1>Tasks</h1>`, `<h2>Tasks</h2>`), and 1 at `level: 1`. Run at that point, the old assertion failed every time with the strict-mode violation seen on 20 October: `resolved to 2 elements: 1) <h1>Tasks</h1> … 2) <h2>Tasks</h2>`. The new locator passed.
+- **The race itself was not reproduced on demand.** With the old locator in its original position, the harness passed 6 of 6 runs, 3 unthrottled and 3 with `TOPSL_TEST_CPU_THROTTLE=4`. So the assertion normally resolves before the list renders, and the window in which it can fail is narrow. That window has not been timed.
+- **Fix.** The assertion now names the page heading: `getByRole("heading", { name: "Tasks", exact: true, level: 1 })`. It still proves the same thing, that the fixture opened on the Tasks view and drew its heading. It is now unambiguous whether or not the list has rendered. The harness also calls `throttleRenderer` ([desktop-click-trace.mjs](../../scripts/desktop-click-trace.mjs)), so `TOPSL_TEST_CPU_THROTTLE` now slows this harness's renderer too. Unset, nothing changes.
+- **Verification** (darwin-arm64, one Electron instance at a time, from the repository root):
+
+| Command | Result |
+| --- | --- |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop -- scripts/round2-ui-test.mjs` | **4 of 4 passed** (9 to 10 s each) |
+| `env -u ANTHROPIC_BASE_URL TOPSL_TEST_CPU_THROTTLE=4 npm run test:desktop -- scripts/round2-ui-test.mjs` | **2 of 2 passed** (13 to 14 s each; no `yes` load) |
+
+Not covered: remote CI, and other platforms. This harness is not in the default `npm run test:desktop` set.
 
 ## Open product questions
 

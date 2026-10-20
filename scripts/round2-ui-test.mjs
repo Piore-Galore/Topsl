@@ -3,6 +3,7 @@ import { build } from "esbuild";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { throttleRenderer } from "./desktop-click-trace.mjs";
 const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-round2-ui-"));
 const output = path.resolve("test-results/round2-ui");
 await mkdir(output, { recursive: true });
@@ -46,8 +47,11 @@ const errors = [];
 try {
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
+  await throttleRenderer(page);
+  // The view's page heading. The Task list's own "Tasks" heading is an h2, so
+  // without the level this matches two elements once the list has rendered.
   await expect(
-    page.getByRole("heading", { name: "Tasks", exact: true }),
+    page.getByRole("heading", { name: "Tasks", exact: true, level: 1 }),
   ).toBeVisible();
   const setup = page.locator(".guided-workflow");
   await setup.locator("summary").first().focus();
