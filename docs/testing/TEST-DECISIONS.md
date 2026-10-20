@@ -208,7 +208,7 @@ Not covered: remote CI, and other platforms. This harness is not in the default 
 | The same under stress (`TOPSL_TEST_CPU_THROTTLE=4` and eight `yes > /dev/null` processes) | — | **8 of 8 passed** (30 to 33 s each) |
 | `npm run check` | — | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,122 tests passed, 17 expected fail, 5 skipped; `test:release` 18/0/0; build |
 
-The default `npm run test:desktop` set (main, coordinator, Atlas and loop journeys) also passed unthrottled. Remote CI had not yet run on this change when it was recorded.
+The default `npm run test:desktop` set (main, coordinator, Atlas and loop journeys) also passed unthrottled. Remote CI run 39379650070 (commit `1c26a78`, pushed as `codex/loop-run-select`, not merged) passed every step on Linux x64, macOS Apple silicon, macOS Intel and Windows x64, including the desktop journeys. The loop journey does not run on Windows. One passing run is a single sample; the held-refresh check above is the deterministic evidence.
 
 ## Open product questions
 
