@@ -100,7 +100,9 @@ darwin-arm64, from the repository root, with the session environment intact (`sc
 
 The main desktop journey's imported fixture answer now runs past 12,000 characters, so the journey checks in an actual Electron window that the handoff dialog shows the omission note and the shortened heading.
 
-**Remote CI** (run 39381532671, "Compile Topsl", commit `858c177` on `codex/campaign-remaining-defects`, not merged): every step passed on Linux x64, macOS Apple silicon, macOS Intel and Windows x64. That covers typecheck, integration tests and build, the desktop journeys, and package compilation. On Windows, Vitest reported 1,014 passed, 8 expected fail and 122 skipped, and `tests/claude-route.test.ts` passed 16 of 24 with 8 skipped. The `.cmd` case has no skip, so it ran and passed there. This is the only evidence for D-26. The separate "Round 2 lifecycle stress" run 39381532625 on the same commit had not finished when this was recorded.
+**Remote CI** (run 39381532671, "Compile Topsl", commit `858c177` on `codex/campaign-remaining-defects`, not merged): every step passed on Linux x64, macOS Apple silicon, macOS Intel and Windows x64. That covers typecheck, integration tests and build, the desktop journeys, and package compilation. On Windows, Vitest reported 1,014 passed, 8 expected fail and 122 skipped, and `tests/claude-route.test.ts` passed 16 of 24 with 8 skipped. The `.cmd` case has no skip, so it ran and passed there. This is the only evidence for D-26. The separate "Round 2 lifecycle stress" run 39381532625 on the same commit was cancelled by the next push to the branch, because that workflow cancels a run in progress on the same branch.
+
+*Follow-up, after D-19 was added:* on commit `03befb7`, "Compile Topsl" run 39387730675 passed every step on all four platforms, with Windows Vitest at 1,016 passed and 7 expected fail. "Round 2 lifecycle stress" run 39387730620 passed on all four platforms. Commits after `03befb7` change only this record.
 
 Not covered: packaged builds and live providers.
 
