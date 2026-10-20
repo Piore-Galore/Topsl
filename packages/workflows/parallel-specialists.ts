@@ -120,6 +120,13 @@ export interface ParallelDriver {
 export const fileEqual = (a?: CandidateFile, b?: CandidateFile) =>
   (a?.hash ?? null) === (b?.hash ?? null) &&
   (a?.mode ?? null) === (b?.mode ?? null);
+/** Names refused paths quoted, so a hidden character cannot disguise one, and
+ * at most 20 of them. */
+const namedPaths = (paths: string[]) =>
+  paths
+    .slice(0, 20)
+    .map((p) => JSON.stringify(p))
+    .join(", ") + (paths.length > 20 ? ` and ${paths.length - 20} more` : "");
 const contentBasis = (candidate: CandidateSnapshot) =>
   stable(candidate.files.map((f) => [f.path, f.hash, f.mode]));
 export function candidateChanges(
@@ -667,9 +674,12 @@ export class ParallelSpecialists {
         "Submission requires confirmed provider process termination. An inference completion is not a stopped writer.",
       );
     const baseline = this.snapshot(specialist.baselineId);
-    if (approvedUntracked.some((p) => !specialist.permittedOutputs.includes(p)))
+    const unagreedUntracked = approvedUntracked.filter(
+      (p) => !specialist.permittedOutputs.includes(p),
+    );
+    if (unagreedUntracked.length)
       throw new Error(
-        "Untracked output must be part of the specialist's agreed outputs.",
+        `Untracked output must be part of the specialist's agreed outputs: ${namedPaths(unagreedUntracked)}.`,
       );
     const candidate = await captureCandidate(this.coordinator.store, {
       root: baseline.sourceRoot,
@@ -689,13 +699,12 @@ export class ParallelSpecialists {
         ? [...new Set([...baseline.approvedUntracked, ...approvedUntracked])]
         : [],
     });
-    if (
-      candidateChanges(baseline, candidate).some(
-        (file) => !specialist.permittedOutputs.includes(file.path),
-      )
-    )
+    const unowned = candidateChanges(baseline, candidate)
+      .map((file) => file.path)
+      .filter((p) => !specialist.permittedOutputs.includes(p));
+    if (unowned.length)
       throw new Error(
-        "Candidate changed or deleted files outside the agreed specialist outputs. Resolve ownership before submitting.",
+        `Candidate changed or deleted files outside the agreed specialist outputs: ${namedPaths(unowned)}. Resolve ownership before submitting.`,
       );
     this.expect(id, expectedRevision);
     this.artifact(candidate, specialist.taskId);

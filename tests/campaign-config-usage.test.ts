@@ -379,8 +379,7 @@ describe("CONF-02 malformed, oversized and arbitrary configuration input", () =>
     expect(Buffer.byteLength("é".repeat(600_000))).toBe(1_200_000);
   });
 
-  // CAMPAIGN DEFECT CONF-02: text within the 1,000,000-character IPC limit but over the 1,000,000-byte read bound is previewed and written, leaving a file Topsl then refuses to read.
-  test.fails(
+  test(
     "an edit larger than the 1,000,000-byte configuration bound is refused before it is written",
     async () => {
       const f = await unit();

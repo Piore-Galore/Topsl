@@ -37,29 +37,34 @@ export async function readClaudeAccount(
   executable: string,
   signal: AbortSignal,
 ): Promise<ProviderAccount> {
-  const output = await new Promise<string>((resolve, reject) => {
-    execFile(
-      executable,
-      ["auth", "status", "--json"],
-      {
-        cwd: os.homedir(),
-        env: nativeEnvironment(),
-        timeout: 10_000,
-        maxBuffer: 64_000,
-        windowsHide: true,
-        signal,
-        encoding: "utf8",
-      },
-      (error, stdout) => {
-        if (error)
-          reject(
-            new Error(
-              "Claude account status could not be read. Sign in through Claude Code and retry.",
-            ),
-          );
-        else resolve(stdout);
-      },
+  const unreadable = () =>
+    new Error(
+      "Claude account status could not be read. Sign in through Claude Code and retry.",
     );
+  const output = await new Promise<string>((resolve, reject) => {
+    // On Windows, Node refuses a `.cmd` or `.bat` launched without a shell by
+    // throwing `spawn EINVAL` synchronously, before any callback runs.
+    try {
+      execFile(
+        executable,
+        ["auth", "status", "--json"],
+        {
+          cwd: os.homedir(),
+          env: nativeEnvironment(),
+          timeout: 10_000,
+          maxBuffer: 64_000,
+          windowsHide: true,
+          signal,
+          encoding: "utf8",
+        },
+        (error, stdout) => {
+          if (error) reject(unreadable());
+          else resolve(stdout);
+        },
+      );
+    } catch {
+      reject(unreadable());
+    }
   });
   const schema = z.object({
     loggedIn: z.literal(true),

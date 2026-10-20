@@ -796,17 +796,11 @@ describe("Claude account read diagnostics", () => {
     if (!windows) expect(cause).toBe("EACCES");
   });
 
-  // CAMPAIGN DEFECT CL-18: on Windows Node refuses to launch a .cmd/.bat
-  // without a shell by throwing "spawn EINVAL" synchronously from execFile
-  // (CVE-2024-27980 hardening). readClaudeAccount
-  // (packages/providers/claude-allowance.ts, the execFile call inside the
-  // Promise executor) sanitizes only errors passed to execFile's callback, so
-  // the synchronous throw rejects with the raw "spawn EINVAL" instead of
-  // Topsl's message (Windows CI run 39271847356, 2026-10-19). The runtime
-  // manager's preflight refuses .cmd installations before this read, which
-  // limits the reachable impact. On POSIX the same file is merely not
-  // executable (EACCES through the callback) and the test passes there.
-  (windows ? test.fails : test)(
+  // On Windows Node refuses to launch a .cmd/.bat without a shell by
+  // throwing "spawn EINVAL" synchronously from execFile (CVE-2024-27980
+  // hardening); readClaudeAccount sanitizes that throw too. On POSIX the same
+  // file is merely not executable (EACCES through the callback).
+  test(
     "a .cmd file, which Node will not launch without a shell, gives Topsl's sanitized message",
     async () => {
       const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-claude-account-"));

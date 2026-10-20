@@ -92,6 +92,32 @@ function Modal({
     </dialog>
   );
 }
+/** Says what the handoff limits left out of a snapshot, before its text. */
+function HandoffOmissions({ snapshot }: { snapshot: ContextSnapshot }) {
+  const omissions = snapshot.omissions;
+  if (!omissions) return null;
+  const dropped = omissions.droppedMessageIds.length,
+    clipped = omissions.clippedMessageIds.length;
+  const lines = [
+    omissions.olderMessages &&
+      "Messages older than the newest 30 in this conversation are not included.",
+    dropped > 0 &&
+      `${dropped === 1 ? "The oldest message considered is" : `The ${dropped} oldest messages considered are`} not included, to keep the handoff within 150,000 characters.`,
+    clipped > 0 &&
+      `${clipped === 1 ? "1 message is" : `${clipped} messages are`} shortened to the first 12,000 characters; ${clipped === 1 ? "its heading says" : "their headings say"} so.`,
+  ].filter((line): line is string => typeof line === "string");
+  if (!lines.length) return null;
+  return (
+    <div className="handoff-omissions" role="note" aria-label="Omitted context">
+      <strong>Not the whole conversation.</strong>
+      <ul>
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [page, setPage] = useState<Page>("projects");
@@ -1095,6 +1121,7 @@ function App() {
               Review the exact context below. This is a new input to the
               destination provider, with its own native session and billing.
             </p>
+            <HandoffOmissions snapshot={snapshot} />
             <pre className="snapshot">{snapshot.text}</pre>
             <p className="tiny muted">Snapshot SHA-256: {snapshot.hash}</p>
             <div className="modal-actions">

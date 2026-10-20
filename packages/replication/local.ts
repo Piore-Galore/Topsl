@@ -248,6 +248,7 @@ export class LocalReplication {
       };
       this.identitySecret = { ...secrets, id: deviceId };
     }
+    this.removeExpiredPlans();
   }
   identity(): DeviceIdentity {
     const {
@@ -317,12 +318,27 @@ export class LocalReplication {
       })),
     };
   }
+  /** An approval preview holds the full portable content it would stage or
+   * export, so one that can no longer be approved is removed rather than kept
+   * in the vault. Runs at startup and before each new preview; a refused
+   * approval changes nothing. */
+  private removeExpiredPlans() {
+    const expired = [
+      ...this.store.iterate<ApprovalPlan>("replication-plan"),
+    ].filter((plan) => !(Date.parse(plan.expiresAt) > Date.now()));
+    if (!expired.length) return;
+    this.store.transaction(() => {
+      for (const plan of expired)
+        this.store.remove("replication-plan", plan.id);
+    });
+  }
   private preview(
     kind: ApprovalPlan["kind"],
     payload: unknown,
     projectId?: string,
   ) {
     this.assertEnabled();
+    this.removeExpiredPlans();
     const plan: ApprovalPlan = {
       id: uid(),
       kind,

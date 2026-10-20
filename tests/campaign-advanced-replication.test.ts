@@ -1320,8 +1320,7 @@ describe("REPL-10 large transfer, interrupted writes, storage exhaustion and con
     expect(dump(b)).toEqual(settled);
   });
 
-  // CAMPAIGN DEFECT REPL-10: expired approval previews (with full portable content) are never pruned (packages/replication/local.ts:317-356).
-  test.fails("expired approval previews do not accumulate", async () => {
+  test("expired approval previews do not accumulate", async () => {
     const a = await device("A");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-19T10:00:00.000Z"));

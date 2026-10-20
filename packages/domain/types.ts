@@ -289,7 +289,20 @@ export interface ContextSnapshot {
   text: string;
   hash: string;
   sourceMessageIds: string[];
+  /** What the handoff limits left out. Snapshots prepared before this field
+   * existed have none and never disclosed omissions. */
+  omissions?: ContextSnapshotOmissions;
   createdAt: string;
+}
+export interface ContextSnapshotOmissions {
+  /** The conversation has messages older than the newest 30 considered. */
+  olderMessages: boolean;
+  /** Of the newest 30, the older messages left out to stay within 150,000
+   * characters, oldest first. */
+  droppedMessageIds: string[];
+  /** Included messages shortened to their first 12,000 characters, oldest
+   * first. */
+  clippedMessageIds: string[];
 }
 export interface ConfigurationPlan {
   id: string;

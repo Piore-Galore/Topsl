@@ -185,18 +185,41 @@ describe("HX-09 handoff snapshot boundaries (30 messages / 12,000 / 150,000)", (
     }
     expect(results[149999].text.length).toBe(149999);
     expect(results[150000].text.length).toBe(150000);
-    expect(results[150001].text.length).toBe(150000);
-    // Below and at the cap the newest message is complete; one above loses its final character.
-    expect(results[149999].text.endsWith("|LAST|\n")).toBe(true);
-    expect(results[150000].text.endsWith("|LAST|\n")).toBe(true);
-    expect(results[150001].text.endsWith("|LAST|")).toBe(true);
-    // All 13 sources are still attributed even when the tail is clipped.
-    expect(results[150001].sourceMessageIds).toHaveLength(13);
+    // Below and at the cap every message is complete and nothing is omitted.
+    for (const target of [149999, 150000]) {
+      expect(results[target].text.endsWith("|LAST|\n")).toBe(true);
+      expect(results[target].sourceMessageIds).toHaveLength(13);
+      expect(results[target].omissions).toEqual({
+        olderMessages: false,
+        droppedMessageIds: [],
+        clippedMessageIds: [],
+      });
+      expect(results[target].text).not.toContain("Omitted context");
+    }
+    // One above the cap: since the D-17 repair the newest content is kept.
+    // Before it, the text was cut to 150,000 characters and lost the newest
+    // message's final character. Now the oldest whole message is dropped,
+    // the newest stays complete, and the omission is disclosed.
+    const over = results[150001];
+    expect(over.text.length).toBeLessThanOrEqual(150000);
+    expect(over.text.endsWith("|LAST|\n")).toBe(true);
+    expect(over.sourceMessageIds).toEqual([
+      ...fillers.slice(1).map((_, i) => `t150001-f${i + 1}`),
+      "t150001-last",
+    ]);
+    expect(over.omissions).toEqual({
+      olderMessages: false,
+      droppedMessageIds: ["t150001-f0"],
+      clippedMessageIds: [],
+    });
+    expect(over.text).toContain(
+      "Omitted context: the oldest of the 13 messages considered is not included, to keep this handoff within 150,000 characters.",
+    );
+    expect(over.text).not.toContain("|F0|");
     for (const snapshot of Object.values(results))
       expect(snapshot.hash).toBe(hash(snapshot.text));
   });
-  // CAMPAIGN DEFECT HX-09: clipped or omitted handoff context is not disclosed in the snapshot or its record.
-  test.fails(
+  test(
     "a snapshot that omits older messages or clips text discloses the omission (plan §6.1)",
     async () => {
       const { store } = await unit();
@@ -205,15 +228,34 @@ describe("HX-09 handoff snapshot boundaries (30 messages / 12,000 / 150,000)", (
           store.message(msg(`m${i}`, i, sized(12001, `M${i}`)));
       });
       const snapshot = previewHandoff(store, conversation("c"), "codex", "go");
-      // Observed: oldest message silently dropped, every message silently clipped and the
-      // 150,000 total cap silently removes the NEWEST messages (the text ends inside an
-      // early message). The record carries no omission field and the text no notice.
-      expect(snapshot.sourceMessageIds).toHaveLength(30);
+      // Observed 2026-10-19: the oldest message was silently dropped, every message silently
+      // clipped and the 150,000 total cap silently removed the NEWEST messages. Since the
+      // D-17 repair the newest messages that fit are kept whole (clipped to 12,000), the
+      // older ones are dropped, and the record and text disclose all three omissions.
       const record = store.get<any>("snapshot", snapshot.id);
       const disclosed =
         Array.isArray(record.omissions) ||
         /omit|clip|truncat|not included|shortened/i.test(snapshot.text);
       expect(disclosed).toBe(true);
+      const kept = snapshot.sourceMessageIds.length;
+      expect(kept).toBeGreaterThan(0);
+      expect(kept).toBeLessThan(30);
+      expect(snapshot.sourceMessageIds).toEqual(
+        Array.from({ length: kept }, (_, k) => `m${31 - kept + k}`),
+      );
+      expect(snapshot.text.length).toBeLessThanOrEqual(150000);
+      expect(snapshot.text).toContain(sized(12001, "M30").slice(0, 12000));
+      expect(record.omissions).toEqual({
+        olderMessages: true,
+        droppedMessageIds: Array.from({ length: 30 - kept }, (_, k) => `m${k + 1}`),
+        clippedMessageIds: snapshot.sourceMessageIds,
+      });
+      expect(snapshot.text).toContain(
+        `Omitted context: messages older than the newest 30 in this conversation are not included; the ${30 - kept} oldest of the 30 messages considered are not included, to keep this handoff within 150,000 characters; ${kept} messages are shortened to the first 12,000 characters, as marked in their headings.`,
+      );
+      expect(snapshot.text).toContain(
+        "shortened to the first 12,000 of 12,001 characters",
+      );
     },
   );
 });

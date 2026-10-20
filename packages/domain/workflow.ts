@@ -395,15 +395,22 @@ const transitions = {
     uncertain: ["interrupted", "completed", "failed"],
   },
 };
+/** A finished task (one with no onward transition: accepted or cancelled)
+ * never changes, not even its detail. Other same-state transitions stay
+ * allowed: acceptance re-records a task that is already verifying. */
 export function assertTransition(
   kind: keyof typeof transitions,
   from: string,
   to: string,
 ): void {
-  if (from === to) return;
   const allowed = (transitions[kind] as Record<string, readonly string[]>)[
     from
   ];
+  if (kind === "task" && allowed?.length === 0)
+    throw new Error(
+      `This task is ${from}. A finished task cannot change; create a new task instead.`,
+    );
+  if (from === to) return;
   if (!allowed?.includes(to))
     throw new Error(`Invalid ${kind} transition: ${from} → ${to}.`);
 }

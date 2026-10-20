@@ -7,6 +7,7 @@ import {
   readdir,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -135,6 +136,46 @@ async function resolvedPath(target: string): Promise<string> {
     }
   }
 }
+type DirectoryIdentity = { dev: number; ino: number };
+/**
+ * Identifies the folder and each of its existing ancestors by device and
+ * inode. A macOS firmlink such as `/System/Volumes/Data/private/tmp` is not a
+ * symbolic link, so `realpath` keeps it, yet it is the same directory as
+ * `/private/tmp`.
+ */
+async function existingAncestors(target: string): Promise<DirectoryIdentity[]> {
+  const identities: DirectoryIdentity[] = [];
+  let current = target;
+  for (;;) {
+    try {
+      const { dev, ino } = await stat(current);
+      identities.push({ dev, ino });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return identities;
+    current = parent;
+  }
+}
+async function sameDirectoryAsAny(
+  folder: string,
+  identities: DirectoryIdentity[],
+): Promise<boolean> {
+  let identity: DirectoryIdentity;
+  try {
+    const { dev, ino } = await stat(folder);
+    identity = { dev, ino };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  // A file system that reports no inode cannot identify the folder.
+  if (identity.ino === 0) return false;
+  return identities.some(
+    (each) => each.dev === identity.dev && each.ino === identity.ino,
+  );
+}
 /**
  * Refuses a qualification folder inside the system temporary directory or
  * `/tmp`. Codex's workspace-write sandbox leaves both writable unless a client
@@ -142,8 +183,12 @@ async function resolvedPath(target: string): Promise<string> {
  */
 export async function assertQualificationParent(parent: string): Promise<void> {
   const target = await resolvedPath(parent);
+  const ancestors = await existingAncestors(target);
   for (const temporary of new Set([os.tmpdir(), "/tmp"]))
-    if (isWithin(await resolvedPath(temporary), target))
+    if (
+      isWithin(await resolvedPath(temporary), target) ||
+      (await sameDirectoryAsAny(temporary, ancestors))
+    )
       throw new Error(
         `The qualification folder ${parent} is inside ${temporary}. Codex's workspace-write sandbox leaves that folder writable, so the outside-write probe could not be judged there. Use a folder outside the system temporary folders.`,
       );

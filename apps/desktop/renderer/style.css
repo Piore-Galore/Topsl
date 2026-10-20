@@ -940,6 +940,18 @@ dialog::backdrop {
   max-height: 50vh;
   overflow: auto;
 }
+.handoff-omissions {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 5px;
+  padding: 10px 14px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+.handoff-omissions ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
 .modal-actions {
   display: flex;
   justify-content: flex-end;

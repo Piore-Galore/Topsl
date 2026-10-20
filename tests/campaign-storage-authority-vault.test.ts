@@ -328,11 +328,12 @@ describe("DATA-04 unrecoverable vault states preserve files and never generate a
     const p = await existingProfile("os");
     await writeFile(p.vault, "null");
     const before = await snapshot(p);
-    await expect(openVault(p.directory)).rejects.toThrow("vault key is missing");
+    // Since the D-18 repair a present but invalid envelope is refused as an
+    // unknown format before the database check.
+    await expect(openVault(p.directory)).rejects.toThrow("Unknown vault format");
     await expectPreserved(p, before);
   });
-  // CAMPAIGN DEFECT DATA-04: a parseable but falsy envelope (null/false/0) with no database is overwritten by a new key instead of being preserved.
-  test.fails.each([["null"], ["false"], ["0"]])(
+  test.each([["null"], ["false"], ["0"]])(
     "a falsy JSON envelope (%s) without a database is preserved, not replaced",
     async (content) => {
       const p = await profile();

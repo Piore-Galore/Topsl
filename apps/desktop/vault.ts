@@ -21,8 +21,12 @@ export async function openVault(
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, "vault.json");
   let existing: VaultFile | undefined;
+  // Any parseable content counts as present, including `null`, `false` and
+  // `0`, so a malformed envelope is refused rather than replaced.
+  let present = false;
   try {
     existing = JSON.parse(await readFile(file, "utf8"));
+    present = true;
   } catch (e: any) {
     if (e.code !== "ENOENT") throw e;
   }
@@ -56,7 +60,7 @@ export async function openVault(
       throw new Error("Vault passphrase is incorrect.");
     }
   }
-  if (existing)
+  if (present)
     throw new Error(
       "Unknown vault format. Preserve the vault file and restore a compatible Topsl version.",
     );

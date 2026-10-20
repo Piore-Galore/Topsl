@@ -253,13 +253,13 @@ describe("PW-03 specialist ownership variants", () => {
       expect(submissions(f)).toBe(before);
       expect(f.parallel.state(state.id).tasks[0].candidateId).toBeNull();
     };
-    // Plain content edit of an unowned file (the message is pinned here; the
-    // separate expected-failure test records that it omits the path).
+    // Plain content edit of an unowned file (the message is pinned here; it
+    // names the path since the D-21 repair).
     await writeFile(path.join(root, "b.txt"), "unowned edit");
     await expect(
       f.parallel.submit(state.id, state.revision, "a"),
     ).rejects.toThrow(
-      "Candidate changed or deleted files outside the agreed specialist outputs. Resolve ownership before submitting.",
+      'Candidate changed or deleted files outside the agreed specialist outputs: "b.txt". Resolve ownership before submitting.',
     );
     await writeFile(path.join(root, "b.txt"), "0");
     // Staged rename of an unowned file.
@@ -351,8 +351,7 @@ describe("PW-03 specialist ownership variants", () => {
     expect(plan.files.map((file) => file.path)).not.toContain("stray.txt");
   });
 
-  // CAMPAIGN DEFECT PW-03: the ownership refusal does not name the changed path the plan requires.
-  test.fails(
+  test(
     "PW-03: the ownership refusal names the exact changed path outside ownership",
     async () => {
       const f = await setup();

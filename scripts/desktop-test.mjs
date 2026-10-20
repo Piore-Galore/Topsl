@@ -104,7 +104,9 @@ await writeFile(
         content: [
           {
             type: "output_text",
-            text: "Fixture answer preserved with provider attribution.",
+            // Longer than the 12,000-character handoff limit for one
+            // message, so the handoff preview must disclose the shortening.
+            text: `Fixture answer preserved with provider attribution. ${"Long fixture detail. ".repeat(600)}`,
           },
         ],
       },
@@ -359,6 +361,18 @@ try {
   await page.getByRole("button", { name: "Open conversation →" }).click();
   await page.getByRole("button", { name: "Prepare handoff" }).click();
   await expect(page.getByRole("dialog")).toContainText("user · codex");
+  // The long fixture answer is clipped, and the dialog says so before the text.
+  const omitted = page
+    .getByRole("dialog")
+    .getByRole("note", { name: "Omitted context" });
+  await expect(omitted).toContainText("Not the whole conversation.");
+  await expect(omitted).toContainText(
+    "1 message is shortened to the first 12,000 characters; its heading says so.",
+  );
+  await expect(omitted).not.toContainText("older");
+  await expect(page.getByRole("dialog")).toContainText(
+    /shortened to the first 12,000 of 12,65\d characters/,
+  );
   await page.getByRole("button", { name: "Close dialog" }).click();
   // Phase 5 acceptance uses only disposable JSONL sources and coordinator records.
   const benchmarkMemoryBefore = await app.evaluate(({ app }) =>

@@ -176,8 +176,7 @@ describe("CQ-01 qualification parent folder and refusal before any process", () 
     existsSync(dataTmp) &&
     statSync(dataTmp).ino === statSync("/private/tmp").ino &&
     statSync(dataTmp).dev === statSync("/private/tmp").dev;
-  // CAMPAIGN DEFECT CQ-01: macOS firmlink path of /tmp (same dev/inode) passes assertQualificationParent and a qualification runs inside /tmp.
-  test.skipIf(!firmlinked).fails(
+  test.skipIf(!firmlinked)(
     "the macOS firmlink alias of /tmp (same device and inode) is refused before the runtime starts",
     async () => {
       const f = await setup();
@@ -185,7 +184,6 @@ describe("CQ-01 qualification parent folder and refusal before any process", () 
       cleanup.push(() => rm(parent, { recursive: true, force: true }));
       // Precondition: the alias really is the system /tmp directory.
       expect(statSync(dataTmp).ino).toBe(statSync("/tmp").ino);
-      // Observed 2026-10-19: this resolves, so the test fails here.
       await expect(assertQualificationParent(parent)).rejects.toThrow(
         "outside the system temporary folders",
       );
