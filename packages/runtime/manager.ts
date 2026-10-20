@@ -54,6 +54,7 @@ import type {
   ProviderAdapter,
   ProviderConnection,
   ProviderAccount,
+  ProviderEvent,
   ProviderModel,
   ProviderToolCall,
   ToolBinding,
@@ -105,6 +106,13 @@ import {
 
 const nativePeer = (executable: string, cwd: string) =>
   new RpcPeer(executable, ["app-server"], cwd);
+/** The most text one stored message keeps. */
+const messageTextLimit = 2_000_000;
+/** How long streamed text waits in memory before it is written. A longer
+ * draft waits longer, so rewriting it costs at most about 2,000,000
+ * characters a second however long the reply grows. */
+const draftDelay = (length: number) =>
+  Math.min(1_000, 100 + Math.floor(length / 2_000));
 type Active = {
   run: Run;
   client: ProviderConnection;
@@ -117,6 +125,10 @@ type Active = {
   tools?: ToolBinding;
   finished: boolean;
   dispatched: boolean;
+  /** Streamed assistant messages by message id, with whether the text has
+   * grown since it was last written. */
+  drafts: Map<string, { message: Message; unwritten: boolean }>;
+  draftTimer: ReturnType<typeof setTimeout> | null;
 };
 export class RuntimeManager {
   private active = new Map<string, Active>();
@@ -1265,6 +1277,8 @@ export class RuntimeManager {
         ...(execution?.tools ? { tools: execution.tools } : {}),
         finished: false,
         dispatched: false,
+        drafts: new Map(),
+        draftTimer: null,
       };
       this.active.set(run.id, active);
       this.changed();
@@ -1528,22 +1542,28 @@ export class RuntimeManager {
       this.store.save("run", run);
       this.coordinator.acknowledge(run, event.reportedModel ?? null);
     }
-    if (event.type === "message-delta" || event.type === "message") {
+    // Only a message's first delta is written at once. The rest wait in
+    // memory, and the timed write that stores them tells the window.
+    if (event.type === "message-delta" && !this.draft(active, event))
+      return;
+    if (event.type === "message") {
+      // The final text replaces the draft, which is never written again.
       const id = `${run.id}:${event.itemId}`,
-        previous = this.store.get<Message>("message", id);
+        createdAt =
+          active.drafts.get(id)?.message.createdAt ??
+          this.store.get<Message>("message", id)?.createdAt ??
+          now();
+      active.drafts.delete(id);
       this.store.message({
         id,
         conversationId: run.conversationId,
         projectId: run.projectId,
-        role: event.type === "message" ? event.role : "assistant",
+        role: event.role,
         provider: run.provider,
-        text:
-          event.type === "message-delta"
-            ? ((previous?.text ?? "") + event.text).slice(0, 2_000_000)
-            : event.text,
+        text: event.text,
         runId: run.id,
         nativeId: event.itemId,
-        createdAt: previous?.createdAt ?? now(),
+        createdAt,
       });
     }
     if (event.type === "usage" && run.nativeTurnId)
@@ -1568,6 +1588,64 @@ export class RuntimeManager {
       return;
     }
     this.changed();
+  }
+  /** Adds a delta to its message's draft. Returns true when the draft was
+   * written now, which only its first delta does, so the message keeps its
+   * place among the run's messages. Later text waits for flushDrafts. */
+  private draft(
+    active: Active,
+    event: Extract<ProviderEvent, { type: "message-delta" }>,
+  ): boolean {
+    const { run } = active,
+      id = `${run.id}:${event.itemId}`,
+      draft = active.drafts.get(id);
+    const grow = (text: string) =>
+      text.length + event.text.length > messageTextLimit
+        ? (text + event.text).slice(0, messageTextLimit)
+        : text + event.text;
+    if (!draft) {
+      const previous = this.store.get<Message>("message", id),
+        message: Message = {
+          id,
+          conversationId: run.conversationId,
+          projectId: run.projectId,
+          role: "assistant",
+          provider: run.provider,
+          text: grow(previous?.text ?? ""),
+          runId: run.id,
+          nativeId: event.itemId,
+          createdAt: previous?.createdAt ?? now(),
+        };
+      active.drafts.set(id, { message, unwritten: false });
+      this.store.message(message);
+      return true;
+    }
+    if (draft.message.text.length >= messageTextLimit) return false;
+    draft.message = { ...draft.message, text: grow(draft.message.text) };
+    draft.unwritten = true;
+    active.draftTimer ??= setTimeout(() => {
+      active.draftTimer = null;
+      if (active.finished) return;
+      try {
+        this.flushDrafts(active);
+      } catch {
+        // The text stays unwritten, and the run's end writes it again.
+        return;
+      }
+      this.changed();
+    }, draftDelay(draft.message.text.length));
+    return false;
+  }
+  /** Writes every draft whose text grew since it was last written. */
+  private flushDrafts(active: Active): void {
+    if (active.draftTimer) clearTimeout(active.draftTimer);
+    active.draftTimer = null;
+    const unwritten = [...active.drafts.values()].filter((d) => d.unwritten);
+    if (!unwritten.length) return;
+    this.store.transaction(() => {
+      for (const draft of unwritten) this.store.message(draft.message);
+    });
+    for (const draft of unwritten) draft.unwritten = false;
   }
   private request(
     active: Active,
@@ -1760,6 +1838,8 @@ export class RuntimeManager {
     error: string | null,
   ): void {
     if (active.finished) return;
+    // Streamed text is complete before the run is seen to end.
+    this.flushDrafts(active);
     active.finished = true;
     active.run.status = status;
     active.run.error = error;

@@ -43,7 +43,22 @@ const rateLimitSnapshot = (usedPercent) => ({
 let pendingApproval = false;
 let pendingTool = null;
 let turn = "turn-fixture";
+// FIXTURE_DELTAS streams the reply as that many one-character deltas first.
 const done = (text) => {
+  const deltas = Number(process.env.FIXTURE_DELTAS || 0);
+  let stream = "";
+  for (let i = 0; i < deltas; i++)
+    stream +=
+      JSON.stringify({
+        method: "item/agentMessage/delta",
+        params: {
+          threadId: "thread-fixture",
+          turnId: turn,
+          itemId: "item-fixture",
+          delta: ".",
+        },
+      }) + "\n";
+  if (stream) process.stdout.write(stream);
   send({
     method: "item/agentMessage/delta",
     params: {

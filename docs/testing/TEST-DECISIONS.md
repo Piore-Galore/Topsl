@@ -345,7 +345,7 @@ darwin-arm64, Node with Electron's ABI as `npm test` sets it up, run from the re
 
 **Remote CI, first push** (workflow "Compile Topsl", run 39446523042, commit `b266714`): Linux x64, macOS Apple silicon and macOS Intel passed every step; Windows x64 failed two tests. Round 2 lifecycle stress (run 39446523098) passed on all four platforms.
 
-- The D-28 stand-in test then streamed 20,100 *text* deltas and timed out on Windows (60 s limit; 377 s in all). The runtime manager rewrites the message's whole stored text for every text delta (`packages/runtime/manager.ts`, `message-delta`), so 20,100 deltas cost 20,100 store writes of a growing text: about 14 s locally, far longer on the Windows runner. The test now sends 20,000 thinking deltas, which carry their own `uuid` but store nothing, plus 100 text deltas. It still fails on `8fa59ee` with the D-28 error and takes about 2 s. **Observation, not repaired here:** that per-delta rewrite makes a long live reply's storage cost grow with the square of its length. It is bounded per message (2,000,000 characters) and was not shown to cause a failure in a live run.
+- The D-28 stand-in test then streamed 20,100 *text* deltas and timed out on Windows (60 s limit; 377 s in all). The runtime manager rewrites the message's whole stored text for every text delta (`packages/runtime/manager.ts`, `message-delta`), so 20,100 deltas cost 20,100 store writes of a growing text: about 14 s locally, far longer on the Windows runner. The test now sends 20,000 thinking deltas, which carry their own `uuid` but store nothing, plus 100 text deltas. It still fails on `8fa59ee` with the D-28 error and takes about 2 s. **Observation, not repaired here:** that per-delta rewrite makes a long live reply's storage cost grow with the square of its length. It is bounded per message (2,000,000 characters) and was not shown to cause a failure in a live run. *Follow-up, 21 October 2026:* repaired; see [Streamed message writes](#streamed-message-writes--21-october-2026).
 - AD-11 in `tests/campaign-advanced-replication-workflows.test.ts` ("mode independent-proposals …") failed with "Independent participants cannot share a filesystem identity." These repairs do not touch that code (`packages/workflows/advanced.ts`), and it passed on the other three platforms and in the local gate.
 
 **Remote CI, second push** (commit `97c99b1`, with the faster D-28 test, pushed as `codex/live-defects-d27-d29`, not merged): "Compile Topsl" run 39454517850 passed every step on Linux x64, macOS Apple silicon, macOS Intel and Windows x64 on its first attempt, AD-11 included, so the AD-11 failure above was intermittent; its cause was not investigated. Round 2 lifecycle stress run 39454517918 passed on all four.
@@ -353,6 +353,38 @@ darwin-arm64, Node with Electron's ABI as `npm test` sets it up, run from the re
 The desktop journeys do not reach an uncertain member turn, a long Claude stream or a Plan-mode transcript, so they show only that these repairs broke none of the existing flows on screen. The **Reconciliation needed** label is not inspected on screen.
 
 **Not established:** live re-verification. `node scripts/live-loop.mjs --mixed-only` would confirm that a live Claude coordinator turn with partial messages completes instead of ending `uncertain` (D-28), and, if a live turn does end `uncertain`, that the loop view shows **Reconciliation needed** (D-29). `node scripts/live-session.mjs --workflow claude-claude` would confirm that a Plan-mode review's reply is taken from its transcript (D-27). Both need the owner's sign-ins and live turns, so neither was run. Packaged builds are also not covered.
+
+## Streamed message writes — 21 October 2026
+
+*Dated follow-up, 21 October 2026.* This repairs the observation recorded in the D-28 repair's first CI push ([Live defect repairs](#live-defect-repairs--20-october-2026)): the runtime manager rewrote a message's whole stored text for every streamed delta, so a reply of N deltas cost N store writes of a growing text, each also re-indexing the text for search. Built on `f956012` (`codex/live-defects-d27-d29`), on branch `codex/coalesce-message-deltas`.
+
+**Change** (`draft` and `flushDrafts` in `packages/runtime/manager.ts`; Codex and Claude Code both reach it through `message-delta`):
+
+- A message's first delta is written at once, so the message takes its place among the run's messages and the window can show it.
+- Later deltas grow the draft in memory. One timer per run writes every grown draft in one transaction and then tells the window. The timer waits 100 ms, plus 1 ms for every 2,000 characters already in the draft, up to 1 s, so rewriting even a draft at the bound costs about 2,000,000 characters a second, not one rewrite per delta.
+- A final `message` event for the item drops the draft and writes the final text, which replaces it exactly, as before.
+- When the run ends for any reason (completed, failed, interrupted, or Topsl closing, which ends every active run), `finish` writes every grown draft before it saves the run's status. A delta that arrives after that is ignored, as before.
+- Each message still keeps at most 2,000,000 characters; deltas past the bound are dropped.
+- Buffered deltas no longer tell the window by themselves; the timed write does. Other events still do.
+
+**What a crash mid-stream loses.** A crash, or a forced quit that skips `close`, loses the text streamed since the last write: at most one timer interval, so up to about 1 s, of the draft. On restart the run becomes `uncertain`, as before, and the native session keeps the whole reply. A final message, a run's end and an orderly close lose nothing.
+
+**Decisions made here.** Coalescing on a timer was chosen over appending chunks, which would need a new storage shape for message text, its search index and every reader. The 100 ms to 1 s interval is this change's tuning, not a measured requirement.
+
+### Verification
+
+darwin-arm64, run from the repository root in an agent session.
+
+| Command | Result |
+| --- | --- |
+| `env -u ANTHROPIC_BASE_URL npx vitest run tests/runtime-message-drafts.test.ts` with the old `manager.ts` from `f956012` | 2 of 3 failed: 20,100 assistant message writes for the Claude stand-in (28 s) and 20,102 for the Codex fixture, against a bound of 200; the 2,000,000-character test passed |
+| The same command with this change | 3 passed in about 1 s. Writes counted in a one-off run: Claude 3 writes (31,620 characters in all), the bound test 2 writes, Codex 3 writes |
+| `npm run check` with this change on `f956012` | passed: `tsc --noEmit`; Vitest 83 files passed (3 skipped), 1,150 tests passed, 5 skipped; `test:release` 18/0/0; build passed with its existing large-chunk warning |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` after that build | passed: the main desktop journey, encrypted restart persistence, the coordinator journey, the Atlas journey and the loop journey, in actual Electron sessions against stand-ins |
+
+`tests/runtime-message-drafts.test.ts` streams 20,100 one-character deltas through a real Claude stand-in process with no final message, and checks that the stored text is exactly the 20,100 characters, the first delta is written at once, and there are fewer than 200 writes. A second Claude test streams three 900,000-character deltas and checks the stored text is exactly 2,000,000 characters. The Codex test streams 20,100 deltas through `tests/fixtures/codex.cjs` (new `FIXTURE_DELTAS`) before the completed item, and checks the stored text is exactly the item's.
+
+**Not established:** a live long reply, and how often the timer writes when a live stream arrives slowly, not in one burst as in these stand-ins; the desktop journeys do not stream long replies. Packaged builds and remote CI are not covered.
 
 ## Open product questions
 
