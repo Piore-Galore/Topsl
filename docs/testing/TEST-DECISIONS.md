@@ -96,9 +96,9 @@ darwin-arm64, from the repository root, with the session environment intact (`sc
 
 The main desktop journey's imported fixture answer now runs past 12,000 characters, so the journey checks in an actual Electron window that the handoff dialog shows the omission note and the shortened heading.
 
-Not covered here: D-26 runs only on Windows, so remote CI is its only evidence (see below). Packaged builds and live providers were not run.
+**Remote CI** (run 39381532671, "Compile Topsl", commit `858c177` on `codex/campaign-remaining-defects`, not merged): every step passed on Linux x64, macOS Apple silicon, macOS Intel and Windows x64. That covers typecheck, integration tests and build, the desktop journeys, and package compilation. On Windows, Vitest reported 1,014 passed, 8 expected fail and 122 skipped, and `tests/claude-route.test.ts` passed 16 of 24 with 8 skipped. The `.cmd` case has no skip, so it ran and passed there. This is the only evidence for D-26. The separate "Round 2 lifecycle stress" run 39381532625 on the same commit had not finished when this was recorded.
 
-REMOTE_CI
+Not covered: packaged builds and live providers.
 
 ## Disputed by the independent review
 

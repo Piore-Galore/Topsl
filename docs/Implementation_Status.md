@@ -320,7 +320,7 @@ D-11, D-17, D-18, D-20, D-21, D-22, D-23 and D-26 were repaired on top of `9a769
 - Specialist ownership refusals name the offending paths (D-21).
 - Approval summaries escape every Unicode `Bidi_Control` character, including U+061C (D-22).
 - Expired replication approval previews, which hold full portable content, are removed at startup and before each new preview (D-23).
-- On Windows, a Claude executable that Node refuses to launch (such as a `.cmd`) gives Topsl's sanitized account message (D-26). Only remote Windows CI covers this.
+- On Windows, a Claude executable that Node refuses to launch (such as a `.cmd`) gives Topsl's sanitized account message (D-26). Only remote Windows CI covers this: run 39381532671 passed on all four platforms.
 
 D-19 (TASK-01) stays open for the owner's decision.
 
