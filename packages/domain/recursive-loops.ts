@@ -51,6 +51,9 @@ export type LoopWaitReason =
   | { kind: "verification"; detail: string }
   | { kind: "authorization"; detail: string }
   | { kind: "recovery"; detail: string }
+  /** A member turn's outcome is unknown: it holds its workspace until the
+   * owner reconciles each named runtime run (plan invariant 7). */
+  | { kind: "reconciliation"; detail: string; runIds: string[] }
   | { kind: "setup"; detail: string };
 
 /**

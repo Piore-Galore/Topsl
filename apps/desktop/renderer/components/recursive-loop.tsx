@@ -529,7 +529,9 @@ function RunView({
           <p className="muted">
             {r.waitReason.kind === "no-opportunity"
               ? "Monitoring"
-              : label(r.waitReason.kind)}
+              : r.waitReason.kind === "reconciliation"
+                ? "Reconciliation needed"
+                : label(r.waitReason.kind)}
             : {r.waitReason.detail}
             {r.nextWakeAt
               ? ` Next check: ${new Date(r.nextWakeAt).toLocaleString()}.`

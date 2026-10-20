@@ -49,6 +49,7 @@ import {
   type RoleCompletion,
   type RoleDefinition,
   type RoleGroupSettings,
+  type RoleRound,
   type RoundMember,
 } from "../domain/role-groups";
 import type { Store } from "../persistence/store";
@@ -1994,6 +1995,19 @@ export class LoopSupervisor {
     // Decision-round turns count toward allowances as they happen, not only
     // when the iteration's child work runs or ends.
     it = this.account(run, it, this.childTurns(it) + this.roundTurns(run, it));
+    // An unknown member outcome stays visible (plan invariant 7). The stage
+    // cannot use that turn until the owner reconciles its run, and the
+    // turn's workspace and capacity stay held meanwhile.
+    const blocked = this.uncertainTurns(run, it);
+    if (blocked) {
+      this.softWait(run, blocked);
+      return;
+    }
+    if (run.waitReason?.kind === "reconciliation")
+      run = this.saveRun(run, {
+        waitReason: null,
+        detail: `Iteration ${it.number}: ${it.state}.`,
+      });
     switch (it.state) {
       case "assessing":
         return this.assess(run, it);
@@ -2285,6 +2299,45 @@ export class LoopSupervisor {
         (n, r) => n + r.members.reduce((m, x) => m + x.attemptIds.length, 0),
         0,
       );
+  }
+
+  /** The iteration's member turns whose outcome is unknown, in its decision
+   * rounds and its child goals' rounds, as one wait reason; null when none. */
+  private uncertainTurns(
+    run: LoopRun,
+    it: LoopIteration,
+  ): LoopWaitReason | null {
+    const children = new Set(it.childExecutionGoalIds);
+    const active = [
+      ...this.scoped<LoopRound>(loopKinds.round, run)
+        .filter((r) => r.iterationId === it.id)
+        .flatMap((r) => r.members),
+      ...(children.size
+        ? this.repo
+            .all<RoleRound>(kinds.round, run.projectId)
+            .filter((r) => children.has(r.goalId))
+            .flatMap((r) => r.members)
+        : []),
+    ];
+    const blocked: Array<{ memberId: string; runId: string }> = [];
+    for (const m of active) {
+      if (!m.activeAttemptId) continue;
+      const obs = this.driver.observe(m.activeAttemptId);
+      if (obs.state === "uncertain")
+        blocked.push({
+          memberId: m.memberId,
+          runId: obs.runId ?? m.activeAttemptId,
+        });
+    }
+    if (!blocked.length) return null;
+    const named = blocked
+      .map((b) => `${b.memberId} (run ${b.runId.slice(0, 8)})`)
+      .join(", ");
+    return {
+      kind: "reconciliation",
+      runIds: [...new Set(blocked.map((b) => b.runId))],
+      detail: `${blocked.length === 1 ? "A member turn" : `${blocked.length} member turns`} ended with an unknown outcome: ${named}. Each holds its workspace until the owner inspects and reconciles that run under Runs.`,
+    };
   }
 
   private childTurns(it: LoopIteration): number {

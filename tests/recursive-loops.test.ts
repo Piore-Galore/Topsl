@@ -2085,3 +2085,52 @@ describe("Recursive Looping: evaluation inputs (live run follow-up, 19 October 2
     expect(loopRounds(t).filter((r) => r.stage === "evaluate").length).toBe(2);
   });
 });
+
+// D-29 (live, 20 October 2026): a loop whose member turn ended `uncertain`
+// showed "Iteration 1: assessing." with no wait reason, so it looked stuck.
+describe("D-29 a loop blocked on an uncertain member turn says so", () => {
+  test("the wait reason names the blocking run and the owner's reconciliation; it clears once the run is reconciled", async () => {
+    const t = await setup();
+    const base = t.driver.reply;
+    let hold = true;
+    t.driver.reply = (turn) =>
+      hold && turn.protocol?.kind === "recursive-loop-v1" ? "hang" : base(turn);
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting to src/a.ts",
+      policy,
+    });
+    const runId = started.run.id;
+    await driveLoop(t, runId, () => t.driver.launches.length > 0, 20);
+    const [attemptId, attempt] = [...t.driver.attempts].at(-1)!;
+    // The member's runtime turn ended with an unknown outcome.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "uncertain",
+      quiescent: false,
+      runId: "run-uncertain-0001",
+      error: "Claude stream exceeds the bounded event limit.",
+    };
+    let view = await driveLoop(t, runId, () => false, 3);
+    expect(view.run.state).toBe("active");
+    expect(view.run.waitReason).toMatchObject({
+      kind: "reconciliation",
+      runIds: ["run-uncertain-0001"],
+    });
+    expect(view.run.waitReason!.detail).toContain("run-unce");
+    expect(view.run.waitReason!.detail).toMatch(/reconcile/i);
+    expect(view.run.detail).toBe(`Waiting: ${view.run.waitReason!.detail}`);
+    expect(attemptId).toBeTruthy();
+    // The owner reconciles the run: it ends failed and its processes are gone.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "failed",
+      quiescent: true,
+      error: "Reconciled by the owner.",
+    };
+    hold = false;
+    view = await driveLoop(t, runId, (v) => v.run.waitReason?.kind !== "reconciliation", 5);
+    expect(view.run.waitReason).toBeNull();
+    expect(view.run.detail).not.toMatch(/reconcile/i);
+  });
+});

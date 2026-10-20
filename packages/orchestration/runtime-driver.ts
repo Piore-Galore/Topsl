@@ -601,6 +601,8 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
         quiescent: false,
         finalText: null,
         reportedModel: null,
+        runId: attempt.legacyRunId,
+        error: attempt.error,
       };
     if (!this.terminal(attempt))
       return {

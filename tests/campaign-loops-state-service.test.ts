@@ -393,6 +393,41 @@ describe("LOOP-13 (service): experimental.recursiveLooping turned off while a ru
 });
 
 // ---------------------------------------------------------------------------
+// D-29 on the real service: an uncertain member turn is a visible wait
+
+describe("D-29 (service): a loop blocked on an uncertain member turn names its run", () => {
+  test("the loop's wait reason names the runtime run whose attempt is uncertain and asks for the owner's reconciliation", async () => {
+    // Turns stay open long enough to mark one uncertain before it returns.
+    const f = await setup(120_000);
+    const runId = await createAndStart(f);
+    await untilRun(f, runId, () =>
+      f.service.store
+        .list<{ state: string; legacyRunId: string | null }>("attempt")
+        .some((a) => a.state === "running" && a.legacyRunId),
+    );
+    const attempt = f.service.store
+      .list<{ id: string; state: string; legacyRunId: string }>("attempt")
+      .find((a) => a.state === "running" && a.legacyRunId)!;
+    // As the runtime records a turn whose outcome is unknown (D-28 live).
+    f.service.store.put("attempt", {
+      ...attempt,
+      state: "uncertain",
+      error: "Claude stream exceeds the bounded event limit.",
+    });
+    const view = await untilRun(f, runId, (r) => r.waitReason !== null);
+    expect(view.run.state).toBe("active");
+    expect(view.run.waitReason).toMatchObject({
+      kind: "reconciliation",
+      runIds: [attempt.legacyRunId],
+    });
+    expect(view.run.waitReason!.detail).toContain(
+      `run ${attempt.legacyRunId.slice(0, 8)}`,
+    );
+    expect(view.run.detail).toBe(`Waiting: ${view.run.waitReason!.detail}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // STATE-08 / STATE-10: publication digest, drift and reconciliation on real Git
 
 describe("STATE-08 / STATE-10 (service): publication binds the exact files to the current folder", () => {

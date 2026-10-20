@@ -121,6 +121,8 @@ export interface AttemptObservation {
   /** Implementation: the candidate captured from the member's workspace. */
   candidateId?: string | null;
   error?: string | null;
+  /** The runtime run that carries the attempt, when there is one. */
+  runId?: string | null;
   evidence: Evidence;
 }
 
