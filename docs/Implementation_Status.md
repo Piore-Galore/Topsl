@@ -319,6 +319,6 @@ D-13, D-14, D-16, D-24 and D-25 were repaired on top of `9a769e5`; each reproduc
 - A monitoring policy with `initialSeconds` above `maxSeconds` is refused (D-24).
 - An owner count above an owner maximum at the same scope is reported as a conflict that keeps the requested count (D-25).
 
-D-15 (AUTO-06) is unchanged and waits for the owner's decision.
+D-15 (AUTO-06) is not a defect: the owner decided on 20 October 2026 that ranking on the conservative lower estimate is intended ([record](testing/TEST-DECISIONS.md#not-a-defect-intended-behaviour)).
 
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

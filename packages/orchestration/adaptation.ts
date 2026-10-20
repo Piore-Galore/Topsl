@@ -45,8 +45,12 @@ function credit(o: LoopOutcome): { success: number; weight: number } {
     return { success: 1 + d, weight: 1 + d };
   if (o.contribution === "valid")
     // A valid contribution to an iteration that did not promote: the team
-    // outcome does not prove this member caused the failure, and harder
-    // tasks weigh less against it.
+    // outcome does not prove this member caused the failure, so it earns
+    // partial credit. A harder task counts as less evidence (lower weight)
+    // and so pulls the mean down less, but less evidence also widens the
+    // interval: by the lower estimate that ranking uses, a failed hard
+    // iteration can rank a model below the same failure on an easy one until
+    // more outcomes arrive (intended; owner decision, 20 October 2026).
     return { success: 0.4 * (1 - 0.5 * d), weight: 1 - 0.5 * d };
   if (o.contribution === "invalid" || o.contribution === "missing")
     return { success: 0, weight: 1 };

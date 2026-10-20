@@ -65,12 +65,17 @@ These repairs were made after the campaign, on top of `5b5b0b4`, on darwin-arm64
 
 ## Disputed by the independent review
 
-The independent review (Phase 9) re-ran each high-severity reproduction and read every other one. It confirmed every defect above (D-25 was found afterwards, while strengthening tests) except these two, which it judges possibly intended. They stay as `test.fails` reproductions. Their case rows remain FAIL against the plan's literal expectation, but the report counts them as open product questions, not confirmed defects, until the owner decides the intended rule.
+The independent review (Phase 9) re-ran each high-severity reproduction and read every other one. It confirmed every defect above (D-25 was found afterwards, while strengthening tests) except two, D-15 and D-19, which it judged possibly intended. The owner has since decided D-15; it is recorded under [Not a defect](#not-a-defect-intended-behaviour). D-19 stays a `test.fails` reproduction. Its case row remains FAIL against the plan's literal expectation, but the report counts it as an open product question, not a confirmed defect, until the owner decides the intended rule.
 
 | ID | Case | Observation | Source and reproduction | Why disputed |
 | --- | --- | --- | --- | --- |
-| D-15 | AUTO-06 (P1) | A valid contribution to a failed hard iteration ranks a model below the same contribution to a failed easy one: the lower-bound estimate is 0.0718 vs 0.1131, although the averages are 0.48 vs 0.4667. | `packages/orchestration/adaptation.ts:50`, `:78`; `tests/campaign-teams-auto-optimizer.test.ts:196` | Ranking by a conservative lower estimate is documented in the source, and the case asks to reproduce the current rules. |
 | D-19 | TASK-01 (P0) | `task-transition` from cancelled to cancelled with a new detail succeeds and records a new revision (2→3) with the new detail; the state does not change. | `packages/domain/workflow.ts:403`; `-t "terminal tasks"` in `tests/campaign-storage-authority.test.ts` | `if (from === to) return;` is a deliberate same-state rule; the earlier revision is kept as `task-revision:2`. Decide whether terminal tasks may take detail updates. |
+
+## Not a defect: intended behaviour
+
+| ID | Case | Observation | Decision |
+| --- | --- | --- | --- |
+| D-15 | AUTO-06 (P1) | A valid contribution to a failed hard iteration ranks a model below the same contribution to a failed easy one: the lower estimate is 0.0718 vs 0.1131 for one outcome (0.1772 vs 0.2244 for five), although the averages are 0.48 vs 0.4667 (0.4444 vs 0.4286). | **Not a defect: intended (owner decision, 20 October 2026).** Ranking on the conservative lower estimate is the intended rule. A harder task counts as less evidence, which lowers the average less but widens the uncertainty, so a failed hard iteration may rank below a failed easy one until more outcomes arrive. The reproduction is now a plain test of this behaviour (`-t "AUTO-06: ranking uses the conservative lower estimate"` in `tests/campaign-teams-auto-optimizer.test.ts`), and the source comment in `credit` (`packages/orchestration/adaptation.ts`) and [Recursive Looping](../Recursive_Looping.md) §7 Ranking now describe the effect. The AUTO-06 case row in the campaign report stays a snapshot of the plan's literal expectation. |
 
 ## Positive capabilities recorded as NOT IMPLEMENTED
 
@@ -194,7 +199,7 @@ Not covered: remote CI, and other platforms. This harness is not in the default 
 
 ## Orchestration defect repairs — 20 October 2026
 
-*Dated follow-up, 20 October 2026.* D-13, D-14, D-16, D-24 and D-25 were repaired on top of `9a769e5`, on branch `codex/orchestration-defects`. The campaign rows above keep what was found; this section records the repairs. Each `test.fails` reproduction is now a plain `test` with its `// CAMPAIGN DEFECT` comment removed, and the observation tests that pinned the defective behaviour now assert the repaired behaviour. D-15 (AUTO-06) is unchanged and waits for the owner's decision.
+*Dated follow-up, 20 October 2026.* D-13, D-14, D-16, D-24 and D-25 were repaired on top of `9a769e5`, on branch `codex/orchestration-defects`. The campaign rows above keep what was found; this section records the repairs. Each `test.fails` reproduction is now a plain `test` with its `// CAMPAIGN DEFECT` comment removed, and the observation tests that pinned the defective behaviour now assert the repaired behaviour. D-15 (AUTO-06) was decided by the owner as intended behaviour; see [Not a defect](#not-a-defect-intended-behaviour).
 
 | ID | Repair | Source | Tests |
 | --- | --- | --- | --- |
@@ -213,10 +218,11 @@ darwin-arm64, working tree on `9a769e5` with these changes, run from the reposit
 | Command | Result |
 | --- | --- |
 | `npm test -- tests/campaign-teams-auto.test.ts tests/orchestration.test.ts tests/coordination.test.ts` | 77 passed |
-| `npm test -- tests/campaign-teams-auto-optimizer.test.ts` | 21 passed, 1 expected fail (D-15) |
+| `npm test -- tests/campaign-teams-auto-optimizer.test.ts` | 21 passed, 1 expected fail (D-15); after the D-15 decision, 22 passed |
 | `npm test -- tests/campaign-loops-state.test.ts tests/campaign-loops-state-service.test.ts tests/recursive-loops.test.ts` | 136 passed |
 | `npm run check` | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,129 tests passed, 11 expected fail, 5 skipped; `test:release` 18/0/0; build passed with its existing large-chunk warning. The 11 expected failures are the remaining reproductions; the 6 removed are D-13, D-14 (2), D-16, D-24 and D-25. |
 | `env -u ANTHROPIC_BASE_URL npm run test:desktop -- scripts/desktop-coordinator-test.mjs scripts/desktop-loop-test.mjs` (after `npm run build`) | both journeys passed in an actual Electron session against the Codex stand-in |
+| `npm run check` again after the D-15 decision (AUTO-06 turned into a plain test; source comment and docs only otherwise) | passed: `tsc --noEmit`; Vitest 82 files passed (3 skipped), 1,130 tests passed, 10 expected fail, 5 skipped; `test:release` 18/0/0; build passed |
 
 Two earlier `npm run check` runs failed only in `tests/claude-allowance.test.ts` ("shutdown cancels a native usage read without writing after closing"): its 1 s poll for the stand-in's `usage-starts` file timed out while other sessions loaded the host. The same test also failed once in 2 runs on an untouched `9a769e5` checkout, so it is a timing flake unrelated to these changes; it is not fixed here.
 

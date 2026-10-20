@@ -192,33 +192,34 @@ describe("AUTO-06: outcome credit, estimates, confidence and cold start", () => 
     ).toBe("task-family");
   });
 
-  // CAMPAIGN DEFECT AUTO-06: a valid contribution to a failed hard iteration ranks below the same contribution to a failed easy one (adaptation.ts credit + lower bound).
-  test.fails(
-    "AUTO-06: a valid contribution to a failed hard iteration does not rank below the same contribution to a failed easy one",
-    () => {
-      // The source says harder tasks weigh less against a valid contributor,
-      // and the plan says difficult assignments must not demote a model. The
-      // mean honors that (0.48 > 0.4667), but ranking uses the lower estimate,
-      // and the reduced weight widens the interval: 0.0718 < 0.1131.
-      for (const k of [1, 5]) {
-        const hard = Array.from({ length: k }, () =>
-          outcome("hard", "valid", "rejected", "high"),
-        );
-        const easy = Array.from({ length: k }, () =>
-          outcome("easy", "valid", "rejected", "low"),
-        );
-        expect(stat(hard).mean).toBeGreaterThan(stat(easy).mean);
-        expect(
-          rankModels({
-            outcomes: [...easy, ...hard],
-            function: "implementation",
-            taskFamily: "goal:family",
-            eligible: ["easy", "hard"],
-          }).ranking[0],
-        ).toBe("hard");
-      }
-    },
-  );
+  test("AUTO-06: ranking uses the conservative lower estimate, so a valid contribution to a failed hard iteration can rank below the same contribution to a failed easy one", () => {
+    // Intended (owner decision, 20 October 2026; D-15 in
+    // docs/testing/TEST-DECISIONS.md). A failed hard iteration costs a valid
+    // contributor less success but also adds less evidence weight. The mean
+    // is higher, yet the lower estimate, which ranking uses, is wider and
+    // lower, so the hard-task model ranks second until more evidence arrives.
+    for (const [k, hardStat, easyStat] of [
+      [1, { mean: 0.48, lower: 0.0718 }, { mean: 0.4667, lower: 0.1131 }],
+      [5, { mean: 0.4444, lower: 0.1772 }, { mean: 0.4286, lower: 0.2244 }],
+    ] as const) {
+      const hard = Array.from({ length: k }, () =>
+        outcome("hard", "valid", "rejected", "high"),
+      );
+      const easy = Array.from({ length: k }, () =>
+        outcome("easy", "valid", "rejected", "low"),
+      );
+      expect(stat(hard)).toMatchObject(hardStat);
+      expect(stat(easy)).toMatchObject(easyStat);
+      expect(
+        rankModels({
+          outcomes: [...easy, ...hard],
+          function: "implementation",
+          taskFamily: "goal:family",
+          eligible: ["hard", "easy"],
+        }).ranking,
+      ).toEqual(["easy", "hard"]);
+    }
+  });
 });
 
 describe("AUTO-07/AUTO-08: change policy boundaries", () => {
