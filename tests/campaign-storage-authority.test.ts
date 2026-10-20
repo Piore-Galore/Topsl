@@ -16,7 +16,7 @@ import { Configuration } from "../packages/workspace/configuration";
 import { commandSchema } from "../packages/domain/commands";
 import { hash, now, uid } from "../packages/domain/invariants";
 import type { Project } from "../packages/domain/types";
-import type { Task, Workflow } from "../packages/domain/workflow";
+import { assertTransition, type Task, type Workflow } from "../packages/domain/workflow";
 import { Service } from "../apps/service/service";
 import { captureCandidate } from "../packages/workflows/candidates";
 import { fixture } from "./helpers";
@@ -596,9 +596,11 @@ describe("TASK-01 task graphs and transitions through the service", () => {
       state: "cancelled",
       detail: "",
     });
+    // Since the D-19 owner decision a finished task gives its own reason
+    // rather than the generic "Invalid task transition".
     for (const [state, revision, message] of [
-      ["ready", 2, "Invalid task transition"],
-      ["blocked", 2, "Invalid task transition"],
+      ["ready", 2, "A finished task cannot change"],
+      ["blocked", 2, "A finished task cannot change"],
       ["ready", 1, "revision changed"],
     ] as const)
       await expect(
@@ -624,8 +626,8 @@ describe("TASK-01 task graphs and transitions through the service", () => {
 });
 
 describe("TASK-01 terminal tasks", () => {
-  // CAMPAIGN DEFECT TASK-01: a cancelled (terminal) task accepts a same-state task-transition that rewrites its detail and bumps its revision (workflow.ts assertTransition returns early when from === to).
-  test.fails("a cancelled task rejects or ignores a repeated cancel without rewriting the terminal record", async () => {
+  // Owner decision, 20 October 2026: finished tasks must not change.
+  test("a cancelled task rejects or ignores a repeated cancel without rewriting the terminal record", async () => {
     const f = await serviceFixture();
     const task: Task = await f.service.command({
       type: "task-create",
@@ -647,18 +649,35 @@ describe("TASK-01 terminal tasks", () => {
       detail: "cancelled by owner",
     });
     const terminal = structuredClone(f.repo.require<Task>("task", task.id));
-    await f.service
-      .command({
-        type: "task-transition",
-        requestId: uid(),
-        id: task.id,
-        expectedRevision: 2,
-        state: "cancelled",
-        detail: "rewritten after the task ended",
-      })
-      .catch(() => {});
+    for (const state of ["cancelled", "ready", "blocked"] as const)
+      await expect(
+        f.service.command({
+          type: "task-transition",
+          requestId: uid(),
+          id: task.id,
+          expectedRevision: 2,
+          state,
+          detail: "rewritten after the task ended",
+        }),
+      ).rejects.toThrow("This task is cancelled. A finished task cannot change");
     expect(f.repo.require<Task>("task", task.id)).toEqual(terminal);
     expect(f.service.store.get("task-revision", `${task.id}:3`)).toBeUndefined();
+  });
+});
+
+describe("TASK-01 finished-task rule", () => {
+  test("accepted and cancelled tasks refuse every transition; a same-state transition of an unfinished task is still allowed", () => {
+    for (const from of ["accepted", "cancelled"])
+      for (const to of ["accepted", "cancelled", "ready", "active"])
+        expect(() => assertTransition("task", from, to)).toThrow(
+          `This task is ${from}. A finished task cannot change`,
+        );
+    // Parallel acceptance re-records a task that is already verifying.
+    expect(() => assertTransition("task", "verifying", "verifying")).not.toThrow();
+    expect(() => assertTransition("task", "ready", "ready")).not.toThrow();
+    // Workflows and attempts keep their existing same-state rule.
+    expect(() => assertTransition("workflow", "cancelled", "cancelled")).not.toThrow();
+    expect(() => assertTransition("attempt", "completed", "completed")).not.toThrow();
   });
 });
 
