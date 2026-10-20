@@ -344,10 +344,14 @@ describe("§6.1 loop boundaries through the public command schema and the superv
         },
       });
     expect(
-      [0, 1, 86400, 86401].map((v) => monitoring({ initialSeconds: v })),
+      [0, 1, 86400, 86401].map((v) =>
+        monitoring({ initialSeconds: v, maxSeconds: 604800 }),
+      ),
     ).toEqual([false, true, true, false]);
     expect(
-      [0, 1, 604800, 604801].map((v) => monitoring({ maxSeconds: v })),
+      [0, 1, 604800, 604801].map((v) =>
+        monitoring({ initialSeconds: 1, maxSeconds: v }),
+      ),
     ).toEqual([false, true, true, false]);
     expect([0.9, 1, 10, 10.1].map((v) => monitoring({ factor: v }))).toEqual([
       false,
@@ -355,8 +359,11 @@ describe("§6.1 loop boundaries through the public command schema and the superv
       true,
       false,
     ]);
-    // Initial greater than maximum is accepted by the schema (each value is in range).
-    expect(monitoring({ initialSeconds: 86400, maxSeconds: 60 })).toBe(true);
+    // Initial greater than maximum is refused, though each value is in range
+    // (accepted until the D-24 repair, 20 October 2026); equal is accepted.
+    expect(monitoring({ initialSeconds: 86400, maxSeconds: 60 })).toBe(false);
+    expect(monitoring({ initialSeconds: 61, maxSeconds: 60 })).toBe(false);
+    expect(monitoring({ initialSeconds: 60, maxSeconds: 60 })).toBe(true);
   });
 
   test("loop-timeline limit 0/1/20 default/100/101 and cursor length at the command boundary", () => {
@@ -596,66 +603,78 @@ describe("LOOP-09: Endless monitoring backs off to its cap and never completes",
     expect(boundaryTargets.at(-1)).toBe(head.candidateId);
   });
 
-  test("monitoring initial greater than maximum: observed first delay and the following delays", async () => {
+  test("monitoring initial greater than maximum is refused with the reason, at the command and when a run starts", async () => {
+    // Observed on 2026-10-19 (D-24): the run started and its delays were
+    // 3,600 s, then 60 s, then 60 s.
+    const command = parse({
+      type: "loop-policy-update",
+      runId: "r",
+      expectedRevision: 1,
+      policy: { monitoring: { initialSeconds: 3600, maxSeconds: 60 } },
+      commandId: "policy-command",
+    });
+    expect(command.success).toBe(false);
+    expect(command.error!.issues.map((i) => i.message).join(" ")).toContain(
+      "cannot be longer than the maximum delay",
+    );
+    const t = await setup();
+    await expect(
+      startRun(t, {
+        mode: "endless",
+        text: "Keep improving.",
+        policy: {
+          ...policy,
+          monitoring: { initialSeconds: 3600, maxSeconds: 60, factor: 2 },
+        },
+      }),
+    ).rejects.toThrow("cannot be longer than the maximum delay");
+  });
+
+  test("a stored policy whose initial delay exceeds its maximum waits no longer than the maximum", async () => {
     const t = await setup();
     const started = await startRun(t, {
       mode: "endless",
       text: "Keep improving.",
-      policy: {
-        ...policy,
-        monitoring: { initialSeconds: 3600, maxSeconds: 60, factor: 2 },
-      },
+      policy,
     });
-    let view = await driveLoop(
+    // A policy saved before the D-24 repair could hold initial > maximum.
+    const stored = t.supervisor.policy(started.run.id);
+    t.store.save(loopKinds.policy, {
+      ...stored,
+      monitoring: { initialSeconds: 3600, maxSeconds: 60, factor: 2 },
+    });
+    const view = await driveLoop(
       t,
       started.run.id,
       (v) => v.run.state === "monitoring",
     );
-    const delays = [view.run.backoffSeconds];
-    for (let i = 0; i < 2; i++) {
-      t.advance(view.run.backoffSeconds * 1000 + 1);
-      const before = t.driver.launches.length;
-      view = await driveLoop(
-        t,
-        started.run.id,
-        (v) =>
-          v.run.state === "monitoring" && t.driver.launches.length > before,
-      );
-      delays.push(view.run.backoffSeconds);
-    }
-    // Recorded fact: the first delay is the initial value even above the
-    // maximum, after which the delay drops to the maximum. See the next test.
-    expect(delays).toEqual([3600, 60, 60]);
+    expect(view.run.backoffSeconds).toBe(60);
   });
 
-  // CAMPAIGN DEFECT LOOP-09/§6.1-monitoring: initialSeconds > maxSeconds is accepted and the first monitoring delay exceeds the configured maximum.
-  test.fails(
-    "monitoring initial greater than maximum is either refused or bounded by the maximum",
-    async () => {
-      const t = await setup();
-      let refused = false;
-      let first = 0;
-      try {
-        const started = await startRun(t, {
-          mode: "endless",
-          text: "Keep improving.",
-          policy: {
-            ...policy,
-            monitoring: { initialSeconds: 3600, maxSeconds: 60, factor: 2 },
-          },
-        });
-        const view = await driveLoop(
-          t,
-          started.run.id,
-          (v) => v.run.state === "monitoring",
-        );
-        first = view.run.backoffSeconds;
-      } catch {
-        refused = true;
-      }
-      expect(refused || first <= 60).toBe(true);
-    },
-  );
+  test("monitoring initial greater than maximum is either refused or bounded by the maximum", async () => {
+    const t = await setup();
+    let refused = false;
+    let first = 0;
+    try {
+      const started = await startRun(t, {
+        mode: "endless",
+        text: "Keep improving.",
+        policy: {
+          ...policy,
+          monitoring: { initialSeconds: 3600, maxSeconds: 60, factor: 2 },
+        },
+      });
+      const view = await driveLoop(
+        t,
+        started.run.id,
+        (v) => v.run.state === "monitoring",
+      );
+      first = view.run.backoffSeconds;
+    } catch {
+      refused = true;
+    }
+    expect(refused || first <= 60).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2226,7 +2245,8 @@ describe("OPS-06 (accelerated): scripted boundaries with promotions, rejections 
     let nextSample = 100;
     for (let step = 0; step < 60_000; step++) {
       const run = runOf(t, runId);
-      if (run.iterationCount >= soakBoundaries && run.state === "monitoring") break;
+      if (run.iterationCount >= soakBoundaries && run.state === "monitoring")
+        break;
       if (run.state === "monitoring") t.advance(run.backoffSeconds * 1000 + 1);
       await t.orchestrator.tick();
       await t.supervisor.tick();

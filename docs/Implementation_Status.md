@@ -323,4 +323,16 @@ D-11, D-17, D-18, D-19, D-20, D-21, D-22, D-23 and D-26 were repaired on top of 
 - On Windows, a Claude executable that Node refuses to launch (such as a `.cmd`) gives Topsl's sanitized account message (D-26). Only remote Windows CI covers this: run 39381532671 passed on all four platforms, and run 39387730675 passed again with D-19 included.
 - *Owner decision, 20 October 2026:* finished tasks must not change. An accepted or cancelled task refuses every `task-transition`, including a same-state one that would only rewrite its detail, and nothing is recorded (D-19).
 
+### Orchestration defect repairs — 20 October 2026 follow-up
+
+D-13, D-14, D-16, D-24 and D-25 were repaired on top of `9a769e5`; each reproduction now passes as a plain test. Changes, decisions and verification (`npm run check` and the coordinator and loop desktop journeys, darwin-arm64) are in [Orchestration defect repairs](testing/TEST-DECISIONS.md#orchestration-defect-repairs--20-october-2026). In short:
+
+- A coordinator status request never creates a goal; with no active goal it reports on the latest one (D-13).
+- An active-role-count override must be a whole number from 3 to 64 and is refused with the reason before anything is stored (D-14).
+- Loop model ranking keeps separate statistics for the same model ID on two providers (D-16).
+- A monitoring policy with `initialSeconds` above `maxSeconds` is refused (D-24).
+- An owner count above an owner maximum at the same scope is reported as a conflict that keeps the requested count (D-25).
+
+D-15 (AUTO-06) is not a defect: the owner decided on 20 October 2026 that ranking on the conservative lower estimate is intended ([record](testing/TEST-DECISIONS.md#not-a-defect-intended-behaviour)).
+
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

@@ -45,8 +45,12 @@ function credit(o: LoopOutcome): { success: number; weight: number } {
     return { success: 1 + d, weight: 1 + d };
   if (o.contribution === "valid")
     // A valid contribution to an iteration that did not promote: the team
-    // outcome does not prove this member caused the failure, and harder
-    // tasks weigh less against it.
+    // outcome does not prove this member caused the failure, so it earns
+    // partial credit. A harder task counts as less evidence (lower weight)
+    // and so pulls the mean down less, but less evidence also widens the
+    // interval: by the lower estimate that ranking uses, a failed hard
+    // iteration can rank a model below the same failure on an easy one until
+    // more outcomes arrive (intended; owner decision, 20 October 2026).
     return { success: 0.4 * (1 - 0.5 * d), weight: 1 - 0.5 * d };
   if (o.contribution === "invalid" || o.contribution === "missing")
     return { success: 0, weight: 1 };
@@ -109,12 +113,17 @@ export function aggregateOutcomes(
  * with no outcomes keep the documented cold-start order the caller supplies
  * (explicit preferences, diversity, default model, stable provider/model
  * order). Ranking reorders eligible routes only.
+ *
+ * Statistics belong to a provider and model together: the same model ID on
+ * two providers is two records. An eligible entry names its provider; a bare
+ * model ID stands for that ID on any provider. The ranking lists model IDs,
+ * each at the position of its best eligible provider.
  */
 export function rankModels(input: {
   outcomes: LoopOutcome[];
   function: LoopFunction;
   taskFamily: string;
-  eligible: string[];
+  eligible: Array<string | { provider: string; model: string }>;
 }): {
   ranking: string[];
   basis: "task-family" | "function" | "cold-start";
@@ -133,9 +142,22 @@ export function rankModels(input: {
     : stats.length
       ? "function"
       : "cold-start";
-  const known = new Map(stats.map((s) => [s.model, s]));
+  const known = new Map(stats.map((s) => [`${s.provider}\0${s.model}`, s]));
   const ranked = input.eligible
-    .map((model, index) => ({ model, index, stat: known.get(model) }))
+    .flatMap((entry, index) => {
+      if (typeof entry !== "string")
+        return [
+          {
+            model: entry.model,
+            index,
+            stat: known.get(`${entry.provider}\0${entry.model}`),
+          },
+        ];
+      const matching = stats.filter((s) => s.model === entry);
+      return matching.length
+        ? matching.map((stat) => ({ model: entry, index, stat }))
+        : [{ model: entry, index, stat: undefined }];
+    })
     .sort((a, b) => {
       // Known models rank by their lower estimate. An unknown model sits at
       // the prior's lower estimate (0), the same as a model with no credited
@@ -146,7 +168,7 @@ export function rankModels(input: {
       return lb - la || a.index - b.index;
     })
     .map((r) => r.model);
-  return { ranking: ranked, basis, stats };
+  return { ranking: [...new Set(ranked)], basis, stats };
 }
 
 /** A content identity for an organization, ignoring revision bookkeeping. */

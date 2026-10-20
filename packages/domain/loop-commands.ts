@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { roleGroupSettingsSchema, roleIdSchema } from "./role-groups";
 import {
+  activeRoleCountProblem,
   criterionVerificationSchema,
   loopPolicySchema,
 } from "./recursive-loops";
@@ -99,24 +100,31 @@ export const loopCommands = [
     policy: loopPolicySchema.partial(),
     commandId,
   }),
-  z.object({
-    type: z.literal("loop-override-set"),
-    runId: id,
-    kind: z.enum([
-      "role-settings",
-      "role-presence",
-      "active-role-count",
-      "provider-exclusion",
-      "role-frozen",
-    ]),
-    roleId: roleIdSchema.nullable().default(null),
-    settings: roleGroupSettingsSchema.nullable().default(null),
-    value: z
-      .union([z.number(), z.string().max(200)])
-      .nullable()
-      .default(null),
-    commandId,
-  }),
+  z
+    .object({
+      type: z.literal("loop-override-set"),
+      runId: id,
+      kind: z.enum([
+        "role-settings",
+        "role-presence",
+        "active-role-count",
+        "provider-exclusion",
+        "role-frozen",
+      ]),
+      roleId: roleIdSchema.nullable().default(null),
+      settings: roleGroupSettingsSchema.nullable().default(null),
+      value: z
+        .union([z.number(), z.string().max(200)])
+        .nullable()
+        .default(null),
+      commandId,
+    })
+    .superRefine((command, ctx) => {
+      if (command.kind !== "active-role-count") return;
+      const problem = activeRoleCountProblem(command.value);
+      if (problem)
+        ctx.addIssue({ code: "custom", path: ["value"], message: problem });
+    }),
   z.object({
     type: z.literal("loop-override-release"),
     runId: id,
