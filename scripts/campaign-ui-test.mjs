@@ -1188,7 +1188,8 @@ await step("UI-26 bounded navigation soak (measured only)", ["UI-26"], async () 
     });
   };
   await sample(0);
-  for (let cycle = 1; soakUntil ? Date.now() < soakUntil : cycle <= cycles; cycle++) {
+  const defaultCycles = cycles;
+  for (let cycle = 1; soakUntil ? Date.now() < soakUntil : cycle <= defaultCycles; cycle++) {
     cycles = cycle;
     for (const nav of [...projectNames, ...globalPages.map((g) => g.nav)]) {
       const begin = Date.now();
