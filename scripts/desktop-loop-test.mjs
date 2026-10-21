@@ -74,6 +74,8 @@ const errors = [];
 let projectId = null;
 let app = app0;
 let page = null;
+// Member runs the mid-turn restart left with an unknown outcome.
+let unknown = [];
 const answerDialogs = (app, selected) =>
   app.evaluate(({ dialog }, selected) => {
     globalThis.topslConfirmations ??= [];
@@ -293,7 +295,9 @@ try {
   );
   await shot(page, "loop-goal-running");
 
-  // Restart while the run works: it suspends and reconciles; it does not resume on its own.
+  // Restart while a member turn runs: the run suspends and reconciles; it
+  // does not resume on its own. Closing mid-turn leaves that turn's outcome
+  // unknown, which the loop shows until the owner reconciles it (D-29).
   const idA = (await runOf("Change the value to two")).id;
   await expect
     .poll(
@@ -303,6 +307,15 @@ try {
       { timeout: 60000 },
     )
     .toMatch(/executing|verifying|evaluating/);
+  await expect
+    .poll(
+      async () =>
+        (await command({ type: "scope-snapshot", projectId })).runs.some(
+          (r) => r.status === "running",
+        ),
+      { timeout: 120000, intervals: [50] },
+    )
+    .toBe(true);
   await app.close();
   app = await launch();
   page = await app.firstWindow();
@@ -320,6 +333,24 @@ try {
   await runArticle("Change the value to two")
     .getByRole("button", { name: "Resume", exact: true })
     .click();
+  // A turn can still finish during shutdown, so check what the restart left.
+  unknown = (await command({ type: "scope-snapshot", projectId })).runs.filter(
+    (r) => r.status === "uncertain",
+  );
+  if (unknown.length) {
+    await expect(runArticle("Change the value to two")).toContainText(
+      "Reconciliation needed",
+      { timeout: 60000 },
+    );
+    const waiting = await command({ type: "loop-inspect", runId: idA });
+    const named = waiting.run.waitReason?.runIds ?? [];
+    if (!unknown.every((r) => named.includes(r.id)))
+      throw new Error(
+        `The reconciliation wait names ${named.join(", ")}, not every unknown run (${unknown.map((r) => r.id).join(", ")}).`,
+      );
+    // The command behind each run's "Inspect & reconcile" button.
+    for (const r of unknown) await command({ type: "run-reconcile", id: r.id });
+  }
   await expect(
     runArticle("Change the value to two").locator(".loop-header .badge").nth(1),
   ).toHaveText("Completed", { timeout: 180000 });
@@ -510,7 +541,7 @@ try {
     .toBe("stopped");
   if (errors.length) throw new Error(`Page errors: ${errors.join("; ")}`);
   console.log(
-    "Desktop loop journey passed: mode selector, Goal loop with live steering, restart and resume, automatic organization change, stop during child work, publication, Endless monitoring in a compact window, Stop while the feature is off.",
+    `Desktop loop journey passed: mode selector, Goal loop with live steering, restart and resume (${unknown.length ? `${unknown.length} member turn(s) cut off by the restart shown as Reconciliation needed and reconciled` : "no member turn cut off by the restart"}), automatic organization change, stop during child work, publication, Endless monitoring in a compact window, Stop while the feature is off.`,
   );
 } catch (error) {
   if (page) await shot(page, "loop-failure").catch(() => {});

@@ -350,7 +350,7 @@ darwin-arm64, Node with Electron's ABI as `npm test` sets it up, run from the re
 
 **Remote CI, second push** (commit `97c99b1`, with the faster D-28 test, pushed as `codex/live-defects-d27-d29`, not merged): "Compile Topsl" run 39454517850 passed every step on Linux x64, macOS Apple silicon, macOS Intel and Windows x64 on its first attempt, AD-11 included, so the AD-11 failure above was intermittent; its cause was not investigated. Round 2 lifecycle stress run 39454517918 passed on all four.
 
-The desktop journeys do not reach an uncertain member turn, a long Claude stream or a Plan-mode transcript, so they show only that these repairs broke none of the existing flows on screen. The **Reconciliation needed** label is not inspected on screen.
+The desktop journeys do not reach an uncertain member turn, a long Claude stream or a Plan-mode transcript, so they show only that these repairs broke none of the existing flows on screen. The **Reconciliation needed** label is not inspected on screen. *Follow-up, 21 October 2026:* the loop journey now reaches an uncertain member turn on every run and checks **Reconciliation needed** on screen ([record](#loop-journey-restart-with-a-turn-in-flight--21-october-2026)).
 
 **Not established:** live re-verification. `node scripts/live-loop.mjs --mixed-only` would confirm that a live Claude coordinator turn with partial messages completes instead of ending `uncertain` (D-28), and, if a live turn does end `uncertain`, that the loop view shows **Reconciliation needed** (D-29). `node scripts/live-session.mjs --workflow claude-claude` would confirm that a Plan-mode review's reply is taken from its transcript (D-27). Both need the owner's sign-ins and live turns, so neither was run. Packaged builds are also not covered.
 
@@ -387,6 +387,38 @@ darwin-arm64, run from the repository root in an agent session.
 **Not established:** a live long reply, and how often the timer writes when a live stream arrives slowly, not in one burst as in these stand-ins; the desktop journeys do not stream long replies. Packaged builds and remote CI are not covered.
 
 *Live confirmation, 21 October 2026:* on `main` at `6450570`, a live Claude/Claude Build and review took both replies from Claude Code's transcripts and reached awaiting acceptance; the review ran in Plan mode, so D-27 is fixed live. A live mixed Claude/Codex Goal loop completed on checkpoint 1 past the coordinator turn that D-28 had cut off, so D-28 is fixed live. D-29 was not exercised live, because no turn became uncertain. Details are in the [report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci).
+
+## Loop journey restart with a turn in flight — 21 October 2026
+
+**Failure.** Remote CI failed the desktop loop journey at `scripts/desktop-loop-test.mjs:325` on three consecutive commits:
+
+| Commit | CI run | Platforms that failed |
+| --- | --- | --- |
+| `bbba7e5`, campaign branch | 39535970488 | Linux |
+| `bbba7e5`, `main` | 39535975393 | macOS Intel |
+| `aa87437` | 39540485741 | macOS Apple silicon and macOS Intel |
+
+`bbba7e5` changed only documentation from `6450570`, whose CI passed on all four platforms. In every failure, the "Change the value to two" run showed Suspended, then Active after Resume, and never Completed within 180 s.
+
+**Cause.** The journey restarts Topsl while the loop works, then presses Resume and waits for Completed. When the close lands during a member turn, that turn's run comes back `uncertain`: "Topsl closed while the native run was active. Inspect before continuing." Since the D-29 repair, the loop then waits with `reconciliation` until the owner reconciles that run. This is the intended behaviour (plan invariant 7). The journey never reconciled, so it passed only when the close fell between turns. Slower CI runners land mid-turn more often.
+
+**Reproduction.** A temporary copy of the journey closed Topsl only once a member run was `running`. The failure then reproduced on the first local attempt. Its loop showed `Waiting: A member turn ended with an unknown outcome: coordinator-auto-1 (run 198e209c)…`; that run was `uncertain`, and every other run was `completed`. Six unmodified local runs had all passed beforehand.
+
+**Change** (`scripts/desktop-loop-test.mjs`, test only; no product change):
+
+1. Before restarting, the journey waits until a member run is `running`, so the restart cuts off a turn on every run instead of by chance.
+2. After Resume, it checks the runs the restart left `uncertain`.
+3. If any exist, it requires **Reconciliation needed** on the loop screen and a wait reason naming every one of them.
+4. It reconciles each with `run-reconcile`, the command behind the run's **Inspect & reconcile** button, then expects Completed.
+5. The journey's summary says which path it took.
+
+**Verification** (darwin-arm64, through `cleanenv.sh`):
+
+- The updated journey passed in four runs.
+- It passed in two more with the path reported; both read "1 member turn(s) cut off by the restart shown as Reconciliation needed and reconciled".
+- The remote CI result is recorded in the [report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci).
+
+**Not established:** the **Inspect & reconcile** button itself. The journey sends its command rather than opening the member's conversation to click it.
 
 ## Equivalent-plan reconciliation — 21 October 2026
 

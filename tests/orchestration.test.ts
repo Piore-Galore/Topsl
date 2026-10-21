@@ -910,7 +910,9 @@ describe("coordinator goals end to end (scripted driver)", () => {
         const plan = rosterPlan(turn);
         const opus = turn.memberId.includes("opus");
         plan[0].title = opus ? "Opus build" : "Astra build";
-        plan[0].brief = opus ? "Edit src/a.ts carefully." : "Change src/a.ts only.";
+        plan[0].brief = opus
+          ? "Edit src/a.ts carefully."
+          : "Change src/a.ts only.";
         plan[0].acceptanceCriteria = opus
           ? ["It works.", "Opus: tests pass."]
           : ["It works.", "Astra: no other file changes."];
@@ -932,9 +934,14 @@ describe("coordinator goals end to end (scripted driver)", () => {
     expect(["Opus build", "Astra build"]).toContain(task.title);
     expect(task.brief).toMatch(/opus[^:]*: Edit src\/a\.ts carefully\./);
     expect(task.brief).toMatch(/astra[^:]*: Change src\/a\.ts only\./);
-    expect(task.acceptanceCriteria.filter((c) => c === "It works.")).toHaveLength(1);
+    expect(
+      task.acceptanceCriteria.filter((c) => c === "It works."),
+    ).toHaveLength(1);
     expect(task.acceptanceCriteria).toEqual(
-      expect.arrayContaining(["Opus: tests pass.", "Astra: no other file changes."]),
+      expect.arrayContaining([
+        "Opus: tests pass.",
+        "Astra: no other file changes.",
+      ]),
     );
     // Neither proposal was this exact plan, so nobody's endorsement is implied.
     const view = f.orchestrator.goalView(goal.id).rounds[0];
@@ -1033,8 +1040,12 @@ describe("coordinator goals end to end (scripted driver)", () => {
     expect(plans[0].tasks).toHaveLength(1);
     const [task] = plans[0].tasks;
     expect(task.permittedOutputs).toEqual(["src/a.ts"]);
-    expect(task.brief).toMatch(/opus[^:]*: Prepend the line and keep every other byte\./);
-    expect(task.brief).toMatch(/astra[^:]*: Prepend the line; change nothing else\./);
+    expect(task.brief).toMatch(
+      /opus[^:]*: Prepend the line and keep every other byte\./,
+    );
+    expect(task.brief).toMatch(
+      /astra[^:]*: Prepend the line; change nothing else\./,
+    );
     const view = f.orchestrator.goalView(goal.id).rounds[0];
     const votes = view.endorsements.filter(
       (e) => e.candidateId === coordination.candidateId,
@@ -1885,18 +1896,27 @@ describe("plan reconciliation: wording versus structure", () => {
     expect(action.brief).toBe(
       "coordinator-a: Brief from A.\n\ncoordinator-b: Brief from B.",
     );
-    expect(action.acceptanceCriteria).toEqual(["It works.", "A only.", "B only."]);
+    expect(action.acceptanceCriteria).toEqual([
+      "It works.",
+      "A only.",
+      "B only.",
+    ]);
     expect(action.permittedOutputs).toEqual(["src/a.ts"]);
   });
   test.each([
-    ["permitted outputs", (a: PlanTaskAction) => void (a.permittedOutputs = ["src/b.ts"])],
+    [
+      "permitted outputs",
+      (a: PlanTaskAction) => void (a.permittedOutputs = ["src/b.ts"]),
+    ],
     ["role", (a: PlanTaskAction) => void (a.roleId = "reviewer")],
     ["kind", (a: PlanTaskAction) => void (a.kind = "information")],
     ["dependencies", (a: PlanTaskAction) => void (a.dependencies = ["setup"])],
     [
       "partitions",
       (a: PlanTaskAction) =>
-        void (a.partitions = [{ title: "One", permittedOutputs: ["src/a.ts"] }]),
+        void (a.partitions = [
+          { title: "One", permittedOutputs: ["src/a.ts"] },
+        ]),
     ],
   ])("a difference in %s stays a conflict", (_field, edit) => {
     const combined = combineProposals([
@@ -1917,8 +1937,14 @@ describe("plan reconciliation: wording versus structure", () => {
     const criteria = (prefix: string) =>
       Array.from({ length: 30 }, (_, i) => `${prefix} criterion ${i}`);
     const many = combineProposals([
-      proposal("coordinator-a", (a) => void (a.acceptanceCriteria = criteria("A"))),
-      proposal("coordinator-b", (a) => void (a.acceptanceCriteria = criteria("B"))),
+      proposal(
+        "coordinator-a",
+        (a) => void (a.acceptanceCriteria = criteria("A")),
+      ),
+      proposal(
+        "coordinator-b",
+        (a) => void (a.acceptanceCriteria = criteria("B")),
+      ),
     ]);
     expect(many.agreement).toBe("conflict");
   });
