@@ -347,4 +347,13 @@ These are verified with stand-ins, the loop fixture, the real service, and the t
 
 **Streamed message writes (21 October 2026).** The runtime manager no longer rewrites a message's whole stored text for every streamed delta, which made a long reply's storage cost grow with the square of its length. A message's first delta is written at once; later text waits in memory and is written by a per-run timer (100 ms, growing with the draft's length to at most 1 s), by the item's final message, which replaces the draft exactly, and when the run ends, including when Topsl closes. Messages keep the 2,000,000-character bound. A crash mid-stream loses at most the last timer interval of the draft; the run becomes `uncertain` on restart as before. Verified with Claude and Codex stand-ins: 20,100 deltas now cost 3 writes instead of 20,100 ([record](testing/TEST-DECISIONS.md#streamed-message-writes--21-october-2026)). Not verified in a live run.
 
+**Equivalent-plan reconciliation (21 October 2026).** Coordinators who propose the same work in different words no longer need an owner choice.
+
+- **When proposals combine.** Proposals for one action key combine when they agree on the action's structure: kind, role, dependencies, permitted outputs and partition scopes.
+- **How wording merges.** The merged action takes the first proposer's title, every distinct brief attributed to its proposers, and the union of acceptance criteria.
+- **Endorsement.** The merged candidate is no member's exact proposal, so every member endorses it explicitly and may challenge it.
+- **What still needs the owner.** A structural difference, or wording too long to merge within the action limits, is still a conflict that ends with the owner's choice.
+
+Live loop passes 5 and 6 of 19 October and the 21 October live loop each needed that choice. Verified with stand-in tests, including the 21 October live sequence (CO-02b to CO-02d). Not re-run live, and proposals that name the same work under different keys are still unioned ([record](testing/TEST-DECISIONS.md#equivalent-plan-reconciliation--21-october-2026)).
+
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).

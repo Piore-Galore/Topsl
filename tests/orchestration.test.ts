@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, test } from "vitest";
 import type {
+  CoordinatorPlan,
   Goal,
   ParticipantContribution,
+  PlanTaskAction,
   QueuedPlanAction,
   RoleRound,
 } from "../packages/domain/role-groups";
 import { kinds } from "../packages/orchestration/repository";
+import {
+  combineProposals,
+  normalizeAction,
+  planActionSchema,
+} from "../packages/orchestration/contracts";
 import {
   effectiveGroup,
   legacyDraftGroups,
@@ -852,10 +859,12 @@ describe("coordinator goals end to end (scripted driver)", () => {
     const { goal } = await start(f, "Coordinate with Opus and Astra.");
     f.driver.reply = (turn) => {
       if (turn.purpose === "coordinator-contribution") {
+        // A real conflict: the two plans would let different files change.
+        // Wording alone no longer counts (CO-02b).
         const plan = rosterPlan(turn);
-        plan[0].title = turn.memberId.includes("opus")
-          ? "Opus build"
-          : "Astra build";
+        const opus = turn.memberId.includes("opus");
+        plan[0].title = opus ? "Opus build" : "Astra build";
+        plan[0].permittedOutputs = [opus ? "src/opus.ts" : "src/astra.ts"];
         return defaultReply(turn, plan);
       }
       return defaultReply(turn);
@@ -893,6 +902,148 @@ describe("coordinator goals end to end (scripted driver)", () => {
     );
   });
 
+  test("CO-02b: coordinators who propose the same work in different words decide without the owner, and each endorses the merged wording explicitly", async () => {
+    const f = await setup();
+    const { goal } = await start(f, "Coordinate with Opus and Astra.");
+    f.driver.reply = (turn) => {
+      if (turn.purpose === "coordinator-contribution") {
+        const plan = rosterPlan(turn);
+        const opus = turn.memberId.includes("opus");
+        plan[0].title = opus ? "Opus build" : "Astra build";
+        plan[0].brief = opus ? "Edit src/a.ts carefully." : "Change src/a.ts only.";
+        plan[0].acceptanceCriteria = opus
+          ? ["It works.", "Opus: tests pass."]
+          : ["It works.", "Astra: no other file changes."];
+        return defaultReply(turn, plan);
+      }
+      return defaultReply(turn);
+    };
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    const coordination = rounds(f, goal.id, "coordination")[0];
+    expect(coordination.stage).toBe("committed");
+    expect(coordination.reconciliationTurnsUsed).toBe(0);
+    const plans = f.orchestrator.repo.all<CoordinatorPlan>(kinds.plan, "p");
+    expect(plans).toHaveLength(1);
+    const [task] = plans[0].tasks;
+    // Authority is exactly what both proposed; wording from both survives.
+    expect(task.permittedOutputs).toEqual(["src/a.ts"]);
+    expect(["Opus build", "Astra build"]).toContain(task.title);
+    expect(task.brief).toMatch(/opus[^:]*: Edit src\/a\.ts carefully\./);
+    expect(task.brief).toMatch(/astra[^:]*: Change src\/a\.ts only\./);
+    expect(task.acceptanceCriteria.filter((c) => c === "It works.")).toHaveLength(1);
+    expect(task.acceptanceCriteria).toEqual(
+      expect.arrayContaining(["Opus: tests pass.", "Astra: no other file changes."]),
+    );
+    // Neither proposal was this exact plan, so nobody's endorsement is implied.
+    const view = f.orchestrator.goalView(goal.id).rounds[0];
+    const votes = view.endorsements.filter(
+      (e) => e.candidateId === coordination.candidateId,
+    );
+    expect(votes.map((e) => e.memberId).sort()).toEqual(
+      coordination.electorateIds.slice().sort(),
+    );
+    expect(votes.every((e) => e.stance === "endorse" && !e.implied)).toBe(true);
+  });
+
+  test("CO-02c: a coordinator who challenges the merged wording is not overridden", async () => {
+    const f = await setup();
+    const { goal } = await start(f, "Coordinate with Opus and Astra.");
+    f.driver.reply = (turn) => {
+      if (turn.purpose === "coordinator-contribution") {
+        const plan = rosterPlan(turn);
+        plan[0].brief = turn.memberId.includes("opus")
+          ? "Put the line at the top."
+          : "Put the line at the bottom.";
+        return defaultReply(turn, plan);
+      }
+      if (
+        turn.purpose === "coordinator-endorsement" &&
+        turn.memberId.includes("astra")
+      ) {
+        const r = JSON.parse((defaultReply(turn) as { text: string }).text);
+        return {
+          text: JSON.stringify({
+            ...r,
+            stance: "challenge",
+            rationale: "The two briefs contradict each other.",
+          }),
+        };
+      }
+      return defaultReply(turn);
+    };
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe("blocked");
+    const coordination = rounds(f, goal.id, "coordination")[0];
+    expect(coordination.stage).toBe("awaiting-user");
+    expect(f.orchestrator.repo.all(kinds.plan, "p")).toHaveLength(0);
+    expect(f.driver.launches.some((l) => l.purpose === "implementation")).toBe(
+      false,
+    );
+    const view = f.orchestrator.goalView(goal.id).rounds[0];
+    expect(
+      view.endorsements.some(
+        (e) => e.memberId.includes("astra") && e.stance === "challenge",
+      ),
+    ).toBe(true);
+  });
+
+  test("CO-02d: reconciled proposals that converge on one task in different words commit without the owner", async () => {
+    // The 21 October live loop: initial plans named the same task with
+    // different keys, the union was challenged as a duplicate, and both
+    // reconciled plans kept one task but worded its brief differently.
+    const f = await setup();
+    const { goal } = await start(f, "Coordinate with Opus and Astra.");
+    f.driver.reply = (turn) => {
+      const opus = turn.memberId.includes("opus");
+      if (turn.purpose === "coordinator-contribution") {
+        const plan = rosterPlan(turn);
+        if (turn.prompt.includes("All initial proposals are now collected")) {
+          plan[0].brief = opus
+            ? "Prepend the line and keep every other byte."
+            : "Prepend the line; change nothing else.";
+          return defaultReply(turn, plan);
+        }
+        if (!opus) plan[0].key = "prepend";
+        return defaultReply(turn, plan);
+      }
+      if (
+        turn.purpose === "coordinator-endorsement" &&
+        turn.prompt.includes('"prepend"')
+      ) {
+        const r = JSON.parse((defaultReply(turn) as { text: string }).text);
+        return {
+          text: JSON.stringify({
+            ...r,
+            stance: "challenge",
+            rationale: "Two tasks would edit the same file.",
+          }),
+        };
+      }
+      return defaultReply(turn);
+    };
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    const coordination = rounds(f, goal.id, "coordination")[0];
+    expect(coordination.stage).toBe("committed");
+    expect(coordination.reconciliationTurnsUsed).toBe(1);
+    const plans = f.orchestrator.repo.all<CoordinatorPlan>(kinds.plan, "p");
+    expect(plans).toHaveLength(1);
+    expect(plans[0].tasks).toHaveLength(1);
+    const [task] = plans[0].tasks;
+    expect(task.permittedOutputs).toEqual(["src/a.ts"]);
+    expect(task.brief).toMatch(/opus[^:]*: Prepend the line and keep every other byte\./);
+    expect(task.brief).toMatch(/astra[^:]*: Prepend the line; change nothing else\./);
+    const view = f.orchestrator.goalView(goal.id).rounds[0];
+    const votes = view.endorsements.filter(
+      (e) => e.candidateId === coordination.candidateId,
+    );
+    expect(votes.map((e) => e.memberId).sort()).toEqual(
+      coordination.electorateIds.slice().sort(),
+    );
+    expect(votes.every((e) => e.stance === "endorse" && !e.implied)).toBe(true);
+  });
   test("CO-04/CO-07: a required coordinator that keeps failing blocks the decision; quorum cannot waive it", async () => {
     const f = await setup();
     const { goal } = await start(f, "Use three coordinators.");
@@ -1698,5 +1849,84 @@ describe("required checks, conflict resolution and applying (scripted driver)", 
     await expect(f.orchestrator.applicationReview(goal.id)).rejects.toThrow(
       /unknown outcome/,
     );
+  });
+});
+
+describe("plan reconciliation: wording versus structure", () => {
+  const proposal = (memberId: string, edit: (a: PlanTaskAction) => void) => {
+    const action = normalizeAction(
+      planActionSchema.parse(defaultPlan("implementation")[0]),
+    );
+    edit(action);
+    return {
+      contribution: { memberId } as ParticipantContribution,
+      actions: [action],
+      assumptions: [],
+    };
+  };
+  test("proposals that differ only in title, brief and acceptance criteria combine into one action", () => {
+    const combined = combineProposals([
+      proposal("coordinator-a", (a) => {
+        a.title = "Build A";
+        a.brief = "Brief from A.";
+        a.acceptanceCriteria = ["It works.", "A only."];
+      }),
+      proposal("coordinator-b", (a) => {
+        a.title = "Build B";
+        a.brief = "Brief from B.";
+        a.acceptanceCriteria = ["It works.", "B only."];
+      }),
+    ]);
+    expect(combined.agreement).toBe("combined");
+    expect(combined.conflicts).toEqual([]);
+    expect(combined.actions).toHaveLength(1);
+    const [action] = combined.actions;
+    expect(action.title).toBe("Build A");
+    expect(action.brief).toBe(
+      "coordinator-a: Brief from A.\n\ncoordinator-b: Brief from B.",
+    );
+    expect(action.acceptanceCriteria).toEqual(["It works.", "A only.", "B only."]);
+    expect(action.permittedOutputs).toEqual(["src/a.ts"]);
+  });
+  test.each([
+    ["permitted outputs", (a: PlanTaskAction) => void (a.permittedOutputs = ["src/b.ts"])],
+    ["role", (a: PlanTaskAction) => void (a.roleId = "reviewer")],
+    ["kind", (a: PlanTaskAction) => void (a.kind = "information")],
+    ["dependencies", (a: PlanTaskAction) => void (a.dependencies = ["setup"])],
+    [
+      "partitions",
+      (a: PlanTaskAction) =>
+        void (a.partitions = [{ title: "One", permittedOutputs: ["src/a.ts"] }]),
+    ],
+  ])("a difference in %s stays a conflict", (_field, edit) => {
+    const combined = combineProposals([
+      proposal("coordinator-a", () => {}),
+      proposal("coordinator-b", edit),
+    ]);
+    expect(combined.agreement).toBe("conflict");
+    expect(combined.actions).toEqual([]);
+    expect(combined.conflicts.map((c) => c.key)).toEqual(["build"]);
+  });
+  test("wording that cannot be merged within the action limits stays a conflict", () => {
+    const long = "x".repeat(15_000);
+    const briefs = combineProposals([
+      proposal("coordinator-a", (a) => void (a.brief = `A ${long}`)),
+      proposal("coordinator-b", (a) => void (a.brief = `B ${long}`)),
+    ]);
+    expect(briefs.agreement).toBe("conflict");
+    const criteria = (prefix: string) =>
+      Array.from({ length: 30 }, (_, i) => `${prefix} criterion ${i}`);
+    const many = combineProposals([
+      proposal("coordinator-a", (a) => void (a.acceptanceCriteria = criteria("A"))),
+      proposal("coordinator-b", (a) => void (a.acceptanceCriteria = criteria("B"))),
+    ]);
+    expect(many.agreement).toBe("conflict");
+  });
+  test("identical proposals still match outright", () => {
+    const combined = combineProposals([
+      proposal("coordinator-a", () => {}),
+      proposal("coordinator-b", () => {}),
+    ]);
+    expect(combined.agreement).toBe("matching");
   });
 });

@@ -156,6 +156,22 @@ export function normalizeAction(
 
 /** The identity of an action's content; titles and wording are part of it. */
 export const actionDigest = (a: PlanTaskAction) => hash(stable(a));
+/**
+ * The identity of what an action does: its kind, role, dependencies and
+ * output scope. Title, brief, acceptance criteria and partition titles are
+ * wording, which reconciliation may merge without changing the plan's shape.
+ */
+const actionStructure = (a: PlanTaskAction) =>
+  hash(
+    stable({
+      key: a.key,
+      kind: a.kind,
+      roleId: a.roleId,
+      dependencies: a.dependencies,
+      permittedOutputs: a.permittedOutputs,
+      partitions: a.partitions.map((p) => p.permittedOutputs),
+    }),
+  );
 export const actionSetDigest = (actions: PlanTaskAction[]) =>
   hash(
     stable(
@@ -289,9 +305,44 @@ export function validateActions(
 }
 
 /**
- * Combines valid proposals. Identical action sets agree outright; otherwise
- * actions are combined only when no key carries two different contents, so
- * compatibility is demonstrable. Anything else is a conflict to reconcile.
+ * Combines one key's wording variants, which share a structure, into a single
+ * action: the first proposer's title and partitions, each distinct brief
+ * attributed to its proposers, and the union of acceptance criteria. Returns
+ * undefined when the merge would exceed the action limits.
+ */
+function mergeWording(
+  variants: Array<{ action: PlanTaskAction; members: string[] }>,
+): PlanTaskAction | undefined {
+  const [first] = variants;
+  const briefs = new Map<string, string[]>();
+  for (const v of variants)
+    briefs.set(v.action.brief, [
+      ...(briefs.get(v.action.brief) ?? []),
+      ...v.members,
+    ]);
+  const merged: PlanTaskAction = {
+    ...first.action,
+    brief:
+      briefs.size === 1
+        ? first.action.brief
+        : [...briefs]
+            .map(([brief, members]) => `${members.join(", ")}: ${brief}`)
+            .join("\n\n"),
+    acceptanceCriteria: [
+      ...new Set(variants.flatMap((v) => v.action.acceptanceCriteria)),
+    ],
+  };
+  return planActionSchema.safeParse(merged).success ? merged : undefined;
+}
+
+/**
+ * Combines valid proposals. Identical action sets agree outright. Otherwise a
+ * key's proposals combine when they share one structure (kind, role,
+ * dependencies, permitted outputs and partition scopes) and differ at most in
+ * wording, which is merged within the action limits; the merged plan is no
+ * member's exact proposal, so every member must still endorse it explicitly.
+ * A key with two structures, or wording that cannot be merged, is a conflict
+ * to reconcile.
  */
 export function combineProposals(
   proposals: Array<{
@@ -332,21 +383,33 @@ export function combineProposals(
       variants.set(d, entry);
       byKey.set(action.key, variants);
     }
-  const conflicts = [...byKey]
-    .filter(([, variants]) => variants.size > 1)
-    .map(([key, variants]) => ({
-      key,
-      variants: [...variants].flatMap(([digest, v]) =>
-        v.members.map((memberId) => ({
-          memberId,
-          digest,
-          title: v.action.title,
-        })),
-      ),
-    }));
-  const actions = [...byKey.values()].map(
-    (variants) => [...variants.values()][0].action,
-  );
+  const actions: PlanTaskAction[] = [];
+  const conflicts: Array<{
+    key: string;
+    variants: Array<{ memberId: string; digest: string; title: string }>;
+  }> = [];
+  for (const [key, variants] of byKey) {
+    const list = [...variants.values()];
+    const structures = new Set(list.map((v) => actionStructure(v.action)));
+    const merged =
+      list.length === 1
+        ? list[0].action
+        : structures.size === 1
+          ? mergeWording(list)
+          : undefined;
+    if (merged) actions.push(merged);
+    else
+      conflicts.push({
+        key,
+        variants: [...variants].flatMap(([digest, v]) =>
+          v.members.map((memberId) => ({
+            memberId,
+            digest,
+            title: v.action.title,
+          })),
+        ),
+      });
+  }
   return conflicts.length
     ? { agreement: "conflict", actions: [], assumptions, conflicts }
     : {

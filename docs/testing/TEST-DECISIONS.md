@@ -388,6 +388,60 @@ darwin-arm64, run from the repository root in an agent session.
 
 *Live confirmation, 21 October 2026:* on `main` at `6450570`, a live Claude/Claude Build and review took both replies from Claude Code's transcripts and reached awaiting acceptance; the review ran in Plan mode, so D-27 is fixed live. A live mixed Claude/Codex Goal loop completed on checkpoint 1 past the coordinator turn that D-28 had cut off, so D-28 is fixed live. D-29 was not exercised live, because no turn became uncertain. Details are in the [report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci).
 
+## Equivalent-plan reconciliation — 21 October 2026
+
+**Gap.** Coordinators who proposed the same work in different words still needed an owner choice. `combineProposals` treated two proposals for one action key as a conflict whenever any field differed, title and brief included. Live evidence:
+
+- Live loop pass 5 on 19 October 2026 ([Implementation status](../Implementation_Status.md#claude-structured-route--19-october-2026)) disagreed only in the task title.
+- The 21 October live mixed loop ([report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci)) went the same way. Its first plans named one task under two keys, and that union was challenged. Both reconciled plans then kept the single task `t1-prepend-comment`, with differently worded content. With no reconciliation turn left, the round waited for the owner.
+
+Plan §2.2 lists this as a P1 enhancement.
+
+**Change** (`actionStructure`, `mergeWording` and `combineProposals` in `packages/orchestration/contracts.ts`):
+
+- **Structure.** An action's structure is its key, kind, role, dependencies, permitted outputs and each partition's permitted outputs. Its title, brief, acceptance criteria and partition titles are its wording.
+- **Wording-only differences combine.** When every proposal for a key has the same structure, the variants merge into one action:
+  - the first proposer's title and partitions;
+  - the brief unchanged if every brief is the same, otherwise each distinct brief prefixed with its proposers (`coordinator-a: …`) and separated by a blank line;
+  - the union of acceptance criteria in proposal order, with exact duplicates removed.
+- **What stays a conflict.** A key with two structures is a conflict, as before. So is a merged action that would break the action limits (a brief over 20,000 characters, or more than 50 criteria).
+- **Endorsement.** A merged candidate is no member's exact proposal, so no endorsement is implied. Every member gets an explicit endorsement turn under the configured decision rule and may challenge. A challenge is handled as before: one bounded reconciliation, then the owner.
+- **Unchanged.** Identical proposals still match outright, with implied endorsements. The engine is unchanged: the merged candidate takes the existing `combined` source, or `reconciled` after a reconciliation turn.
+
+**Decisions made here.**
+
+- **What counts as structure.** Permitted outputs, role, kind, dependencies and partition scopes decide what a task may change and who does it, so a difference there is a real disagreement about authority.
+- **Why briefs are concatenated.** Topsl does not pick or rewrite one coordinator's brief. It keeps every brief, attributed, and relies on the explicit endorsements to catch briefs that contradict each other (CO-02c).
+- **Title choice.** Taking the first proposer's title follows proposal order. The title has no authority.
+
+**Remaining limitation.** Proposals that describe the same work under different keys still form a union of both actions. Coordinators may challenge that union, as they did on 21 October; this change does not recognise duplicates across keys.
+
+### Verification
+
+Tests written before the change (`tests/orchestration.test.ts`):
+
+| Test | What it checks | Before the change | After |
+| --- | --- | --- | --- |
+| CO-02b | Two coordinators differ only in title, brief and criteria. The goal commits one task with the shared permitted outputs, both attributed briefs and the union of criteria. No reconciliation is used, and both members endorse explicitly. | failed (`blocked`) | passed |
+| CO-02c | Same, but the briefs contradict and one member challenges. The round waits for the owner and nothing dispatches. | failed: the round blocked at the conflict, before any endorsement turn, so the challenge was never asked for | passed |
+| CO-02d | The 21 October live shape: different keys, the union challenged, then reconciled plans with one key and different briefs. The goal commits one merged task, and every member endorses explicitly. | failed (`blocked`) | passed |
+| CO-02 | Now a structural conflict (different permitted outputs). It still needs the owner's branch choice. | passed | passed |
+| `plan reconciliation: wording versus structure` | Unit tests of `combineProposals`. Wording-only differences combine. A difference in permitted outputs, role, kind, dependencies or partitions stays a conflict. A merge past the brief or criteria limit stays a conflict. Identical proposals match. | the wording case failed | all passed |
+
+Local gate. Run on darwin-arm64 on `bbba7e5` with this change, through `cleanenv.sh` (`test-results/agent-testing/2026-10-19-comprehensive/cleanenv.sh`). Logs are in `test-results/agent-testing/2026-10-19-comprehensive/gate-equivalent-plans/` (not committed).
+
+| Command | Result |
+| --- | --- |
+| `npm run typecheck` | passed |
+| `npm test` | 83 files passed, 3 skipped; 1,161 tests passed, 5 skipped |
+| `npm run test:release` | 18 passed, 0 failed |
+| `npm run build` | passed |
+| `npm run test:desktop -- scripts/<journey>.mjs`, for `desktop-test`, `desktop-coordinator-test`, `desktop-atlas-test`, `desktop-loop-test`, `desktop-usage-test`, `round2-ui-test` and `campaign-ui-test` | all seven passed; the campaign UI harness passed 31 steps |
+
+The desktop journeys run against stand-ins and are not built to produce a wording-only disagreement. They show only that the change broke no existing flow on screen, not a merged candidate on screen.
+
+**Not established:** a live rerun. Neither live report stores the proposals' actions, only summaries and titles. Whether those plans differed only in wording is therefore inferred from those records, not verified. A live mixed loop (`node scripts/live-loop.mjs --mixed-only`) would show whether coordinators now decide without the owner.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.
