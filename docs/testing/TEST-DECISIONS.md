@@ -386,6 +386,8 @@ darwin-arm64, run from the repository root in an agent session.
 
 **Not established:** a live long reply, and how often the timer writes when a live stream arrives slowly, not in one burst as in these stand-ins; the desktop journeys do not stream long replies. Packaged builds and remote CI are not covered.
 
+*Live confirmation, 21 October 2026:* on `main` at `6450570`, a live Claude/Claude Build and review took both replies from Claude Code's transcripts and reached awaiting acceptance; the review ran in Plan mode, so D-27 is fixed live. A live mixed Claude/Codex Goal loop completed on checkpoint 1 past the coordinator turn that D-28 had cut off, so D-28 is fixed live. D-29 was not exercised live, because no turn became uncertain. Details are in the [report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci).
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

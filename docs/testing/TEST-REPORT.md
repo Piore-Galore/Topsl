@@ -205,6 +205,16 @@ Live usage: about 14 Codex turns (four qualifications plus build turns), 4 Claud
 
 **Live defects fixed (21 October 2026).** D-27 to D-29 were fixed from reproducing tests, recorded in [TEST-DECISIONS](TEST-DECISIONS.md#live-and-soak-follow-up--20-october-2026). A follow-up change writes a reply's streamed text in batches instead of rewriting the stored message on every delta: 20,100 deltas now cost 3 writes instead of 20,100. Local gate on `e5c208a`: typecheck; Vitest 1,150 passed and 5 skipped; release 18/0; build; all seven desktop journeys. The campaign UI harness first failed its soak step, because the new opt-in soak duration had broken the default cycle count; this was fixed in `e5c208a`. CI run 39466511628 passed every step on all four platforms, and lifecycle stress (run 39466511756) passed on all four. The fixes have not been confirmed against live providers: the mixed Claude/Codex loop and a Claude/Claude review hand-back would need another owner-attended live run.
 
+**Live re-verification of the fixes (21 October 2026).** Both runs used `main` at `6450570`, the owner's sign-ins and disposable profiles.
+
+| Run | Result |
+| --- | --- |
+| Claude/Claude Build and review (`live-session.mjs --workflow claude-claude`), first attempt | Stopped during the build: Claude Code's "Do you want to proceed?" prompt for `npm run check` sat unanswered for 15 minutes, far down the Tasks page in the build card's terminal. The build's edit to `src/order.mjs` had already landed. |
+| Same, second attempt | **Passed, reaching awaiting acceptance.** The Claude Code build (Accept edits mode) changed only `src/order.mjs`; Topsl took its reply from the transcript (587 s). The Claude Code review (Plan mode, fresh session) found no problems, and Topsl took that reply from the transcript too, confirming **D-27 fixed live**. The required check passed (`totalCents` 900). Nothing was accepted or applied. |
+| Mixed Claude/Codex Goal loop (`live-loop.mjs --mixed-only --max-turns 30`) | **Completed** in 22 minutes. Claude qualification passed 7/7 in 4 turns. Iteration 1 used 15 member turns: the Claude and Codex coordinators assessed and organized, the Claude implementer made the change, and Claude and Codex reviewed it; the iteration was promoted to checkpoint 1 (`README.md` modified). Iteration 2 found no work, and every required goal was satisfied on checkpoint 1. The first coordinator turn, which D-28 cut off on 20 October, completed, confirming **D-28 fixed live**. No member turn became uncertain, so D-29's new wait reason was not exercised live; its stand-in test covers it. |
+
+One owner choice was needed although both coordinators proposed the same plan with identical titles. This is the equivalent-plan reconciliation gap that plan §2.2 lists as a P1 enhancement. Live usage: one Claude Code build session and one review session in Topsl's terminal (usage not visible to Topsl), 4 Claude qualification turns, Codex qualification turns, and 15 loop member turns.
+
 **Coverage register:** the per-case register still reflects the campaign's darwin-arm64 execution. The CI runs establish suite-level results on the other hosts; their cells were not re-mapped case by case.
 
 ## Evidence locations
