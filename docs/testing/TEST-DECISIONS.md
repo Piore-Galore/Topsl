@@ -416,7 +416,7 @@ darwin-arm64, run from the repository root in an agent session.
 
 - The updated journey passed in four runs.
 - It passed in two more with the path reported; both read "1 member turn(s) cut off by the restart shown as Reconciliation needed and reconciled".
-- The remote CI result is recorded in the [report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci).
+- Remote CI on `802b58c` (run 39547088592): the journey passed on Linux, macOS Apple silicon and macOS Intel, and both macOS runs took the reconciliation path. Windows passed on a rerun after a slow runner hit the job time limit ([report](TEST-REPORT.md#follow-up-fixes-and-four-platform-ci)).
 
 **Not established:** the **Inspect & reconcile** button itself. The journey sends its command rather than opening the member's conversation to click it.
 

@@ -215,6 +215,20 @@ Live usage: about 14 Codex turns (four qualifications plus build turns), 4 Claud
 
 One owner choice was needed although both coordinators proposed the same plan with identical titles. This is the equivalent-plan reconciliation gap that plan §2.2 lists as a P1 enhancement. *Follow-up, 21 October 2026:* proposals for one task that differ only in wording now combine into one merged candidate, which every coordinator endorses explicitly. Proposals that differ in structure still need the owner's choice. The gap is closed with stand-in tests ([record](TEST-DECISIONS.md#equivalent-plan-reconciliation--21-october-2026)); the change has not been re-run live. Live usage: one Claude Code build session and one review session in Topsl's terminal (usage not visible to Topsl), 4 Claude qualification turns, Codex qualification turns, and 15 loop member turns.
 
+**Equivalent plans and the loop journey restart (21 October 2026).** This follow-up made two changes:
+
+- Coordinator proposals that differ only in wording now combine ([record](TEST-DECISIONS.md#equivalent-plan-reconciliation--21-october-2026)).
+- The desktop loop journey now reconciles the member turn its restart cuts off ([record](TEST-DECISIONS.md#loop-journey-restart-with-a-turn-in-flight--21-october-2026)). The journey had failed intermittently on Linux and macOS on `bbba7e5` and `aa87437`.
+
+Local gate for the plan change, on `bbba7e5` with the change: typecheck; Vitest 1,161 passed and 5 skipped; release 18/0; build; all seven desktop journeys.
+
+CI on `802b58c`:
+
+- Compile Topsl, run 39547088592: Linux, macOS Apple silicon and macOS Intel passed every step on the first attempt.
+- Both macOS journeys reported a member turn cut off by the restart, shown as **Reconciliation needed** and reconciled.
+- Windows was cancelled at the 60-minute job limit. Its test step had run 54 minutes, against 31 to 38 minutes on earlier commits, and its install step was also about twice as slow, so the runner itself was slow. Windows passed every step on the rerun (attempt 2), with its test step taking 39 minutes.
+- Lifecycle stress, run 39547088579, passed on all four platforms.
+
 **Coverage register:** the per-case register still reflects the campaign's darwin-arm64 execution. The CI runs establish suite-level results on the other hosts; their cells were not re-mapped case by case.
 
 ## Evidence locations
