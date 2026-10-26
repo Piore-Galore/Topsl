@@ -172,8 +172,8 @@ The compile workflow uses read-only repository permissions, pinned actions, boun
 To release, commit the matching version and `docs/releases/v<version>.md` notes to `main`, then create and push that version tag. For the current pilot:
 
 ```sh
-git tag -a v0.1.2 -m "Topsl v0.1.2 personal pilot"
-git push origin v0.1.2
+git tag -a v0.1.3 -m "Topsl v0.1.3 personal pilot"
+git push origin v0.1.3
 ```
 
 Failed builds leave the release in draft. Rerun failed jobs on the same tag to resume; each platform replaces only its own draft assets. Published releases are never overwritten by this workflow. Use a new version and tag for subsequent releases; do not move an existing release tag. Downloads appear on the [releases page](https://github.com/Piore-Galore/Topsl/releases).
