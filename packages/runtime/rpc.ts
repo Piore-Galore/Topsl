@@ -128,7 +128,7 @@ export class RpcPeer {
       clientInfo: {
         name: "topsl",
         title: "Topsl personal pilot",
-        version: "0.1.2",
+        version: "0.1.3",
       },
       // Review threads declare Topsl's tools through Codex's experimental API.
       // Every runtime connection opts in, so a qualification checks the same

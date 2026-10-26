@@ -357,3 +357,7 @@ These are verified with stand-ins, the loop fixture, the real service, and the t
 Live loop passes 5 and 6 of 19 October and the 21 October live loop each needed that choice. Verified with stand-in tests, including the 21 October live sequence (CO-02b to CO-02d). Not re-run live, and proposals that name the same work under different keys are still unioned ([record](testing/TEST-DECISIONS.md#equivalent-plan-reconciliation--21-october-2026)).
 
 The owner-set budget wording in the [Usage remaining](#usage-remaining--18-october-2026) entry above predates Recursive Looping. Loop child admission does wait on an exhausted owner budget; see the README and [Recursive Looping](Recursive_Looping.md).
+
+## v0.1.3 release — 26 October 2026
+
+Version 0.1.3 packages `main` at `9b491f1` (21 October 2026), whose **Compile Topsl** and **Round 2 lifecycle stress** runs passed on all four platforms, as a personal-pilot prerelease so the owner can test an installed build. The only source change is the version number in `package.json`, `package-lock.json` and the version strings Topsl reports to providers and release metadata. Notes: [v0.1.3](releases/v0.1.3.md). The release workflow's four-platform run on the `v0.1.3` tag is the evidence for that build; it does not add live provider, clean-machine or notarization evidence, and the gates above are unchanged.

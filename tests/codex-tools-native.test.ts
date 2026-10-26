@@ -65,7 +65,7 @@ test.skipIf(!executable)(
         clientInfo: {
           name: "topsl",
           title: "Topsl personal pilot",
-          version: "0.1.2",
+          version: "0.1.3",
         },
       });
       plain.notify("initialized");
