@@ -392,7 +392,7 @@ const projectNames = ["Overview", "Sessions", "Coordinator", "Tasks", "Changes",
 const globalPages = [
   { nav: "Projects", h1: "Projects", crumb: "Topsl / Projects" },
   { nav: "Applications", h1: "Applications", crumb: "Topsl / Applications" },
-  { nav: "Settings", h1: "Make it your workspace.", crumb: "Topsl / Settings" },
+  { nav: "Settings", h1: "Settings", crumb: "Topsl / Settings" },
 ];
 const paletteDialog = page.getByRole("dialog", { name: "Command palette" });
 const focusInfo = () =>
@@ -1028,7 +1028,7 @@ await step("UI-11 one pending mutation per target; unrelated controls stay usabl
   expect(await countAdds()).toBe(beforeClicks + 1);
   // Unrelated controls stay usable while the mutation is pending.
   await expect(page.getByRole("combobox", { name: "Conversation" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Manage shared projects", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Projects", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Add project", exact: true })).toBeEnabled();
   await expect(page.locator("footer.statusbar")).toContainText("Operations pending");
   await release(app, "add-twice");

@@ -92,13 +92,12 @@ export function WorkbenchSidebar({
       </nav>
       <div className="sidebar-projects">
         <div className="eyebrow">
-          PROJECT INDEX
+          PROJECT
           <ActionButton aria-label="Add project" onClick={addProject}>
             +
           </ActionButton>
         </div>
-        <label className="project-picker">
-          Selected project
+        <div className="project-picker">
           <select
             aria-label="Selected project"
             value={projectId}
@@ -114,7 +113,7 @@ export function WorkbenchSidebar({
               </option>
             ))}
           </select>
-        </label>
+        </div>
         <nav className="project-navigation" aria-label="Project navigation">
           {projectViews.map((item) => (
             <ActionButton

@@ -62,9 +62,6 @@ export function SynchronizationSummary({
                     <strong>Unverified</strong> · no observation recorded for
                     this dimension.
                   </p>
-                  <p>
-                    Source: unavailable. Last successful observation: unknown.
-                  </p>
                   <p>Next action: {action}.</p>
                 </>
               )}

@@ -116,7 +116,7 @@ export function Transcript({
     visible = items.slice(start, start + 12 + OVERSCAN * 2);
   return (
     <section className="transcript" aria-label="Conversation transcript">
-      <Freshness state={freshness} retry={freshness.retry} />
+      <Freshness state={freshness} retry={freshness.retry} quiet />
       {error && <p role="alert">{error}</p>}
       {cursor && (
         <button disabled={pending} onClick={() => void load(true)}>
@@ -173,10 +173,12 @@ export function Transcript({
           </div>
         </div>
       )}
-      <p className="tiny muted">
-        {items.length} messages loaded in this conversation. Older history is
-        paged from the project scope.
-      </p>
+      {items.length > 0 && (
+        <p className="tiny muted">
+          {items.length} messages loaded
+          {cursor ? "; older messages load on request" : ""}.
+        </p>
+      )}
     </section>
   );
 }

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { type ProjectView } from "../../../packages/domain/navigation";
+import {
+  viewLabel as label,
+  type ProjectView,
+} from "../../../packages/domain/navigation";
 export type { ProjectView } from "../../../packages/domain/navigation";
-import { AtlasIcon } from "./components/atlas";
 import { ProjectOverview } from "./screens/project-overview";
 import { ParallelActivity } from "./components/parallel-activity";
 import { CoordinatorModes } from "./components/recursive-loop";
@@ -14,8 +16,6 @@ import { SynchronizationSummary } from "./components/synchronization-summary";
 import type { Task } from "../../../packages/domain/workflow";
 import type { Command } from "../../../packages/domain/commands";
 import { summarizeUsage, budgetAlerts } from "../../../packages/domain/usage";
-const label = (value: string) =>
-  value.replaceAll("-", " ").replace(/^./, (c) => c.toUpperCase());
 function Identity({ name, value }: { name: string; value?: string | null }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -458,25 +458,19 @@ export function Coordination({
   );
   return (
     <section className="coordination-view" aria-label="Project activity">
-      <div className="page-heading chart-heading">
+      <div className="page-heading">
         <div>
-          <div className="eyebrow">PROJECT COMMAND DESK / {label(view)}</div>
           <h1>
             {view === "overview" ? (projectName ?? "Overview") : label(view)}
           </h1>
-          <p className="path">{projectPath ?? "Select a project to begin."}</p>
+          {view === "overview" && (
+            <p className="path">
+              {projectPath ?? "Select a project to begin."}
+            </p>
+          )}
         </div>
-        <AtlasIcon name="overview" />
-        <button
-          disabled={pending.refresh || !projectId}
-          onClick={() =>
-            void run("refresh", { type: "coordination-query", projectId })
-          }
-        >
-          Refresh activity
-        </button>
       </div>
-      {projectId && !["coordinator", "tasks", "changes"].includes(view) && (
+      {projectId && view !== "coordinator" && (
         <Freshness state={freshness} retry={freshness.retry} />
       )}
       <div hidden={view !== "sessions"}>{sessionsContent}</div>
@@ -534,34 +528,19 @@ export function Coordination({
                 <article>
                   <h2>Capacity</h2>
                   <p>
-                    {coordination.concurrency.visibleAttempts} visible attempts
-                    · {coordination.concurrency.reservedCapacity}/
+                    {coordination.concurrency.visibleAttempts} running ·{" "}
+                    {coordination.concurrency.reservedCapacity}/
                     {coordination.concurrency.totalLimit} reserved
                   </p>
                   <p>
                     Hidden native concurrency:{" "}
                     {coordination.concurrency.hiddenConcurrency}
                   </p>
-                  <p>
-                    Maximum including native children:{" "}
-                    {coordination.concurrency.maximumIncludingNativeChildren ??
-                      "Unknown"}
-                  </p>
                 </article>
                 <article>
-                  <h2>Usage and billing</h2>
+                  <h2>Usage</h2>
                   <p>{usageReadout(usage)}</p>
-                  <p>
-                    {usage.coveredRuns}/{usage.totalRuns} turns report usage ·{" "}
-                    {usage.complete
-                      ? "Complete recorded coverage"
-                      : "Incomplete coverage; missing is unknown"}
-                  </p>
                   <p>{alert.detail}</p>
-                  <p className="tiny">
-                    Provider allowance: Applications → Usage remaining. API
-                    estimate: unavailable.
-                  </p>
                 </article>
               </div>
               <UsageBudget
@@ -611,16 +590,7 @@ export function Coordination({
               </div>
             </>
           )}
-          {view === "changes" && (
-            <>
-              <p>
-                Each candidate requires its own review and check evidence.
-                Changing captured files invalidates acceptance for a newer
-                candidate.
-              </p>
-            </>
-          )}
-          <div hidden={view !== "context"} className="">
+          <div hidden={view !== "context"}>
             <h2>Shared context</h2>
             <p>
               Published inputs are immutable. Dispatch blocking changes remain

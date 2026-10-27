@@ -356,21 +356,19 @@ function App() {
     const mode = openedMode(terminal.installationId, terminal.permissionMode);
     return mode ? ` · ${mode.label}` : "";
   };
-  const messages =
-    state?.messages
-      .filter((m) => m.conversationId === conversationId)
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)) ?? [];
   const runs = (scopedData?.runs ?? state?.runs ?? []).filter(
     (r: any) => r.conversationId === conversationId,
   );
   const active = runs.find((r: any) =>
     ["starting", "running", "awaiting-approval"].includes(r.status),
   );
-  const usage =
-    (scopedData?.usage ?? state?.usage ?? []).filter((u: any) =>
-      runs.some((r: any) => r.id === u.runId),
-    ) ?? [];
+  const usage = (scopedData?.usage ?? state?.usage ?? []).filter((u: any) =>
+    runs.some((r: any) => r.id === u.runId),
+  );
+  const sessionUsage = summarizeUsage(
+    usage,
+    runs.map((run: any) => run.id),
+  );
   async function addProject() {
     const origin = selectedProject.current;
     const result = await act({ type: "project-add" });
@@ -517,11 +515,6 @@ function App() {
                   ? `${project?.name ?? "Project"} / ${viewLabel(projectView)}`
                   : `Topsl / ${viewLabel(page)}`}
             </span>
-            <span>
-              {state.platform}
-              <span className="header-divider">/</span>
-              <span className="status-dot" /> On this computer
-            </span>
           </header>
           {state.serviceError && (
             <div className="error-banner" role="alert">
@@ -597,22 +590,17 @@ function App() {
                 onView={openProjectView}
                 sessionsContent={
                   <>
-                    <div className="actions wrap">
-                      <ActionButton onClick={() => setPage("projects")}>
-                        Manage shared projects
-                      </ActionButton>
-                      {project &&
-                        (!project.trusted ||
-                          (project.availability &&
-                            project.availability !== "available")) && (
-                          <span className="tiny">
-                            {project.availability === "missing" ||
-                            project.availability === "changed"
-                              ? "Relink this folder in Projects before starting a session."
-                              : "Trust this discovered folder in Projects before starting a session."}
-                          </span>
-                        )}
-                    </div>
+                    {project &&
+                      (!project.trusted ||
+                        (project.availability &&
+                          project.availability !== "available")) && (
+                        <span className="tiny">
+                          {project.availability === "missing" ||
+                          project.availability === "changed"
+                            ? "Relink this folder in Projects before starting a session."
+                            : "Trust this discovered folder in Projects before starting a session."}
+                        </span>
+                      )}
                     {!project ? (
                       <div className="onboarding">
                         <span className="empty-compass">
@@ -752,10 +740,8 @@ function App() {
                                 const value = await act({
                                   type: "handoff-preview",
                                   conversationId,
-                                  provider: installation?.appId.includes(
-                                    "claude",
-                                  )
-                                    ? "claude"
+                                  provider: installation
+                                    ? terminalProvider(installation)
                                     : "codex",
                                   objective:
                                     prompt ||
@@ -809,9 +795,6 @@ function App() {
                           <div className="conversation-heading">
                             <span>
                               {conversation?.title ?? "Shared history"}
-                            </span>
-                            <span className="muted tiny">
-                              PROVIDER ATTRIBUTION PRESERVED
                             </span>
                           </div>
                           <Transcript
@@ -986,34 +969,19 @@ function App() {
                                 chatPresetNote(selectedPreset))}
                           </p>
                           <p className="tiny muted">
-                            Codex uses an experimental local stdio adapter.
-                            Claude and provider-specific features use the native
-                            terminal. Native terminal history can be imported
-                            explicitly.
+                            Claude Code runs in the native terminal.
                           </p>
                         </form>
-                        <div className="usage-line">
-                          Native-reported usage:{" "}
-                          {summarizeUsage(
-                            usage,
-                            runs.map((run: any) => run.id),
-                          ).knownInput.toLocaleString()}{" "}
-                          known input ·{" "}
-                          {summarizeUsage(
-                            usage,
-                            runs.map((run: any) => run.id),
-                          ).knownOutput.toLocaleString()}{" "}
-                          known output ·{" "}
-                          {summarizeUsage(
-                            usage,
-                            runs.map((run: any) => run.id),
-                          ).complete
-                            ? "complete recorded coverage"
-                            : "incomplete coverage; missing usage is unknown"}
-                          . Provider allowance is under Applications → Usage
-                          remaining, as each runtime reports it; provider
-                          billing remains authoritative.
-                        </div>
+                        {runs.length > 0 && (
+                          <div className="usage-line">
+                            Reported usage:{" "}
+                            {sessionUsage.knownInput.toLocaleString()} input ·{" "}
+                            {sessionUsage.knownOutput.toLocaleString()} output
+                            {sessionUsage.complete
+                              ? ""
+                              : " · some turns did not report usage"}
+                          </div>
+                        )}
                       </>
                     )}
                   </>
@@ -1050,7 +1018,6 @@ function App() {
                 project={project}
                 setConfigPlan={setConfigPlan}
                 setDetail={setDetail}
-                setPage={setPage}
               />
             )}
           </main>
@@ -1058,10 +1025,8 @@ function App() {
             <span>
               {Object.values(pending).some(Boolean)
                 ? "Operations pending"
-                : "Ready"}{" "}
-              <span className="muted">/ Protected local history</span>
+                : "Ready"}
             </span>
-            <span>Native credentials stay with their provider</span>
           </footer>
         </div>
         {plan && (

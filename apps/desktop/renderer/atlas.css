@@ -330,9 +330,6 @@ small,
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.topbar .header-divider {
-  padding: 0 10px;
-}
 .content {
   padding: 30px 34px 48px;
   max-width: 1500px;
@@ -364,42 +361,6 @@ small,
 }
 .section-heading {
   gap: 16px;
-}
-.chart-heading {
-  position: relative;
-  padding-right: 105px;
-}
-.chart-heading::before {
-  content: "";
-  position: absolute;
-  right: 12px;
-  top: 0;
-  width: 64px;
-  height: 64px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background:
-    linear-gradient(
-      90deg,
-      transparent 49%,
-      var(--line) 49%,
-      var(--line) 51%,
-      transparent 51%
-    ),
-    linear-gradient(
-      transparent 49%,
-      var(--line) 49%,
-      var(--line) 51%,
-      transparent 51%
-    );
-}
-.chart-heading > .atlas-icon {
-  position: absolute;
-  right: 25px;
-  top: 13px;
-  width: 38px;
-  height: 38px;
-  color: var(--brass);
 }
 .project-heading {
   display: flex;
@@ -535,40 +496,6 @@ small,
   line-height: 1.2;
   color: var(--ink);
   margin-bottom: 8px;
-}
-.command-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin: 24px 0;
-}
-.command-action {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  text-align: left;
-  white-space: normal;
-  padding: 20px;
-  background: var(--card);
-  border-color: var(--strong-line);
-}
-.command-action > .atlas-icon {
-  width: 30px;
-  height: 30px;
-  flex-basis: 30px;
-  color: var(--accent);
-}
-.command-action strong {
-  display: block;
-  font-family: Georgia, serif;
-  font-size: 23px;
-  font-weight: 400;
-  margin-bottom: 3px;
-}
-.command-action small {
-  display: block;
-  color: var(--muted);
-  font-size: 13px;
 }
 .attention-list {
   list-style: none;
@@ -750,17 +677,6 @@ small,
 }
 .coordinator-conversation li {
   margin-bottom: 12px;
-}
-.settings-index {
-  display: flex;
-  gap: 8px 20px;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
-}
-.settings-index a {
-  color: var(--accent);
-  font-size: 13px;
-  text-underline-offset: 4px;
 }
 .settings-group-title {
   margin: 32px 0 10px;
@@ -981,10 +897,6 @@ dialog::backdrop {
   .page-heading > .actions {
     justify-content: flex-start;
   }
-  .chart-heading {
-    padding-right: 80px;
-  }
-  .command-actions,
   .member-cards,
   .workflow-form,
   .synchronization-dimensions,

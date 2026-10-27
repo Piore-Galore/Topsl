@@ -131,7 +131,6 @@ try {
   page.on("pageerror", (e) => errors.push(e.message));
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible({ timeout: 45000 });
   await navigate(page, "Applications");
-  await expect(page.getByText("You approve every Topsl update.")).toBeVisible();
   await expect(page.locator(".application-catalog .application-card")).toHaveCount(4);
   // A test profile never searches for applications, and says so. An
   // application without a native build for this platform keeps its own label.

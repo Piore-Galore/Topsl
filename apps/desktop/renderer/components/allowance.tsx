@@ -33,11 +33,8 @@ export function ProviderUsage({ state }: { state: AppState }) {
     <section className="provider-usage" aria-label="Usage remaining">
       <div className="eyebrow">USAGE REMAINING</div>
       <p className="muted tiny">
-        Each runtime's own report of its plan limits, with when Topsl observed
-        it. Topsl never estimates a provider's allowance from token counts; a
-        value a runtime does not report stays unknown. Values older than{" "}
-        {ALLOWANCE_STALE_AFTER_MS / 60_000} minutes are marked stale, and none
-        of them authorizes or blocks work.
+        As each runtime reports it; never estimated. Values older than{" "}
+        {ALLOWANCE_STALE_AFTER_MS / 60_000} minutes are marked stale.
       </p>
       <div className="usage-grid">
         {(["codex", "claude"] as Provider[]).map((provider) => (
