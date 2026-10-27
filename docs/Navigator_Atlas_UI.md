@@ -80,7 +80,7 @@ Revision: branch `claude/project-thread-1vq93z` from `c50fac1`, Linux x64 cloud 
 - `npx tsc --noEmit` passed.
 - The renderer was built with Vite and driven in Playwright Chromium against a real `Service` (isolated test profile, synthetic project) through a local HTTP bridge standing in for the Electron preload. Every destination was captured before and after at 1440 px; no page errors. This is not an Electron, packaged or native-window run.
 - Electron journeys (`npm run test:desktop`, `scripts/campaign-ui-test.mjs`) could not run here: the container cannot download Electron headers to rebuild the native modules. Their selectors were updated for the removed text (**Make it your workspace.** → **Settings**, **Manage shared projects** → sidebar **Projects**, the removed update strip) and remain unverified until run on a desktop.
-- Unit test results are recorded in the pull request.
+- `npx vitest run` under plain Node (the container's `better-sqlite3-multiple-ciphers` is built for Node, not Electron, so `npm test` was not used): with `ANTHROPIC_BASE_URL` set by the container, 173 tests in 28 files failed on the billing preflight. Rerunning those 28 files with `env -u ANTHROPIC_BASE_URL -u CLAUDE_CODE_USE_CCR_V2` left 5 failures in `campaign-checks-parallel`, `campaign-claude-codex` and `campaign-loops-state-service`; the same 5 fail identically on unmodified `origin/main` in this container, so they are environmental. No renderer test failed.
 
 ## Remaining acceptance boundaries
 
