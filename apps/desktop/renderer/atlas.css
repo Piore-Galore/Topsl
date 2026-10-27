@@ -708,17 +708,14 @@ small,
   font-size: 21px;
 }
 .member-list,
-.model-options,
 .team-summary,
 .member-cards {
   padding-left: 20px;
 }
-.member-list li,
-.model-options li {
+.member-list li {
   margin: 8px 0;
 }
-.member-list button,
-.model-options button {
+.member-list button {
   margin: 3px;
 }
 .member-cards {

@@ -206,7 +206,15 @@ try {
   const claudeRuntime = await page.evaluate(() =>
     window.topsl.command({ type: "select-runtime" }),
   );
-  await expect.poll(async () => (await page.evaluate(() => window.topsl.command({ type: "state" }))).installations.some((installation) => installation.id === claudeRuntime.id)).toBe(true);
+  await expect
+    .poll(async () =>
+      (
+        await page.evaluate(() => window.topsl.command({ type: "state" }))
+      ).installations.some(
+        (installation) => installation.id === claudeRuntime.id,
+      ),
+    )
+    .toBe(true);
   await page.evaluate(
     async ({ runtimeId, projectId }) => {
       await window.topsl.command({ type: "trust-installation", id: runtimeId });
@@ -271,10 +279,14 @@ try {
       projectId,
     );
   const routes = (await query()).routes;
-  expect(routes.map((route) => route.provider).sort()).toEqual(["claude", "codex"]);
+  expect(routes.map((route) => route.provider).sort()).toEqual([
+    "claude",
+    "codex",
+  ]);
   const codexRoute = routes.find((route) => route.provider === "codex");
   const claudeRoute = routes.find((route) => route.provider === "claude");
-  for (const purpose of Object.values(claudeRoute.purposes)) expect(purpose.ready).toBe(false);
+  for (const purpose of Object.values(claudeRoute.purposes))
+    expect(purpose.ready).toBe(false);
   for (const purpose of Object.values(codexRoute.purposes))
     expect(purpose).toEqual({ ready: true, blockers: [] });
 
@@ -307,13 +319,14 @@ try {
       new RegExp(`^${title}: `),
     );
   };
-  const add = (name) =>
-    editor
-      .getByRole("button", {
-        name: `Add ${name} · codex (fixture-${name.toLowerCase()})`,
-        exact: true,
-      })
+  const add = async (name) => {
+    await editor
+      .getByLabel("Model picker")
+      .selectOption({ label: `${name} (fixture-${name.toLowerCase()})` });
+    await editor
+      .getByRole("button", { name: "Add selected model", exact: true })
       .click();
+  };
   const member = (title, label) =>
     members(title).getByRole("listitem").filter({ hasText: label });
   const projectGroup = async (roleId) =>
@@ -555,19 +568,21 @@ try {
     await focusByTab(target);
     await page.keyboard.press(key);
   };
-  // Focus starts in the model search; everything after is the keyboard.
-  await editor.getByLabel("Search models across providers").focus();
-  for (const [name, model] of [
-    ["Fixture", "fixture-model"],
-    ["Opus", "fixture-opus"],
-    ["Astra", "fixture-astra"],
-  ])
-    await press(
-      editor.getByRole("button", {
-        name: `Add ${name} · codex (${model})`,
-        exact: true,
-      }),
+  // Focus starts in the model search; everything after is the keyboard. A
+  // search that narrows to one model selects it in the picker.
+  const search = editor.getByLabel("Search models across providers");
+  await search.focus();
+  for (const model of ["fixture-model", "fixture-opus", "fixture-astra"]) {
+    await focusByTab(search);
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.type(model);
+    await expect(editor.getByLabel("Model picker")).toHaveValue(
+      new RegExp(`:${model}$`),
     );
+    await press(
+      editor.getByRole("button", { name: "Add selected model", exact: true }),
+    );
+  }
   const listed = members("Reviewers").getByRole("listitem");
   await expect(listed).toHaveCount(5);
   await expect(editor.locator("legend")).toHaveText(
