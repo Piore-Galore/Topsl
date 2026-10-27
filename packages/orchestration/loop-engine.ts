@@ -1955,6 +1955,15 @@ export class LoopSupervisor {
       return;
     if (run.state === "monitoring" || run.state === "waiting") {
       const fingerprint = await this.inputsFingerprint(run);
+      // A control (pause, stop, or the feature turned off) can land while the
+      // project is read. Leaving the wait from the older record would mark a
+      // paused run active, and nothing would ever pause it again.
+      const latest = this.run(run.id);
+      if (
+        latest.controlGeneration !== run.controlGeneration ||
+        latest.state !== run.state
+      )
+        return;
       const wake = this.pendingWakeup(run);
       const due = !run.nextWakeAt || Date.parse(run.nextWakeAt) <= this.ms();
       if (!due && wake && wake.inputsFingerprint === fingerprint) return;

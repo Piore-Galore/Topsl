@@ -474,6 +474,22 @@ The desktop journeys run against stand-ins and are not built to produce a wordin
 
 **Not established:** a live rerun. Neither live report stores the proposals' actions, only summaries and titles. Whether those plans differed only in wording is therefore inferred from those records, not verified. A live mixed loop (`node scripts/live-loop.mjs --mixed-only`) would show whether coordinators now decide without the owner.
 
+## Pause during a wait check — 27 October 2026
+
+**Failure.** On PR #34 (a role editor change that does not touch loops), the macOS Apple silicon CI job failed in `scripts/desktop-loop-test.mjs:525`: after `loop-feature-set` with `enabled: false`, the Endless run stayed `active` for 30 s instead of becoming `paused`. Linux and the other journeys in that job passed.
+
+**Cause.** `advance` in [loop-engine.ts](../../packages/orchestration/loop-engine.ts) awaits `inputsFingerprint` (a project read) before leaving `monitoring` or `waiting`. When the feature-off pause committed during that await, the tick then saved `state: "active"` over the paused record. The run was left `desiredState: "paused"` with `state: "active"`, which neither the disable policy nor later ticks act on, so it stayed `active`.
+
+**Repair.** After the read, `advance` re-reads the run and returns when its control generation or state changed.
+
+| Command (cloud container, Linux, 27 October 2026) | Result |
+| --- | --- |
+| `npx vitest run tests/campaign-loops-state.test.ts -t "reads its inputs"` with the source change reverted | 1 failed: `expected 'active' to be 'paused'`, the CI symptom |
+| Same, with the change | passed |
+| `env -u ANTHROPIC_BASE_URL npx vitest run` over the seven loop test files | 165 passed, 1 failed. The failure, STATE-09 "a write that fails at the file is uncertain", also fails with the change reverted in this container and passed on CI Linux for this PR, so it is environmental here (cause not investigated) |
+
+**Not established:** the macOS desktop journey rerun; CI on the PR records it.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

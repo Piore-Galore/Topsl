@@ -1787,6 +1787,36 @@ describe("LOOP-13: turning Recursive Looping off while a run is active or monito
     expect(runOf(t, started.run.id).iterationCount).toBe(iterations);
   });
 
+  test("the flag turned off while a due monitoring run reads its inputs leaves it paused, not active", async () => {
+    const t = await setup();
+    const f = flag(t);
+    const started = await startRun(t, {
+      mode: "endless",
+      text: "Keep improving.",
+      policy,
+    });
+    await driveLoop(t, started.run.id, (v) => v.run.state === "monitoring");
+    t.advance(3_600_000);
+    // Hold the tick inside its project read, as a slow folder read does.
+    let release!: () => void;
+    let reading!: () => void;
+    const entered = new Promise<void>((resolve) => (reading = resolve));
+    t.loop.projectFingerprint = () =>
+      new Promise<string>((resolve) => {
+        reading();
+        release = () => resolve("folder-1");
+      });
+    const tick = t.supervisor.tick();
+    await entered;
+    f.enabled = false;
+    await t.supervisor.holdWhileDisabled();
+    expect(runOf(t, started.run.id).state).toBe("paused");
+    release();
+    await tick;
+    expect(runOf(t, started.run.id).state).toBe("paused");
+    expect(runOf(t, started.run.id).desiredState).toBe("paused");
+  });
+
   test("with the flag off, Pause and Stop are accepted and Resume is refused", async () => {
     const t = await setup();
     const f = flag(t);
