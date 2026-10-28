@@ -55,6 +55,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 xvfb
       - name: Install locked dependencies and compile native modules
+        timeout-minutes: 15
         run: npm ci
       - name: Typecheck, integration tests, and application build
         run: npm run check
