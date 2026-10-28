@@ -380,3 +380,14 @@ Version 0.1.3 packages `main` at `9b491f1` (21 October 2026), whose **Compile To
 | `env -u ANTHROPIC_BASE_URL npm run test:desktop -- scripts/desktop-loop-test.mjs` | Passed again after the loop thread stopped listing the running iteration twice, the last renderer change |
 
 - **Not established.** Live providers, Windows (the coordinator and loop journeys skip it), four-platform CI, packaged builds, and large projects or long conversations.
+
+Follow-up, 28 October 2026: the branch was rebased onto `main` at `fa1d934`, after PR #34 (the role model picker, which this branch had carried as a local commit) and PR #35 (the decluttering pass) merged. The conflicts were the sidebar, the Coordination heading, `atlas.css` and this file. The conversation headers dropped their eyebrows to follow the [decluttering decision](Topsl_Design.md#201-visual-direction), and the journeys' sidebar helper now follows the app's media query instead of one `innerWidth` read ([test decision](testing/TEST-DECISIONS.md#coordinator-conversations-journey-names--28-october-2026)). Rerun on the same Mac:
+
+| Command (rebased branch, same environment) | Result |
+| --- | --- |
+| `env -u ANTHROPIC_BASE_URL npm run check` | Passed: 1182 tests passed and 5 skipped; 18 release checks; build |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` | The first run failed in the Atlas journey and a second in the main journey, both in the sidebar helper (see the test decision). With the helper fixed, all four journeys passed. These are also the first Electron runs of PR #35's updated selectors, which its own record left unverified |
+| `env -u ANTHROPIC_BASE_URL node scripts/campaign-ui-test.mjs` | Passed 31 of 31 steps |
+| `node scripts/round2-ui-test.mjs` | Passed |
+
+The boundaries above are unchanged.

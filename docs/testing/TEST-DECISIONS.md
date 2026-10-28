@@ -504,6 +504,8 @@ The shell now lists each project's coordinator conversations in the sidebar ([Co
 | Pause/Resume on the goal card | **Goal controls** in the conversation header | The latest goal's controls belong to the conversation |
 | UI-03 "project destinations are disabled with no project" | Project tools are absent and **New conversation** is disabled | Project tools render only for a selected project |
 | `navigate()` searched the whole page | `navigate()` searches the sidebar and expands **Project tools** when collapsed | Thread titles and pane buttons can share names with other buttons on the page |
+| The sidebar helper chose the aside or drawer from one `innerWidth` read | It asks `matchMedia("(max-width: 899px)")`, the query the sidebar uses, and waits until React shows the matching aside or drawer | After rebasing onto `fa1d934`, the Atlas journey read `innerWidth` below 900px just after a 1.5× zoom reset and waited for the hidden **Navigation** toggle; an interim fix that took whichever was visible returned a closing drawer after the main journey resized from 560 to 1280px. Both were test races; the app's layout was correct |
+| Loop journey read the state as the second `.loop-header .badge` | It reads the last badge | The loop header gained a **Goal loop** / **Endless loop** badge in place of its eyebrow ([decluttering decision](../Topsl_Design.md#201-visual-direction)) |
 
 The Atlas journey also asserts one `h1` and one `aria-current="page"` on every destination and on a goal conversation, and captures the conversation's pane docked at 1200px and overlaid at 1199px. The coordinator journey checks that the open conversation is restored after a restart.
 

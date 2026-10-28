@@ -474,10 +474,7 @@ export function Coordination({
           onThread={(next) => onThread?.(next)}
         />
       )}
-      <div
-        className="page-heading"
-        hidden={view === "coordinator"}
-      >
+      <div className="page-heading" hidden={view === "coordinator"}>
         <div>
           <h1>
             {view === "overview" ? (projectName ?? "Overview") : label(view)}

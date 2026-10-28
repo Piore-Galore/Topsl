@@ -1897,6 +1897,8 @@ An agent may submit a proposed configuration or application-management action fo
 
 Decided 27 October 2026, when the owner found the interface cluttered: each page carries only its title (and, on Overview, the project path); there are no eyebrows, taglines or decorative compass in page headings. A project page shows one compact data-freshness line, and nested sections report freshness only when their own read fails. Controls that repeat a sidebar destination, and explanatory notes repeated on every card, are removed. The atlas identity remains in the palette, sidebar, emblem and section rules.
 
+Follow-up, 28 October 2026: coordinator conversations ([§20.4](#204-main-window)) keep this rule. A project's New conversation page, which replaces Overview as the page a project opens on, carries the project name and path; a goal or loop conversation carries its title and a state badge, and a loop's kind (**Goal loop** or **Endless loop**) is a badge rather than an eyebrow.
+
 A billowing square topsail, yard, and short mast form the app emblem, in ivory and brass on a navy tile. The canonical geometry is [topsl.svg](../assets/brand/topsl.svg). The sidebar, loading/lock screens, native About/Dock/window identity and packaged icons share it. Run `npm run icons:build` for reproducible PNG, ICNS and ICO exports with the installed electron-builder converter; normal builds use the checked-in exports. No external fonts or hosted artwork are required.
 
 ### 20.2 Themes and color tokens

@@ -1,18 +1,28 @@
 /** Opens the sidebar the owner would use: the aside, or the drawer below 900px. */
 async function sidebar(page) {
-  // A viewport/zoom change can precede React's media-query reconciliation.
-  if (await page.evaluate(() => innerWidth < 900)) {
-    const drawer = page.locator("dialog.sidebar");
-    await drawer.waitFor({ state: "attached" });
-    if (!(await drawer.isVisible()))
-      await page
-        .getByRole("button", { name: "Navigation", exact: true })
-        .click();
-    return drawer;
-  }
+  // A viewport/zoom change can precede React's media-query reconciliation,
+  // and `innerWidth` can lag a zoom reset. Ask the media query the app uses,
+  // then wait until React shows the matching sidebar: the aside, or the
+  // drawer (opened through its Navigation toggle).
   const aside = page.locator("aside.sidebar");
-  await aside.waitFor({ state: "visible" });
-  return aside;
+  const drawer = page.locator("dialog.sidebar");
+  const toggle = page.getByRole("button", { name: "Navigation", exact: true });
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    const compact = await page.evaluate(
+      () => matchMedia("(max-width: 899px)").matches,
+    );
+    if (!compact && (await aside.isVisible())) return aside;
+    if (compact && (await drawer.isVisible())) return drawer;
+    if (compact && (await toggle.isVisible())) {
+      await toggle.click();
+      await drawer.waitFor({ state: "visible" });
+      return drawer;
+    }
+    if (Date.now() > deadline)
+      throw new Error("Neither the sidebar nor the Navigation toggle appeared");
+    await page.waitForTimeout(50);
+  }
 }
 
 /**
