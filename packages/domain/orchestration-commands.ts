@@ -28,7 +28,27 @@ export const requiredCheckSchema = z.object({
 
 /** Service commands for the coordinator feature (docs/Coordinator_Teams.md). */
 export const orchestrationCommands = [
-  z.object({ type: z.literal("orchestration-query"), projectId: id }),
+  /** With `conversationId`, only that conversation and its goals. */
+  z.object({
+    type: z.literal("orchestration-query"),
+    projectId: id,
+    conversationId: id.nullable().optional(),
+  }),
+  /** The sidebar's goal and loop threads for each project, newest first. */
+  z.object({
+    type: z.literal("coordinator-threads"),
+    projectIds: z.array(id).max(500),
+    limit: z.number().int().min(1).max(200).default(8),
+  }),
+  /** A new goal thread: a conversation and its first goal. */
+  z.object({
+    type: z.literal("orchestration-conversation-start"),
+    projectId: id,
+    text: z.string().min(1).max(100000),
+    kind: z.enum(["code", "information"]).default("code"),
+    checks: z.array(requiredCheckSchema).max(20).optional(),
+    commandId,
+  }),
   z.object({
     type: z.literal("orchestration-conversation-create"),
     projectId: id,
@@ -41,7 +61,14 @@ export const orchestrationCommands = [
     text: z.string().min(1).max(100000),
     goalId: id.nullable().default(null),
     routing: z
-      .enum(["auto", "new-goal", "update-goal", "related-goal", "status"])
+      .enum([
+        "auto",
+        "follow-up",
+        "new-goal",
+        "update-goal",
+        "related-goal",
+        "status",
+      ])
       .default("auto"),
     kind: z.enum(["code", "information"]).default("code"),
     /** Required checks for a new code goal; ignored when the message steers a goal. */

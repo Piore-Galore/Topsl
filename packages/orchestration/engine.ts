@@ -34,6 +34,14 @@ import type {
 } from "../domain/role-groups";
 import type { Store } from "../persistence/store";
 import { OrchestrationRepository, kinds } from "./repository";
+import { threadTitle } from "../domain/threads";
+import type { ThreadConversationFact, ThreadGoalFact } from "../domain/threads";
+import {
+  classifyMessage,
+  endedGoalStates,
+  isStopAll,
+  type RoutingMode,
+} from "./routing";
 import { customRoleDefinition } from "./roles";
 import { builtInRoles } from "../domain/role-groups";
 import {
@@ -585,6 +593,75 @@ export class Orchestrator {
     );
   }
 
+  /**
+   * Starts a conversation with its first goal: one conversation per goal
+   * thread. Both steps keep their own receipts, so a retry with the same
+   * command ID returns the same conversation and message.
+   */
+  async startConversation(input: {
+    projectId: string;
+    text: string;
+    kind?: Goal["kind"];
+    checks?: GoalCheckDefinition[];
+    commandId: string;
+  }) {
+    return this.repo.receipt(
+      input.commandId,
+      input.projectId,
+      "conversation-start",
+      async () => {
+        const text = input.text.trim();
+        if (!text) throw new Error("Write a message first.");
+        const conversation = await this.createConversation({
+          projectId: input.projectId,
+          title: threadTitle(text),
+          commandId: `${input.commandId}:conversation`,
+        });
+        const posted = await this.post({
+          conversationId: conversation.id,
+          text,
+          routing: "new-goal",
+          kind: input.kind,
+          checks: input.checks,
+          commandId: `${input.commandId}:message`,
+        });
+        return { conversationId: conversation.id, ...posted };
+      },
+    );
+  }
+
+  /**
+   * Records a message that is not routed, such as a loop's steering text and
+   * what it changed (packages/orchestration/loop-engine.ts).
+   */
+  async note(input: {
+    conversationId: string;
+    role: CoordinatorMessage["role"];
+    text: string;
+    routing: CoordinatorMessage["routing"];
+    commandId: string;
+  }) {
+    const conversation = this.repo.require<CoordinatorConversation>(
+      kinds.conversation,
+      input.conversationId,
+    );
+    return this.repo.receipt(
+      input.commandId,
+      conversation.projectId,
+      "conversation-note",
+      () => {
+        const message = this.message(
+          conversation,
+          input.role,
+          input.text,
+          input.routing,
+        );
+        this.changed();
+        return message;
+      },
+    );
+  }
+
   private message(
     conversation: CoordinatorConversation,
     role: CoordinatorMessage["role"],
@@ -620,7 +697,7 @@ export class Orchestrator {
     text: string;
     commandId: string;
     goalId?: string | null;
-    routing?: "auto" | "new-goal" | "update-goal" | "related-goal" | "status";
+    routing?: RoutingMode;
     kind?: Goal["kind"];
     checks?: GoalCheckDefinition[];
   }) {
@@ -638,41 +715,26 @@ export class Orchestrator {
         const goals = conversation.goalIds.map((id) =>
           this.repo.require<Goal>(kinds.goal, id),
         );
+        // A follow-up is about the conversation's latest goal, ended or not;
+        // other routing considers only goals that are still running.
         const target =
           (input.goalId
             ? goals.find((g) => g.id === input.goalId)
             : undefined) ??
-          goals
-            .filter(
-              (g) => !["stopped", "accepted", "completed"].includes(g.state),
-            )
-            .at(-1);
-        let routing = input.routing ?? "auto";
-        if (routing === "auto") {
-          if (/^\s*(stop everything|stop all)\b/i.test(text))
-            routing = "status";
-          // An explicit status question is a status request with or without
-          // an active goal; any other question is one only while a goal runs.
-          else if (
-            /^\s*(status|what(?:'s| is) (?:the )?(?:status|progress)|how is it going)\b/i.test(
-              text,
-            ) ||
-            (target && /\?\s*$/.test(text))
-          )
-            routing = "status";
-          else if (
-            target &&
-            /^\s*(also|change|update|instead|actually|steer|add to)\b/i.test(
-              text,
-            )
-          )
-            routing = "update-goal";
-          else routing = "new-goal";
-        }
+          (input.routing === "follow-up"
+            ? goals.at(-1)
+            : goals.filter((g) => !endedGoalStates.includes(g.state)).at(-1));
+        const followUp = input.routing === "follow-up";
+        const routing = classifyMessage(text, target, input.routing ?? "auto");
+        // Pause and resume phrases act only on a goal that has not ended.
+        const controlTarget =
+          followUp && target && endedGoalStates.includes(target.state)
+            ? undefined
+            : target;
         const membership = parseMembership(text, input.commandId);
         // Explicit controls are service operations, independent of language
         // interpretation; these phrases are a convenience over them.
-        if (/^\s*(stop everything|stop all)\b/i.test(text)) {
+        if (isStopAll(text)) {
           const message = this.message(conversation, "user", text, {
             kind: "control",
             goalId: null,
@@ -691,38 +753,25 @@ export class Orchestrator {
           );
           return { message, routing: "control", goal: null };
         }
-        if (target && /^\s*pause (this|the) goal\b/i.test(text)) {
+        for (const [pattern, action] of [
+          [/^\s*pause (this|the) goal\b/i, "pause"],
+          [/^\s*resume\b/i, "resume"],
+        ] as const) {
+          if (!controlTarget || !pattern.test(text)) continue;
           const message = this.message(conversation, "user", text, {
             kind: "control",
-            goalId: target.id,
+            goalId: controlTarget.id,
           });
           await this.controlCommand({
             projectId: conversation.projectId,
-            goalId: target.id,
-            action: "pause",
+            goalId: controlTarget.id,
+            action,
             commandId: `${input.commandId}:control`,
           });
           return {
             message,
             routing: "control",
-            goal: this.repo.require<Goal>(kinds.goal, target.id),
-          };
-        }
-        if (target && /^\s*resume\b/i.test(text)) {
-          const message = this.message(conversation, "user", text, {
-            kind: "control",
-            goalId: target.id,
-          });
-          await this.controlCommand({
-            projectId: conversation.projectId,
-            goalId: target.id,
-            action: "resume",
-            commandId: `${input.commandId}:control`,
-          });
-          return {
-            message,
-            routing: "control",
-            goal: this.repo.require<Goal>(kinds.goal, target.id),
+            goal: this.repo.require<Goal>(kinds.goal, controlTarget.id),
           };
         }
         if (routing === "status" && target) {
@@ -781,12 +830,15 @@ export class Orchestrator {
           kind: routing === "related-goal" ? "related-goal" : "new-goal",
           goalId: null,
         });
+        // A follow-up after its goal ended continues that work: the related
+        // goal keeps the parent's kind and required checks.
+        const parent = followUp && routing === "related-goal" ? target : null;
         const goal = this.newGoal(
           conversation,
           text,
-          input.kind ?? "code",
+          parent?.kind ?? input.kind ?? "code",
           routing === "related-goal" ? (target?.id ?? null) : null,
-          input.checks ?? [],
+          input.checks?.length ? input.checks : (parent?.checks ?? []),
         );
         this.store.put(kinds.message, {
           ...message,
@@ -4414,17 +4466,54 @@ export class Orchestrator {
     };
   }
 
-  view(projectId: string) {
-    const conversations = this.repo.all<CoordinatorConversation>(
-      kinds.conversation,
-      projectId,
-    );
+  /** What the sidebar's thread list needs, without messages or rounds. */
+  threadFacts(projectId: string): {
+    conversations: ThreadConversationFact[];
+    goals: ThreadGoalFact[];
+  } {
+    return {
+      conversations: this.repo
+        .all<CoordinatorConversation>(kinds.conversation, projectId)
+        .map((c) => ({
+          id: c.id,
+          projectId: c.projectId,
+          title: c.title,
+          goalIds: c.goalIds,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+        })),
+      goals: this.repo
+        .all<Goal>(kinds.goal, projectId)
+        .filter((g) => !g.loop)
+        .map((g) => ({
+          id: g.id,
+          conversationId: g.conversationId,
+          objective: g.objective,
+          kind: g.kind,
+          state: g.state,
+          application: g.application ? { state: g.application.state } : null,
+          updatedAt: g.updatedAt,
+        })),
+    };
+  }
+
+  /**
+   * The project's coordinator records. With `conversationId`, only that
+   * conversation and its goals.
+   */
+  view(projectId: string, conversationId?: string | null) {
+    const conversations = this.repo
+      .all<CoordinatorConversation>(kinds.conversation, projectId)
+      .filter((c) => !conversationId || c.id === conversationId);
     const roles = this.repo.roles(projectId);
     // Loop child goals belong to their run's view (packages/orchestration/
     // loop-engine.ts), not the ordinary goal list.
     const goals = this.repo
       .all<Goal>(kinds.goal, projectId)
-      .filter((g) => !g.loop)
+      .filter(
+        (g) =>
+          !g.loop && (!conversationId || g.conversationId === conversationId),
+      )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const routes = this.driver.routes(projectId);
     return {

@@ -25,6 +25,8 @@ In both modes the coordinators decide which roles are active, how many members e
 
 Commands ([loop-commands.ts](../packages/domain/loop-commands.ts)): `loop-feature-set`, `loop-query`, `loop-inspect`, `loop-timeline`, `loop-create`, `loop-start` (native confirmation), `loop-goals-update`, `loop-policy-update` (native confirmation when it widens execution), `loop-override-set`, `loop-override-release`, `loop-control`, `loop-message`, `loop-checkpoint-export`, `loop-publication-preview`, `loop-publication-apply` (native confirmation) and `loop-publication-reconcile`. Assessment, topology commits, iteration admission and promotion have no public command; only the supervisor performs them.
 
+Since 28 October 2026 the run's conversation records what the owner wrote: `loop-create` notes the goals or priorities, and `loop-message` notes the owner's text and then a short service note of what it changed (routing kind `loop-steer`), each under its own receipt. `loop-query` also returns each run's `conversationId`, `started` and `waitReason`, which the sidebar's thread list uses ([Coordinator teams](Coordinator_Teams.md#follow-up-conversations-as-threads-28-october-2026)).
+
 ## 3. Architecture
 
 ```mermaid

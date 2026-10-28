@@ -251,6 +251,28 @@ export function parsePriorities(text: string): string[] {
 }
 
 /** The longest rolling window a policy may set (31 days). */
+/** The service's note in a loop thread of what one steering message did. */
+export function steeringNote(
+  routing: string,
+  text: string,
+  view: { run: Pick<LoopRun, "state" | "desiredState"> },
+): string {
+  switch (routing) {
+    case "control":
+      return `Run ${view.run.desiredState === "running" ? "resumed" : view.run.desiredState}; it is now ${view.run.state}.`;
+    case "goals": {
+      const added = splitGoals(text).length;
+      return `Added ${added} ${added === 1 ? "goal" : "goals"} to the run.`;
+    }
+    case "priorities":
+      return `Added priorities: ${parsePriorities(text).join("; ")}.`;
+    case "membership":
+      return "Updated the team settings for the coming iterations.";
+    default:
+      return "Nothing changed. Write goals, priorities or team settings, or pause, resume or stop the run.";
+  }
+}
+
 const RECENT_HORIZON_MS = 31 * 86_400_000;
 
 /**
@@ -585,6 +607,16 @@ export class LoopSupervisor {
               revision: run.revision + 1,
             });
         });
+        // The thread opens with what the owner asked for.
+        const asked = text || goalInputs.map((g) => g.text.trim()).join("\n");
+        if (asked)
+          await this.orchestrator.note({
+            conversationId,
+            role: "user",
+            text: asked,
+            routing: { kind: "loop-steer", goalId: null },
+            commandId: `${input.commandId}:transcript`,
+          });
         this.changed();
         return this.view(runId);
       },
@@ -1580,10 +1612,44 @@ export class LoopSupervisor {
    * overrides the editor saves; pause, resume and stop are controls; other
    * text adds goals (Goal mode) or priorities (Endless mode).
    */
+  /**
+   * Steers a run from the conversation. The owner's text and a short note of
+   * what it changed are recorded in the run's conversation, so the thread
+   * shows both; each note keeps its own receipt.
+   */
   async message(input: { runId: string; text: string; commandId: string }) {
     this.assertEnabled();
     const run = this.run(input.runId);
     const text = input.text.trim();
+    if (!text) throw new Error("Write a message first.");
+    await this.transcript(run, "user", text, `${input.commandId}:transcript`);
+    const result = await this.steer(run, text, input.commandId);
+    await this.transcript(
+      run,
+      "service",
+      steeringNote(result.routing, text, result.view),
+      `${input.commandId}:transcript-result`,
+    );
+    return result;
+  }
+
+  private transcript(
+    run: Pick<LoopRun, "conversationId">,
+    role: "user" | "service",
+    text: string,
+    commandId: string,
+  ) {
+    return this.orchestrator.note({
+      conversationId: run.conversationId,
+      role,
+      text,
+      routing: { kind: "loop-steer", goalId: null },
+      commandId,
+    });
+  }
+
+  private async steer(run: LoopRun, text: string, commandId: string) {
+    const input = { runId: run.id, commandId };
     if (
       /^\s*(pause|resume|stop)(?: (?:the|this) (?:run|loop))?\s*[.!]?\s*$/i.test(
         text,
@@ -1664,7 +1730,7 @@ export class LoopSupervisor {
       return {
         routing: goals.length
           ? "goals"
-          : membership.length
+          : membership.length || exclude || keep || count
             ? "membership"
             : "none",
         view: this.view(run.id),
@@ -1685,7 +1751,7 @@ export class LoopSupervisor {
     return {
       routing: priorities.length
         ? "priorities"
-        : membership.length
+        : membership.length || exclude || keep || count
           ? "membership"
           : "none",
       view: this.view(run.id),
@@ -6675,10 +6741,13 @@ export class LoopSupervisor {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((r) => ({
         id: r.id,
+        conversationId: r.conversationId,
         title: r.title,
         mode: r.mode,
         state: r.state,
         desiredState: r.desiredState,
+        started: r.started,
+        waitReason: r.waitReason,
         iterationCount: r.iterationCount,
         detail: r.detail,
         createdAt: r.createdAt,

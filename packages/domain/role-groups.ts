@@ -728,7 +728,9 @@ export interface CoordinatorMessage {
       | "new-goal"
       | "related-goal"
       | "control"
-      | "membership";
+      | "membership"
+      /** The owner's text to a loop run, and what it changed. */
+      | "loop-steer";
     goalId: string | null;
   } | null;
   createdAt: string;
