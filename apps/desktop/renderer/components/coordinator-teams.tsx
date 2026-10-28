@@ -4,6 +4,7 @@ import type {
   CollaborationMode,
   GoalCheckDefinition,
   MemberIntent,
+  MemberPin,
   RoleGroupSettings,
   SchedulingKind,
   SelectionForm,
@@ -35,7 +36,7 @@ export function teamLine(group: any, assignments: any[] = []): string {
   ].join(" + ");
 }
 
-interface ModelOption {
+export interface ModelOption {
   key: string;
   provider: "codex" | "claude";
   installationId: string;
@@ -65,6 +66,43 @@ function modelOptions(routes: any[], purpose: string): ModelOption[] {
       };
     }),
   );
+}
+
+/**
+ * Options whose provider, name or model ID contain every word of the search,
+ * ignoring case, so "opus claude" finds Claude's Opus models.
+ */
+export function filterModelOptions(
+  options: ModelOption[],
+  search: string,
+): ModelOption[] {
+  const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+  return options.filter((o) => {
+    const text = `${o.provider} ${o.name} ${o.model}`.toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
+}
+
+/**
+ * A pin for a model ID the person typed, or null when the search is not one
+ * ID or an observed option already offers that exact model for the provider.
+ * Claude Code has no model list, so its catalog holds only qualified models;
+ * a typed ID stays unresolved until a catalog observes it (RG-08).
+ */
+export function typedModelPin(
+  options: ModelOption[],
+  search: string,
+  provider: ModelOption["provider"] | "",
+): MemberPin | null {
+  const model = search.trim();
+  if (!model || /\s/.test(model) || model.length > 200) return null;
+  if (
+    options.some(
+      (o) => o.model === model && (!provider || o.provider === provider),
+    )
+  )
+    return null;
+  return provider ? { provider, model } : { model };
 }
 
 /**
@@ -113,31 +151,42 @@ function RoleEditor({
   );
   const [distinct, setDistinct] = useState(group.distinctModels === "required");
   const [search, setSearch] = useState("");
+  const [typedProvider, setTypedProvider] = useState<
+    ModelOption["provider"] | ""
+  >("");
   const options = useMemo(
     () => modelOptions(routes, role.purpose),
     [routes, role.purpose],
   );
-  const filtered = options.filter((o) =>
-    `${o.provider} ${o.name} ${o.model}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
-  );
+  const filtered = filterModelOptions(options, search);
+  const typed = typedModelPin(options, search, typedProvider);
+  const [picked, setPicked] = useState("");
+  // A search that narrows to one model selects it, so typing an ID and
+  // pressing Add selected model works without opening the list.
+  const pickedOption =
+    filtered.find((o) => o.key === picked) ??
+    (filtered.length === 1 ? filtered[0] : null);
   const total = form === "exact" ? members.length : Number(count) || null;
   function add(option: ModelOption | null) {
+    addPin(
+      option
+        ? {
+            label: option.name,
+            provider: option.provider,
+            installationId: option.installationId,
+            model: option.model,
+          }
+        : null,
+    );
+  }
+  function addPin(pin: MemberPin | null) {
     const n = members.length + 1;
     setMembers([
       ...members,
       {
         memberId: `${role.id}-${n}-${Math.random().toString(36).slice(2, 6)}`,
         required: true,
-        pin: option
-          ? {
-              label: option.name,
-              provider: option.provider,
-              installationId: option.installationId,
-              model: option.model,
-            }
-          : null,
+        pin,
         fallbacks: [],
         preferences: { providers: [], models: [] },
         source: { kind: "ui", reference: null, provenance: "explicit" },
@@ -297,31 +346,92 @@ function RoleEditor({
           placeholder="Name, model ID or provider"
         />
       </label>
-      <ul
-        className="model-options"
-        style={{ maxHeight: 200, overflowY: "auto" }}
-        aria-label="Model options"
+      <label>
+        Model{" "}
+        <select
+          aria-label="Model picker"
+          value={pickedOption?.key ?? ""}
+          onChange={(e) => setPicked(e.target.value)}
+        >
+          <option value="">
+            {filtered.length
+              ? `Choose one of ${filtered.length} ${filtered.length === 1 ? "model" : "models"}`
+              : "No observed model matches"}
+          </option>
+          {(["claude", "codex"] as const).map((provider) => {
+            const group = filtered.filter((o) => o.provider === provider);
+            return group.length ? (
+              <optgroup key={provider} label={label(provider)}>
+                {group.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.name} ({o.model})
+                    {o.available ? "" : " · unavailable now"}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null;
+          })}
+        </select>
+      </label>{" "}
+      <button
+        type="button"
+        disabled={!pickedOption}
+        title={pickedOption?.reason || undefined}
+        onClick={() => {
+          add(pickedOption);
+          setPicked("");
+        }}
       >
-        {filtered.map((o) => (
-          <li key={o.key}>
-            <button
-              type="button"
-              onClick={() => add(o)}
-              title={o.reason || undefined}
+        Add selected model
+      </button>
+      {pickedOption && !pickedOption.available && (
+        <p className="muted">Unavailable now: {pickedOption.reason}</p>
+      )}
+      {!options.length ? (
+        <p className="muted">
+          No model catalog is loaded for these runtimes. Inspect a Codex runtime
+          or qualify Claude Code under Applications to list its models, or pin
+          the model ID you type above.
+        </p>
+      ) : (
+        !filtered.length && (
+          <p className="muted">
+            No observed model matches the search. You can pin the model ID you
+            typed.
+          </p>
+        )
+      )}
+      {typed && !filtered.length && (
+        <div className="typed-model">
+          <label>
+            Provider for the typed ID{" "}
+            <select
+              value={typedProvider}
+              onChange={(e) =>
+                setTypedProvider(e.target.value as ModelOption["provider"] | "")
+              }
             >
-              Add {o.name} · {o.provider} ({o.model})
-            </button>
-            {!o.available && (
-              <span className="muted"> Unavailable now: {o.reason}</span>
-            )}
-          </li>
-        ))}
-        {!filtered.length && (
-          <li className="muted">
-            No observed model matches. Inspect a runtime to load its catalog.
-          </li>
-        )}
-      </ul>
+              <option value="">Any provider</option>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+            </select>
+          </label>{" "}
+          <button
+            type="button"
+            onClick={() => {
+              addPin(typed);
+              setSearch("");
+            }}
+          >
+            Pin model ID {typed.model}
+          </button>
+          <p className="muted">
+            A typed ID is kept as your choice but stays unresolved until a
+            runtime catalog or Claude qualification observes it; Topsl never
+            substitutes another model.
+          </p>
+        </div>
+      )}
       <button type="button" onClick={() => add(null)}>
         Add Auto member
       </button>
