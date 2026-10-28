@@ -296,3 +296,5 @@ Unchanged: every native confirmation (check runs, acceptance, applying, loop sta
 | `env -u ANTHROPIC_BASE_URL npm run test:desktop -- scripts/desktop-loop-test.mjs` | Passed again after the loop thread stopped listing the running iteration twice, the last renderer change |
 
 **Not established:** live providers; Windows, where the coordinator and loop journeys skip; four-platform CI; packaged builds; and behavior with many projects or long conversations. Messages are still read per project and filtered per conversation, so a per-conversation read may be needed for large projects.
+
+Follow-up, 28 October 2026: after a rebase onto `main`, CI on [PR #36](https://github.com/Piore-Galore/Topsl/pull/36) passed on all four platforms, with the coordinator and loop journeys passing on both Macs and Linux and skipped on Windows. Details: [implementation status](Implementation_Status.md#coordinator-conversations--28-october-2026).

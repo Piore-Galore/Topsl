@@ -391,3 +391,14 @@ Follow-up, 28 October 2026: the branch was rebased onto `main` at `fa1d934`, aft
 | `node scripts/round2-ui-test.mjs` | Passed |
 
 The boundaries above are unchanged.
+
+Follow-up, 28 October 2026: CI on [PR #36](https://github.com/Piore-Galore/Topsl/pull/36) at `10177ea` passed every job on the first attempt.
+
+| Platform | [Compile Topsl](https://github.com/Piore-Galore/Topsl/actions/runs/40667525072) | [Round 2 lifecycle stress](https://github.com/Piore-Galore/Topsl/actions/runs/40667524998) |
+| --- | --- | --- |
+| macOS Apple silicon | Vitest 1182 passed, 5 skipped; release 18/0; main, coordinator, Atlas and loop journeys passed | Passed |
+| macOS Intel | Vitest 1182 passed, 5 skipped; release 18/0; main, coordinator, Atlas and loop journeys passed | Passed |
+| Linux x64 | Vitest 1181 passed, 6 skipped; release 17/0; main, coordinator, Atlas and loop journeys passed | Passed |
+| Windows x64 | Vitest 1065 passed, 122 skipped; release 17/0; main and Atlas journeys passed; coordinator and loop journeys skipped | Passed |
+
+On Windows the Atlas journey ran, so the conversation sidebar and a goal conversation's pane rendered there. A goal or loop run through the screens did not, because those journeys need a shell wrapper; the loop journey's skip line is printed with the coordinator journey's wording. Four-platform CI is now established for this branch. Live providers, Windows conversation journeys, packaged builds, and large projects or long conversations remain open.
