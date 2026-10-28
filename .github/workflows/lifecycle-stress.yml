@@ -44,6 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1
       - name: Install locked test dependencies
+        timeout-minutes: 15
         run: npm ci
       - name: Twenty independent lifecycle iterations
         run: node scripts/lifecycle-stress.mjs --iterations 20 --seed ci-${{ github.run_id }}-${{ github.run_attempt }} --output round2-lifecycle-results
