@@ -44,6 +44,7 @@ import {
   autoAcceptOptions,
 } from "../../../packages/domain/auto-accept";
 import { useScopedRefresh } from "./state/scoped";
+import { breadcrumb, useThreadIndex } from "./state/threads";
 import { summarizeUsage } from "../../../packages/domain/usage";
 import { SettingsScreen } from "./screens/settings";
 import { HistoryScreen } from "./screens/history";
@@ -133,6 +134,8 @@ function App() {
   const [navigationReady, setNavigationReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
+  /** The open coordinator thread (`goal:<id>` or `loop:<id>`), if any. */
+  const [threadId, setThreadId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState("");
   const [installationId, setInstallationId] = useState("");
   const selectedProject = useRef(projectId);
@@ -233,6 +236,7 @@ function App() {
         if (state.projects.some((project) => project.id === saved.projectId)) {
           setProjectId(saved.projectId);
           setProjectView(validProjectView(saved.projectView));
+          setThreadId(saved.threadId ?? null);
           setPage("project");
         }
         setNavigationReady(true);
@@ -247,9 +251,10 @@ function App() {
           projectId: projectId || null,
           workflowId: null,
           projectView,
+          threadId,
         })
         .catch(() => {});
-  }, [navigationReady, projectId, projectView]);
+  }, [navigationReady, projectId, projectView, threadId]);
   useEffect(() => {
     void window.topsl
       .command({ type: "state" })
@@ -283,6 +288,7 @@ function App() {
     ) {
       setProjectId("");
       setProjectView("overview");
+      setThreadId(null);
       setPage("projects");
     }
   }, [state, navigationReady]);
@@ -291,14 +297,25 @@ function App() {
     setPage("project");
     setNavOpen(false);
   }
+  /** Opens a project at its home: a new conversation with its coordinators. */
   function selectProject(id: string) {
     setProjectId(id);
+    setThreadId(null);
     setConversationId("");
     setAttachedSnapshot(null);
     setTerminalId("");
-    openProjectView("overview");
+    openProjectView("coordinator");
+  }
+  /** Opens one coordinator thread, or the project's home with none. */
+  function openThread(next: string | null, inProject = projectId) {
+    if (inProject !== projectId) selectProject(inProject);
+    setThreadId(next);
+    openProjectView("coordinator");
   }
   const project = state?.projects.find((p) => p.id === projectId);
+  const threadIndex = useThreadIndex(
+    state?.locked ? [] : (state?.projects.map((p) => p.id) ?? []),
+  );
   const conversations =
     scopedData?.conversations ??
     state?.conversations.filter((c) => c.projectId === projectId) ??
@@ -372,11 +389,7 @@ function App() {
   async function addProject() {
     const origin = selectedProject.current;
     const result = await act({ type: "project-add" });
-    if (result && selectedProject.current === origin) {
-      setProjectId(result.id);
-      setConversationId("");
-      openProjectView("overview");
-    }
+    if (result && selectedProject.current === origin) selectProject(result.id);
   }
   async function newConversation() {
     if (!projectId) return;
@@ -497,6 +510,9 @@ function App() {
           selectView={openProjectView}
           addProject={addProject}
           palette={() => setPalette(true)}
+          threads={threadIndex}
+          threadId={threadId}
+          openThread={openThread}
         />
         <div className="main-column">
           <header className="topbar">
@@ -509,11 +525,17 @@ function App() {
               <AtlasIcon name="menu" /> Navigation
             </ActionButton>
             <span>
-              {page === "applications"
-                ? "Topsl / Applications"
-                : page === "project"
-                  ? `${project?.name ?? "Project"} / ${viewLabel(projectView)}`
-                  : `Topsl / ${viewLabel(page)}`}
+              {breadcrumb({
+                page,
+                projectName: project?.name,
+                view: projectView,
+                viewLabel: viewLabel(projectView),
+                threadTitle: threadId
+                  ? (threadIndex[projectId]?.threads.find(
+                      (t) => t.threadId === threadId,
+                    )?.title ?? "Conversation")
+                  : null,
+              })}
             </span>
           </header>
           {state.serviceError && (
@@ -588,6 +610,8 @@ function App() {
                 projectPath={project?.path}
                 view={projectView}
                 onView={openProjectView}
+                threadId={threadId}
+                onThread={(next) => openThread(next)}
                 sessionsContent={
                   <>
                     {project &&
@@ -1183,11 +1207,16 @@ function App() {
                   key={view}
                   disabled={!projectId}
                   onClick={() => {
-                    openProjectView(view);
+                    // The coordinator opens as the project's home.
+                    if (view === "coordinator") openThread(null);
+                    else openProjectView(view);
                     setPalette(false);
                   }}
                 >
-                  {viewLabel(view)} →
+                  {view === "coordinator"
+                    ? "New conversation"
+                    : viewLabel(view)}{" "}
+                  →
                 </ActionButton>
               ))}
               <ActionButton

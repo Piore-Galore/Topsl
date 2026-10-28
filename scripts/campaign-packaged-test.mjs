@@ -43,6 +43,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import os from "node:os";
+import { selectProject } from "./desktop-navigation.mjs";
 import path from "node:path";
 
 // Paths default to the 19 October 2026 campaign layout; override them to rerun
@@ -997,7 +998,7 @@ async function upgrade(version) {
     notes.privileges = privileges;
     check("PKG-10", "no privilege widening: Claude structured route off, loops off, auto-accept off, discovery/sync off, no trusted executables", privileges.claudeStructuredRoute?.enabled === false && privileges.loopsEnabled === false && privileges.autoAccept === "off" && !privileges.projectSync && !privileges.codexProjectSync && privileges.trustedInstallations.length === 0 && privileges.testProfile === false, privileges);
     // An upgraded profile has no remembered project selection; choose it as the owner would.
-    await session.page.getByRole("combobox", { name: "Selected project" }).selectOption(old.projects[0].id);
+    await selectProject(session.page, old.projects[0].name);
     notes.terminal = await terminalJourney(session, root, "J-12");
     notes.moduleErrors = moduleErrors(session.logs);
     check("J-12", "no missing-module or wrong-ABI errors", notes.moduleErrors.length === 0, notes.moduleErrors);
