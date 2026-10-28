@@ -1,3 +1,10 @@
+import {
+  automaticMembers,
+  eligibleModels,
+  memberChangeProblem,
+  roleDefinitionFor,
+  roleLocks,
+} from "./organization";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type { Project } from "../domain/types";
 import {
@@ -780,6 +787,18 @@ export class LoopSupervisor {
   }
 
   /** Starts the run under the authority the owner just confirmed natively. */
+  /**
+   * Checks before a run starts, such as a native session's rule that one
+   * goal or loop runs at a time. A guard returns why the run cannot start.
+   */
+  readonly startGuards: Array<
+    (run: {
+      id: string;
+      projectId: string;
+      conversationId: string;
+    }) => string | null
+  > = [];
+
   async start(input: { runId: string; digest: string; commandId: string }) {
     this.assertEnabled();
     const run = this.run(input.runId);
@@ -792,6 +811,10 @@ export class LoopSupervisor {
           throw new Error(
             "This run already started. Use resume to continue it.",
           );
+        for (const guard of this.startGuards) {
+          const refusal = guard(run);
+          if (refusal) throw new Error(refusal);
+        }
         const review = this.authorityReview(run.id);
         if (input.digest !== review.digest)
           throw new Error(
@@ -3262,19 +3285,11 @@ export class LoopSupervisor {
       { binding, scopeId: `loop:${run.id}` },
     );
     const overrides = this.overrides(run);
-    const released = group.form === "auto" && !group.members.length;
-    const fields = new Set(
-      (group.userFields ?? []).filter(
-        (f) => !(released && (f === "form" || f === "members")),
-      ),
-    );
     return {
-      fields,
+      ...roleLocks(group),
       presence: overrides.some(
         (o) => o.kind === "role-presence" && o.roleId === roleId,
       ),
-      pinned: group.members.some((m) => m.pin),
-      exact: group.form === "exact" && fields.has("members"),
     };
   }
 
@@ -3304,17 +3319,6 @@ export class LoopSupervisor {
     const routes = this.driver
       .routes(run.projectId)
       .filter((r) => !binding.excludedProviders.includes(r.provider));
-    const eligible = (purpose: string) =>
-      new Set(
-        routes
-          .filter(
-            (r) =>
-              r.route === "managed-structured" &&
-              r.catalog.fresh &&
-              r.purposes[purpose as "information"]?.ready,
-          )
-          .flatMap((r) => r.catalog.models.map((m) => m.model)),
-      );
     const role = (roleId: string) => roles.find((r) => r.roleId === roleId);
     const constrained = (roleId: string) => {
       const l = this.locks(run, roleId, binding);
@@ -3477,32 +3481,18 @@ export class LoopSupervisor {
             rejections.push(`Role ${op.roleId} is not active.`);
             break;
           }
-          const l = this.locks(run, op.roleId, binding);
-          if (l.exact) {
-            rejections.push(
-              `Role ${op.roleId} has your exact roster; its membership cannot change automatically.`,
-            );
-            break;
-          }
-          if (op.count !== null && l.fields.has("count")) {
-            rejections.push(
-              `Role ${op.roleId}'s member count is fixed by your settings.`,
-            );
-            break;
-          }
-          if (op.count !== null && op.count > limit) {
-            rejections.push(
-              `${op.count} members exceed the configured limit of ${limit} for one role.`,
-            );
-            break;
-          }
           const purpose = this.repo.role(run.projectId, op.roleId).purpose;
-          const ok = eligible(purpose);
-          const unknown = op.models.filter((m) => !ok.has(m));
-          if (unknown.length) {
-            rejections.push(
-              `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not an observed, qualified model for ${purpose} on an allowed route.`,
-            );
+          const problem = memberChangeProblem({
+            roleId: op.roleId,
+            locks: this.locks(run, op.roleId, binding),
+            count: op.count,
+            limit,
+            purpose,
+            models: op.models,
+            eligible: eligibleModels(routes, purpose),
+          });
+          if (problem) {
+            rejections.push(problem);
             break;
           }
           r.adaptive.count = op.count;
@@ -3611,37 +3601,17 @@ export class LoopSupervisor {
     // the purpose their function requires.
     for (const c of created) {
       const key = `${run.projectId}:${c.roleId}`;
-      if (!this.repo.get(kinds.role, key)) {
-        const role: RoleDefinition & { roleId: string } = {
-          id: key,
-          roleId: c.roleId,
-          projectId: run.projectId,
-          revision: 1,
-          title: c.title,
-          instructions: c.instructions,
-          purpose: c.purpose as RoleDefinition["purpose"],
-          requiredCapabilities: [],
-          permittedOperations:
-            c.purpose === "implementation"
-              ? ["write-permitted-outputs"]
-              : ["read-inputs"],
-          outputContract:
-            c.purpose === "implementation"
-              ? "code-candidate"
-              : c.purpose === "candidate-review"
-                ? "candidate-review"
-                : c.purpose === "coordinator-contribution"
-                  ? "coordinator-proposal"
-                  : "information",
-          defaultCollaboration:
-            c.purpose === "implementation"
-              ? "parallel-partitioned"
-              : c.purpose === "coordinator-contribution"
-                ? "peer-collaboration"
-                : "parallel-independent",
-        };
-        this.repo.saveRevisioned(kinds.role, role);
-      }
+      if (!this.repo.get(kinds.role, key))
+        this.repo.saveRevisioned(
+          kinds.role,
+          roleDefinitionFor({
+            projectId: run.projectId,
+            roleId: c.roleId,
+            title: c.title,
+            instructions: c.instructions,
+            purpose: c.purpose as RoleDefinition["purpose"],
+          }),
+        );
     }
     const fixed = bindings.map((b) => {
       const r = this.repo.role(run.projectId, b.roleId);
@@ -3746,18 +3716,7 @@ export class LoopSupervisor {
       if (a.collaboration) value.collaboration = a.collaboration;
       if (a.executionWidth !== null) value.executionWidth = a.executionWidth;
       if (a.models.length)
-        value.members = a.models.map((model, i) => ({
-          memberId: `${r.roleId}-auto-${i + 1}`,
-          required: true,
-          pin: null,
-          fallbacks: [],
-          preferences: { providers: [], models: [model] },
-          source: {
-            kind: "auto",
-            reference: topology.id,
-            provenance: "default",
-          },
-        }));
+        value.members = automaticMembers(r.roleId, a.models, topology.id);
       if (Object.keys(value).length) adaptive[r.roleId] = value;
     }
     const goals = this.goals(run);
@@ -6753,6 +6712,32 @@ export class LoopSupervisor {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
       }));
+  }
+
+  /**
+   * Runs as a native session sees them: the accepted result is the run's
+   * latest promoted checkpoint, never the initial capture of the folder.
+   */
+  sessionFacts(projectId: string) {
+    return [...this.store.iterate<LoopRun>(loopKinds.run, { projectId })].map(
+      (r) => {
+        const head = r.acceptedCheckpointId
+          ? this.repo.get<LoopCheckpoint>(
+              loopKinds.checkpoint,
+              r.acceptedCheckpointId,
+            )
+          : undefined;
+        return {
+          id: r.id,
+          conversationId: r.conversationId,
+          title: r.title,
+          state: r.state,
+          started: r.started,
+          acceptedCandidateId:
+            head && head.kind === "promoted" ? head.candidateId : null,
+        };
+      },
+    );
   }
 
   timeline(runId: string, cursor: string | null = null, limit = 20) {

@@ -7,6 +7,7 @@ import {
   requiredCheckSchema,
 } from "./orchestration-commands";
 import { loopCommands } from "./loop-commands";
+import { sessionCommands } from "./session-commands";
 import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
@@ -49,6 +50,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...candidateReviewCommands,
   ...orchestrationCommands,
   ...loopCommands,
+  ...sessionCommands,
   z.object({ type: z.literal("environment-detect"), projectId: id }),
   z.object({
     type: z.literal("environment-selection-create"),

@@ -388,10 +388,11 @@ await app.evaluate(({ dialog }) => {
 });
 await page.setViewportSize({ width: 1280, height: 880 });
 const mod = process.platform === "darwin" ? "Meta" : "Control";
-// "New conversation" is the coordinator destination: the project's home.
-const projectNames = ["Overview", "Sessions", "New conversation", "Tasks", "Changes", "Context", "History", "Synchronization"];
-const toolNames = projectNames.filter((name) => name !== "New conversation");
-const savedView = (nav) => (nav === "New conversation" ? "coordinator" : nav.toLowerCase());
+// "New session" is the coordinator destination: the project's home.
+const projectNames = ["Overview", "Provider tools", "New session", "Tasks", "Changes", "Context", "History", "Synchronization"];
+const toolNames = projectNames.filter((name) => name !== "New session");
+const savedView = (nav) =>
+  nav === "New session" ? "coordinator" : nav === "Provider tools" ? "sessions" : nav.toLowerCase();
 const globalPages = [
   { nav: "Projects", h1: "Projects", crumb: "Topsl / Projects" },
   { nav: "Applications", h1: "Applications", crumb: "Topsl / Applications" },
@@ -437,8 +438,8 @@ async function checkDestination({ nav, h1, crumb }, projectView, projectId) {
 await step("UI-03 empty profile: global destinations; no project tools and no new conversation", ["UI-03"], async () => {
   for (const destination of globalPages) await checkDestination(destination);
   await expect(page.getByRole("navigation", { name: "Project navigation" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "New conversation", exact: true })).toBeDisabled();
-  await expect(page.getByRole("list", { name: "Projects and conversations" }).getByRole("listitem")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New session", exact: true })).toBeDisabled();
+  await expect(page.getByRole("list", { name: "Projects and sessions" }).getByRole("listitem")).toHaveCount(0);
 }, page);
 
 await step("UI-05 command palette: unavailable actions stay unavailable (empty profile)", ["UI-05"], async () => {
@@ -504,7 +505,7 @@ await step("UI-03 populated: all 11 destinations, one h1, marker, scope and save
     await checkDestination(
       {
         nav,
-        h1: ["Overview", "New conversation"].includes(nav) ? nameA : nav,
+        h1: ["Overview", "New session"].includes(nav) ? nameA : nav,
         crumb: `${nameA} / ${nav}`,
       },
       savedView(nav),
@@ -663,7 +664,7 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
   await setup.locator("summary").first().click();
   const objective = setup.getByRole("textbox", { name: "Objective", exact: true });
   await objective.fill("Unsaved draft 草稿 survives resizing");
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await page.getByRole("combobox", { name: "Runtime", exact: true }).selectOption(installed.id);
   await page.getByRole("button", { name: "Native terminal", exact: true }).click();
   const terminal = page.locator(".terminal-panel");
@@ -677,7 +678,7 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
     await expect(page.getByRole("dialog", { name: "Workbench navigation" })).toBeVisible();
     await page.keyboard.press("Escape");
     await navigate(page, "Overview");
-    await navigate(page, "Sessions");
+    await navigate(page, "Provider tools");
     expect(await terminal.getAttribute("data-session-id")).toBe(id);
     expect(await xterm.evaluate((node) => node.isConnected)).toBe(true);
     expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -689,7 +690,7 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
   await navigate(page, "Tasks");
   await expect(objective).toHaveValue("Unsaved draft 草稿 survives resizing");
   await objective.fill("");
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await terminal.getByRole("button", { name: "Close session", exact: true }).click();
   await expect(terminal).toHaveCount(0);
   return { terminal: id };
@@ -790,7 +791,7 @@ await step("UI-08 IME composition Enter does not submit search or publish contex
 }, page);
 
 await step("UI-08 multiline paste and shortcuts preserve the composer text", ["UI-08"], async () => {
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   const message = page.getByRole("textbox", { name: "Message" });
   const text = "第一行 first line\n  second line with emoji 🚀\n\tthird line · /路径/with spaces";
   await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), text);
@@ -805,7 +806,7 @@ await step("UI-08 multiline paste and shortcuts preserve the composer text", ["U
   await expect(message).toBeFocused();
   await expect(message).toHaveValue(text);
   await navigate(page, "Context");
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await expect(message).toHaveValue(text);
   await message.fill("");
 }, page);
@@ -843,7 +844,7 @@ await step("UI-09 late Beta replies after A->B->A cannot replace Alpha", ["UI-09
   await showsProject(nameA, lineA);
   await expect(page.getByText("Beta-only task 乙")).toHaveCount(0);
   expect((await command(page, { type: "navigation-query" })).projectId).toBe(idA);
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await expect(page.getByRole("combobox", { name: "Conversation" }).locator("option", { hasText: "Beta-only conversation" })).toHaveCount(0);
   await expect(page.locator("footer.statusbar")).toContainText("Ready");
   return { releasedBetaReplies: released, lineA, lineB };
@@ -879,7 +880,7 @@ await step("UI-09 a late Beta error after A->B->A is not shown in Alpha", ["UI-0
   await settle(page, 800);
   await expect(page.getByText(/Late Beta failure/)).toHaveCount(0);
   await showsProject(nameA, lineA);
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await expect(page.getByText(/Late Beta failure/)).toHaveCount(0);
   return { releasedBetaErrors: released };
 }, page);
@@ -952,7 +953,7 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
   await showsProject(nameA, lineA);
   const freshness = page.locator(".scope-freshness:visible");
   // A mutation whose reply is still outstanding when the connection drops.
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   // The service's own project snapshot, not the main process's cached state.
   const storedConversations = async () =>
     (await command(page, { type: "scope-snapshot", projectId: idA })).conversations.length;
@@ -1011,7 +1012,7 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
 }, page);
 
 await step("UI-11 one pending mutation per target; unrelated controls stay usable; recovers after reply and error", ["UI-11"], async () => {
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   const newChat = page.getByRole("button", { name: "+ New chat", exact: true });
   const countAdds = async () => (await calls(app)).filter((c) => c.type === "conversation-add" && c.projectId === idA).length;
   // Negative control: the call log does see two dispatches when two are made.

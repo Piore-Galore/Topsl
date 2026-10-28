@@ -143,6 +143,7 @@ import {
 import { desktopProjectRoute } from "../../packages/workspace/project-opening";
 import { Orchestrator } from "../../packages/orchestration/engine";
 import { RuntimeOrchestrationDriver } from "../../packages/orchestration/runtime-driver";
+import { SessionSupervisor } from "../../packages/orchestration/session-engine";
 import { LoopSupervisor } from "../../packages/orchestration/loop-engine";
 import { RuntimeLoopDriver } from "../../packages/orchestration/loop-checkpoints";
 import { LOOP_FEATURE_FLAG } from "../../packages/domain/recursive-loops";
@@ -190,6 +191,7 @@ export class Service {
   readonly orchestration: Orchestrator;
   /** Recursive Looping (experimental): the loop supervisor above the coordinator engine. */
   readonly loops: LoopSupervisor;
+  readonly sessions: SessionSupervisor;
   private timer?: ReturnType<typeof setInterval>;
   private ownershipTimer?: ReturnType<typeof setInterval>;
   private workflowTimer?: ReturnType<typeof setInterval>;
@@ -475,6 +477,28 @@ export class Service {
         exportRoot: path.join(directory, "loop-exports"),
       },
     );
+    this.sessions = new SessionSupervisor(
+      this.store,
+      this.orchestration,
+      orchestrationDriver,
+      () => this.changed(),
+      {
+        runs: (projectId) => this.loops.sessionFacts(projectId),
+        stop: async (runId, commandId) => {
+          await this.loops.control({ runId, action: "stop", commandId });
+        },
+      },
+    );
+    // A native session runs one goal or loop at a time.
+    this.loops.startGuards.push((run) => {
+      const session = this.orchestration.session(run.conversationId);
+      if (session?.origin !== "native") return null;
+      return session.queue.some(
+        (w) => w.state === "running" && w.runId !== run.id,
+      )
+        ? "This session is already running a goal or loop. Start this run when it finishes, or stop the current work first."
+        : null;
+    });
     const projectPaths = isolatedTest
       ? projectSourcePaths(path.join(directory, "native-home"), {})
       : projectSourcePaths();
@@ -502,10 +526,16 @@ export class Service {
   async start(): Promise<void> {
     await this.orchestration.recover();
     await this.loops.recover();
+    await this.sessions.recover();
     this.workflowTimer = setInterval(() => {
       this.background(this.parallel.tick());
       // The loop supervisor reads what the engine settled in the same tick.
-      this.background(this.orchestration.tick().then(() => this.loops.tick()));
+      this.background(
+        this.orchestration
+          .tick()
+          .then(() => this.loops.tick())
+          .then(() => this.sessions.tick()),
+      );
       for (const state of this.store.iterate<BuilderReviewerState>(
         "builder-reviewer",
       )) {
@@ -1904,8 +1934,10 @@ export class Service {
           projectId: savedNavigation?.projectId ?? null,
           workflowId: savedNavigation?.workflowId ?? null,
           projectView: validProjectView(savedNavigation?.projectView),
+          // A goal thread saved before sessions opens its session.
           threadId: parseThreadId(savedNavigation?.threadId)
-            ? savedNavigation.threadId
+            ? (this.sessions.resolveThread(savedNavigation.threadId)
+                ?.threadId ?? null)
             : null,
         };
       }
@@ -2038,6 +2070,7 @@ export class Service {
               projectId,
               ...this.orchestration.threadFacts(projectId),
               runs: this.loops.list(projectId),
+              sessions: this.sessions.list(projectId),
             });
             return {
               projectId,
@@ -2057,6 +2090,28 @@ export class Service {
         return this.orchestration.createConversation(command);
       case "orchestration-message":
         return this.orchestration.post(command);
+      case "session-create": {
+        this.require<Project>("project", command.projectId);
+        const { type: _, ...input } = command;
+        return this.sessions.create(input);
+      }
+      case "session-list":
+        this.require<Project>("project", command.projectId);
+        return this.sessions.list(command.projectId);
+      case "session-query":
+        return this.sessions.query(command.sessionId);
+      case "session-update":
+        return this.sessions.update(command);
+      case "session-message":
+        return this.sessions.message(command);
+      case "session-choose":
+        return this.sessions.choose(command);
+      case "session-queue":
+        return this.sessions.queue(command);
+      case "session-control":
+        return this.sessions.control(command);
+      case "session-role-save":
+        return this.sessions.saveRole(command);
       case "orchestration-group-set":
         this.require<Project>("project", command.projectId);
         return this.orchestration.setGroup(command);

@@ -216,6 +216,8 @@ Each contribution, reconciliation, and endorsement turn releases its own lease a
 
 The coordination snapshot is immutable as evidence. Routine execution progress can be queued for the next round, but a change that invalidates a proposed action's preconditions must prevent that action from committing. New user scope changes, membership changes, pause/stop, and revoked authority advance the relevant revision or control generation immediately.
 
+**Native sessions, 29 October 2026.** A [native Topsl session](Native_Sessions_Plan.md) runs this peer protocol for every owner message as well: each selected coordinator answers in the `session-v1` contract (intent, reply, optional clarifying question and team proposal), the largest group of identical proposals forms the candidate the others endorse, one reconciliation round follows a disagreement, and unresolved alternatives go to the owner. The first configured coordinator prepares the shared wording from its peers' answers without extra decision authority. Goals the session starts then use the coordination round above unchanged.
+
 ### Resolving disagreement
 
 For an exact roster of N coordinators, the default requires every member's contribution and endorsement. Surface concrete disagreements and their assumptions, then allow a bounded exchange and one revised candidate. A targeted check or evidence task can help resolve a factual issue when it is authorized and admitted under the same declared decision policy.

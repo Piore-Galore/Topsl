@@ -115,10 +115,11 @@ test("the thread list re-reads only projects whose threads changed", () => {
         { kind: "orch-message", projectId: "b" },
         { kind: "loop-run", projectId: "c" },
         { kind: "orch-conversation", projectId: "a" },
+        { kind: "orch-session", projectId: "d" },
         { kind: "goal", projectId: null },
       ],
     }),
-  ).toEqual(["a", "c"]);
+  ).toEqual(["a", "c", "d"]);
 });
 
 test("the top bar names the open thread or the project's home", () => {
@@ -128,7 +129,7 @@ test("the top bar names the open thread or the project's home", () => {
     viewLabel: "Coordinator",
   };
   expect(breadcrumb({ ...base, view: "coordinator", threadTitle: null })).toBe(
-    "Topsl / New conversation",
+    "Topsl / New session",
   );
   expect(
     breadcrumb({ ...base, view: "coordinator", threadTitle: "Fix sync" }),

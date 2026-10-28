@@ -11,6 +11,7 @@ import type {
 import { reviewSchema } from "../workflows/builder-reviewer";
 import type { TurnProtocol } from "../domain/recursive-loops";
 import { loopOutputSchema } from "./loop-contracts";
+import { sessionOutputSchema } from "./session-contracts";
 
 /**
  * Output contracts per execution purpose. Every purpose parses only the
@@ -102,6 +103,8 @@ export function purposeOutputSchema(
   if (purpose === "direct-chat") return null;
   if (protocol?.kind === "recursive-loop-v1")
     return loopOutputSchema(purpose, protocol);
+  if (protocol?.kind === "session-v1")
+    return sessionOutputSchema(purpose, protocol);
   return z.toJSONSchema(purposeSchemas[purpose]) as Record<string, unknown>;
 }
 

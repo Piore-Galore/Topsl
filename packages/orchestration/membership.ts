@@ -28,7 +28,11 @@ export interface SettingsLayer {
     | "goal-policy"
     | "goal-role"
     | "task"
-    | "adaptive";
+    | "adaptive"
+    /** A native session's captured project defaults, its owner settings and its automatic team. */
+    | "session-inherited"
+    | "session-role"
+    | "session-automatic";
   revisionId: string | null;
   settings: RoleGroupSettings;
   /**

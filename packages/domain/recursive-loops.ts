@@ -843,11 +843,17 @@ export const loopDecisionStages = ["boundary", "organize", "evaluate"] as const;
 export type LoopDecisionStage = (typeof loopDecisionStages)[number];
 
 /** The protocol versions an execution turn can be bound to. */
-export const protocolKinds = ["coordinator-v1", "recursive-loop-v1"] as const;
+export const protocolKinds = [
+  "coordinator-v1",
+  "recursive-loop-v1",
+  /** A native session's intake and wording turns (docs/Native_Sessions_Plan.md). */
+  "session-v1",
+] as const;
 export type ProtocolKind = (typeof protocolKinds)[number];
 export interface TurnProtocol {
   kind: ProtocolKind;
-  stage: LoopDecisionStage | null;
+  /** A loop decision stage, or a session-v1 stage. */
+  stage: LoopDecisionStage | "intake" | "wording" | null;
   mode: LoopMode | null;
 }
 

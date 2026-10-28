@@ -168,12 +168,12 @@ describe("thread summaries", () => {
       runs: [run({})],
     });
     expect(threads.map((t) => t.threadId)).toEqual([
-      "goal:c1",
+      "session:c1",
       "loop:r1",
-      "goal:c9",
+      "session:c9",
     ]);
     expect(threads[0]).toMatchObject({
-      kind: "goal",
+      kind: "session",
       title: "Change the value to two",
       needsYou: "Accept",
     });
@@ -184,7 +184,12 @@ describe("thread summaries", () => {
   test("titles and thread IDs", () => {
     expect(threadTitle("  Fix it\nwith detail")).toBe("Fix it");
     expect(threadTitle("x".repeat(100))).toHaveLength(80);
-    expect(parseThreadId("goal:abc")).toEqual({ kind: "goal", id: "abc" });
+    // A goal thread ID saved before sessions opens its conversation's session.
+    expect(parseThreadId("goal:abc")).toEqual({ kind: "session", id: "abc" });
+    expect(parseThreadId("session:abc")).toEqual({
+      kind: "session",
+      id: "abc",
+    });
     expect(parseThreadId("loop:r:1")).toEqual({ kind: "loop", id: "r:1" });
     expect(parseThreadId("coordinator")).toBeNull();
     expect(parseThreadId(null)).toBeNull();

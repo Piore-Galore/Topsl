@@ -893,6 +893,60 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     }
   }
 
+  /**
+   * A session goal's baseline: the session's accepted candidate, copied into
+   * a Topsl-owned folder and captured for the new goal, so the next goal
+   * continues from it whether or not it was applied to the project folder.
+   */
+  async continueFrom(input: {
+    projectId: string;
+    goalId: string;
+    candidateId: string;
+  }): Promise<string> {
+    const prior = this.store.get<{ candidateId: string }>(
+      "session-continuation",
+      input.goalId,
+    );
+    if (prior) return prior.candidateId;
+    const source = this.snapshot(input.candidateId);
+    const parent = this.deps.integrationRoot ?? os.tmpdir();
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    const root = await mkdtemp(path.join(parent, "topsl-continuation-"));
+    try {
+      const files = source.files.filter((f) => f.hash);
+      await writeManagedSnapshot({ ...source, files }, root, this.store);
+      const captured = await captureCandidate(this.store, {
+        root,
+        projectId: input.projectId,
+        workflowId: input.goalId,
+        baseCandidateId: source.id,
+        selectedPaths: files.map((f) => f.path),
+      });
+      if (
+        files.some(
+          (f) =>
+            !fileEqual(
+              f,
+              captured.files.find((c) => c.path === f.path),
+            ),
+        )
+      )
+        throw new Error(
+          "The owned copy differs from the accepted result it was made from.",
+        );
+      this.store.immutable("session-continuation", {
+        id: input.goalId,
+        projectId: input.projectId,
+        candidateId: captured.id,
+        sourceCandidateId: source.id,
+      });
+      return captured.id;
+    } catch (error) {
+      await rm(root, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
   fileText(candidateId: string, filePath: string): string | null {
     const candidate = this.store.get<CandidateSnapshot>(
       "candidate",

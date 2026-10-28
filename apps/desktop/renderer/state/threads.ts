@@ -11,6 +11,8 @@ export interface ProjectThreads {
 /** Record kinds whose change can alter a project's thread list. */
 const threadKinds = new Set([
   "orch-conversation",
+  // A native session's queue, attention and discussion-only listing.
+  "orch-session",
   "goal",
   "loop-run",
   "project",
@@ -97,5 +99,5 @@ export function breadcrumb(input: {
     return `Topsl / ${input.page.replace(/^./, (c) => c.toUpperCase())}`;
   const project = input.projectName ?? "Project";
   if (input.view !== "coordinator") return `${project} / ${input.viewLabel}`;
-  return `${project} / ${input.threadTitle ?? "New conversation"}`;
+  return `${project} / ${input.threadTitle ?? "New session"}`;
 }

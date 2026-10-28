@@ -413,8 +413,8 @@ export function TeamPane({
   return (
     <div className="pane-section">
       <p className="muted">
-        Changes here apply to this goal. Project defaults for new goals are on
-        the project's New conversation page.
+        Changes here apply to this goal only. The session's team is above;
+        project defaults for new sessions are on the project's New session page.
       </p>
       <ul className="team-summary">
         {view.groups.map((x: any) => (

@@ -34,6 +34,31 @@ export const stateTone: Record<string, string> = {
 export type Run = (key: string, command: Command) => Promise<any>;
 
 /**
+ * Re-reads a screen when the application state changes, at most every two
+ * seconds. Runtime qualification and model catalogs are not project records,
+ * so project change events do not carry them; a coordinator picker opened
+ * before a runtime qualified would otherwise keep showing it as unavailable.
+ */
+export function useRuntimeRefresh(refresh: () => unknown) {
+  const latest = useRef(refresh);
+  latest.current = refresh;
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = window.topsl.subscribe((event: { type: string }) => {
+      if (event.type !== "state" || timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        void latest.current();
+      }, 2000);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe?.();
+    };
+  }, []);
+}
+
+/**
  * Runs owner commands for one screen: each command's error is kept under its
  * key, and a result that arrives after the screen changed (another project
  * or thread) neither refreshes nor reports.

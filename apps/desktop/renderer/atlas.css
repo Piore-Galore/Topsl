@@ -1415,3 +1415,134 @@ button.link {
     width: 100%;
   }
 }
+
+/* Native Topsl sessions (docs/Native_Sessions_Plan.md). */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 8px 0 0;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.segmented label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.segmented label.selected {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.segmented input {
+  margin: 0;
+}
+.composer-target select {
+  max-width: 260px;
+}
+.composer-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.session-setup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.coordinator-picker {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.coordinator-picker legend {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+.model-options,
+.picked-coordinators,
+.work-queue,
+.roster-picker {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.model-options li,
+.picked-coordinators li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.model-options li.unavailable {
+  color: var(--muted);
+}
+.work-queue {
+  max-height: none;
+}
+.work-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.work-item .badge {
+  margin-left: 6px;
+}
+.contributions {
+  margin-top: 6px;
+  font-size: 13px;
+}
+.contributions > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.contributions ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.contributions li {
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+.turn.pending .turn-text {
+  font-style: italic;
+}
+.session-attention {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warm-line);
+  border-radius: 6px;
+  background: var(--warm-soft);
+  color: var(--warm-ink);
+}
+.session-team .role-create {
+  display: grid;
+  gap: 6px;
+}
+.session-team .role-create input,
+.session-team .role-create textarea {
+  width: 100%;
+  max-width: 100%;
+}
+@media (max-width: 1199px) {
+  .session-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

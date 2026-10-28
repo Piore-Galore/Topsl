@@ -509,6 +509,22 @@ The shell now lists each project's coordinator conversations in the sidebar ([Co
 
 The Atlas journey also asserts one `h1` and one `aria-current="page"` on every destination and on a goal conversation, and captures the conversation's pane docked at 1200px and overlaid at 1199px. The coordinator journey checks that the open conversation is restored after a restart.
 
+## Native sessions: journey names — 29 October 2026
+
+Coordinator work now starts in a native Topsl session ([plan and record](../Native_Sessions_Plan.md)). The journeys follow the renamed path; no assertion about stored settings, acceptance, applying or restart was weakened.
+
+| Removed or changed | Journeys now | Why |
+| --- | --- | --- |
+| **New conversation** (sidebar button, home region, palette) | **New session** | The session is the primary workspace |
+| Home **Send**; **Run mode: Single goal** | **Start session**; **Run mode: Session** | A session can start with discussion; the first message no longer is always a goal |
+| Region **Coordinator conversation** | Region **Session** (`exact: true`, since "New session" and "Recent sessions" contain the word) | The goal thread became the session view |
+| Sidebar lists **Projects and conversations**, **&lt;project&gt; conversations** | **Projects and sessions**, **&lt;project&gt; sessions** | Same tree, named for what it lists |
+| Project tool **Sessions** | **Provider tools** (stored view value still `sessions`) | "Session" now names a Topsl session |
+| Coordinator journey `send()` returned once the message was shown | It also waits until every session intake is decided | A message's effect (steering, team instructions) now follows the coordinators' structured answer, after one stand-in turn, instead of applying synchronously; `toContainText("Astra + Sol")` had passed on "Astra + Sol + Fable" |
+| Atlas journey expected a goal card from the first message | It expects the message and the service note that no coordinator can answer | The Atlas profile qualifies no coordinator, and a session starts no goal without one |
+| — | New [session journey](../../scripts/desktop-session-test.mjs) in `npm run test:desktop` | The plan's setup, discussion, delegation, override, second-goal, theme, compact and restart journey |
+| The sidebar helper clicked the **Navigation** toggle with Playwright's 30-second wait | It clicks with a 2-second wait and reads the layout again when the toggle has gone | In the full `npm run test:desktop` run the Atlas journey's zoom reset switched the layout back to the aside between the check and the click, and the click waited out its timeout on a hidden toggle; the journey passed alone |
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

@@ -49,10 +49,8 @@ try {
   await expect(
     page.getByRole("heading", { name: "Atlas 项目", exact: true }),
   ).toBeVisible();
-  // Adding a project opens its New conversation page.
-  await expect(
-    page.getByRole("region", { name: "New conversation" }),
-  ).toBeVisible();
+  // Adding a project opens its New session page.
+  await expect(page.getByRole("region", { name: "New session" })).toBeVisible();
   selectedProject = (
     await page.evaluate(() =>
       window.topsl.command({ type: "navigation-query" }),
@@ -75,8 +73,8 @@ try {
     );
     for (const view of [
       "Overview",
-      "Sessions",
-      "New conversation",
+      "Provider tools",
+      "New session",
       "Tasks",
       "Changes",
       "Context",
@@ -134,19 +132,28 @@ try {
       );
     reports.push({ theme, contrast });
   }
-  // A goal conversation: transcript, composer and a detail pane, docked at
-  // 1200px and wider and over the transcript below.
-  await navigate(page, "New conversation");
-  const home = page.getByRole("region", { name: "New conversation" });
+  // A session: transcript, composer and a detail pane, docked at 1200px and
+  // wider and over the transcript below. This journey qualifies no
+  // coordinator, so the session reports that no coordinator can answer.
+  await navigate(page, "New session");
+  const home = page.getByRole("region", { name: "New session" });
   await home
     .getByRole("textbox", { name: "Message" })
     .fill("Chart the harbor before the tide turns.");
-  await home.getByRole("button", { name: "Send", exact: true }).click();
-  const thread = page.getByRole("region", { name: "Coordinator conversation" });
+  await home
+    .getByRole("button", { name: "Start session", exact: true })
+    .click();
+  const thread = page.getByRole("region", { name: "Session", exact: true });
+  const transcript = thread.getByRole("list", { name: "Conversation" });
   await expect(
-    thread.getByRole("article", {
-      name: "Goal Chart the harbor before the tide turns.",
-    }),
+    transcript
+      .getByRole("listitem")
+      .filter({ hasText: "Chart the harbor before the tide turns." }),
+  ).toBeVisible();
+  await expect(
+    transcript
+      .getByRole("listitem")
+      .filter({ hasText: "The coordinators cannot answer yet." }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
   await expect(page.locator('[aria-current="page"]')).toHaveCount(1);
@@ -158,20 +165,20 @@ try {
     thread.getByRole("complementary", { name: "Team details" }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1200, height: 880 });
-  await shot("night-goal-thread-pane-docked");
+  await shot("night-session-pane-docked");
   await page.setViewportSize({ width: 1199, height: 880 });
-  await shot("night-goal-thread-pane-overlay");
+  await shot("night-session-pane-overlay");
   await thread
     .getByRole("button", { name: "Close team details", exact: true })
     .click();
   await page.setViewportSize({ width: 1280, height: 880 });
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await page.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect(page.locator(".conversation-heading")).toContainText("Chat 1");
   const prompt = page.locator(".composer > textarea");
   await prompt.fill("A draft survives a journey around the atlas.");
   await navigate(page, "Context");
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await expect(prompt).toHaveValue(
     "A draft survives a journey around the atlas.",
   );
@@ -219,7 +226,7 @@ try {
       window.topsl.command({ type: "theme", theme: "night" }),
     );
     await navigate(page, "Overview");
-    await navigate(page, "Sessions");
+    await navigate(page, "Provider tools");
     expect(await terminal.getAttribute("data-session-id")).toBe(id);
     expect(await xterm.evaluate((node) => node.isConnected)).toBe(true);
     await expect(terminal.locator(".xterm-scrollable-element")).toHaveCSS(
@@ -256,8 +263,8 @@ try {
     );
     for (const view of [
       "Overview",
-      "Sessions",
-      "New conversation",
+      "Provider tools",
+      "New session",
       "Tasks",
       "Changes",
       "Context",

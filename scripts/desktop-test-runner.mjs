@@ -11,6 +11,7 @@ const scripts = process.argv.slice(2).length
       "scripts/desktop-coordinator-test.mjs",
       "scripts/desktop-atlas-test.mjs",
       "scripts/desktop-loop-test.mjs",
+      "scripts/desktop-session-test.mjs",
     ];
 function report(script, detail) {
   if (process.env.GITHUB_ACTIONS === "true") {

@@ -138,7 +138,41 @@ function loopAnswer(prompt, cwd) {
   });
 }
 
+/**
+ * session-v1 turns (docs/Native_Sessions_Plan.md). The stand-in treats a
+ * message as discussion when the owner chose Discuss or the message is a
+ * question, and otherwise as new work; with the composer aimed at a running
+ * goal, as steering. The shared wording turn repeats the decision.
+ */
+function sessionAnswer(prompt) {
+  const inputDigest = match(prompt, /Input digest \(echo it exactly\): (\S+)/);
+  const base = { schemaVersion: 1, protocolKind: "session-v1", inputDigest };
+  if (/Prepare the shared response/.test(prompt))
+    return JSON.stringify({
+      ...base,
+      reply: `The coordinators agree: ${match(prompt, /Recorded decision: (.+)/)}`,
+    });
+  const message = match(prompt, /The owner's message:\n([\s\S]*?)\n\n/);
+  const discuss =
+    /The owner chose Discuss/.test(prompt) ||
+    (!/The owner chose Work/.test(prompt) && /\?\s*$/.test(message.trim()));
+  const steer = /Composer target: the current goal/.test(prompt);
+  const intent = discuss ? "discuss" : steer ? "steer" : "new-work";
+  return JSON.stringify({
+    ...base,
+    intent,
+    reply: discuss
+      ? "file.ts holds one exported value; changing it is a one-line edit."
+      : steer
+        ? "I will pass that to the running goal."
+        : "I will queue this as a goal for the implementer.",
+    question: null,
+    team: null,
+  });
+}
+
 function answer(prompt, cwd = process.cwd()) {
+  if (/"protocolKind": "session-v1"/.test(prompt)) return sessionAnswer(prompt);
   if (
     /"protocolKind": "recursive-loop-v1"/.test(prompt) &&
     /Stage: \w+\./.test(prompt)

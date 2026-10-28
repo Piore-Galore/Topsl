@@ -9,9 +9,9 @@ import type { ProjectThreads } from "../state/threads";
 import { ActionButton } from "./action-button";
 import { AtlasIcon, Brand } from "./atlas";
 
-const kindMark = { goal: "◆", "goal-loop": "↻", endless: "∞" } as const;
+const kindMark = { session: "◆", "goal-loop": "↻", endless: "∞" } as const;
 const kindTitle = {
-  goal: "Goal",
+  session: "Session",
   "goal-loop": "Goal loop",
   endless: "Endless",
 } as const;
@@ -124,7 +124,7 @@ export function WorkbenchSidebar({
       <ActionButton
         className={`new-conversation primary ${inCoordinator && !threadId ? "selected" : ""}`}
         // The "+" is drawn by atlas.css and is not part of the name.
-        aria-label="New conversation"
+        aria-label="New session"
         aria-current={inCoordinator && !threadId ? "page" : undefined}
         disabled={!projectId}
         onClick={() => {
@@ -132,7 +132,7 @@ export function WorkbenchSidebar({
           close();
         }}
       >
-        New conversation
+        New session
       </ActionButton>
       <nav className="global-navigation" aria-label="Main navigation">
         {globalLink("projects")}
@@ -144,7 +144,7 @@ export function WorkbenchSidebar({
             +
           </ActionButton>
         </div>
-        <ul className="project-tree" aria-label="Projects and conversations">
+        <ul className="project-tree" aria-label="Projects and sessions">
           {state.projects.map((project) => {
             const list = threads[project.id];
             const open = expanded.has(project.id);
@@ -186,7 +186,7 @@ export function WorkbenchSidebar({
                 {open && (
                   <ul
                     className="thread-list"
-                    aria-label={`${project.name} conversations`}
+                    aria-label={`${project.name} sessions`}
                   >
                     {list?.threads.map((t) => {
                       const current =
@@ -219,7 +219,7 @@ export function WorkbenchSidebar({
                       );
                     })}
                     {list && !list.total && (
-                      <li className="tiny muted">No conversations yet.</li>
+                      <li className="tiny muted">No sessions yet.</li>
                     )}
                     {hidden > 0 && (
                       <li>

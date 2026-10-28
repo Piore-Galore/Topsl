@@ -182,7 +182,7 @@ try {
   await expect(
     page.getByRole("heading", { name: "fixture-project", exact: true }),
   ).toBeVisible();
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await page.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect(page.locator(".conversation-heading")).toContainText("Chat 1");
   await navigate(page, "Projects");
@@ -436,7 +436,7 @@ try {
       stream,
     });
   }
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await page
     .getByRole("combobox", { name: "Conversation", exact: true })
     .selectOption(streamFixtures[0].conversationId);
@@ -1171,9 +1171,9 @@ try {
     // committed its records, each synced to disk. A slow CI disk can stretch
     // that past the default five seconds, so these waits allow 30.
     const committed = { timeout: 30000 };
-    await navigate(page, "Sessions");
+    await navigate(page, "Provider tools");
     await expect(
-      page.getByRole("heading", { name: "Sessions", exact: true }),
+      page.getByRole("heading", { name: "Provider tools", exact: true }),
     ).toBeVisible();
     const conversationSelect = page.getByRole("combobox", {
       name: "Conversation",
@@ -1529,7 +1529,7 @@ try {
       "Only use this mode in isolated environments",
     );
     await expect(level("Sandboxed")).toHaveAttribute("aria-pressed", "true");
-    await navigate(page, "Sessions");
+    await navigate(page, "Provider tools");
     await expect(modeSelect).toHaveValue("sandboxed", committed);
     await expect(modeNote).toContainText(
       "Passes --permission-mode acceptEdits --settings",
@@ -1543,7 +1543,7 @@ try {
       committed,
     );
     expect(await confirmations()).toBe(beforeAutoAccept + 2);
-    await navigate(page, "Sessions");
+    await navigate(page, "Provider tools");
     await expect(modeSelect).toHaveValue("plan", committed);
     // The transcript read in Settings: turning it on takes Topsl's own
     // confirmation, and turning it off takes none.

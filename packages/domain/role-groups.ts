@@ -241,6 +241,8 @@ export interface RoleDefinition {
     | "information"
     | "code-candidate";
   defaultCollaboration: CollaborationMode;
+  /** Set for a role one native session defined; other sessions do not list it. */
+  ownerConversationId?: string | null;
 }
 
 export interface ResolvedMemberAssignment {
@@ -686,6 +688,12 @@ export interface Goal {
   application?: GoalApplication | null;
   /** Function bindings; absent goals use the built-in roles. */
   functions?: GoalFunctions;
+  /**
+   * Set for a goal a native session started (docs/Native_Sessions_Plan.md).
+   * continued: it starts from the session's accepted result, which its
+   * coordinators read instead of the project folder.
+   */
+  session?: { workItemId: string; continued: boolean } | null;
   /** Set for a loop run's child execution goal (docs/Recursive_Looping.md). */
   loop?: GoalLoopBinding | null;
   /**
@@ -730,9 +738,13 @@ export interface CoordinatorMessage {
       | "control"
       | "membership"
       /** The owner's text to a loop run, and what it changed. */
-      | "loop-steer";
+      | "loop-steer"
+      /** A native session message and the coordinators' shared response. */
+      | "session";
     goalId: string | null;
   } | null;
+  /** The session intake this message started or answers. */
+  intakeId?: string | null;
   createdAt: string;
 }
 

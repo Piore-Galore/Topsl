@@ -98,6 +98,7 @@ const digestIn = (prompt: string, label: RegExp) =>
 
 /** Default scripted behavior: agreeable coordinators, clean reviewers, working implementers. */
 export function defaultReply(turn: MemberTurn, plan?: unknown[]): Reply {
+  if (turn.protocol.kind === "session-v1") return sessionReply(turn);
   // Partitioned groups need one partition per member; read the roster the
   // coordinator was shown.
   if (!plan) plan = rosterPlan(turn);
@@ -157,6 +158,51 @@ export function defaultReply(turn: MemberTurn, plan?: unknown[]): Reply {
     default:
       return { text: "" };
   }
+}
+
+/**
+ * A session-v1 answer (docs/Native_Sessions_Plan.md). By default a
+ * coordinator treats a message in Work mode, or one that starts with
+ * "Build", as new work, a question as discussion, and anything else as
+ * discussion; tests script other answers per turn.
+ */
+export function sessionReply(
+  turn: MemberTurn,
+  over: Partial<{
+    intent: string;
+    reply: string;
+    question: string | null;
+    team: unknown[] | null;
+  }> = {},
+): Reply {
+  const inputDigest = digestIn(
+    turn.prompt,
+    /Input digest \(echo it exactly\): (\S+)/,
+  );
+  if (turn.protocol.stage === "wording")
+    return {
+      text: JSON.stringify({
+        schemaVersion: 1,
+        protocolKind: "session-v1",
+        inputDigest,
+        reply: over.reply ?? `Shared answer from ${turn.memberId}.`,
+      }),
+    };
+  const message =
+    /The owner's message:\n([\s\S]*?)\n\n/.exec(turn.prompt)?.[1] ?? "";
+  const work =
+    /The owner chose Work/.test(turn.prompt) || /^build\b/i.test(message);
+  return {
+    text: JSON.stringify({
+      schemaVersion: 1,
+      protocolKind: "session-v1",
+      inputDigest,
+      intent: over.intent ?? (work ? "new-work" : "discuss"),
+      reply: over.reply ?? `Answer from ${turn.memberId}.`,
+      question: over.question ?? null,
+      team: over.team ?? null,
+    }),
+  };
 }
 
 /**
@@ -346,6 +392,11 @@ export class ScriptedDriver implements OrchestrationDriver {
   }
   async baseline() {
     return "baseline-candidate";
+  }
+  continuations: Array<{ goalId: string; candidateId: string }> = [];
+  async continueFrom(input: { goalId: string; candidateId: string }) {
+    this.continuations.push(input);
+    return `continued-${input.candidateId}`;
   }
   async integrate(input: {
     baseCandidateId: string;

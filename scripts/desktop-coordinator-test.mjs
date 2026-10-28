@@ -291,10 +291,10 @@ try {
     expect(purpose).toEqual({ ready: true, blockers: [] });
 
   await page.setViewportSize({ width: 1280, height: 900 });
-  // Adding the project opened its New conversation page; the sidebar's
-  // New conversation returns there from a conversation.
-  await navigate(page, "New conversation");
-  const home = page.getByRole("region", { name: "New conversation" });
+  // Adding the project opened its New session page; the sidebar's
+  // New session returns there from a conversation.
+  await navigate(page, "New session");
+  const home = page.getByRole("region", { name: "New session" });
   await expect(
     home.getByRole("heading", { name: "coordinator-project", exact: true }),
   ).toBeVisible();
@@ -304,9 +304,9 @@ try {
   const editor = home.locator("fieldset.role-editor");
   const members = (title) =>
     editor.getByRole("list", { name: `${title} members`, exact: true });
-  /** The project's defaults, edited on the New conversation page. */
+  /** The project's defaults, edited on the New session page. */
   const openDefaults = async (title) => {
-    if (!(await home.count())) await navigate(page, "New conversation");
+    if (!(await home.count())) await navigate(page, "New session");
     if ((await defaults.getAttribute("open")) === null)
       await defaults.locator("summary").click();
     await defaults
@@ -340,9 +340,12 @@ try {
   // to Auto by follow-up messages in that conversation alone.
   const goalText = "Change the value to two in file.ts.";
   await home.getByRole("textbox", { name: "Message" }).fill(goalText);
-  await home.getByRole("button", { name: "Send", exact: true }).click();
+  await home
+    .getByRole("button", { name: "Start session", exact: true })
+    .click();
   const section = page.getByRole("region", {
-    name: "Coordinator conversation",
+    name: "Session",
+    exact: true,
   });
   await expect(
     section.getByRole("heading", { name: goalText, exact: true }),
@@ -354,6 +357,27 @@ try {
     await expect(section).toBeVisible();
   };
   const message = section.getByRole("textbox", { name: "Message" });
+  /** Every message of the session has been answered by its coordinators. */
+  const answered = async () => {
+    const sessions = await page.evaluate(
+      (projectId) => window.topsl.command({ type: "session-list", projectId }),
+      projectId,
+    );
+    const views = await Promise.all(
+      sessions.map((s) =>
+        page.evaluate(
+          (sessionId) =>
+            window.topsl.command({ type: "session-query", sessionId }),
+          s.id,
+        ),
+      ),
+    );
+    return views.every((v) =>
+      v.intakes.every(
+        (i) => !["collecting", "reconciling", "endorsing"].includes(i.stage),
+      ),
+    );
+  };
   const send = async (text) => {
     await openGoal();
     await message.fill(text);
@@ -364,6 +388,8 @@ try {
         .getByRole("listitem")
         .filter({ hasText: text }),
     ).toBeVisible();
+    // The coordinators decide what the message does before it takes effect.
+    await expect.poll(answered, { timeout: 60000 }).toBe(true);
   };
   await expect(
     section
@@ -568,7 +594,7 @@ try {
   ).toBeVisible();
   await expect(
     page
-      .getByRole("list", { name: "coordinator-project conversations" })
+      .getByRole("list", { name: "coordinator-project sessions" })
       .getByRole("listitem")
       .filter({ hasText: goalText }),
   ).toContainText("Apply");
@@ -754,7 +780,7 @@ try {
   await expect(page.locator(".app-shell")).toBeVisible({ timeout: 45000 });
   await expect(
     page
-      .getByRole("region", { name: "Coordinator conversation" })
+      .getByRole("region", { name: "Session", exact: true })
       .getByRole("heading", {
         name: "Change the value to two in file.ts.",
         exact: true,
