@@ -37,6 +37,10 @@ export const kinds = {
   memberSession: "member-session",
   dependency: "dependency-bundle",
   integration: "goal-integration",
+  /** A native session's configuration, queue and checkpoint (docs/Native_Sessions_Plan.md). */
+  session: "orch-session",
+  /** One session message's coordinator round. */
+  intake: "session-intake",
 } as const;
 
 export class OrchestrationRepository {
@@ -183,12 +187,25 @@ export class OrchestrationRepository {
       });
     });
   }
+  /**
+   * Every role defined for the project, including roles a session owns. Role
+   * IDs are unique per project, so a role is always found by its ID.
+   */
   roles(projectId: string): RoleDefinition[] {
     const custom = this.all<RoleDefinition & { roleId: string }>(
       kinds.role,
       projectId,
     ).map(({ roleId, ...role }) => ({ ...role, id: roleId }));
     return [...Object.values(builtInRoleDefinitions), ...custom];
+  }
+  /**
+   * The roles one scope may use: project roles, plus the roles the given
+   * session owns. A role another session owns is not listed.
+   */
+  visibleRoles(projectId: string, conversationId: string | null) {
+    return this.roles(projectId).filter(
+      (r) => !r.ownerConversationId || r.ownerConversationId === conversationId,
+    );
   }
   role(projectId: string, roleId: string): RoleDefinition {
     const role = this.roles(projectId).find((r) => r.id === roleId);

@@ -40,7 +40,7 @@ export interface ModelOption {
   reason: string;
 }
 
-function modelOptions(routes: any[], purpose: string): ModelOption[] {
+export function modelOptions(routes: any[], purpose: string): ModelOption[] {
   return routes.flatMap((r) =>
     r.models.map((m: any) => {
       const readiness = r.purposes?.[purpose];
@@ -113,6 +113,7 @@ export function RoleEditor({
   policyLimit,
   run,
   onClose,
+  scope,
 }: {
   projectId: string;
   goalId: string | null;
@@ -122,6 +123,14 @@ export function RoleEditor({
   policyLimit: number;
   run: (key: string, command: Command) => Promise<unknown>;
   onClose: () => void;
+  /**
+   * A native session's role settings: saving and releasing change the
+   * session's configuration instead of the project or goal scope.
+   */
+  scope?: {
+    save: (settings: RoleGroupSettings) => Command;
+    release: () => Command;
+  };
 }) {
   const [form, setForm] = useState<SelectionForm>(group.form);
   const [count, setCount] = useState<string>(
@@ -208,6 +217,10 @@ export function RoleEditor({
           : { kind: "all" },
       },
     };
+    if (scope) {
+      void run(`save-${role.id}`, scope.save(settings));
+      return;
+    }
     void run(`save-${role.id}`, {
       type: "orchestration-group-set",
       projectId,
@@ -500,13 +513,16 @@ export function RoleEditor({
         <button
           type="button"
           onClick={async () => {
-            const released = await run(`release-${role.id}`, {
-              type: "orchestration-roster-release",
-              projectId,
-              goalId,
-              roleId: role.id,
-              commandId: newCommandId(),
-            });
+            const released = await run(
+              `release-${role.id}`,
+              scope?.release() ?? {
+                type: "orchestration-roster-release",
+                projectId,
+                goalId,
+                roleId: role.id,
+                commandId: newCommandId(),
+              },
+            );
             // The editor shows what was saved, so a later save cannot bring
             // the released roster back.
             if (released) {

@@ -409,7 +409,7 @@ async function terminalJourney(session, root, caseId, bundle = BUNDLE) {
   await expect
     .poll(async () => (await state(page)).installations.find((i) => i.id === installation.id)?.trusted, { timeout: 30_000 })
     .toBe(true);
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
   await page.getByRole("combobox", { name: "Runtime", exact: true }).selectOption(installation.id);
   await page.getByRole("button", { name: "Native terminal", exact: true }).click();
   const terminal = page.getByRole("region", { name: "Native terminal" });

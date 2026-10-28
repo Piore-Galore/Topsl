@@ -1,11 +1,12 @@
 import { parseThreadId } from "../../../../packages/domain/threads";
-import { GoalThread } from "./goal-thread";
+import { SessionThread } from "./session-thread";
 import { LoopThread } from "./loop-thread";
 import { ProjectHome } from "./project-home";
 
 /**
- * The coordinator: the project's home when no conversation is open, or one
- * goal or loop thread (docs/Coordinator_Teams.md). Each thread mounts afresh,
+ * The coordinator: the project's home when no session is open, one native
+ * Topsl session (docs/Native_Sessions_Plan.md), or one loop thread
+ * (docs/Coordinator_Teams.md). Each thread mounts afresh,
  * so its reads and panes never carry over to another thread; unsent text is
  * kept per thread (state/drafts.ts).
  */
@@ -23,12 +24,13 @@ export function CoordinatorView({
   onThread: (threadId: string | null) => void;
 }) {
   const thread = parseThreadId(threadId);
-  if (thread?.kind === "goal")
+  // A goal thread ID saved before sessions opens its conversation's session.
+  if (thread?.kind === "session")
     return (
-      <GoalThread
-        key={threadId}
+      <SessionThread
+        key={thread.id}
         projectId={projectId}
-        conversationId={thread.id}
+        sessionId={thread.id}
       />
     );
   if (thread?.kind === "loop")

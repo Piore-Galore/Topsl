@@ -393,7 +393,9 @@ export function loopOutputSchema(
   )
     return null;
   return anyOf(
-    z.toJSONSchema(loopEnvelopeSchema(protocol.stage, protocol.mode)),
+    z.toJSONSchema(
+      loopEnvelopeSchema(protocol.stage as LoopDecisionStage, protocol.mode),
+    ),
   ) as Record<string, unknown>;
 }
 

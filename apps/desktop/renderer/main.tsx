@@ -134,7 +134,7 @@ function App() {
   const [navigationReady, setNavigationReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
-  /** The open coordinator thread (`goal:<id>` or `loop:<id>`), if any. */
+  /** The open coordinator thread (`session:<id>` or `loop:<id>`), if any. */
   const [threadId, setThreadId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState("");
   const [installationId, setInstallationId] = useState("");
@@ -1213,10 +1213,7 @@ function App() {
                     setPalette(false);
                   }}
                 >
-                  {view === "coordinator"
-                    ? "New conversation"
-                    : viewLabel(view)}{" "}
-                  →
+                  {view === "coordinator" ? "New session" : viewLabel(view)} →
                 </ActionButton>
               ))}
               <ActionButton

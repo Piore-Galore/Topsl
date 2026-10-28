@@ -1636,7 +1636,7 @@ async function claudeTranscripts() {
     timeout: 15000,
   });
   report.claudeCode.transcriptRead = "on";
-  await navigate(page, "Sessions");
+  await navigate(page, "Provider tools");
 }
 
 /**
@@ -2868,7 +2868,7 @@ try {
         provider === "claude" ? report.claudeCode : report,
       );
     projectId = await addProject();
-    await navigate(page, "Sessions");
+    await navigate(page, "Provider tools");
     await page
       .locator(".runtime-bar select")
       .first()
@@ -2884,7 +2884,7 @@ try {
         : report;
       const trusted = await locate(provider, step);
       projectId ??= await addProject();
-      await navigate(page, "Sessions");
+      await navigate(page, "Provider tools");
       await page
         .locator(".runtime-bar select")
         .first()

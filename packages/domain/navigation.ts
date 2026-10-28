@@ -18,5 +18,13 @@ export function projectView(value: unknown): ProjectView {
     : "overview";
 }
 
+/**
+ * Direct Claude Code and Codex sessions are Provider tools: "session" now
+ * names a Topsl session (docs/Native_Sessions_Plan.md). The stored view value
+ * stays "sessions", so saved navigation keeps working.
+ */
+const viewLabels: Record<string, string> = { sessions: "Provider tools" };
+
 export const viewLabel = (value: string) =>
+  viewLabels[value] ??
   value.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());

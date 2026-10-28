@@ -9,7 +9,16 @@ export interface ThreadMessage {
   text: string;
   sequence: number;
   routing: { kind: string; goalId: string | null } | null;
+  /** The session intake the message started or answers. */
+  intakeId?: string | null;
   createdAt: string;
+}
+
+/** The open intakes still being answered, for a "coordinators are answering" line. */
+export function answering<I extends { stage: string }>(intakes: I[]): I[] {
+  return intakes.filter((i) =>
+    ["collecting", "reconciling", "endorsing"].includes(i.stage),
+  );
 }
 
 export type TimelineItem<G> =
@@ -25,11 +34,16 @@ export type TimelineItem<G> =
 export function threadTimeline<G extends { goal: { id: string } }>(
   messages: ThreadMessage[],
   goals: G[],
+  /**
+   * Messages known to be about a goal without naming it, by message ID: a
+   * native session's queued request names its goal only once it starts.
+   */
+  about: Record<string, string> = {},
 ): TimelineItem<G>[] {
   const ordered = [...messages].sort((a, b) => a.sequence - b.sequence);
   const anchor = new Map<string, string>();
   for (const message of ordered) {
-    const goalId = message.routing?.goalId;
+    const goalId = message.routing?.goalId ?? about[message.id];
     if (goalId && goals.some((g) => g.goal.id === goalId))
       anchor.set(goalId, message.id);
   }

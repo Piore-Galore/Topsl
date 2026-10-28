@@ -85,6 +85,8 @@ import {
 } from "./contracts";
 import { reviewSchema } from "../workflows/builder-reviewer";
 import type { TurnProtocol } from "../domain/recursive-loops";
+import type { TopslSession } from "../domain/sessions";
+import { sessionActiveRoles, withSessionLayers } from "./session-layers";
 
 /** One member turn the engine asks a driver to run. */
 export interface MemberTurn {
@@ -174,6 +176,15 @@ export interface OrchestrationDriver {
     | { candidateId: string }
     | { conflicts: Array<{ path: string; candidateIds: string[] }> }
   >;
+  /**
+   * A session goal's baseline from the session's accepted candidate, bound
+   * to the new goal. Idempotent per goal.
+   */
+  continueFrom?(input: {
+    projectId: string;
+    goalId: string;
+    candidateId: string;
+  }): Promise<string>;
   /** One file's text in a candidate, for an integration brief. null: absent or binary. */
   fileText?(candidateId: string, path: string): string | null;
   /** Freezes the check protocol (tests, configuration, scripts) at the goal's baseline. */
@@ -326,20 +337,33 @@ export class Orchestrator {
     goalId: string | null,
     roleId: string,
     taskKey: string | null = null,
-    /** A loop decision round's binding and scope, which has no engine goal. */
-    scope?: { binding: GoalLoopBinding; scopeId: string },
+    /**
+     * A scope with no engine goal: a loop decision round's binding, or a
+     * native session's intake (its conversation ID).
+     */
+    scope?: {
+      binding?: GoalLoopBinding;
+      scopeId: string;
+      conversationId?: string;
+    },
   ): EffectiveRoleGroup {
     const role = this.repo.role(projectId, roleId);
     const policy = this.repo.policy(projectId);
     const goal = goalId ? this.repo.require<Goal>(kinds.goal, goalId) : null;
     const loop = scope?.binding ?? goal?.loop ?? null;
-    const layers = layersFor(
+    let layers = layersFor(
       this.repo.groupRevisions(projectId),
       policy.defaults,
       roleId,
       goal?.id ?? null,
       taskKey,
     );
+    // A native session's settings sit between project and goal scope. Loop
+    // children keep their run's organization.
+    const session = loop
+      ? null
+      : this.session(scope?.conversationId ?? goal?.conversationId ?? null);
+    if (session) layers = withSessionLayers(layers, session, roleId);
     // The owner's run-scope settings sit between project and goal scope,
     // with user authority.
     const override = loop?.overrides?.[roleId];
@@ -369,6 +393,12 @@ export class Orchestrator {
       memberLimit: policy.maxMembersPerRole,
       layers,
     });
+  }
+
+  /** The session record of a conversation, if it has one. */
+  session(conversationId: string | null): TopslSession | null {
+    if (!conversationId) return null;
+    return this.repo.get<TopslSession>(kinds.session, conversationId) ?? null;
   }
 
   async setGroup(input: {
@@ -532,7 +562,11 @@ export class Orchestrator {
     goalId: string | null,
     roleId: string,
     taskKey: string | null = null,
-    scope?: { binding: GoalLoopBinding; scopeId: string },
+    scope?: {
+      binding?: GoalLoopBinding;
+      scopeId: string;
+      conversationId?: string;
+    },
   ) {
     const role = this.repo.role(projectId, roleId);
     const group = this.effective(projectId, goalId, roleId, taskKey, scope);
@@ -640,6 +674,7 @@ export class Orchestrator {
     text: string;
     routing: CoordinatorMessage["routing"];
     commandId: string;
+    intakeId?: string | null;
   }) {
     const conversation = this.repo.require<CoordinatorConversation>(
       kinds.conversation,
@@ -655,6 +690,7 @@ export class Orchestrator {
           input.role,
           input.text,
           input.routing,
+          input.intakeId ?? null,
         );
         this.changed();
         return message;
@@ -667,6 +703,7 @@ export class Orchestrator {
     role: CoordinatorMessage["role"],
     text: string,
     routing: CoordinatorMessage["routing"],
+    intakeId: string | null = null,
   ) {
     const sequence = conversation.intakeCursor + 1;
     const message: CoordinatorMessage = {
@@ -677,6 +714,7 @@ export class Orchestrator {
       role,
       text,
       routing,
+      ...(intakeId ? { intakeId } : {}),
       createdAt: now(),
     };
     this.store.immutable(kinds.message, message);
@@ -857,6 +895,27 @@ export class Orchestrator {
     );
   }
 
+  /**
+   * Applies the owner's team instructions in a message ("review with Fable
+   * and Sol") to one goal, as the owner's settings. A native session calls it
+   * once its coordinators decided the message steers or starts that goal.
+   */
+  applyMessageMembership(input: {
+    projectId: string;
+    goalId: string;
+    text: string;
+    messageId: string;
+    commandId: string;
+  }) {
+    this.applyMembership(
+      input.projectId,
+      input.goalId,
+      parseMembership(input.text, input.commandId),
+      input.messageId,
+      input.commandId,
+    );
+  }
+
   private applyMembership(
     projectId: string,
     goalId: string,
@@ -961,6 +1020,8 @@ export class Orchestrator {
     baselineCandidateId?: string;
     /** The actor recorded on the goal's message; loop children record none. */
     message?: boolean;
+    /** A native session's work item (docs/Native_Sessions_Plan.md). */
+    session?: Goal["session"];
   }) {
     const conversation = this.repo.require<CoordinatorConversation>(
       kinds.conversation,
@@ -1006,6 +1067,7 @@ export class Orchestrator {
           ...goal,
           constraints: input.constraints ?? [],
           grant: { ...goal.grant, ...input.grant },
+          ...(input.session ? { session: input.session } : {}),
         };
         this.store.put(kinds.goal, next);
         if (input.message !== false)
@@ -1515,9 +1577,14 @@ export class Orchestrator {
     if (input.kind === "coordination") {
       // The complete resolved topology: the same resolution the plan's tasks
       // will execute with, so prompt, partitions and dispatch agree.
-      const active = goal.loop ? new Set(goal.loop.activeRoles) : null;
+      const session = goal.loop ? null : this.session(goal.conversationId);
+      const active = goal.loop
+        ? new Set(goal.loop.activeRoles)
+        : session
+          ? sessionActiveRoles(session)
+          : null;
       for (const r of this.repo
-        .roles(goal.projectId)
+        .visibleRoles(goal.projectId, goal.conversationId)
         .filter(
           (r) =>
             r.purpose !== "coordinator-contribution" &&
@@ -2150,7 +2217,9 @@ export class Orchestrator {
         contextCandidateId:
           round.kind === "coordination" || round.kind === "information"
             ? (this.assembledFor(fresh) ??
-              (goal.loop ? goal.baselineCandidateId : null))
+              (goal.loop || goal.session?.continued
+                ? goal.baselineCandidateId
+                : null))
             : null,
       };
       try {
@@ -4479,6 +4548,7 @@ export class Orchestrator {
           projectId: c.projectId,
           title: c.title,
           goalIds: c.goalIds,
+          messages: c.intakeCursor,
           createdAt: c.createdAt,
           updatedAt: c.updatedAt,
         })),
@@ -4505,7 +4575,8 @@ export class Orchestrator {
     const conversations = this.repo
       .all<CoordinatorConversation>(kinds.conversation, projectId)
       .filter((c) => !conversationId || c.id === conversationId);
-    const roles = this.repo.roles(projectId);
+    // Roles a session owns are listed in that session's view only.
+    const roles = this.repo.visibleRoles(projectId, conversationId ?? null);
     // Loop child goals belong to their run's view (packages/orchestration/
     // loop-engine.ts), not the ordinary goal list.
     const goals = this.repo

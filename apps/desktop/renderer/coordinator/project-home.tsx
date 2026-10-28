@@ -3,8 +3,15 @@ import type { ThreadSummary } from "../../../../packages/domain/threads";
 import { Freshness } from "../components/freshness";
 import { useDraft } from "../state/drafts";
 import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
+import type {
+  ComposerMode,
+  TeamMode,
+} from "../../../../packages/domain/sessions";
+import type { MemberIntent } from "../../../../packages/domain/role-groups";
 import { Composer } from "./composer";
 import { RoleEditor, teamLine } from "./role-editor";
+import { CoordinatorPicker } from "./session-panes";
+import { ComposerModes } from "./session-thread";
 import {
   CheckFields,
   Errors,
@@ -14,14 +21,15 @@ import {
   newCommandId,
   stateTone,
   useCommandRunner,
+  useRuntimeRefresh,
   type CheckDraft,
   type Run,
 } from "./shared";
 
-type Mode = "single" | "goal" | "endless";
+type Mode = "session" | "goal" | "endless";
 
 export const threadKindLabel: Record<ThreadSummary["kind"], string> = {
-  goal: "Goal",
+  session: "Session",
   "goal-loop": "Goal loop",
   endless: "Endless",
 };
@@ -66,8 +74,9 @@ function StoppableRuns({ runs, run }: { runs: any[]; run: Run }) {
 }
 
 /**
- * A project's home when no conversation is open: start a new goal or loop,
- * reopen a recent conversation, and set the team defaults for new goals.
+ * A project's home when no session is open: start a new session (choose its
+ * coordinators and team, then start talking) or a loop, reopen a recent
+ * session, and set the project defaults new sessions capture.
  */
 export function ProjectHome({
   projectId,
@@ -83,7 +92,11 @@ export function ProjectHome({
   const [snapshot, setSnapshot] = useState<any>(null);
   const [loops, setLoops] = useState<any>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
-  const [mode, setMode] = useState<Mode>("single");
+  const [mode, setMode] = useState<Mode>("session");
+  const [coordinators, setCoordinators] = useState<MemberIntent[]>([]);
+  const [team, setTeam] = useState<TeamMode>("automatic");
+  const [roster, setRoster] = useState<string[]>([]);
+  const [composerMode, setComposerMode] = useState<ComposerMode>("auto");
   const [kind, setKind] = useState<"code" | "information">("code");
   const [check, setCheck] = useState<CheckDraft>(emptyCheck);
   const [automaticChecks, setAutomaticChecks] = useState(false);
@@ -110,26 +123,40 @@ export function ProjectHome({
   }
   const freshness = useScopedRefresh(projectId, refresh);
   const { run, errors } = useCommandRunner(refresh, projectId);
-  const loopMode = mode !== "single";
+  useRuntimeRefresh(refresh);
+  const loopMode = mode !== "session";
   const loopsOff = loopMode && loops && !loops.enabled;
-  const coordinators = (snapshot?.routes ?? []).filter(
+  const readyRoutes = (snapshot?.routes ?? []).filter(
     (r: any) => r.purposes?.["coordinator-contribution"]?.ready,
+  );
+  const teamRoles = (snapshot?.roles ?? []).filter(
+    (r: any) => r.role.purpose !== "coordinator-contribution",
   );
   async function send() {
     const message = text.trim();
     if (!message) return;
-    if (mode === "single") {
+    if (mode === "session") {
       const started = await run("start", {
-        type: "orchestration-conversation-start",
+        type: "session-create",
         projectId,
         text: message,
+        mode: composerMode,
         kind,
         ...(kind === "code" ? { checks: checksFrom(check) } : {}),
+        configuration: {
+          coordinators,
+          team,
+          composerMode,
+          roles:
+            team === "custom"
+              ? Object.fromEntries(roster.map((r) => [r, { settings: {} }]))
+              : {},
+        },
         commandId: newCommandId(),
       });
-      if (started?.conversationId) {
+      if (started?.sessionId) {
         setText("");
-        onThread(`goal:${started.conversationId}`);
+        onThread(`session:${started.sessionId}`);
       }
       return;
     }
@@ -158,7 +185,7 @@ export function ProjectHome({
   const editorRole =
     editing && snapshot?.roles.find((r: any) => r.role.id === editing);
   return (
-    <section aria-label="New conversation" className="project-home">
+    <section aria-label="New session" className="project-home">
       <header className="thread-header">
         <div className="thread-title">
           <h1>{projectName ?? "Project"}</h1>
@@ -172,7 +199,7 @@ export function ProjectHome({
           <legend>Run mode</legend>
           {(
             [
-              ["single", "Single goal", false],
+              ["session", "Session", false],
               ["goal", "Goal loop", true],
               ["endless", "Endless", true],
             ] as const
@@ -191,10 +218,10 @@ export function ProjectHome({
           ))}
         </fieldset>
         <p className="muted readiness">
-          {mode === "single"
-            ? coordinators.length
-              ? `${coordinators.length} ${coordinators.length === 1 ? "runtime" : "runtimes"} can coordinate. Name models in the message ("coordinate with Opus and Astra, review with Fable and Sol") or set the project's role defaults below.`
-              : "No runtime can coordinate yet. Qualify a Codex runtime (or Claude Code) under Applications first; goals wait until one can run."
+          {mode === "session"
+            ? readyRoutes.length
+              ? "A session keeps one conversation with its coordinators. They answer questions without starting work, and turn requests into goals that run one at a time, each continuing from the last accepted result."
+              : "No runtime can coordinate yet. Qualify a Codex runtime (or Claude Code) under Applications first; sessions wait until one can answer."
             : mode === "goal"
               ? "A Goal loop keeps assessing, delegating, verifying and repairing until every required goal is met on one accepted checkpoint. Creating it does not start work."
               : "An Endless loop keeps finding and verifying worthwhile improvements until you stop it. Creating it does not start work."}
@@ -223,26 +250,88 @@ export function ProjectHome({
             />
           </div>
         )}
+        {mode === "session" && snapshot && (
+          <div className="session-setup">
+            <CoordinatorPicker
+              routes={snapshot.routes}
+              value={coordinators}
+              onChange={setCoordinators}
+            />
+            <fieldset className="mode-selector" aria-label="Team setup">
+              <legend>Team</legend>
+              {(
+                [
+                  ["automatic", "Automatic"],
+                  ["custom", "Custom"],
+                ] as const
+              ).map(([value, title]) => (
+                <label key={value} className={team === value ? "selected" : ""}>
+                  <input
+                    type="radio"
+                    name="session-team-mode"
+                    checked={team === value}
+                    onChange={() => setTeam(value)}
+                  />
+                  {title}
+                </label>
+              ))}
+              <p className="muted">
+                {team === "automatic"
+                  ? "Coordinators choose roles and models within your permissions and limits, and explain each choice in the Team pane. Pin roles there to keep them."
+                  : "Coordinators work within the roles you pick; add models or Auto slots to each in the Team pane."}
+              </p>
+              {team === "custom" && (
+                <ul className="roster-picker" aria-label="Custom roster">
+                  {teamRoles.map((r: any) => (
+                    <li key={r.role.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={roster.includes(r.role.id)}
+                          onChange={(e) =>
+                            setRoster(
+                              e.target.checked
+                                ? [...roster, r.role.id]
+                                : roster.filter((x) => x !== r.role.id),
+                            )
+                          }
+                        />
+                        {r.role.title}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </fieldset>
+          </div>
+        )}
         <Composer
           value={text}
           onChange={setText}
           onSend={() => void send()}
-          sendLabel={loopMode ? "Create run" : "Send"}
+          sendLabel={loopMode ? "Create run" : "Start session"}
           disabled={!!loopsOff}
           placeholder={
-            mode === "single"
-              ? 'For example: "Add the coordinator feature; coordinate with Opus and Astra, review with Fable and Sol."'
+            mode === "session"
+              ? 'For example: "How does project synchronization work?" or "Add a retry to the sync reconciler."'
               : mode === "goal"
                 ? "For example: Make project synchronization reliable, add the missing coordinator controls, and ensure restart preserves the selected model teams."
                 : "For example: Keep improving Topsl. Prioritize reliability, synchronization and clarity of the interface."
           }
         >
+          {mode === "session" && (
+            <ComposerModes
+              value={composerMode}
+              onChange={setComposerMode}
+              name="home-composer-mode"
+            />
+          )}
           <details className="composer-options-panel">
             <summary>
               Options
               {checksFrom(check).length ? " · required check set" : ""}
             </summary>
-            {mode === "single" && (
+            {mode === "session" && (
               <label>
                 New goals produce{" "}
                 <select
@@ -305,12 +394,12 @@ export function ProjectHome({
         </Composer>
       </div>
 
-      <section aria-label="Recent conversations" className="recent-threads">
-        <h2>Recent conversations</h2>
+      <section aria-label="Recent sessions" className="recent-threads">
+        <h2>Recent sessions</h2>
         {!threads.length ? (
           <p className="muted">
-            No conversations yet. Each goal or loop you start becomes its own
-            conversation here and in the sidebar.
+            No sessions yet. Each session or loop you start is listed here and
+            in the sidebar.
           </p>
         ) : (
           <ul>
@@ -339,7 +428,8 @@ export function ProjectHome({
       <details className="home-defaults">
         <summary>Project role defaults</summary>
         <p className="muted">
-          New goals start with these teams. Capacity:{" "}
+          New sessions capture these teams when they start; later edits do not
+          change existing sessions. Capacity:{" "}
           {snapshot?.capacity.held.reduce(
             (n: number, h: any) => n + h.weight,
             0,

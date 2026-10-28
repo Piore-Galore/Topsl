@@ -1,13 +1,18 @@
+import { attentionLabels, type SessionAttentionKind } from "./sessions";
+
 /**
  * Coordinator threads: the conversations the sidebar lists under each
- * project. A goal thread is one coordinator conversation and its goals; a
- * loop thread is one Goal loop or Endless run (docs/Coordinator_Teams.md).
+ * project. A session thread is one native Topsl session: its conversation,
+ * goals and queue (docs/Native_Sessions_Plan.md); a loop thread is one Goal
+ * loop or Endless run recorded outside a native session
+ * (docs/Coordinator_Teams.md). `goal:<conversationId>` is the ID such a
+ * conversation had before sessions, and still opens it.
  */
 
-export type ThreadKind = "goal" | "goal-loop" | "endless";
+export type ThreadKind = "session" | "goal-loop" | "endless";
 
 export interface ThreadSummary {
-  /** `goal:<conversationId>` or `loop:<runId>`. */
+  /** `session:<conversationId>` or `loop:<runId>`. */
   threadId: string;
   kind: ThreadKind;
   projectId: string;
@@ -25,6 +30,8 @@ export interface ThreadConversationFact {
   projectId: string;
   title: string;
   goalIds: string[];
+  /** How many messages it holds; a discussion-only session is still listed. */
+  messages?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,19 +57,35 @@ export interface ThreadRunFact {
   updatedAt: string;
 }
 
+/** The session facts the sidebar needs. */
+export interface ThreadSessionFact {
+  id: string;
+  origin: "native" | "legacy";
+  attention: { kind: SessionAttentionKind; detail: string } | null;
+  queue: Array<{ state: string; runId: string | null }>;
+  updatedAt: string;
+}
+
 export const DEFAULT_CONVERSATION_TITLE = "Project conversation";
 
+export const sessionThreadIdOf = (conversationId: string) =>
+  `session:${conversationId}`;
+/** The pre-session thread ID of a conversation; it opens the session. */
 export const goalThreadId = (conversationId: string) =>
   `goal:${conversationId}`;
 export const loopThreadId = (runId: string) => `loop:${runId}`;
 
-/** Splits a thread ID; null for anything that is not one. */
+/**
+ * Splits a thread ID; null for anything that is not one. A goal thread ID
+ * from before sessions reads as its conversation's session.
+ */
 export function parseThreadId(
   value: unknown,
-): { kind: "goal" | "loop"; id: string } | null {
+): { kind: "session" | "loop"; id: string } | null {
   if (typeof value !== "string") return null;
-  const match = /^(goal|loop):(.+)$/.exec(value);
-  return match ? { kind: match[1] as "goal" | "loop", id: match[2] } : null;
+  const match = /^(goal|loop|session):(.+)$/.exec(value);
+  if (!match) return null;
+  return { kind: match[1] === "loop" ? "loop" : "session", id: match[2] };
 }
 
 /** A sidebar title from the first line of a message. */
@@ -106,34 +129,47 @@ export function loopAttention(run: ThreadRunFact): string | null {
 }
 
 /**
- * One project's threads, newest activity first. Conversations a loop run
- * owns belong to that run's thread; ordinary goals recorded in such a
- * conversation still get a goal thread of their own. Conversations with no
- * goal are not listed.
+ * One project's threads, newest activity first. A native session is one
+ * thread, with any loop run started in it. A conversation a legacy loop run
+ * owns belongs to that run's thread; ordinary goals recorded in such a
+ * conversation still get a session thread of their own. A legacy
+ * conversation with no goal is not listed; a native session is listed as
+ * soon as it has a message, even when it holds only discussion.
  */
 export function summarizeThreads(input: {
   projectId: string;
   conversations: ThreadConversationFact[];
   goals: ThreadGoalFact[];
   runs: ThreadRunFact[];
+  sessions?: ThreadSessionFact[];
 }): ThreadSummary[] {
   const threads: ThreadSummary[] = [];
+  const sessions = new Map((input.sessions ?? []).map((s) => [s.id, s]));
+  const native = (conversationId: string) =>
+    sessions.get(conversationId)?.origin === "native";
   for (const conversation of input.conversations) {
+    const session = sessions.get(conversation.id);
     const goals = input.goals
       .filter((g) => g.conversationId === conversation.id)
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-    if (!goals.length) continue;
+    const discussed =
+      session?.origin === "native" && (conversation.messages ?? 0) > 0;
+    if (!goals.length && !discussed) continue;
+    const runs = input.runs.filter(
+      (r) => r.conversationId === conversation.id && native(conversation.id),
+    );
     const latest =
       conversation.goalIds
         .map((id) => goals.find((g) => g.id === id))
         .filter((g) => !!g)
-        .at(-1) ?? goals.at(-1)!;
+        .at(-1) ?? goals.at(-1);
     const custom =
       conversation.title && conversation.title !== DEFAULT_CONVERSATION_TITLE;
     const first = goals.find((g) => g.id === conversation.goalIds[0]);
+    const running = session?.queue.some((w) => w.state === "running");
     threads.push({
-      threadId: goalThreadId(conversation.id),
-      kind: "goal",
+      threadId: sessionThreadIdOf(conversation.id),
+      kind: "session",
       projectId: input.projectId,
       conversationId: conversation.id,
       runId: null,
@@ -142,14 +178,26 @@ export function summarizeThreads(input: {
         : goals.length === 1 && first
           ? threadTitle(first.objective)
           : conversation.title || DEFAULT_CONVERSATION_TITLE,
-      state: latest.state,
-      needsYou: goals.map(goalAttention).find((a) => a) ?? null,
-      updatedAt: [conversation.updatedAt, ...goals.map((g) => g.updatedAt)]
+      state:
+        latest?.state ??
+        runs.at(0)?.state ??
+        (running ? "running" : "discussion"),
+      needsYou:
+        (session?.attention ? attentionLabels[session.attention.kind] : null) ??
+        goals.map(goalAttention).find((a) => a) ??
+        runs.map(loopAttention).find((a) => a) ??
+        null,
+      updatedAt: [
+        conversation.updatedAt,
+        session?.updatedAt ?? "",
+        ...goals.map((g) => g.updatedAt),
+        ...runs.map((r) => r.updatedAt),
+      ]
         .sort()
         .at(-1)!,
     });
   }
-  for (const run of input.runs)
+  for (const run of input.runs.filter((r) => !native(r.conversationId)))
     threads.push({
       threadId: loopThreadId(run.id),
       kind: run.mode === "goal" ? "goal-loop" : "endless",

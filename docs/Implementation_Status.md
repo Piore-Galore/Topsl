@@ -402,3 +402,43 @@ Follow-up, 28 October 2026: CI on [PR #36](https://github.com/Piore-Galore/Topsl
 | Windows x64 | Vitest 1065 passed, 122 skipped; release 17/0; main and Atlas journeys passed; coordinator and loop journeys skipped | Passed |
 
 On Windows the Atlas journey ran, so the conversation sidebar and a goal conversation's pane rendered there. A goal or loop run through the screens did not, because those journeys need a shell wrapper; the loop journey's skip line is printed with the coordinator journey's wording. Four-platform CI is now established for this branch. Live providers, Windows conversation journeys, packaged builds, and large projects or long conversations remain open.
+
+## Native Topsl sessions — agreed plan, 29 October 2026
+
+The owner chose persistent sessions across goals, peer coordinators, automatic team creation that can start work within existing permissions, model-and-instructions agent assignments, discussion alongside work, and queued goals. The [native-session plan](Native_Sessions_Plan.md) records the experience, service changes, compatibility defaults, and required validation; the [design](Topsl_Design.md#204-main-window) links this agreed target.
+
+**Status:** Plan saved; implementation has not begun for this follow-up. This documentation-only save changes no application behavior and establishes no new runtime, Electron, live-provider, CI, or packaged-platform acceptance. The 28 October conversation evidence above retains its original scope.
+
+Follow-up, 29 October 2026: the plan was reviewed and implemented the same day; see [Native Topsl sessions — 29 October 2026](#native-topsl-sessions--29-october-2026).
+
+## Native Topsl sessions — 29 October 2026
+
+**What changed.** The [native-session plan](Native_Sessions_Plan.md) is implemented on branch `claude/native-sessions` after `f84dd87`; its [review](Native_Sessions_Plan.md#review-29-october-2026) records the decisions the plan left open, and its [implementation record](Native_Sessions_Plan.md#implementation-record-29-october-2026) maps each part to its source. A persistent session (`orch-session`, keyed by its conversation) now holds a revisioned configuration, an ordered work queue, the active work, the latest accepted result and what waits on the owner. Every session message runs a `session-v1` intake by all selected coordinators, with peer endorsement, one reconciliation round and the owner's choice when they still disagree. New work runs one goal at a time, each continuing from the accepted result through a Topsl-owned copy. Session role settings sit between captured project defaults and goal overrides; automatic team choices fill only open fields and apply at round boundaries. Conversations from before sessions are backfilled as legacy sessions without rewriting their history, and saved `goal:` thread IDs open them. The screens add the New session page with the combined coordinator picker and team setup, the session view with **Auto / Discuss / Work**, **Target**, **Contributions**, session controls and the **Team** and **Work** panes, sessions in the sidebar, and **Provider tools** for direct Claude Code and Codex sessions.
+
+**Defect found during validation.** In zod 4, `.partial()` still fills field defaults, so a `session-update` that changed only roles reset the session's coordinators to one Auto coordinator. The Electron session journey caught it (its third message was answered by `coordinator-auto-1`); the commands now use `sessionConfigurationPatchSchema`, and `a command that changes one field keeps the others` parses the command through `commandSchema`. The same zod behavior applies to the existing `loop-policy-update` and to role groups' `completion` field; that predates this change and is not addressed here.
+
+**Verification (macOS 27.0.1 arm64, Node 26.0.0, Electron 44.4.5; branch `claude/native-sessions` after `f84dd87`, uncommitted).** Fixture and stand-in evidence only.
+
+| Command | Result |
+| --- | --- |
+| `npm test -- tests/native-sessions.test.ts` | Passed, 23 tests: composer-mode bounds, peer decisions (agreement, clarify, reconcile, alternatives, largest group leads), stale answers, bounded context; discussion without a goal and its thread listing; a clarifying question that starts nothing; duplicate message commands; one goal at a time with the second continuing from the accepted result and its coordinators reading it; a stopped goal adding nothing; two coordinators on two providers with shared wording; conflicting coordinators reconciling once then the owner choosing; a challenged decision reconciled before acting; an automatic team with provider-qualified models, a refused cross-provider model, a session-owned role hidden from another session, and explanations; owner settings over automatic ones and saving a role as a project default; captured versus live project defaults; an unavailable pinned coordinator and its explicit fallback; a custom team asking for configuration then running; a one-field command keeping the others; configuration waiting for the round boundary; Work-mode steering and session stop; pause and resume; restart adopting a recorded launch; legacy backfill without rewriting history and resolving `goal:` IDs |
+| `env -u ANTHROPIC_BASE_URL npm run check` | Passed: typecheck; 1205 tests passed and 5 skipped in 87 files (3 skipped); 18 release checks; build. The existing renderer chunk-size warning remains |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` | Passed all five default journeys: main, coordinator, Atlas, loop and session. An earlier full run failed the Atlas journey once on a navigation race after its zoom reset, which passed alone; the sidebar helper now retries that click ([TEST-DECISIONS](testing/TEST-DECISIONS.md#native-sessions-journey-names--29-october-2026)), and the next full run passed |
+| `env -u ANTHROPIC_BASE_URL node scripts/campaign-ui-test.mjs` | Passed 31 of 31 steps with the renamed labels |
+
+The [session journey](../scripts/desktop-session-test.mjs) creates a session with two pinned Codex stand-in coordinators from the picker, answers a **Discuss** message with one shared response and two attributed contributions and no goal, lists the discussion-only session in the sidebar, turns a **Work** message into the session's goal, pins **Reviewers** in the Team pane and sees it applied at the round boundary, accepts the goal through the native dialog, continues a second goal from the accepted result with the project folder unchanged, checks one heading and no horizontal overflow in Night and Paper at 1280 × 900 and 560 × 720, stops the session, and restores the session, transcript, queue and accepted result after a restart. The coordinator journey now runs its UI-01, acceptance, UI-02 and restart steps through a session. Screenshots are written to `test-results/sessions/` and are not committed.
+
+The label renames in [live-session.mjs](../scripts/live-session.mjs) (it needs the owner's accounts) and [campaign-packaged-test.mjs](../scripts/campaign-packaged-test.mjs) (it needs a packaged build) were made but not run.
+
+**Not established:** live Claude Code and Codex routes for sessions (the plan's live validation), remote CI on the four platforms, Windows session and coordinator journeys (they skip without a shell wrapper), packaged builds, many sessions or long conversations, and a loop starting from a session's accepted result.
+
+Follow-up, 29 October 2026: CI on [PR #38](https://github.com/Piore-Galore/Topsl/pull/38) at `42234d0` passed every job on the first attempt.
+
+| Platform | [Compile Topsl](https://github.com/Piore-Galore/Topsl/actions/runs/40744554491) | [Round 2 lifecycle stress](https://github.com/Piore-Galore/Topsl/actions/runs/40744554458) |
+| --- | --- | --- |
+| macOS Apple silicon | Vitest 1205 passed, 5 skipped; release 18/0; main, coordinator, Atlas, loop and session journeys passed | Passed |
+| macOS Intel | Vitest 1205 passed, 5 skipped; release 18/0; main, coordinator, Atlas, loop and session journeys passed | Passed |
+| Linux x64 | Vitest 1204 passed, 6 skipped; release 17/0; main, coordinator, Atlas, loop and session journeys passed | Passed |
+| Windows x64 | Vitest 1088 passed, 122 skipped; release 17/0; main and Atlas journeys passed; coordinator, loop and session journeys skipped | Passed |
+
+On Windows the session journey skipped because it needs a shell wrapper, like the coordinator and loop journeys (the loop journey's skip line still uses the coordinator journey's wording). Four-platform CI is now established for this branch. Live providers, Windows session and coordinator journeys, packaged builds, many sessions or long conversations, and a loop starting from a session's accepted result remain open.

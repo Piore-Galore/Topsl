@@ -145,10 +145,10 @@ const settled = () =>
     .toBe(0);
 const command = (value) =>
   page.evaluate((value) => window.topsl.command(value), value);
-/** The project's New conversation page, in a loop run mode. */
+/** The project's New session page, in a loop run mode. */
 async function openLoops(mode) {
-  await navigate(page, "New conversation");
-  const home = page.getByRole("region", { name: "New conversation" });
+  await navigate(page, "New session");
+  const home = page.getByRole("region", { name: "New session" });
   await home.getByRole("radio", { name: new RegExp(`^${mode}`) }).check();
   return home;
 }
@@ -225,11 +225,11 @@ try {
     }),
   ).not.toBeNull();
 
-  // The run mode selector on the project's New conversation page: Single
-  // goal starts a goal conversation; the loop modes create runs.
+  // The run mode selector on the project's New session page: Session
+  // starts a native session; the loop modes create runs.
   await page.setViewportSize({ width: 1280, height: 900 });
-  await navigate(page, "New conversation");
-  await expect(page.getByRole("radio", { name: /^Single goal/ })).toBeChecked();
+  await navigate(page, "New session");
+  await expect(page.getByRole("radio", { name: /^Session/ })).toBeChecked();
   let loops = await openLoops("Goal loop");
   await expect(loops).toContainText("Experimental");
   await loops
