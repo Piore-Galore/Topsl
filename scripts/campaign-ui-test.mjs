@@ -27,7 +27,7 @@ import {
 import { randomBytes, scryptSync, createCipheriv } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { navigate } from "./desktop-navigation.mjs";
+import { navigate, selectProject as selectProjectIn } from "./desktop-navigation.mjs";
 
 const packet = path.resolve(
   "test-results/agent-testing/2026-10-19-comprehensive/p4b-desktop-ui",
@@ -388,7 +388,10 @@ await app.evaluate(({ dialog }) => {
 });
 await page.setViewportSize({ width: 1280, height: 880 });
 const mod = process.platform === "darwin" ? "Meta" : "Control";
-const projectNames = ["Overview", "Sessions", "Coordinator", "Tasks", "Changes", "Context", "History", "Synchronization"];
+// "New conversation" is the coordinator destination: the project's home.
+const projectNames = ["Overview", "Sessions", "New conversation", "Tasks", "Changes", "Context", "History", "Synchronization"];
+const toolNames = projectNames.filter((name) => name !== "New conversation");
+const savedView = (nav) => (nav === "New conversation" ? "coordinator" : nav.toLowerCase());
 const globalPages = [
   { nav: "Projects", h1: "Projects", crumb: "Topsl / Projects" },
   { nav: "Applications", h1: "Applications", crumb: "Topsl / Applications" },
@@ -431,12 +434,11 @@ async function checkDestination({ nav, h1, crumb }, projectView, projectId) {
   }
 }
 
-await step("UI-03 empty profile: global destinations and disabled project destinations", ["UI-03"], async () => {
+await step("UI-03 empty profile: global destinations; no project tools and no new conversation", ["UI-03"], async () => {
   for (const destination of globalPages) await checkDestination(destination);
-  const projectNav = page.getByRole("navigation", { name: "Project navigation" });
-  for (const name of projectNames)
-    await expect(projectNav.getByRole("button", { name, exact: true })).toBeDisabled();
-  await expect(page.getByRole("combobox", { name: "Selected project" })).toHaveValue("");
+  await expect(page.getByRole("navigation", { name: "Project navigation" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New conversation", exact: true })).toBeDisabled();
+  await expect(page.getByRole("list", { name: "Projects and conversations" }).getByRole("listitem")).toHaveCount(0);
 }, page);
 
 await step("UI-05 command palette: unavailable actions stay unavailable (empty profile)", ["UI-05"], async () => {
@@ -492,7 +494,7 @@ await step("setup: add two projects and Beta-only records", ["UI-03", "UI-09"], 
     acceptanceCriteria: ["Only Beta shows this"],
   });
   await command(page, { type: "conversation-add", projectId: idB, title: "Beta-only conversation" });
-  await page.getByRole("combobox", { name: "Selected project" }).selectOption(idA);
+  await selectProjectIn(page, nameA);
   await expect(page.getByRole("heading", { level: 1, name: nameA })).toBeVisible();
   return { idA, idB };
 }, page);
@@ -500,14 +502,18 @@ await step("setup: add two projects and Beta-only records", ["UI-03", "UI-09"], 
 await step("UI-03 populated: all 11 destinations, one h1, marker, scope and saved view", ["UI-03"], async () => {
   for (const nav of projectNames)
     await checkDestination(
-      { nav, h1: nav === "Overview" ? nameA : nav, crumb: `${nameA} / ${nav}` },
-      nav.toLowerCase(),
+      {
+        nav,
+        h1: ["Overview", "New conversation"].includes(nav) ? nameA : nav,
+        crumb: `${nameA} / ${nav}`,
+      },
+      savedView(nav),
       idA,
     );
   for (const destination of globalPages) await checkDestination(destination);
-  await expect(page.getByRole("combobox", { name: "Selected project" })).toHaveValue(idA);
+  expect((await command(page, { type: "navigation-query" })).projectId).toBe(idA);
   const projectNav = page.getByRole("navigation", { name: "Project navigation" });
-  for (const name of projectNames) await expect(projectNav.getByRole("button", { name, exact: true })).toBeEnabled();
+  for (const name of toolNames) await expect(projectNav.getByRole("button", { name, exact: true })).toBeEnabled();
 }, page);
 
 await step("UI-05 command palette by mouse: focus enters, stays, returns", ["UI-05"], async () => {
@@ -695,7 +701,7 @@ await step("UI-08 Unicode/emoji long path is shown, legible and copied exactly",
   expect(await realpath(project.path)).toBe(await realpath(folderA));
   await navigate(page, "Overview");
   await expect(page.locator(".coordination-view .page-heading .path")).toHaveText(project.path);
-  await expect(page.getByRole("combobox", { name: "Selected project" }).locator("option:checked")).toHaveText(nameA);
+  await expect(page.locator(".project-node.selected .project-name")).toHaveText(nameA);
   await navigate(page, "Projects");
   const card = page.getByRole("article", { name: nameA, exact: true });
   await expect(card.locator("code.path")).toHaveText(project.path);
@@ -815,7 +821,11 @@ async function showsProject(name, line) {
   await expect(page.locator("header.topbar > span").first()).toHaveText(`${name} / Overview`);
   await expect(tasksLine).toContainText(line);
 }
-const selectProject = (id) => page.getByRole("combobox", { name: "Selected project" }).selectOption(id);
+/** Selects a project in the sidebar, then its Overview. */
+const selectProject = async (id) => {
+  await selectProjectIn(page, id === idA ? nameA : nameB);
+  await navigate(page, "Overview");
+};
 
 await step("UI-09 late Beta replies after A->B->A cannot replace Alpha", ["UI-09"], async () => {
   const lineA = await responsibility(idA),
@@ -832,7 +842,6 @@ await step("UI-09 late Beta replies after A->B->A cannot replace Alpha", ["UI-09
   await settle(page, 800);
   await showsProject(nameA, lineA);
   await expect(page.getByText("Beta-only task 乙")).toHaveCount(0);
-  await expect(page.getByRole("combobox", { name: "Selected project" })).toHaveValue(idA);
   expect((await command(page, { type: "navigation-query" })).projectId).toBe(idA);
   await navigate(page, "Sessions");
   await expect(page.getByRole("combobox", { name: "Conversation" }).locator("option", { hasText: "Beta-only conversation" })).toHaveCount(0);

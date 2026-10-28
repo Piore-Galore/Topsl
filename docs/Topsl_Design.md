@@ -1831,7 +1831,7 @@ Agreed on 18 October 2026 in the [coordinator feature specification](Coordinator
 - **Checks, acceptance and the project folder.** A code goal may carry required check definitions. Their protocol (tests, check configuration, referenced scripts) is bound at the goal's baseline, and each check runs against the exact integrated candidate through the same check plans, native confirmation and trusted digest as Build and review. Acceptance needs the satisfied review completion and current passing evidence for every required check on that candidate. Acceptance only records the decision; writing the candidate into the project folder is a separate, natively confirmed step that refuses a folder with uncommitted or untracked changes or one that no longer matches the baseline, records its intent before writing and is never repeated after an uncertain outcome.
 - **Conflicts are chosen, not merged.** A file two members changed differently blocks integration until the owner chooses one member's whole version per path. The chosen versions produce a new candidate, which the review group and required checks cover again.
 
-**Implemented** (18 October 2026): the domain model, persistence, selection, protocol, review barrier, scheduling, service commands and the project overview's Coordinator section, verified with fixture and stand-in-runtime tests. Required checks, per-file conflict choices and applying the accepted candidate to the project folder followed the same day on branch `coordinator-checks`, verified the same way. **Not yet implemented or established:** a qualified production Claude structured route, a qualified bounded native fan-out route for parallel waves, an adjudicator policy, partial progress on disputed plans, and any live provider evidence. A coordinator Electron journey has since run against a stand-in ([Coordinator teams](Coordinator_Teams.md#electron-journey-18-october-2026)). On 19 October 2026 the engine gained repair driven by failing checks or unmet criteria and an integration task for overlapping changes; loop runs use them automatically, and the single-goal conversation does not yet offer them.
+**Implemented** (18 October 2026): the domain model, persistence, selection, protocol, review barrier, scheduling, service commands and the project overview's Coordinator section, verified with fixture and stand-in-runtime tests. Required checks, per-file conflict choices and applying the accepted candidate to the project folder followed the same day on branch `coordinator-checks`, verified the same way. **Not yet implemented or established:** a qualified production Claude structured route, a qualified bounded native fan-out route for parallel waves, an adjudicator policy, partial progress on disputed plans, and any live provider evidence. A coordinator Electron journey has since run against a stand-in ([Coordinator teams](Coordinator_Teams.md#electron-journey-18-october-2026)). On 19 October 2026 the engine gained repair driven by failing checks or unmet criteria and an integration task for overlapping changes; loop runs use them automatically, and the single-goal conversation does not yet offer them. On 28 October 2026 the Coordinator section was replaced by conversations listed per project (§20.4; [Coordinator teams](Coordinator_Teams.md#follow-up-conversations-as-threads-28-october-2026)).
 
 ---
 
@@ -1897,6 +1897,8 @@ An agent may submit a proposed configuration or application-management action fo
 
 Decided 27 October 2026, when the owner found the interface cluttered: each page carries only its title (and, on Overview, the project path); there are no eyebrows, taglines or decorative compass in page headings. A project page shows one compact data-freshness line, and nested sections report freshness only when their own read fails. Controls that repeat a sidebar destination, and explanatory notes repeated on every card, are removed. The atlas identity remains in the palette, sidebar, emblem and section rules.
 
+Follow-up, 28 October 2026: coordinator conversations ([§20.4](#204-main-window)) keep this rule. A project's New conversation page, which replaces Overview as the page a project opens on, carries the project name and path; a goal or loop conversation carries its title and a state badge, and a loop's kind (**Goal loop** or **Endless loop**) is a badge rather than an eyebrow.
+
 A billowing square topsail, yard, and short mast form the app emblem, in ivory and brass on a navy tile. The canonical geometry is [topsl.svg](../assets/brand/topsl.svg). The sidebar, loading/lock screens, native About/Dock/window identity and packaged icons share it. Run `npm run icons:build` for reproducible PNG, ICNS and ICO exports with the installed electron-builder converter; normal builds use the checked-in exports. No external fonts or hosted artwork are required.
 
 ### 20.2 Themes and color tokens
@@ -1930,20 +1932,22 @@ Use adaptive density: concise summaries and primary actions lead to dedicated ed
 
 ### 20.4 Main window
 
-The sidebar contains a project picker, the eight project destinations, and global Projects, Applications and Settings. Selecting another project opens Overview. Launch restores a valid saved project/view; otherwise it opens Projects. The existing preference record now accepts Sessions and Coordinator in addition to the old views; an unknown stored view falls back to Overview. No database migration is required.
+*Revised 28 October 2026* so the coordinator works like Claude Code projects. The sidebar contains **+ New conversation**, global Projects, a project tree, and Applications and Settings. Each project in the tree expands to its coordinator **threads**, newest first: one per Single goal conversation and one per Goal loop or Endless run, each marked with its kind and with what waits on the owner (for example Accept, Run checks, Apply, Review and start). Threads waiting on the owner are listed past the per-project limit, and the selected project is always expanded. The selected project's **Project tools** group (expanded by default) holds Overview, Sessions, Tasks, Changes, Context, History and Synchronization, following §20.5's grouped-navigation rule. Selecting a project opens its New conversation page (the Coordinator destination with no thread open), not Overview. Launch restores a valid saved project, view and thread; otherwise it opens Projects. The preference record adds an optional thread ID; older records and unknown values read as none, and an unknown stored view still falls back to Overview. No database migration is required.
+
+*Retired 28 October 2026:* the project picker (`<select>`) and "selecting another project opens Overview". The owner asked for the coordinator to be the way into a project, as a project's sessions are in Claude Code; a picker could not show a project's conversations or what waits on the owner, and Overview's attention items are now carried by the tree's markers. Overview remains one click away under Project tools.
 
 | Project destination | Main content |
 |---|---|
+| New conversation (Coordinator) | With no thread open, the project's home: Run mode (Single goal, Goal loop, Endless), one composer with Options (goal kind, required check, loop policy), readiness, recent conversations, project role defaults, and Stop everything under Project controls. With a thread open, that conversation: a transcript of the owner's messages and the service's notes with the coordinators' turn for each goal (state, team lines, answer, and only the decisions waiting on the owner) or each loop iteration; the latest plan's tasks pinned above the composer; the thread's controls in its header; and one detail pane at a time (Team, Plan, Review, Checks, Changes for a goal; Goals, Checkpoint, Organization, Iterations, Backlog, Usage for a loop). Native confirmations for checks, acceptance, applying, starting and publishing are unchanged. |
 | Overview | Attention items, recorded responsibility/capacity/usage, and actions to start a session or coordinate work. |
 | Sessions | Conversations, composer, explicit runtime/model/permission choices, native terminal and handoff. |
-| Coordinator | Team conversation, role defaults, goals, rounds, checks and acceptance. |
 | Tasks | Workflow setup, attempts and task inspection. |
 | Changes | Candidate review, findings, check evidence and acceptance; workflow setup stays under Tasks. |
 | Context | Captured shared context and input freshness. |
 | History | Conversation search/import and explicitly approved native history sources. |
 | Synchronization | Native sync evidence, managed workspaces and optional coordination settings. |
 
-Project editors and terminals retain their mounts when navigating within the selected project; project-scoped reads and drafts reset on a project switch. Below 900px, Navigation opens a native HTML dialog with focus trapping and restoration. Controls stack below 700px. Task inspectors use dialogs below 1200px, where their side panel is hidden. Provider identity, permissions, billing route, errors and evidence uncertainty remain explicit.
+Project editors and terminals retain their mounts when navigating within the selected project; project-scoped reads and drafts reset on a project switch. A coordinator thread mounts afresh when opened, so its reads and panes never carry over to another thread; its unsent composer text is kept per thread for the window's life, and unsaved role-editor changes are lost when another thread opens. Below 900px, Navigation opens a native HTML dialog with focus trapping and restoration. Controls stack below 700px. Task inspectors use dialogs below 1200px, where their side panel is hidden. Provider identity, permissions, billing route, errors and evidence uncertainty remain explicit.
 
 ### 20.5 Settings information architecture
 
@@ -2006,7 +2010,7 @@ Native terminal input receives its usual shortcuts. In particular, Ctrl+C is sen
 
 ### 20.8 Keyboard and accessibility
 
-Use **Command/Ctrl+K** for a command palette and **Command/Ctrl+Enter** for send by default, with configurable alternatives. Enter in the composer creates a newline unless the user deliberately selects another behavior. Avoid accidental billable requests while editing multi-line prompts.
+Use **Command/Ctrl+K** for a command palette and **Command/Ctrl+Enter** for send by default, with configurable alternatives. The coordinator's thread composer follows the same rule (28 October 2026), unlike Claude Code's Enter-to-send. Enter in the composer creates a newline unless the user deliberately selects another behavior. Avoid accidental billable requests while editing multi-line prompts.
 
 The palette finds projects, sessions, models, native capabilities, settings, and commands. Show the destination host/profile before a consequential action. Do not make the palette a shell-string execution shortcut.
 
@@ -2028,7 +2032,7 @@ Provide visible focus indicators, logical tab order, accessible names, screen-re
 
 ### 20.10 Responsive layout and release criteria
 
-At smaller window sizes, collapse the sidebar and inspector before reducing text size. Settings become a single-column view; diff and terminal panes remain resizable. Avoid mandatory horizontal scrolling for primary controls.
+At smaller window sizes, collapse the sidebar and inspector before reducing text size. A coordinator thread's detail pane sits beside the transcript from 1200px and overlays it below. Settings become a single-column view; diff and terminal panes remain resizable. Avoid mandatory horizontal scrolling for primary controls.
 
 A release must support completing setup, a cross-provider task, a plugin configuration change, a permissions review, and a history search using keyboard alone and using a mouse. Test both themes at ordinary and increased zoom. Visual simplicity must not hide account, billing, authorization, or partial-sync warnings.
 
@@ -2887,7 +2891,7 @@ Block unsupported platform and production claims independently of pilot function
 | Usage display | Tokens, quotas, and money in separate views |
 | Missing data | Unknown/partial with provenance |
 | Cloud synchronization | Not required; optional encrypted application-state replication later |
-| Interface | Navigator’s Atlas project command desk; mouse and keyboard first-class |
+| Interface | Navigator’s Atlas: projects with their coordinator conversations, and grouped project tools; mouse and keyboard first-class |
 | Default theme | System, following the computer's light or dark appearance; an explicit Paper (light) or Night (dark) choice is kept |
 | Full feature access | Structured or documented native route per capability; unsupported states visible |
 | Extension management | Native lifecycle operations with source/trust review |

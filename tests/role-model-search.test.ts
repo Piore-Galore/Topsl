@@ -3,7 +3,7 @@ import {
   filterModelOptions,
   typedModelPin,
   type ModelOption,
-} from "../apps/desktop/renderer/components/coordinator-teams";
+} from "../apps/desktop/renderer/coordinator/role-editor";
 import { memberPinSchema } from "../packages/domain/role-groups";
 
 const option = (

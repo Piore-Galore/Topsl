@@ -6,7 +6,7 @@ import {
 export type { ProjectView } from "../../../packages/domain/navigation";
 import { ProjectOverview } from "./screens/project-overview";
 import { ParallelActivity } from "./components/parallel-activity";
-import { CoordinatorModes } from "./components/recursive-loop";
+import { CoordinatorView } from "./coordinator";
 import { OptionalCoordination, UsageBudget } from "./components/reporting";
 import { Workflows } from "./workflows";
 import { ScopedReadFence, useScopedRefresh } from "./state/scoped";
@@ -46,6 +46,8 @@ export function Coordination({
   projectPath,
   sessionsContent,
   historyContent,
+  threadId = null,
+  onThread,
 }: {
   projectId: string;
   view?: ProjectView;
@@ -54,6 +56,9 @@ export function Coordination({
   projectPath?: string;
   sessionsContent?: ReactNode;
   historyContent?: ReactNode;
+  /** The open coordinator thread; none shows the project's home. */
+  threadId?: string | null;
+  onThread?: (threadId: string | null) => void;
 }) {
   const [snapshot, setSnapshot] = useState<any>(null),
     [sync, setSync] = useState<any>(null),
@@ -458,7 +463,18 @@ export function Coordination({
   );
   return (
     <section className="coordination-view" aria-label="Project activity">
-      <div className="page-heading">
+      {/* The coordinator draws its own heading: the project's home or the
+          open conversation. */}
+      {projectId && view === "coordinator" && (
+        <CoordinatorView
+          projectId={projectId}
+          projectName={projectName}
+          projectPath={projectPath}
+          threadId={threadId}
+          onThread={(next) => onThread?.(next)}
+        />
+      )}
+      <div className="page-heading" hidden={view === "coordinator"}>
         <div>
           <h1>
             {view === "overview" ? (projectName ?? "Overview") : label(view)}
@@ -485,12 +501,9 @@ export function Coordination({
       {!projectId ? (
         <p>Select a project to inspect its work.</p>
       ) : !snapshot ? (
-        <p>Loading project activity…</p>
+        view !== "coordinator" && <p>Loading project activity…</p>
       ) : (
         <>
-          <div hidden={view !== "coordinator"}>
-            <CoordinatorModes projectId={projectId} />
-          </div>
           <div hidden={view !== "tasks" && view !== "changes"}>
             <Workflows
               projectId={projectId}

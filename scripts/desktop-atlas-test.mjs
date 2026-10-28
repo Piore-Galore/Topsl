@@ -2,7 +2,7 @@ import { _electron as electron, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { navigate } from "./desktop-navigation.mjs";
+import { navigate, selectProject } from "./desktop-navigation.mjs";
 
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-atlas-"));
 const folder = path.join(profile, "Atlas 项目");
@@ -49,9 +49,15 @@ try {
   await expect(
     page.getByRole("heading", { name: "Atlas 项目", exact: true }),
   ).toBeVisible();
-  selectedProject = await page
-    .getByRole("combobox", { name: "Selected project", exact: true })
-    .inputValue();
+  // Adding a project opens its New conversation page.
+  await expect(
+    page.getByRole("region", { name: "New conversation" }),
+  ).toBeVisible();
+  selectedProject = (
+    await page.evaluate(() =>
+      window.topsl.command({ type: "navigation-query" }),
+    )
+  ).projectId;
   const shot = async (name) => {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: path.join(output, name + ".png") });
@@ -70,7 +76,7 @@ try {
     for (const view of [
       "Overview",
       "Sessions",
-      "Coordinator",
+      "New conversation",
       "Tasks",
       "Changes",
       "Context",
@@ -81,8 +87,10 @@ try {
       "Projects",
     ]) {
       await navigate(page, view);
-      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-      await shot(`${theme}-${view.toLowerCase()}`);
+      // One page heading and one current location per screen.
+      await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+      await expect(page.locator('[aria-current="page"]')).toHaveCount(1);
+      await shot(`${theme}-${view.toLowerCase().replaceAll(" ", "-")}`);
     }
     // Measure actual rendered tokens on the root, panel, control and sidebar.
     const contrast = await page.evaluate(() => {
@@ -126,6 +134,37 @@ try {
       );
     reports.push({ theme, contrast });
   }
+  // A goal conversation: transcript, composer and a detail pane, docked at
+  // 1200px and wider and over the transcript below.
+  await navigate(page, "New conversation");
+  const home = page.getByRole("region", { name: "New conversation" });
+  await home
+    .getByRole("textbox", { name: "Message" })
+    .fill("Chart the harbor before the tide turns.");
+  await home.getByRole("button", { name: "Send", exact: true }).click();
+  const thread = page.getByRole("region", { name: "Coordinator conversation" });
+  await expect(
+    thread.getByRole("article", {
+      name: "Goal Chart the harbor before the tide turns.",
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+  await expect(page.locator('[aria-current="page"]')).toHaveCount(1);
+  await thread
+    .getByRole("group", { name: "Thread panes" })
+    .getByRole("button", { name: "Team", exact: true })
+    .click();
+  await expect(
+    thread.getByRole("complementary", { name: "Team details" }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 1200, height: 880 });
+  await shot("night-goal-thread-pane-docked");
+  await page.setViewportSize({ width: 1199, height: 880 });
+  await shot("night-goal-thread-pane-overlay");
+  await thread
+    .getByRole("button", { name: "Close team details", exact: true })
+    .click();
+  await page.setViewportSize({ width: 1280, height: 880 });
   await navigate(page, "Sessions");
   await page.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect(page.locator(".conversation-heading")).toContainText("Chat 1");
@@ -204,9 +243,7 @@ try {
   await expect(
     page.getByRole("heading", { name: "Second harbor", exact: true }),
   ).toBeVisible();
-  await page
-    .getByRole("combobox", { name: "Selected project", exact: true })
-    .selectOption(selectedProject);
+  await selectProject(page, "Atlas 项目");
   await expect(
     page.getByRole("heading", { name: "Atlas 项目", exact: true }),
   ).toBeVisible();
@@ -220,7 +257,7 @@ try {
     for (const view of [
       "Overview",
       "Sessions",
-      "Coordinator",
+      "New conversation",
       "Tasks",
       "Changes",
       "Context",
@@ -231,7 +268,7 @@ try {
       "Projects",
     ]) {
       await navigate(page, view);
-      await shot(`compact-${theme}-${view.toLowerCase()}`);
+      await shot(`compact-${theme}-${view.toLowerCase().replaceAll(" ", "-")}`);
     }
     await page.getByRole("button", { name: "Navigation", exact: true }).click();
     await expect(
@@ -287,9 +324,13 @@ try {
   await expect(
     page.getByRole("heading", { name: "History", exact: true }),
   ).toBeVisible({ timeout: 45000 });
-  await expect(
-    page.getByRole("combobox", { name: "Selected project", exact: true }),
-  ).toHaveValue(selectedProject);
+  expect(
+    (
+      await page.evaluate(() =>
+        window.topsl.command({ type: "navigation-query" }),
+      )
+    ).projectId,
+  ).toBe(selectedProject);
 } finally {
   await reopened.close();
   await rm(profile, { recursive: true, force: true });

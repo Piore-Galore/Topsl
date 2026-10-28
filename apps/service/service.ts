@@ -1,4 +1,5 @@
 import { projectView as validProjectView } from "../../packages/domain/navigation";
+import { parseThreadId, summarizeThreads } from "../../packages/domain/threads";
 import path from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
 import { Store } from "../../packages/persistence/store";
@@ -1903,6 +1904,9 @@ export class Service {
           projectId: savedNavigation?.projectId ?? null,
           workflowId: savedNavigation?.workflowId ?? null,
           projectView: validProjectView(savedNavigation?.projectView),
+          threadId: parseThreadId(savedNavigation?.threadId)
+            ? savedNavigation.threadId
+            : null,
         };
       }
       case "navigation-save":
@@ -1916,6 +1920,7 @@ export class Service {
               ? previous.workflowId
               : null),
           projectView: command.projectView,
+          threadId: command.threadId ?? null,
         });
         return null;
       case "scope-events":
@@ -2021,7 +2026,32 @@ export class Service {
         return this.managedWorkspaces.apply(command.id, trusted.digest);
       case "orchestration-query":
         this.require<Project>("project", command.projectId);
-        return this.orchestration.view(command.projectId);
+        return this.orchestration.view(
+          command.projectId,
+          command.conversationId,
+        );
+      case "coordinator-threads":
+        return command.projectIds
+          .filter((projectId) => this.store.get<Project>("project", projectId))
+          .map((projectId) => {
+            const threads = summarizeThreads({
+              projectId,
+              ...this.orchestration.threadFacts(projectId),
+              runs: this.loops.list(projectId),
+            });
+            return {
+              projectId,
+              total: threads.length,
+              needsYou: threads.filter((t) => t.needsYou).length,
+              // Threads waiting on the owner are listed past the limit.
+              threads: threads.filter(
+                (t, index) => index < command.limit || t.needsYou,
+              ),
+            };
+          });
+      case "orchestration-conversation-start":
+        this.require<Project>("project", command.projectId);
+        return this.orchestration.startConversation(command);
       case "orchestration-conversation-create":
         this.require<Project>("project", command.projectId);
         return this.orchestration.createConversation(command);

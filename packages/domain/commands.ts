@@ -415,6 +415,8 @@ export const commandSchema = z.discriminatedUnion("type", [
     projectId: id.nullable(),
     workflowId: id.nullable(),
     projectView: z.enum(projectViews),
+    /** The open coordinator thread (`goal:<id>` or `loop:<id>`), if any. */
+    threadId: z.string().max(300).nullable().optional(),
   }),
   z.object({ type: z.literal("navigation-query") }),
   z.object({ type: z.literal("managed-workspaces-query"), projectId: id }),

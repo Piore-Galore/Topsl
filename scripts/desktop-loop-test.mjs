@@ -1,4 +1,4 @@
-import { navigate } from "./desktop-navigation.mjs";
+import { navigate, openThread } from "./desktop-navigation.mjs";
 import { throttleRenderer } from "./desktop-click-trace.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-// Recursive Looping (experimental) in the Coordinator section, driven through
+// Recursive Looping (experimental) as loop conversations, driven through
 // Topsl's own screens in Electron against a synthetic profile. The Codex runtime is a
 // scripted stand-in (tests/fixtures/codex-desktop-coordinator.cjs) that is
 // registered, connected and qualified through typed IPC as the main desktop
@@ -145,14 +145,27 @@ const settled = () =>
     .toBe(0);
 const command = (value) =>
   page.evaluate((value) => window.topsl.command(value), value);
+/** The project's New conversation page, in a loop run mode. */
 async function openLoops(mode) {
-  await navigate(page, "Coordinator");
-  await page
-    .getByRole("navigation", { name: "Project navigation" })
-    .getByRole("button", { name: "Coordinator", exact: true })
-    .click();
-  await page.getByRole("radio", { name: new RegExp(`^${mode}`) }).check();
-  return page.getByRole("region", { name: "Recursive loop" });
+  await navigate(page, "New conversation");
+  const home = page.getByRole("region", { name: "New conversation" });
+  await home.getByRole("radio", { name: new RegExp(`^${mode}`) }).check();
+  return home;
+}
+/** Opens a run's conversation from the sidebar unless it is already open. */
+async function openRun(title) {
+  if (!(await runArticle(title).isVisible()))
+    await openThread(page, "loop-project", title);
+  await expect(runArticle(title)).toBeVisible();
+  return runArticle(title);
+}
+/** Shows one of a run's panes (Goals, Checkpoint, Organization, …). */
+async function showPane(run, name) {
+  const toggle = run
+    .getByRole("group", { name: "Thread panes" })
+    .getByRole("button", { name, exact: true });
+  if ((await toggle.getAttribute("aria-pressed")) !== "true")
+    await toggle.click();
 }
 // Exact: one run's title can begin another's ("Change the value to two" and
 // "Change the value to two in a second run").
@@ -212,17 +225,11 @@ try {
     }),
   ).not.toBeNull();
 
-  // The run mode selector: Single goal is the existing conversation.
+  // The run mode selector on the project's New conversation page: Single
+  // goal starts a goal conversation; the loop modes create runs.
   await page.setViewportSize({ width: 1280, height: 900 });
-  await navigate(page, "Coordinator");
-  await page
-    .getByRole("navigation", { name: "Project navigation" })
-    .getByRole("button", { name: "Coordinator", exact: true })
-    .click();
+  await navigate(page, "New conversation");
   await expect(page.getByRole("radio", { name: /^Single goal/ })).toBeChecked();
-  await expect(
-    page.getByRole("region", { name: "Coordinator conversation" }),
-  ).toBeVisible();
   let loops = await openLoops("Goal loop");
   await expect(loops).toContainText("Experimental");
   await loops
@@ -234,11 +241,15 @@ try {
 
   // Goal loop A: create, start under native authority, and steer while it runs.
   await loops
-    .getByRole("textbox", { name: "Goals", exact: true })
+    .getByRole("textbox", { name: "Message", exact: true })
     .fill("Change the value to two.");
   await loops.getByRole("button", { name: "Create run", exact: true }).click();
+  // Creating opens the run's own conversation, which starts with the goals.
   const a = runArticle("Change the value to two");
   await expect(a).toBeVisible();
+  await expect(
+    a.getByRole("list", { name: "Conversation" }).getByRole("listitem").first(),
+  ).toContainText("Change the value to two.");
   await a
     .getByRole("button", { name: "Review and start", exact: true })
     .click();
@@ -273,6 +284,7 @@ try {
       { timeout: 60000 },
     )
     .toMatch(/organizing|preparing|executing|verifying|evaluating/);
+  await showPane(a, "Goals");
   await a
     .getByRole("textbox", { name: "Add a goal", exact: true })
     .fill("Keep file.ts exporting the value");
@@ -280,6 +292,7 @@ try {
   await expect(a.getByRole("region", { name: "Goals" })).toContainText(
     "Keep file.ts exporting the value",
   );
+  await showPane(a, "Organization");
   const reviewers = a
     .getByRole("region", { name: "Organization" })
     .getByRole("listitem")
@@ -326,7 +339,8 @@ try {
     timeout: 45000,
   });
   await answerDialogs(app, project);
-  loops = await openLoops("Goal loop");
+  // The window reopens on the run's conversation.
+  await openRun("Change the value to two");
   await expect(runArticle("Change the value to two")).toContainText(
     "Suspended",
   );
@@ -352,7 +366,7 @@ try {
     for (const r of unknown) await command({ type: "run-reconcile", id: r.id });
   }
   await expect(
-    runArticle("Change the value to two").locator(".loop-header .badge").nth(1),
+    runArticle("Change the value to two").locator(".loop-header .badge").last(),
   ).toHaveText("Completed", { timeout: 180000 });
   const doneA = await command({ type: "loop-inspect", runId: idA });
   if (
@@ -363,6 +377,7 @@ try {
       "Run A must complete with every goal satisfied on an accepted checkpoint.",
     );
   // The automatic organization change is visible with its reason and boundary.
+  await showPane(runArticle("Change the value to two"), "Organization");
   const changes = runArticle("Change the value to two").locator("details", {
     hasText: "Why the organization changed",
   });
@@ -372,16 +387,14 @@ try {
   await shot(page, "loop-goal-completed");
 
   // Goal loop B: stop during child work fences everything and settles.
-  await loops.locator("details.loop-new > summary").click();
+  loops = await openLoops("Goal loop");
   await loops
-    .getByRole("textbox", { name: "Goals", exact: true })
+    .getByRole("textbox", { name: "Message", exact: true })
     .fill("Change the value to two in a second run.");
   await loops.getByRole("button", { name: "Create run", exact: true }).click();
   const titleB = "Change the value to two in a second run";
-  await loops
-    .getByRole("combobox", { name: "Run" })
-    .selectOption({ label: `${titleB} · Paused` });
   const b = runArticle(titleB);
+  await expect(b).toBeVisible();
   await b
     .getByRole("button", { name: "Review and start", exact: true })
     .click();
@@ -407,15 +420,14 @@ try {
   ).toBeDisabled();
 
   // Inspect and publish run A's accumulated checkpoint into the folder.
-  // Choosing a run shows that run by itself. It once re-read the previously
-  // selected run and showed it until the project's next change, so project
-  // refreshes are held while A is chosen (the loop failure recorded with F-01
-  // in docs/testing/TEST-DECISIONS.md).
+  // Opening a run shows that run by itself, read by its own screen: project
+  // refreshes are held while A is opened (the run picker once showed the
+  // previously chosen run until the project's next change, the loop failure
+  // recorded with F-01 in docs/testing/TEST-DECISIONS.md).
   await holdRefreshes(app, true);
   await settled();
-  await loops
-    .getByRole("combobox", { name: "Run" })
-    .selectOption({ label: "Change the value to two · Completed" });
+  await openRun("Change the value to two");
+  await showPane(runArticle("Change the value to two"), "Checkpoint");
   await settled();
   const checkpoint = runArticle("Change the value to two").getByRole("region", {
     name: "Accepted checkpoint",
@@ -458,29 +470,24 @@ try {
     throw new Error("The publication dialog must name machine promotion.");
 
   // Endless: with the published value there is no worthwhile work, so it monitors.
-  // Switching modes keeps the form and reads the Endless runs itself. It once
-  // cleared the view, and with no project refresh after the switch the view
-  // stayed on "Loading loop runs…" (the loop failure recorded with F-01 in
-  // docs/testing/TEST-DECISIONS.md), so refreshes are held until the form
-  // has settled with the text in it.
+  // Switching modes keeps the typed text. Refreshes are held until the form
+  // has settled with the text in it, so the page cannot depend on a project
+  // refresh (the loop failure recorded with F-01 in
+  // docs/testing/TEST-DECISIONS.md).
+  loops = await openLoops("Goal loop");
   await holdRefreshes(app, true);
   await settled();
+  const improve = loops.getByRole("textbox", { name: "Message", exact: true });
+  await improve.fill("Keep improving the fixture. Prioritize correctness.");
   // Keyboard: the mode selector is an ordinary radio group.
   await page.getByRole("radio", { name: /^Goal loop/ }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("radio", { name: /^Endless/ })).toBeChecked();
-  loops = page.getByRole("region", { name: "Recursive loop" });
   await page.setViewportSize({ width: 760, height: 900 });
-  const improve = loops.getByRole("textbox", {
-    name: "What to improve, and priorities",
-    exact: true,
-  });
-  await improve.fill("Keep improving the fixture. Prioritize correctness.");
   await settled();
   await expect(improve).toHaveValue(
     "Keep improving the fixture. Prioritize correctness.",
   );
-  await expect(loops.getByText("Loading loop runs…")).toHaveCount(0);
   await holdRefreshes(app, false);
   await loops.getByRole("button", { name: "Create run", exact: true }).click();
   const c = runArticle("Keep improving the fixture. Prioritize correctness.");
@@ -497,7 +504,7 @@ try {
       { timeout: 90000 },
     )
     .toBe("monitoring");
-  await expect(c.locator(".loop-header .badge").nth(1)).toHaveText(
+  await expect(c.locator(".loop-header .badge").last()).toHaveText(
     "Monitoring",
   );
   // Compact layout: the controls stay reachable without horizontal scrolling.
@@ -523,6 +530,12 @@ try {
       { timeout: 30000 },
     )
     .toBe("paused");
+  // The run's conversation can no longer be steered, and the project's page
+  // keeps Stop for it.
+  await expect(
+    c.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeDisabled();
+  loops = await openLoops("Endless");
   const existing = loops.getByRole("region", { name: "Existing runs" });
   await expect(existing).toContainText("Paused");
   await shot(page, "loop-feature-off-existing-run");

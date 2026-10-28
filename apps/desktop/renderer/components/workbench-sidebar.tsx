@@ -5,8 +5,18 @@ import {
   viewLabel,
   type ProjectView,
 } from "../../../../packages/domain/navigation";
+import type { ProjectThreads } from "../state/threads";
 import { ActionButton } from "./action-button";
 import { AtlasIcon, Brand } from "./atlas";
+
+const kindMark = { goal: "◆", "goal-loop": "↻", endless: "∞" } as const;
+const kindTitle = {
+  goal: "Goal",
+  "goal-loop": "Goal loop",
+  endless: "Endless",
+} as const;
+/** Project tools: every project destination except the coordinator. */
+const toolViews = projectViews.filter((v) => v !== "coordinator");
 
 export type GlobalPage = "projects" | "applications" | "settings";
 
@@ -22,6 +32,9 @@ export function WorkbenchSidebar({
   selectView,
   addProject,
   palette,
+  threads,
+  threadId,
+  openThread,
 }: {
   state: AppState;
   page: GlobalPage | "project";
@@ -34,7 +47,28 @@ export function WorkbenchSidebar({
   selectView: (view: ProjectView) => void;
   addProject: () => void;
   palette: () => void;
+  threads: Record<string, ProjectThreads>;
+  threadId: string | null;
+  /** Opens a thread of a project, or that project's home with none. */
+  openThread: (threadId: string | null, projectId: string) => void;
 }) {
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => new Set(projectId ? [projectId] : []),
+  );
+  const [toolsOpen, setToolsOpen] = useState(true);
+  // The selected project is always expanded, so its conversations show.
+  useEffect(() => {
+    if (projectId && !expanded.has(projectId))
+      setExpanded((current) => new Set(current).add(projectId));
+  }, [projectId]);
+  const toggle = (id: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const inCoordinator = page === "project" && view === "coordinator";
   const [compact, setCompact] = useState(
     () => matchMedia("(max-width: 899px)").matches,
   );
@@ -87,6 +121,19 @@ export function WorkbenchSidebar({
           Close navigation
         </ActionButton>
       )}
+      <ActionButton
+        className={`new-conversation primary ${inCoordinator && !threadId ? "selected" : ""}`}
+        // The "+" is drawn by atlas.css and is not part of the name.
+        aria-label="New conversation"
+        aria-current={inCoordinator && !threadId ? "page" : undefined}
+        disabled={!projectId}
+        onClick={() => {
+          openThread(null, projectId);
+          close();
+        }}
+      >
+        New conversation
+      </ActionButton>
       <nav className="global-navigation" aria-label="Main navigation">
         {globalLink("projects")}
       </nav>
@@ -97,42 +144,138 @@ export function WorkbenchSidebar({
             +
           </ActionButton>
         </div>
-        <div className="project-picker">
-          <select
-            aria-label="Selected project"
-            value={projectId}
-            onChange={(event) => {
-              selectProject(event.target.value);
-              close();
-            }}
-          >
-            <option value="">Choose a project</option>
-            {state.projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <nav className="project-navigation" aria-label="Project navigation">
-          {projectViews.map((item) => (
-            <ActionButton
-              key={item}
-              className={`nav ${page === "project" && view === item ? "selected" : ""}`}
-              aria-current={
-                page === "project" && view === item ? "page" : undefined
-              }
-              disabled={!projectId}
-              onClick={() => {
-                selectView(item);
-                close();
-              }}
-            >
-              <AtlasIcon name={item} />
-              <span>{viewLabel(item)}</span>
-            </ActionButton>
-          ))}
-        </nav>
+        <ul className="project-tree" aria-label="Projects and conversations">
+          {state.projects.map((project) => {
+            const list = threads[project.id];
+            const open = expanded.has(project.id);
+            const selected = project.id === projectId;
+            const hidden = list ? list.total - list.threads.length : 0;
+            return (
+              <li
+                key={project.id}
+                className={`project-node ${selected ? "selected" : ""}`}
+              >
+                <div className="project-row">
+                  <ActionButton
+                    className="tree-toggle"
+                    aria-expanded={open}
+                    aria-label={`${open ? "Collapse" : "Expand"} ${project.name}`}
+                    onClick={() => toggle(project.id)}
+                  >
+                    <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+                  </ActionButton>
+                  <ActionButton
+                    className="project-name"
+                    onClick={() => {
+                      openThread(null, project.id);
+                      close();
+                    }}
+                  >
+                    {project.name}
+                  </ActionButton>
+                  {!!list?.needsYou && (
+                    <span
+                      className="count warm"
+                      title={`${list.needsYou} waiting on you`}
+                    >
+                      {list.needsYou}
+                      <span className="visually-hidden"> waiting on you</span>
+                    </span>
+                  )}
+                </div>
+                {open && (
+                  <ul
+                    className="thread-list"
+                    aria-label={`${project.name} conversations`}
+                  >
+                    {list?.threads.map((t) => {
+                      const current =
+                        inCoordinator && selected && threadId === t.threadId;
+                      return (
+                        <li
+                          key={t.threadId}
+                          className={`thread-row ${t.needsYou ? "needs-you" : ""}`}
+                        >
+                          <ActionButton
+                            className={`thread-link ${current ? "selected" : ""}`}
+                            aria-current={current ? "page" : undefined}
+                            title={`${kindTitle[t.kind]} · ${t.state}`}
+                            onClick={() => {
+                              openThread(t.threadId, project.id);
+                              close();
+                            }}
+                          >
+                            <span className="thread-mark" aria-hidden="true">
+                              {kindMark[t.kind]}
+                            </span>
+                            <span className="thread-title">{t.title}</span>
+                          </ActionButton>
+                          {t.needsYou && (
+                            <span className="thread-attention">
+                              {t.needsYou}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                    {list && !list.total && (
+                      <li className="tiny muted">No conversations yet.</li>
+                    )}
+                    {hidden > 0 && (
+                      <li>
+                        <ActionButton
+                          className="thread-more"
+                          onClick={() => {
+                            openThread(null, project.id);
+                            close();
+                          }}
+                        >
+                          {hidden} older in {project.name}
+                        </ActionButton>
+                      </li>
+                    )}
+                  </ul>
+                )}
+                {selected && (
+                  <div className="project-tools">
+                    <ActionButton
+                      className="tools-toggle"
+                      aria-expanded={toolsOpen}
+                      onClick={() => setToolsOpen(!toolsOpen)}
+                    >
+                      Project tools
+                    </ActionButton>
+                    {toolsOpen && (
+                      <nav
+                        className="project-navigation"
+                        aria-label="Project navigation"
+                      >
+                        {toolViews.map((item) => (
+                          <ActionButton
+                            key={item}
+                            className={`nav ${page === "project" && view === item ? "selected" : ""}`}
+                            aria-current={
+                              page === "project" && view === item
+                                ? "page"
+                                : undefined
+                            }
+                            onClick={() => {
+                              selectView(item);
+                              close();
+                            }}
+                          >
+                            <AtlasIcon name={item} />
+                            <span>{viewLabel(item)}</span>
+                          </ActionButton>
+                        ))}
+                      </nav>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
         {!state.projects.length && (
           <p className="tiny">
             Add a folder to begin. Native tools are under Applications.

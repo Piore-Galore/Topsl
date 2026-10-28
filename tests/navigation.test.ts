@@ -61,3 +61,41 @@ test("project navigation retains old destinations and accepts Sessions and Coord
     workflowId: "workflow",
   });
 });
+
+test("the open coordinator thread is restored; older records and malformed values read as none", async () => {
+  const f = await fixture();
+  f.store.close();
+  const service = new Service(f.directory, f.key, () => {}, true);
+  opened.push({ service, directory: f.directory });
+  await service.start();
+  service.store.put("preference", {
+    id: "navigation",
+    projectId: "project",
+    workflowId: null,
+    projectView: "coordinator",
+  });
+  expect(await service.command({ type: "navigation-query" })).toMatchObject({
+    threadId: null,
+  });
+  await service.command({
+    type: "navigation-save",
+    projectId: "project",
+    workflowId: null,
+    projectView: "coordinator",
+    threadId: "loop:run-1",
+  });
+  expect(await service.command({ type: "navigation-query" })).toMatchObject({
+    projectView: "coordinator",
+    threadId: "loop:run-1",
+  });
+  service.store.put("preference", {
+    id: "navigation",
+    projectId: "project",
+    workflowId: null,
+    projectView: "coordinator",
+    threadId: "not-a-thread",
+  });
+  expect(await service.command({ type: "navigation-query" })).toMatchObject({
+    threadId: null,
+  });
+});

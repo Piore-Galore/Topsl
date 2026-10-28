@@ -1,4 +1,4 @@
-import { navigate } from "./desktop-navigation.mjs";
+import { navigate, openThread } from "./desktop-navigation.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-// The Coordinator section of a project's overview, driven through Topsl's
+// A project's coordinator conversations, driven through Topsl's
 // own screens in Electron against a synthetic profile. The Codex runtime is a
 // scripted stand-in (tests/fixtures/codex-desktop-coordinator.cjs) that is
 // registered, connected and qualified through typed IPC as the main desktop
@@ -291,25 +291,24 @@ try {
     expect(purpose).toEqual({ ready: true, blockers: [] });
 
   await page.setViewportSize({ width: 1280, height: 900 });
-  await navigate(page, "Coordinator");
-  await page
-    .getByRole("navigation", { name: "Project navigation" })
-    .getByRole("button", { name: "Coordinator", exact: true })
-    .click();
-  const section = page.getByRole("region", {
-    name: "Coordinator conversation",
-  });
+  // Adding the project opened its New conversation page; the sidebar's
+  // New conversation returns there from a conversation.
+  await navigate(page, "New conversation");
+  const home = page.getByRole("region", { name: "New conversation" });
   await expect(
-    section.getByRole("heading", { name: "Team conversation", exact: true }),
+    home.getByRole("heading", { name: "coordinator-project", exact: true }),
   ).toBeVisible();
-  const defaults = section.locator("details", {
+  const defaults = home.locator("details", {
     has: page.getByText("Project role defaults", { exact: true }),
   });
-  await defaults.locator("summary").click();
-  const editor = section.locator("fieldset.role-editor");
+  const editor = home.locator("fieldset.role-editor");
   const members = (title) =>
     editor.getByRole("list", { name: `${title} members`, exact: true });
+  /** The project's defaults, edited on the New conversation page. */
   const openDefaults = async (title) => {
+    if (!(await home.count())) await navigate(page, "New conversation");
+    if ((await defaults.getAttribute("open")) === null)
+      await defaults.locator("summary").click();
     await defaults
       .getByRole("listitem")
       .filter({ hasText: `${title}:` })
@@ -336,10 +335,27 @@ try {
       .find((g) => g.goal.id === goalId)
       .groups.find((x) => x.roleId === roleId);
 
-  // UI-01, conversation path: a goal is given and paused, and its reviewers
-  // are then pinned, trimmed and partly returned to Auto by messages alone.
+  // UI-01, conversation path: a goal starts its own conversation and is
+  // paused, and its reviewers are then pinned, trimmed and partly returned
+  // to Auto by follow-up messages in that conversation alone.
+  const goalText = "Change the value to two in file.ts.";
+  await home.getByRole("textbox", { name: "Message" }).fill(goalText);
+  await home.getByRole("button", { name: "Send", exact: true }).click();
+  const section = page.getByRole("region", {
+    name: "Coordinator conversation",
+  });
+  await expect(
+    section.getByRole("heading", { name: goalText, exact: true }),
+  ).toBeVisible();
+  /** Returns to the goal's conversation from the sidebar. */
+  const openGoal = async () => {
+    if (!(await section.count()))
+      await openThread(page, "coordinator-project", goalText);
+    await expect(section).toBeVisible();
+  };
   const message = section.getByRole("textbox", { name: "Message" });
   const send = async (text) => {
+    await openGoal();
     await message.fill(text);
     await section.getByRole("button", { name: "Send", exact: true }).click();
     await expect(
@@ -349,14 +365,22 @@ try {
         .filter({ hasText: text }),
     ).toBeVisible();
   };
-  await send("Change the value to two in file.ts.");
-  const goal = section.getByRole("article", {
-    name: "Goal Change the value to two in file.ts.",
-  });
+  await expect(
+    section
+      .getByRole("list", { name: "Conversation" })
+      .getByRole("listitem")
+      .filter({ hasText: goalText }),
+  ).toBeVisible();
+  const goal = section.getByRole("article", { name: `Goal ${goalText}` });
   await expect(goal).toBeVisible();
-  await goal.getByRole("button", { name: "Pause", exact: true }).click();
+  const goalControls = section.getByRole("group", { name: "Goal controls" });
+  await goalControls
+    .getByRole("button", { name: "Pause", exact: true })
+    .click();
   await expect(goal.getByText("Paused", { exact: true })).toBeVisible();
-  await expect(goal.getByRole("button", { name: "Resume" })).toBeVisible();
+  await expect(
+    goalControls.getByRole("button", { name: "Resume" }),
+  ).toBeVisible();
   const goalId = (await query()).goals[0].goal.id;
   const reviewerLine = goal
     .locator(".team-summary li")
@@ -388,6 +412,7 @@ try {
   // Remove: Fable leaves the roster.
   await send("Change the reviewers. Review with Astra and Sol.");
   await expect(reviewerLine).toContainText("Reviewers: Astra + Sol");
+  await openDefaults("Reviewers");
   await member("Reviewers", "Fable")
     .getByRole("button", { name: "Remove", exact: true })
     .click();
@@ -400,6 +425,7 @@ try {
   // Return one member to Auto: Sol's slot stays, chosen automatically.
   await send("Change the reviewers. Use two reviewers; include Astra.");
   await expect(reviewerLine).toContainText("Reviewers: Astra + 1 Auto");
+  await openDefaults("Reviewers");
   await member("Reviewers", "Sol")
     .getByRole("button", { name: "Return to Auto", exact: true })
     .click();
@@ -443,6 +469,7 @@ try {
     .filter({ hasText: "Coordinators:" });
   await expect(coordinatorLine).toContainText("Coordinators: Opus + Astra");
   await expect(reviewerLine).toContainText("Reviewers: Fable + Sol");
+  await shot(page, "coordinator-ui01-thread");
   for (const [title, roleId, names] of [
     ["Coordinators", "coordinator", ["Opus", "Astra"]],
     ["Reviewers", "reviewer", ["Fable", "Sol"]],
@@ -471,9 +498,18 @@ try {
   await shot(page, "coordinator-ui01-conversation");
 
   // The goal runs to "awaiting acceptance" with the conversation's team:
-  // round progress and member cards while it runs, then the review group.
-  await goal.getByRole("button", { name: "Resume", exact: true }).click();
-  const coordinatorRound = goal.getByRole("region", {
+  // round progress and member cards in the Plan pane while it runs, then
+  // the review group.
+  await openGoal();
+  await goalControls
+    .getByRole("button", { name: "Resume", exact: true })
+    .click();
+  await section
+    .getByRole("group", { name: "Thread panes" })
+    .getByRole("button", { name: "Plan", exact: true })
+    .click();
+  const planPane = section.getByRole("complementary", { name: "Plan details" });
+  const coordinatorRound = planPane.getByRole("region", {
     name: "coordinator round",
   });
   await expect(coordinatorRound.locator(".member-card")).toHaveCount(2, {
@@ -492,7 +528,7 @@ try {
   await expect(
     goal.getByText("Awaiting acceptance", { exact: true }),
   ).toBeVisible({ timeout: 180000 });
-  const reviewRound = goal.getByRole("region", { name: "reviewer round" });
+  const reviewRound = planPane.getByRole("region", { name: "reviewer round" });
   const reviewCards = reviewRound.locator(".member-card");
   await expect(reviewCards).toHaveCount(2);
   for (const [name, model] of [
@@ -526,6 +562,16 @@ try {
     .getByRole("button", { name: "Accept candidate…", exact: true })
     .click();
   await expect(goal.getByText("Accepted", { exact: true })).toBeVisible();
+  // An accepted code goal offers Apply, and the sidebar says so.
+  await expect(
+    goal.getByRole("button", { name: "Apply to project folder…", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "coordinator-project conversations" })
+      .getByRole("listitem")
+      .filter({ hasText: goalText }),
+  ).toContainText("Apply");
   const acceptance = (await confirmations()).findLast(
     (c) => c.message === "Accept this reviewed candidate?",
   );
@@ -650,6 +696,12 @@ try {
   await expect(
     defaults.getByRole("listitem").filter({ hasText: "Reviewers:" }),
   ).toContainText("Reviewers: Fable + Sol + Fixture + Opus + Auto");
+  // The open conversation is restored after a restart.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openGoal();
+  await expect(page.locator("header.topbar > span").first()).toHaveText(
+    `coordinator-project / ${goalText}`,
+  );
   expect(errors).toEqual([]);
   const final = await query();
   persisted = {
@@ -700,6 +752,14 @@ const reopened = await launch();
 try {
   const page = await reopened.firstWindow();
   await expect(page.locator(".app-shell")).toBeVisible({ timeout: 45000 });
+  await expect(
+    page
+      .getByRole("region", { name: "Coordinator conversation" })
+      .getByRole("heading", {
+        name: "Change the value to two in file.ts.",
+        exact: true,
+      }),
+  ).toBeVisible({ timeout: 30000 });
   const view = await page.evaluate(
     (projectId) =>
       window.topsl.command({ type: "orchestration-query", projectId }),
