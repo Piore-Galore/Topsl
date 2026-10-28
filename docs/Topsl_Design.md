@@ -1895,6 +1895,8 @@ An agent may submit a proposed configuration or application-management action fo
 
 **Navigator’s Atlas**, agreed 18 October 2026 and implemented 19 October 2026, replaces the earlier quiet-terminal styling and the restriction of nautical branding to an optional mark. Topsl uses parchment, sailcloth panels, ocean ink, brass chart rules, and restrained compass details. Reading, code, evidence, and approval surfaces stay clear. Ordinary labels describe the work: Projects, Sessions, Coordinator, Tasks, Changes, Context, History, Synchronization, Applications, and Settings.
 
+Decided 27 October 2026, when the owner found the interface cluttered: each page carries only its title (and, on Overview, the project path); there are no eyebrows, taglines or decorative compass in page headings. A project page shows one compact data-freshness line, and nested sections report freshness only when their own read fails. Controls that repeat a sidebar destination, and explanatory notes repeated on every card, are removed. The atlas identity remains in the palette, sidebar, emblem and section rules.
+
 A billowing square topsail, yard, and short mast form the app emblem, in ivory and brass on a navy tile. The canonical geometry is [topsl.svg](../assets/brand/topsl.svg). The sidebar, loading/lock screens, native About/Dock/window identity and packaged icons share it. Run `npm run icons:build` for reproducible PNG, ICNS and ICO exports with the installed electron-builder converter; normal builds use the checked-in exports. No external fonts or hosted artwork are required.
 
 ### 20.2 Themes and color tokens

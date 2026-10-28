@@ -51,7 +51,7 @@ export function ParallelActivity({ projectId }: { projectId: string }) {
   return (
     <section aria-label="Parallel integration queue">
       <h2>Parallel integration</h2>
-      <Freshness state={freshness} retry={freshness.retry} />
+      <Freshness state={freshness} retry={freshness.retry} quiet />
       <p>
         Specialists keep separate approved workspaces. Combined checks and
         acceptance apply to the combined candidate; individual successes do not

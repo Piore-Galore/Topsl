@@ -319,10 +319,6 @@ kbd {
   font-size: 9px;
   color: var(--muted);
 }
-.header-divider {
-  padding: 0 14px;
-  color: var(--line);
-}
 .content {
   padding: 38px 36px 50px;
   flex: 1;
@@ -1406,9 +1402,6 @@ summary:focus-visible {
 .scope-freshness p {
   margin: 0;
   flex: 1 1 240px;
-}
-.scope-freshness small {
-  flex-basis: 100%;
 }
 .scope-freshness.stale,
 .scope-freshness.failed,

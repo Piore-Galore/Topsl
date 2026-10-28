@@ -200,7 +200,7 @@ export function RecursiveLoop({
   if (!query)
     return (
       <section aria-label="Recursive loop">
-        <Freshness state={freshness} retry={freshness.retry} />
+        <Freshness state={freshness} retry={freshness.retry} quiet />
         <p>Loading loop runs…</p>
       </section>
     );
@@ -239,7 +239,7 @@ export function RecursiveLoop({
   const runs = (query.runs ?? []).filter((r: any) => r.mode === mode);
   return (
     <section aria-label="Recursive loop" className="recursive-loop">
-      <Freshness state={freshness} retry={freshness.retry} />
+      <Freshness state={freshness} retry={freshness.retry} quiet />
       <Errors errors={errors} />
       {runs.length > 0 && (
         <label className="run-picker">

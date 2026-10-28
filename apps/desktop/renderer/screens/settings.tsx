@@ -10,7 +10,6 @@ import { claudeTranscriptOptions } from "../../../../packages/domain/claude-step
 import { claudeRouteOptions } from "../../../../packages/domain/claude-route";
 import { ActionButton } from "../components/action-button";
 import { Badge } from "../components/atlas";
-import type { GlobalPage } from "../components/workbench-sidebar";
 type Configuration = {
   path: string;
   text: string;
@@ -28,7 +27,6 @@ type Props = {
   project: AppState["projects"][number] | undefined;
   setConfigPlan: (plan: ConfigurationPlan | null) => void;
   setDetail: (detail: { title: string; text: string } | null) => void;
-  setPage: (page: GlobalPage) => void;
 };
 export function SettingsScreen({
   state,
@@ -41,23 +39,14 @@ export function SettingsScreen({
   project,
   setConfigPlan,
   setDetail,
-  setPage,
 }: Props) {
   return (
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">APPLICATION SETTINGS</div>
-          <h1>Make it your workspace.</h1>
-          <p>Native configuration stays native. Every write has a preview.</p>
+          <h1>Settings</h1>
         </div>
       </div>
-      <nav className="settings-index" aria-label="Settings sections">
-        <a href="#appearance">Appearance</a>
-        <a href="#agent-behavior">Agent behavior</a>
-        <a href="#configuration">Configuration</a>
-        <a href="#context-connection">Context</a>
-      </nav>
       <section className="settings-card" id="appearance">
         <h2>Appearance</h2>
         <p>System follows the computer’s light or dark appearance.</p>
@@ -188,13 +177,8 @@ export function SettingsScreen({
             : ""}
         </p>
       </section>
-      <section className="settings-card">
-        <div className="section-heading">
-          <h2>Native capabilities</h2>
-          <ActionButton onClick={() => setPage("applications")}>
-            Applications →
-          </ActionButton>
-        </div>
+      <details className="settings-card">
+        <summary>Native capabilities</summary>
         <div className="capabilities">
           {state.capabilities.map((c) => (
             <div key={c.id}>
@@ -204,7 +188,7 @@ export function SettingsScreen({
             </div>
           ))}
         </div>
-      </section>
+      </details>
       <section className="settings-card">
         <h2 id="configuration">Configuration & instructions</h2>
         <div className="runtime-bar">

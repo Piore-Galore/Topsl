@@ -426,9 +426,7 @@ export function Projects(props: Props) {
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">SHARED LOCAL FOLDERS</div>
           <h1>Projects</h1>
-          <p>Use the same project folders in Topsl, Codex, and Claude.</p>
         </div>
         <ActionButton className="primary" disabled={busy} onClick={addProject}>
           + Add project

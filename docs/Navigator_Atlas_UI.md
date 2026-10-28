@@ -56,6 +56,32 @@ The test reads the actual CSS tokens loaded in Electron and checks the used text
 
 The final packaged app was inspected through Computer Use using its exact bundle path. The About dialog displayed the ivory topsail on navy, **Topsl Version 0.1.2**, and **Navigator’s Atlas · pronounced “topsail”**. The native menu displayed **About Topsl** and **Quit Topsl**. Dock observations timed out twice with error `-10005`; the Dock visibility API is only visibility evidence. An auxiliary `app.getFileIcon` diagnostic caused an Electron SIGTRAP on this host and was removed from the inspection helper; Topsl does not call that API. Subsequent normal packaged startup, Projects/About inspection and clean shutdown passed. This does not establish a general macOS crash/soak qualification.
 
+## Follow-up: decluttering pass — 27 October 2026
+
+The owner found the interface cluttered and asked for redundancy to be removed. This pass changes presentation only; no command, permission, or service behavior changed.
+
+| Area | Before | After |
+|---|---|---|
+| Data freshness | A full freshness panel with a retry button and a disclaimer on every page, repeated inside Sessions, Tasks, Changes and Synchronization sections (up to three per screen). | One compact line per project page. Sections pass `quiet` to [`Freshness`](../apps/desktop/renderer/components/freshness.tsx) and appear only when their own read is stale, failed or disconnected. **Retry project reads** appears only when the status is not current. Coordinator keeps the line its team or loop view already shows. |
+| Page headings | Eyebrow (`PROJECT COMMAND DESK / …`, `YOUR TOOLBOX`, `APPLICATION SETTINGS`, `SHARED LOCAL FOLDERS`), tagline, decorative compass and **Refresh activity** button. | Title only; Overview also shows the project path. Settings is titled **Settings**. The freshness retry replaces **Refresh activity**. |
+| Window chrome | Topbar platform and “On this computer”; status bar taglines. | Topbar shows the breadcrumb; status bar shows **Ready** or **Operations pending**. |
+| Overview | Two shortcut cards and two shortcut buttons repeating sidebar destinations; four-line capacity and usage cards. | Needs attention plus short Responsibility, Capacity and Usage summaries. |
+| Sessions | **Manage shared projects** (repeats sidebar Projects), `PROVIDER ATTRIBUTION PRESERVED`, two adapter notes and a paragraph-length usage line computed three times. | One note, and a one-line usage summary only when the conversation has turns. The transcript's message count shows only when messages are loaded. |
+| Applications | “You approve every Topsl update” strip, long usage disclaimer, the same two install notes on every card. | Test-profile notice kept; one-line usage note; uninstalled cards say **Not installed.** |
+| Settings | Section index links; always-expanded Native capabilities with a link back to Applications. | Native capabilities is a collapsed section. |
+| Synchronization | Unobserved dimensions repeated “Source: unavailable. Last successful observation: unknown.” | The “no observation recorded” line stands alone. |
+
+Code redundancy removed in the same pass: the Coordination view's private label helper (now `viewLabel` from [navigation](../packages/domain/navigation.ts)), an unused `messages` computation in the renderer root, the handoff provider check (now `terminalProvider`), and dead CSS for the compass heading, shortcut cards, topbar divider, settings index and freshness disclaimer.
+
+### Checks for this pass
+
+Revision: branch `claude/project-thread-1vq93z` from `c50fac1`, Linux x64 cloud container, Node 22.22.0.
+
+- `npx tsc --noEmit` passed.
+- The renderer was built with Vite and driven in Playwright Chromium against a real `Service` (isolated test profile, synthetic project) through a local HTTP bridge standing in for the Electron preload. Every destination was captured before and after at 1440 px; no page errors. This is not an Electron, packaged or native-window run.
+- Electron journeys (`npm run test:desktop`, `scripts/campaign-ui-test.mjs`) could not run here: the container cannot download Electron headers to rebuild the native modules. Their selectors were updated for the removed text (**Make it your workspace.** → **Settings**, **Manage shared projects** → sidebar **Projects**, the removed update strip) and remain unverified until run on a desktop.
+- `npx vitest run` under plain Node (the container's `better-sqlite3-multiple-ciphers` is built for Node, not Electron, so `npm test` was not used): with `ANTHROPIC_BASE_URL` set by the container, 173 tests in 28 files failed on the billing preflight. Rerunning those 28 files with `env -u ANTHROPIC_BASE_URL -u CLAUDE_CODE_USE_CCR_V2` left 5 failures in `campaign-checks-parallel`, `campaign-claude-codex` and `campaign-loops-state-service`; the same 5 fail identically on unmodified `origin/main` in this container, so they are environmental. No renderer test failed.
+
 ## Remaining acceptance boundaries
 
 The local macOS package is a personal-pilot artifact. Windows/Linux native UI and packaged icon acceptance, remote CI, notarized distribution, full screen-reader/IME acceptance and live-provider qualification require their own evidence. Historical provider, synchronization and release gates retain their original scope. The UI captures and synthetic journeys do not close them.

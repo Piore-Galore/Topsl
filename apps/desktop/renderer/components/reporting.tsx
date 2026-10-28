@@ -176,7 +176,7 @@ export function OptionalCoordination({ projectId }: { projectId: string }) {
   return (
     <section className="optional-coordination">
       <h2>Optional coordination</h2>
-      <Freshness state={freshness} retry={freshness.retry} />
+      <Freshness state={freshness} retry={freshness.retry} quiet />
       {error && <p role="alert">{error}</p>}
       <details>
         <summary>

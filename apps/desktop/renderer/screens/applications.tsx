@@ -32,9 +32,7 @@ export function ApplicationsScreen({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">YOUR TOOLBOX</div>
           <h1>Applications</h1>
-          <p>Native tools. One place to keep them ready.</p>
         </div>
         <div className="actions">
           <ActionButton onClick={() => void act({ type: "select-runtime" })}>
@@ -62,17 +60,6 @@ export function ApplicationsScreen({
           </div>
         </div>
       )}
-      <div className="info-strip">
-        <span className="status-dot" />
-        <div>
-          <strong>You approve every Topsl update.</strong>
-          <span>
-            {" "}
-            Metadata checks run at most daily. Native automatic updates keep
-            their existing settings.
-          </span>
-        </div>
-      </div>
       <ProviderUsage state={state} />
       <div className="eyebrow">RUNTIMES AND APPLICATIONS</div>
       <div className="application-grid application-catalog">
@@ -230,10 +217,7 @@ export function ApplicationsScreen({
                 })
               ) : (
                 <div className="not-installed">
-                  <span>Ready when you are.</span>
-                  <small>
-                    Installer availability depends on your OS and architecture.
-                  </small>
+                  <span>Not installed.</span>
                 </div>
               )}
               <div className="card-footer">
@@ -286,7 +270,6 @@ export function ApplicationsScreen({
       <section className="jobs">
         <div className="section-heading">
           <h2>Operations</h2>
-          <span className="muted tiny">DURABLE LOCAL JOURNAL</span>
         </div>
         {!state.jobs.length ? (
           <div className="empty-row">
