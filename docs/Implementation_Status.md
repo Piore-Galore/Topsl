@@ -431,3 +431,14 @@ The [session journey](../scripts/desktop-session-test.mjs) creates a session wit
 The label renames in [live-session.mjs](../scripts/live-session.mjs) (it needs the owner's accounts) and [campaign-packaged-test.mjs](../scripts/campaign-packaged-test.mjs) (it needs a packaged build) were made but not run.
 
 **Not established:** live Claude Code and Codex routes for sessions (the plan's live validation), remote CI on the four platforms, Windows session and coordinator journeys (they skip without a shell wrapper), packaged builds, many sessions or long conversations, and a loop starting from a session's accepted result.
+
+Follow-up, 29 October 2026: CI on [PR #38](https://github.com/Piore-Galore/Topsl/pull/38) at `42234d0` passed every job on the first attempt.
+
+| Platform | [Compile Topsl](https://github.com/Piore-Galore/Topsl/actions/runs/40744554491) | [Round 2 lifecycle stress](https://github.com/Piore-Galore/Topsl/actions/runs/40744554458) |
+| --- | --- | --- |
+| macOS Apple silicon | Vitest 1205 passed, 5 skipped; release 18/0; main, coordinator, Atlas, loop and session journeys passed | Passed |
+| macOS Intel | Vitest 1205 passed, 5 skipped; release 18/0; main, coordinator, Atlas, loop and session journeys passed | Passed |
+| Linux x64 | Vitest 1204 passed, 6 skipped; release 17/0; main, coordinator, Atlas, loop and session journeys passed | Passed |
+| Windows x64 | Vitest 1088 passed, 122 skipped; release 17/0; main and Atlas journeys passed; coordinator, loop and session journeys skipped | Passed |
+
+On Windows the session journey skipped because it needs a shell wrapper, like the coordinator and loop journeys (the loop journey's skip line still uses the coordinator journey's wording). Four-platform CI is now established for this branch. Live providers, Windows session and coordinator journeys, packaged builds, many sessions or long conversations, and a loop starting from a session's accepted result remain open.

@@ -1,7 +1,7 @@
 # Native Topsl sessions
 
 **Recorded:** 29 October 2026.
-**Status:** Implemented on 29 October 2026 on branch `claude/native-sessions`, with fixture tests and Electron journeys against stand-in providers ([review](#review-29-october-2026), [implementation record](#implementation-record-29-october-2026)). Live Claude Code and Codex routes, remote CI and packaged platforms are not yet established for it.
+**Status:** Implemented on 29 October 2026 on branch `claude/native-sessions`, with fixture tests and Electron journeys against stand-in providers ([review](#review-29-october-2026), [implementation record](#implementation-record-29-october-2026)). Four-platform CI passed on [PR #38](https://github.com/Piore-Galore/Topsl/pull/38) ([record](Implementation_Status.md#native-topsl-sessions--29-october-2026)); live Claude Code and Codex routes and packaged platforms are not yet established for it.
 **Related documents:** [Topsl design](Topsl_Design.md), [coordinator feature specification](Coordinator_Feature_Specification.md), [coordinator delivery and evidence](Coordinator_Teams.md), [recursive looping](Recursive_Looping.md), and [implementation status](Implementation_Status.md#native-topsl-sessions--29-october-2026).
 
 ## Summary
