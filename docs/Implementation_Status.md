@@ -545,12 +545,23 @@ Everything else in the suite is unchanged: each probe still passes only when Top
 | `npm run test:release` | Passed: 18 checks |
 | `npm run build`, then `node scripts/desktop-session-test.mjs`, `desktop-coordinator-test.mjs`, `desktop-loop-test.mjs` | Passed on macOS with the shell-wrapper stand-in |
 
-Nothing above ran on Windows. Windows evidence comes from remote CI; until a run is recorded here, the Windows tests and journeys are unverified.
+Nothing above ran on Windows; the Windows evidence is the remote CI below.
+
+**Remote CI (29 October 2026, PR [#41](https://github.com/Piore-Galore/Topsl/pull/41) at `b2bb8da`).** "Compile Topsl" ([run 40841110187](https://github.com/Piore-Galore/Topsl/actions/runs/40841110187)) and "Round 2 lifecycle stress" ([run 40841110179](https://github.com/Piore-Galore/Topsl/actions/runs/40841110179)) passed on all four runners: macOS Apple silicon, macOS Intel, Windows x64 and Linux x64. On Windows x64:
+
+| Step | Result |
+| --- | --- |
+| `npm run check` | Passed: 1120 tests and 102 skipped in 90 files (4 skipped), including runtime-qualification.test.ts (16 tests, 4 skipped) and campaign-claude-codex-qualification.test.ts (23 tests, 9 skipped) |
+| `npm run test:desktop` | Passed: the desktop journey, encrypted restart persistence, the coordinator journey, the atlas, the loop journey and the session journey. The coordinator, loop and session journeys qualified the compiled launcher stand-in as a Windows coordinator |
+| `node scripts/desktop-session-test.mjs` against `release\win-unpacked\Topsl.exe` | Passed: the session journey on the packaged app |
+| Round 2 lifecycle stress | Passed: 20 of 20 iterations, each 33 tests and 2 skipped |
+
+The coordinator journey logged the Claude usage card after **Refresh from Claude** as "Read failed … Claude did not return a supported /usage display", so the native `/usage` read itself still fails on Windows (see *Not established*). Earlier Windows runs of this change failed at that card (`aef591a`, `35aeb5f`); a macOS Apple silicon failure at `378dd08` is the xterm read described in [TEST-DECISIONS](testing/TEST-DECISIONS.md#runtime-qualification-on-windows--29-october-2026). This is CI against stand-ins; it does not qualify a live Codex or Claude runtime on Windows.
 
 **Not established.**
 
 - **Live Codex on Windows.** No live Codex runtime has been qualified on Windows. Whether Codex's sandbox runs Windows PowerShell under `command/exec`, and whether its read-only and workspace-write policies confine those writes there, is what a live qualification would observe; the probes fail closed if it does not.
 - **Temporary folder aliases on Windows.** The temporary-folder refusal is tested on Windows only for `os.tmpdir()` and a folder inside it, not for aliases such as 8.3 short names or junctions.
-- **Claude usage reads on Windows.** Reading Claude Code's native `/usage` display through a stand-in had never run on Windows (the usage journey skips there because its stand-in is a shell wrapper). Its first Windows run, in the coordinator journey, did not report usage, and on the run at `35aeb5f` the card still read "Reading…" 20 seconds after the click, inside the reader's 25-second timeout. The journey now waits up to 45 seconds for the read to end before logging the card; the cause is not diagnosed.
+- **Claude usage reads on Windows.** Reading Claude Code's native `/usage` display through a stand-in had never run on Windows (the usage journey skips there because its stand-in is a shell wrapper). Its first Windows run, in the coordinator journey, did not report usage, and on the run at `35aeb5f` the card still read "Reading…" 20 seconds after the click, inside the reader's 25-second timeout. The journey now waits up to 45 seconds for the read to end before logging the card. At `b2bb8da` the read ended as "Read failed": Claude did not return a supported `/usage` display. The cause is not diagnosed.
 - **Claude coordinators on Windows.** How Claude Code exits on Topsl's interrupt there is unverified, so an interrupted Claude turn may end `uncertain` and need reconciliation ([Claude structured route](#claude-structured-route--19-october-2026)).
 - **Process cleanup on Windows.** Topsl stops a runtime by a Windows process-tree kill and observes its CIM descendants, not a process group ([process-lifecycle.ts](../packages/runtime/process-lifecycle.ts)); live coverage of this is thin.
