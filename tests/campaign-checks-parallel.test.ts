@@ -11,6 +11,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -841,8 +842,13 @@ describe("CK-17 public check-cleanup-retry", () => {
       expect((await retry()).attempts).toBe(3);
 
       // A replacement directory at the recorded path is refused, not deleted.
+      // The original is moved aside, not removed, while the replacement is
+      // made: Linux can reuse a just-freed inode for the new directory, which
+      // would give it the recorded device and inode by chance.
       await unlockTree(resources.root);
-      await rm(resources.root, { recursive: true, force: true });
+      const original = `${resources.root}-original`;
+      await rename(resources.root, original);
+      cleanup.push(() => rm(original, { recursive: true, force: true }));
       await mkdir(resources.root);
       await writeFile(path.join(resources.root, "replacement.txt"), "keep");
       job = await retry();
