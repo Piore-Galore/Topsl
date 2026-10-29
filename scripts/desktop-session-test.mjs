@@ -1,6 +1,7 @@
 import { navigate, openThread, selectProject } from "./desktop-navigation.mjs";
 import { _electron as electron, expect } from "@playwright/test";
-import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises";
+import { standIn, standInAvailable } from "./desktop-stand-in.mjs";
 import { rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,9 +15,12 @@ import { execFileSync } from "node:child_process";
 // Codex runtime is the scripted stand-in the coordinator journey uses
 // (tests/fixtures/codex-desktop-coordinator.cjs); no model or account is
 // contacted, and the Opus and Astra labels are fixture catalog entries only.
-// The stand-in is a shell wrapper, which Topsl launches on macOS and Linux.
-if (process.platform === "win32") {
-  console.log("Desktop session journey skipped: it needs a shell wrapper.");
+// The stand-in is a shell wrapper on macOS and Linux and a compiled launcher
+// on Windows (scripts/desktop-stand-in.mjs).
+if (!standInAvailable()) {
+  console.log(
+    "Desktop session journey skipped: Windows has no .NET Framework C# compiler for its stand-in.",
+  );
   process.exit(0);
 }
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-session-"));
@@ -106,13 +110,12 @@ try {
   projectId = (
     await page.evaluate(() => window.topsl.command({ type: "state" }))
   ).projects.find((p) => p.realPath === canonicalProject).id;
-  const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-  const wrapper = path.join(profile, "codex-session-fixture");
-  await writeFile(
-    wrapper,
-    `#!/bin/sh\nFIXTURE_TURN_DELAY_MS=300 exec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex-desktop-coordinator.cjs"))} "$@"\n`,
-  );
-  await chmod(wrapper, 0o700);
+  const wrapper = await standIn({
+    directory: profile,
+    name: "codex-session-fixture",
+    script: "tests/fixtures/codex-desktop-coordinator.cjs",
+    env: { FIXTURE_TURN_DELAY_MS: 300 },
+  });
   await app.evaluate((_, selected) => {
     globalThis.topslOpenPath = selected;
   }, wrapper);

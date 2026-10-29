@@ -798,6 +798,11 @@ export class LoopSupervisor {
       conversationId: string;
     }) => string | null
   > = [];
+  /**
+   * The accepted result a run starts from instead of the project folder, such
+   * as the latest one of the native session it runs in.
+   */
+  startFrom: ((run: { conversationId: string }) => string | null) | null = null;
 
   async start(input: { runId: string; digest: string; commandId: string }) {
     this.assertEnabled();
@@ -824,6 +829,7 @@ export class LoopSupervisor {
         const base = await this.loop.captureBase({
           projectId: run.projectId,
           runId: run.id,
+          fromCandidateId: this.startFrom?.(run) ?? null,
         });
         if (policy.checks.length)
           this.loop.bindRunProtocol({

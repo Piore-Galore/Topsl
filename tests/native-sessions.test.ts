@@ -863,6 +863,70 @@ describe("native sessions", () => {
     expect(f.driver.launches).toHaveLength(1);
   });
 
+  test("many sessions in one project stay separate, and a long conversation's context reads only its latest messages", async () => {
+    const f = await setup();
+    const count = 30;
+    const created: Array<{ sessionId: string; intakeId: string | null }> = [];
+    for (let i = 0; i < count; i++)
+      created.push(
+        await f.sessions.create({
+          projectId: "p",
+          text: `Question ${i}`,
+          mode: "discuss",
+          commandId: cmd(),
+        }),
+      );
+    expect(
+      await run(f, () => created.every((c) => decided(f, c.intakeId!)())),
+    ).toBe(true);
+    for (const [i, c] of created.entries()) {
+      expect(intake(f, c.intakeId!).outcome).toMatchObject({ kind: "reply" });
+      expect(messages(f, c.sessionId).map((m) => m.text)[0]).toBe(
+        `Question ${i}`,
+      );
+      expect(messages(f, c.sessionId)).toHaveLength(2);
+      expect(f.sessions.intakes(c.sessionId)).toHaveLength(1);
+    }
+    expect(f.store.list(kinds.goal)).toHaveLength(0);
+    const threads = summarizeThreads({
+      projectId: "p",
+      ...f.orchestrator.threadFacts("p"),
+      runs: [],
+      sessions: f.sessions.list("p"),
+    });
+    expect(threads.filter((t) => t.kind === "session")).toHaveLength(count);
+    // A long conversation: 400 earlier messages, then a new one.
+    const long = created[0].sessionId;
+    for (let i = 0; i < 400; i++)
+      await f.orchestrator.note({
+        conversationId: long,
+        role: i % 2 ? "coordinator" : "user",
+        text: `Earlier ${i} `.repeat(400),
+        routing: { kind: "session", goalId: null },
+        commandId: cmd(),
+      });
+    const next = await f.sessions.message({
+      sessionId: long,
+      text: "And now?",
+      mode: "discuss",
+      commandId: cmd(),
+    });
+    const context = intake(f, next.intakeId!).context;
+    expect(context.messages).toHaveLength(CONTEXT_MESSAGES);
+    expect(context.messages.at(-1)!.text).toBe("And now?");
+    expect(context.messages.every((m) => m.text.length <= 2000)).toBe(true);
+    // 2 first messages + 400 notes + the new one; the latest 12 are included.
+    expect(context.omitted).toEqual({
+      fromSequence: 1,
+      toSequence: 403 - CONTEXT_MESSAGES,
+      count: 403 - CONTEXT_MESSAGES,
+    });
+    expect(JSON.stringify(context).length).toBeLessThan(40_000);
+    expect(await run(f, decided(f, next.intakeId!))).toBe(true);
+    // Other sessions saw none of it.
+    expect(messages(f, created[1].sessionId)).toHaveLength(2);
+  });
+
   test("legacy conversations are backfilled without rewriting history, and their thread IDs resolve", async () => {
     const f = await setup();
     const legacy = await f.orchestrator.startConversation({

@@ -2,7 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vitest";
 import { Service } from "../apps/service/service";
 import {
@@ -18,7 +18,11 @@ import type { Goal } from "../packages/domain/role-groups";
 import type { ExecutionAttempt } from "../packages/domain/workflow";
 import type { LoopRun } from "../packages/domain/recursive-loops";
 import type { CandidateSnapshot } from "../packages/workflows/candidates";
-import { candidateFileBytes } from "../packages/workflows/candidates";
+import {
+  candidateFileBytes,
+  captureCandidate,
+} from "../packages/workflows/candidates";
+import type { TopslSession } from "../packages/domain/sessions";
 import { fixture, gitExecutable } from "./helpers";
 
 /**
@@ -320,6 +324,86 @@ test("a Goal loop runs through real attempts, owned checkpoints and publication 
     "export const value = 2;\n",
   );
   expect(git(f.project, "status", "--porcelain").trim()).toBe("M file.ts");
+});
+
+test("a loop in a native session starts from the session's accepted result, not the project folder", async () => {
+  const f = await setup();
+  await enable(f);
+  const { sessionId } = await f.service.command({
+    type: "session-create",
+    projectId: "p",
+    kind: "code",
+    commandId: `c-${uid()}`,
+  });
+  // An accepted goal result the owner has not applied to the folder.
+  const result = path.join(f.directory, "integrations", "session-goal");
+  await mkdir(result, { recursive: true });
+  await writeFile(path.join(result, "file.ts"), "export const value = 5;\n");
+  const accepted = await captureCandidate(f.service.store, {
+    root: result,
+    projectId: "p",
+    workflowId: "session-goal",
+    selectedPaths: ["file.ts"],
+    gitExecutable,
+  });
+  const session = f.service.store.get<TopslSession>("orch-session", sessionId)!;
+  f.service.store.save("orch-session", {
+    ...session,
+    acceptedCheckpoint: {
+      candidateId: accepted.id,
+      goalId: "session-goal",
+      runId: null,
+      workItemId: "w",
+      at: now(),
+    },
+  });
+  const created = await f.service.command({
+    type: "loop-create",
+    projectId: "p",
+    conversationId: sessionId,
+    mode: "goal",
+    text: "Change the value to two.",
+    policy: { scheduling: { reserveForDirectWork: 0 } },
+    commandId: `c-${uid()}`,
+  });
+  const runId = created.run.id;
+  const authority = f.service.review("loop-authority", runId) as {
+    digest: string;
+  };
+  await f.service.command(
+    { type: "loop-start", runId, commandId: `c-${uid()}` },
+    { digest: authority.digest },
+  );
+  const view = f.service.loops.view(runId);
+  expect(view.run.setupConditions.join(" ")).toMatch(
+    /Starts from the session's accepted result/,
+  );
+  const initial = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    view.checkpoint!.candidateId,
+  )!;
+  expect(
+    candidateFileBytes(
+      initial,
+      initial.files.find((x) => x.path === "file.ts")!,
+      f.service.store,
+    )!.toString(),
+  ).toBe("export const value = 5;\n");
+  // The publication base is still the folder, which is unchanged.
+  const base = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    view.run.publicationBaseCandidateId!,
+  )!;
+  expect(base.sourceRoot).toBe(f.project);
+  expect(await readFile(path.join(f.project, "file.ts"), "utf8")).toBe(
+    "export const value = 1;\n",
+  );
+  await f.service.command({
+    type: "loop-control",
+    runId,
+    action: "stop",
+    commandId: `c-${uid()}`,
+  });
 });
 
 test("an Endless loop improves once, then monitors instead of completing", async () => {

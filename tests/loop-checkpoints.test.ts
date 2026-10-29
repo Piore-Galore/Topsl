@@ -142,6 +142,42 @@ test("checkpoint 0 is an owned copy of the folder; a child baseline keeps its by
   expect(git(f.root, "status", "--porcelain")).toBe("");
 });
 
+test("checkpoint 0 can copy an accepted result instead of the folder, which stays the publication base", async () => {
+  const f = await setup();
+  const folder = await f.driver.captureBase({ projectId: "p", runId: "first" });
+  const accepted = await changed(f, folder.checkpointCandidateId, "goal-s", {
+    "src/a.ts": "export const a = 5;\n",
+  });
+  const base = await f.driver.captureBase({
+    projectId: "p",
+    runId: "run",
+    fromCandidateId: accepted.id,
+  });
+  const checkpoint = f.store.get<CandidateSnapshot>(
+    "candidate",
+    base.checkpointCandidateId,
+  )!;
+  expect(checkpoint.workflowId).toBe("run");
+  expect(checkpoint.baseCandidateId).toBe(accepted.id);
+  expect(filesDigest(checkpoint)).toBe(filesDigest(accepted));
+  expect(
+    f.store.get<CandidateSnapshot>(
+      "candidate",
+      base.publicationBaseCandidateId,
+    )!.sourceRoot,
+  ).toBe(f.root);
+  expect(
+    f.driver.changedPaths(
+      base.publicationBaseCandidateId,
+      base.checkpointCandidateId,
+    ),
+  ).toEqual([{ path: "src/a.ts", change: "modified" }]);
+  expect(base.setupConditions.join(" ")).toMatch(
+    /Starts from the session's accepted result/,
+  );
+  expect(git(f.root, "status", "--porcelain")).toBe("");
+});
+
 test("VF-04: a child baseline whose protected tests differ from the run's protocol is reported", async () => {
   const f = await setup();
   const base = await f.driver.captureBase({ projectId: "p", runId: "run" });

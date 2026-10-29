@@ -408,6 +408,8 @@ export function buildSessionContext(input: {
   checkpoint: SessionContext["checkpoint"];
   status: string | null;
   team: string[];
+  /** Messages before those given, when only the latest were read. */
+  omitted?: SessionContext["omitted"];
 }): SessionContext {
   const sorted = [...input.messages].sort((a, b) => a.sequence - b.sequence);
   const recent = sorted.slice(-CONTEXT_MESSAGES);
@@ -416,11 +418,11 @@ export function buildSessionContext(input: {
     messages: recent.map((m) => ({ ...m, text: clip(m.text, 2000) })),
     omitted: older.length
       ? {
-          fromSequence: older[0].sequence,
+          fromSequence: input.omitted?.fromSequence ?? older[0].sequence,
           toSequence: older.at(-1)!.sequence,
-          count: older.length,
+          count: (input.omitted?.count ?? 0) + older.length,
         }
-      : null,
+      : (input.omitted ?? null),
     decisions: input.decisions
       .slice(-CONTEXT_DECISIONS)
       .map((d) => ({ ...d, summary: clip(d.summary, 600) })),

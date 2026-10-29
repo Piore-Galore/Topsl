@@ -40,8 +40,16 @@ export interface PublicationPlan {
 }
 
 export interface LoopDriver {
-  /** Captures the original folder as the publication base and its owned copy as checkpoint 0. */
-  captureBase(input: { projectId: string; runId: string }): Promise<{
+  /**
+   * Captures the original folder as the publication base and an owned copy as
+   * checkpoint 0: of the folder, or of `fromCandidateId` when the run continues
+   * an accepted result, such as its session's.
+   */
+  captureBase(input: {
+    projectId: string;
+    runId: string;
+    fromCandidateId?: string | null;
+  }): Promise<{
     publicationBaseCandidateId: string;
     checkpointCandidateId: string;
     contentDigest: string;
@@ -230,7 +238,11 @@ export class RuntimeLoopDriver implements LoopDriver {
     }
   }
 
-  async captureBase(input: { projectId: string; runId: string }) {
+  async captureBase(input: {
+    projectId: string;
+    runId: string;
+    fromCandidateId?: string | null;
+  }) {
     const project = this.store.get<Project>("project", input.projectId);
     if (!project?.trusted)
       throw new Error("The project folder must be trusted.");
@@ -251,11 +263,18 @@ export class RuntimeLoopDriver implements LoopDriver {
     );
     for (const o of base.omissions.slice(0, 20))
       setupConditions.push(`Not captured: ${o.source} (${o.reason}).`);
+    const from = input.fromCandidateId
+      ? this.snapshot(input.fromCandidateId)
+      : null;
+    if (from)
+      setupConditions.push(
+        "Starts from the session's accepted result, not the project folder. Publication compares that result and this run's work with the folder, so it includes changes the folder does not have yet.",
+      );
     const copy = await this.recapture({
       projectId: input.projectId,
       runId: input.runId,
       workflowId: input.runId,
-      source: base,
+      source: from ?? base,
       label: "checkpoint-0",
     });
     return {
