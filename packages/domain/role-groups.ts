@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Evidence } from "./workflow";
+import { optionalFields } from "./patches";
 
 /**
  * Role groups for the coordinator feature (docs/Coordinator_Teams.md). A role
@@ -144,6 +145,15 @@ export const completionPolicySchema = z
   .strict();
 export type CompletionPolicy = z.infer<typeof completionPolicySchema>;
 
+/**
+ * The completion fields one scope sets. An absent field defers to a broader
+ * scope; unlike `completionPolicySchema.partial()`, it is not filled with its
+ * default, which would override what a broader scope set.
+ */
+export const completionPolicyPatchSchema = z
+  .object(optionalFields(completionPolicySchema.shape))
+  .strict();
+
 /** Settings a scope can set for a role. An absent field defers to a broader scope. */
 export const roleGroupSettingsSchema = z
   .object({
@@ -159,7 +169,7 @@ export const roleGroupSettingsSchema = z
     scheduling: z.enum(schedulingKinds).optional(),
     /** W: the most members active at once. null: capacity decides. */
     executionWidth: z.number().int().min(1).nullable().optional(),
-    completion: completionPolicySchema.partial().optional(),
+    completion: completionPolicyPatchSchema.optional(),
     /** requested-only: a clearly labelled mode that accepts unreported effective models. */
     modelEvidence: z.enum(["verified", "requested-only"]).optional(),
   })

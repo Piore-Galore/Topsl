@@ -2362,3 +2362,114 @@ describe("OPS-06 (accelerated): scripted boundaries with promotions, rejections 
   }, 600_000);
 });
 const terminal = new Set(["promoted", "rejected", "no-work", "cancelled"]);
+
+// ---------------------------------------------------------------------------
+// 2026-10-29: in zod 4, `.partial()` fills defaults, so a `loop-policy-update`
+// that sent one field reset every other one. On a started run the reset
+// `checks: []` was refused as a protocol change, and an empty
+// `excludedProviders` counted as lifting an exclusion.
+
+describe("loop-policy-update changes only the fields it sends", () => {
+  const settings = (p: ReturnType<T["supervisor"]["policy"]>) => {
+    const { revision: _r, updatedAt: _u, ...rest } = p;
+    return rest;
+  };
+  const update = (
+    runId: string,
+    expectedRevision: number,
+    patch: Record<string, unknown>,
+  ) => {
+    const command = commandSchema.parse({
+      type: "loop-policy-update",
+      runId,
+      expectedRevision,
+      policy: patch,
+      commandId: `partial-${Math.random()}`,
+    });
+    if (command.type !== "loop-policy-update") throw new Error("unexpected");
+    return command;
+  };
+
+  test("a one-field command keeps the run's other settings, including grouped fields", async () => {
+    const t = await setup();
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting",
+      policy: {
+        scheduling: { reserveForDirectWork: 3 },
+        excludedProviders: ["claude"],
+        checks: [check(1)],
+        automaticChecks: true,
+        iteration: { maxTurns: 150, maxRepairRounds: 5 },
+        allowances: {
+          runMemberTurns: 40,
+          rolling: { memberTurns: 10, windowHours: 2 },
+        },
+      },
+    });
+    const runId = started.run.id;
+    const before = t.supervisor.policy(runId);
+
+    const one = update(runId, before.revision, { opportunityThreshold: 0.5 });
+    expect(one.policy).toEqual({ opportunityThreshold: 0.5 });
+    await t.supervisor.updatePolicy(one);
+    const afterOne = t.supervisor.policy(runId);
+    expect(afterOne.revision).toBe(before.revision + 1);
+    expect(settings(afterOne)).toEqual({
+      ...settings(before),
+      opportunityThreshold: 0.5,
+    });
+
+    // Inside a group, the fields sent replace only those fields.
+    const grouped = update(runId, afterOne.revision, {
+      iteration: { maxTurns: 50 },
+      allowances: { runMemberTurns: 60 },
+    });
+    expect(grouped.policy).toEqual({
+      iteration: { maxTurns: 50 },
+      allowances: { runMemberTurns: 60 },
+    });
+    await t.supervisor.updatePolicy(grouped);
+    const afterGrouped = t.supervisor.policy(runId);
+    expect(settings(afterGrouped)).toEqual({
+      ...settings(afterOne),
+      iteration: { ...afterOne.iteration, maxTurns: 50 },
+      allowances: { ...afterOne.allowances, runMemberTurns: 60 },
+    });
+    expect(afterGrouped).toMatchObject({
+      automaticChecks: true,
+      excludedProviders: ["claude"],
+      scheduling: { reserveForDirectWork: 3 },
+      iteration: { maxRepairRounds: 5 },
+      allowances: { rolling: { memberTurns: 10, windowHours: 2 } },
+      authorizedDigest: before.authorizedDigest,
+    });
+    expect(afterGrouped.checks).toHaveLength(1);
+  });
+
+  test("the monitoring delay rule applies to the merged settings", async () => {
+    const t = await setup();
+    const started = await startRun(t, {
+      mode: "endless",
+      text: "Keep improving.",
+      policy,
+    });
+    const runId = started.run.id;
+    const revision = t.supervisor.policy(runId).revision;
+    // One side of the rule parses alone; the stored maximum is 21,600 s.
+    const command = update(runId, revision, {
+      monitoring: { initialSeconds: 30000 },
+    });
+    await expect(t.supervisor.updatePolicy(command)).rejects.toThrow(
+      "cannot be longer than the maximum delay",
+    );
+    await t.supervisor.updatePolicy(
+      update(runId, revision, { monitoring: { initialSeconds: 600 } }),
+    );
+    expect(t.supervisor.policy(runId).monitoring).toEqual({
+      initialSeconds: 600,
+      maxSeconds: 21600,
+      factor: 2,
+    });
+  });
+});

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalFields } from "./patches";
 import type {
   CollaborationMode,
   ExecutionPurpose,
@@ -683,6 +684,78 @@ export const loopPolicySchema = z
   .strict();
 export type LoopPolicyInput = z.input<typeof loopPolicySchema>;
 export type LoopPolicySettings = z.infer<typeof loopPolicySchema>;
+
+const policyFields = loopPolicySchema.shape;
+/** The policy fields grouped in an object, which a patch changes field by field. */
+const policyGroups = [
+  "iteration",
+  "allowances",
+  "adaptation",
+  "monitoring",
+  "scheduling",
+  "recovery",
+] as const;
+const groupPatch = <S extends z.ZodRawShape>(
+  group: z.ZodDefault<z.ZodObject<S>>,
+) => z.object(optionalFields(group.unwrap().shape)).strict().optional();
+
+/**
+ * A change to some fields of a run's policy. Unlike `.partial()`, which still
+ * fills defaults, an absent field here stays absent, so changing one field
+ * never resets the others. Within a group such as `iteration`, the fields
+ * sent replace only those fields.
+ */
+export const loopPolicyPatchSchema = z
+  .object({
+    ...optionalFields({
+      allowedWork: policyFields.allowedWork,
+      excludedProviders: policyFields.excludedProviders,
+      checks: policyFields.checks,
+      automaticChecks: policyFields.automaticChecks,
+      automaticOrganization: policyFields.automaticOrganization,
+      publication: policyFields.publication,
+      priorities: policyFields.priorities,
+      opportunityThreshold: policyFields.opportunityThreshold,
+    }),
+    iteration: groupPatch(policyFields.iteration),
+    allowances: groupPatch(policyFields.allowances),
+    adaptation: groupPatch(policyFields.adaptation),
+    monitoring: groupPatch(policyFields.monitoring).refine(
+      (m) =>
+        m?.initialSeconds === undefined ||
+        m.maxSeconds === undefined ||
+        m.initialSeconds <= m.maxSeconds,
+      {
+        path: ["initialSeconds"],
+        message:
+          "The first monitoring delay (initialSeconds) cannot be longer than the maximum delay (maxSeconds).",
+      },
+    ),
+    scheduling: groupPatch(policyFields.scheduling),
+    recovery: groupPatch(policyFields.recovery),
+  })
+  .strict();
+export type LoopPolicyPatch = z.input<typeof loopPolicyPatchSchema>;
+
+/** The settings after a patch: absent fields keep their current values. */
+export function applyLoopPolicyPatch(
+  current: LoopPolicyInput,
+  patch: LoopPolicyPatch,
+): LoopPolicySettings {
+  const next: Record<string, unknown> = { ...current };
+  for (const [field, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    next[field] = (policyGroups as readonly string[]).includes(field)
+      ? {
+          ...(current[field as keyof LoopPolicyInput] as object),
+          ...Object.fromEntries(
+            Object.entries(value).filter(([, v]) => v !== undefined),
+          ),
+        }
+      : value;
+  }
+  return loopPolicySchema.parse(next);
+}
 
 export interface LoopPolicy extends LoopPolicySettings {
   id: string;
