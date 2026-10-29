@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { stripVTControlCharacters } from "node:util";
 import { spawn, type IPty } from "node-pty";
 import { z } from "zod";
 import { hash, stable } from "../domain/invariants";
@@ -100,17 +99,153 @@ export async function readClaudeAccount(
   };
 }
 
+const terminalColumns = 160;
+const terminalRows = 80;
+
+/** The text a terminal shows after `output`, one trimmed line per row. A
+ * Windows pseudoconsole (ConPTY) repaints only changed cells and moves the
+ * cursor into the middle of a line, so the raw stream is not readable text.
+ * Handles printing, CR/LF/BS/TAB and the cursor, erase and scroll commands;
+ * other sequences change nothing on screen. Every character takes one cell,
+ * and LF also returns to the first column, as a Unix PTY's output does. */
+export function terminalScreen(
+  output: string,
+  columns = terminalColumns,
+  rows = terminalRows,
+): string {
+  const blank = () => Array<string>(columns).fill(" ");
+  const screen = Array.from({ length: rows }, blank);
+  let row = 0;
+  let column = 0;
+  let saved = [0, 0];
+  const clamp = (value: number, max: number) =>
+    Math.max(0, Math.min(max - 1, value));
+  const erase = (r: number, from: number, to: number) =>
+    screen[r].fill(" ", from, to);
+  const scroll = (top: number, count: number) => {
+    // Positive counts move rows up from `top`; negative counts move them down.
+    const size = Math.min(Math.abs(count), rows - top);
+    const lines = Array.from({ length: size }, blank);
+    if (count > 0) {
+      screen.splice(top, size);
+      screen.push(...lines);
+    } else {
+      screen.splice(top, 0, ...lines);
+      screen.length = rows;
+    }
+  };
+  const lineFeed = () => {
+    column = 0;
+    if (row === rows - 1) scroll(0, 1);
+    else row++;
+  };
+  let i = 0;
+  while (i < output.length) {
+    const char = output[i];
+    if (char === "\x1b") {
+      const kind = output[i + 1];
+      if (kind === "[") {
+        const csi = /^\x1b\[([0-?]*)[ -/]*([@-~])/.exec(
+          output.slice(i, i + 64),
+        );
+        if (!csi) break; // An incomplete sequence at the end of the output.
+        i += csi[0].length;
+        if (/^[<=>?]/.test(csi[1])) continue; // Private modes.
+        const params = csi[1].split(";").map((p) => Number.parseInt(p) || 0);
+        const n = Math.max(1, params[0]);
+        switch (csi[2]) {
+          case "A":
+            row = clamp(row - n, rows);
+            break;
+          case "B":
+            row = clamp(row + n, rows);
+            break;
+          case "C":
+            column = clamp(column + n, columns);
+            break;
+          case "D":
+            column = clamp(column - n, columns);
+            break;
+          case "E":
+          case "F":
+            row = clamp(row + (csi[2] === "E" ? n : -n), rows);
+            column = 0;
+            break;
+          case "G":
+          case "`":
+            column = clamp(n - 1, columns);
+            break;
+          case "d":
+            row = clamp(n - 1, rows);
+            break;
+          case "H":
+          case "f":
+            row = clamp(n - 1, rows);
+            column = clamp(Math.max(1, params[1] ?? 0) - 1, columns);
+            break;
+          case "J":
+            if (params[0] === 0) {
+              erase(row, column, columns);
+              for (let r = row + 1; r < rows; r++) erase(r, 0, columns);
+            } else if (params[0] === 1) {
+              for (let r = 0; r < row; r++) erase(r, 0, columns);
+              erase(row, 0, column + 1);
+            } else for (let r = 0; r < rows; r++) erase(r, 0, columns);
+            break;
+          case "K":
+            if (params[0] === 0) erase(row, column, columns);
+            else if (params[0] === 1) erase(row, 0, column + 1);
+            else erase(row, 0, columns);
+            break;
+          case "X":
+            erase(row, column, column + n);
+            break;
+          case "S":
+          case "T":
+            scroll(0, csi[2] === "S" ? n : -n);
+            break;
+          case "L":
+          case "M":
+            scroll(row, csi[2] === "M" ? n : -n);
+            break;
+        }
+        continue;
+      }
+      if (kind === "]" || kind === "P" || kind === "_" || kind === "^") {
+        // OSC, DCS, APC and PM strings end at BEL or ST.
+        const end = /\x07|\x1b\\/.exec(output.slice(i + 2));
+        if (!end) break;
+        i += 2 + end.index + end[0].length;
+        continue;
+      }
+      const other = /^\x1b[ -/]*[0-~]/.exec(output.slice(i, i + 8));
+      if (!other) break;
+      if (other[0] === "\x1b7") saved = [row, column];
+      if (other[0] === "\x1b8") [row, column] = saved;
+      i += other[0].length;
+      continue;
+    }
+    i++;
+    if (char === "\r") column = 0;
+    else if (char === "\n" || char === "\v" || char === "\f") lineFeed();
+    else if (char === "\b") column = Math.max(0, column - 1);
+    else if (char === "\t") column = Math.min(columns - 1, (column | 7) + 1);
+    else if (char < " " || (char >= "\x7f" && char < "\xa0")) continue;
+    else {
+      if (column === columns) lineFeed();
+      screen[row][column++] = char;
+    }
+  }
+  return screen.map((line) => line.join("").trimEnd()).join("\n");
+}
+
 /** Screen-reader output from the native /usage display. Unknown or partial
  * layouts stay unknown; local activity percentages are never quota windows.
  * Reset labels lack an exact timestamp/year, so retain their original text. */
 export function parseClaudeUsageDisplay(
   output: string,
 ): AllowanceReport | null {
-  // Repaints can put a new heading immediately after the old footer. Keep a
-  // line boundary for cursor/erase commands; SGR/OSC are formatting only.
-  const text = stripVTControlCharacters(
-    output.replace(/\x1b\[[\d;?]*[ABCDEFGHJKf]/g, "\n"),
-  ).replace(/\r/g, "");
+  const text = terminalScreen(output);
   const start = text.lastIndexOf("Current session\n");
   if (start < 0) return null;
   const display = text.slice(start);
@@ -176,8 +311,8 @@ export function readClaudeUsage(
         {
           cwd,
           env: nativeEnvironment({ TERM: "xterm-256color" }),
-          cols: 160,
-          rows: 80,
+          cols: terminalColumns,
+          rows: terminalRows,
           name: "xterm-256color",
         },
       );
@@ -233,7 +368,7 @@ export function readClaudeUsage(
       output += chunk;
       if (output.length > 256_000)
         return stop(new Error("Claude usage display exceeded the read limit."));
-      const plain = stripVTControlCharacters(output);
+      const plain = terminalScreen(output);
       if (
         /Is this a project you created or one you trust|Enter y\/n:/.test(plain)
       )

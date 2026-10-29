@@ -1,29 +1,22 @@
 import { _electron as electron, expect } from "@playwright/test";
-import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { standIn } from "./desktop-stand-in.mjs";
 
 // Focused native usage journey, independent of the project's landing view.
 // No provider account is contacted: the CLI and profile are local fixtures.
-if (process.platform === "win32") {
-  console.log(
-    "Desktop usage journey skipped: its executable fixture is a shell wrapper.",
-  );
-  process.exit(0);
-}
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-usage-"));
 const project = path.join(profile, "usage-project");
 const config = path.join(profile, "claude-config");
 await mkdir(project);
 await mkdir(config);
 await writeFile(path.join(config, "usage-fixture"), "");
-const quote = (text) => "'" + text.replaceAll("'", "'\\''") + "'";
-const wrapper = path.join(profile, "claude-usage-fixture");
-await writeFile(
-  wrapper,
-  `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/claude-usage.cjs"))} "$@"\n`,
-);
-await chmod(wrapper, 0o700);
+const wrapper = await standIn({
+  directory: profile,
+  name: "claude-usage-fixture",
+  script: "tests/fixtures/claude-usage.cjs",
+});
 const env = {
   ...process.env,
   TOPSL_TEST_PROFILE: profile,
