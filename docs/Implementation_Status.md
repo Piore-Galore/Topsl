@@ -586,4 +586,4 @@ The coordinator journey logged the Claude usage card after **Refresh from Claude
 | `env -u ANTHROPIC_BASE_URL npm test` | Passed: 1218 tests and 6 skipped in 87 files (3 skipped) |
 | `npm run build`, then `env -u ANTHROPIC_BASE_URL npm run test:desktop -- scripts/desktop-usage-test.mjs scripts/desktop-coordinator-test.mjs` | Both journeys passed on macOS with the shell-wrapper stand-in |
 
-Windows evidence is the remote CI run of this branch, recorded below once it completes. This is against stand-ins; no live Claude Code ran.
+Nothing above ran on Windows. The Windows evidence is the remote CI of PR [#42](https://github.com/Piore-Galore/Topsl/pull/42), which had not finished when this was written. This is against stand-ins; no live Claude Code ran.
