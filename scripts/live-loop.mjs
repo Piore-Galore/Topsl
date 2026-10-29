@@ -36,8 +36,15 @@ import path from "node:path";
 // and Codex coordinate, Claude implements, and Claude and Codex review, the
 // Claude reviewer through Topsl's candidate reader. Those turns count against
 // the Claude subscription's usage as well as ChatGPT's.
+//
+// With --session, Runs A to C are skipped and Run S exercises a native Topsl
+// session (docs/Native_Sessions_Plan.md): Codex coordinates, with a Claude
+// coordinator as its peer when --claude-model is given; a Discuss message is
+// answered without starting work; a Work message becomes the session's goal,
+// which runs on the automatic team and is accepted; and a Goal loop in the
+// session starts from that accepted result, completes and is published.
 const usage =
-  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--mixed-only] [--keep-profile] [--output directory]";
+  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--mixed-only | --session] [--keep-profile] [--output directory]";
 const options = {
   codex: null,
   claude: null,
@@ -61,6 +68,7 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (a === "--no-pin-run") options.noPinRun = true;
   // Skips Run A, the Codex-only loop, so the turns go to Run C.
   else if (a === "--mixed-only") options.mixedOnly = true;
+  else if (a === "--session") options.session = true;
   else if (a === "--output") options.output = value();
   else throw new Error(usage);
 }
@@ -70,6 +78,7 @@ if (
   (options.claude && !path.isAbsolute(options.claude)) ||
   (options.claudeModel && !options.claude) ||
   (options.mixedOnly && !options.claudeModel) ||
+  (options.mixedOnly && options.session) ||
   !(options.maxTurns > 4)
 )
   throw new Error(usage);
@@ -240,13 +249,15 @@ try {
                       : message ===
                           "Turn on auto-accept for work inside the sandbox?"
                         ? buttons[1]
-                        : message === "Start this Goal loop? (Experimental)"
-                          ? "Start loop"
-                          : message ===
-                                "Publish the loop's accepted checkpoint to the project folder?" &&
-                              detail.includes(policy.project)
-                            ? "Publish to folder"
-                            : null;
+                        : message === "Accept this reviewed candidate?"
+                          ? "Accept candidate"
+                          : message === "Start this Goal loop? (Experimental)"
+                            ? "Start loop"
+                            : message ===
+                                  "Publish the loop's accepted checkpoint to the project folder?" &&
+                                detail.includes(policy.project)
+                              ? "Publish to folder"
+                              : null;
         const response = expected ? Math.max(0, buttons.indexOf(expected)) : 0;
         dialogs.push({ dialog: message, answer: buttons[response] ?? null });
         return { response, checkboxChecked: false };
@@ -472,40 +483,41 @@ try {
   };
 
   // Run A: Goal loop, everything Auto.
-  const a = options.mixedOnly
-    ? null
-    : await runLoop(
-        "a-goal",
-        {
-          mode: "goal",
-          goals: [
-            {
-              text: "Change value.ts so that it exports value = 2",
-              criteria: [
-                {
-                  text: "value.ts exports `value = 2`",
-                  verification: { kind: "inspection" },
-                },
-              ],
-            },
-          ],
-          policy: {
-            scheduling: { reserveForDirectWork: 0 },
-            allowances: { runMemberTurns: options.maxTurns, rolling: null },
-            iteration: {
-              maxTurns: Math.min(25, options.maxTurns),
-              maxDelegatedTasks: 3,
-              maxRepairRounds: 1,
-              maxApproachesPerTarget: 2,
+  const a =
+    options.mixedOnly || options.session
+      ? null
+      : await runLoop(
+          "a-goal",
+          {
+            mode: "goal",
+            goals: [
+              {
+                text: "Change value.ts so that it exports value = 2",
+                criteria: [
+                  {
+                    text: "value.ts exports `value = 2`",
+                    verification: { kind: "inspection" },
+                  },
+                ],
+              },
+            ],
+            policy: {
+              scheduling: { reserveForDirectWork: 0 },
+              allowances: { runMemberTurns: options.maxTurns, rolling: null },
+              iteration: {
+                maxTurns: Math.min(25, options.maxTurns),
+                maxDelegatedTasks: 3,
+                maxRepairRounds: 1,
+                maxApproachesPerTarget: 2,
+              },
             },
           },
-        },
-        (v) =>
-          ["completed", "waiting", "stopped", "monitoring"].includes(
-            v.run.state,
-          ),
-        35 * 60_000,
-      );
+          (v) =>
+            ["completed", "waiting", "stopped", "monitoring"].includes(
+              v.run.state,
+            ),
+          35 * 60_000,
+        );
   if (a?.view.run.state === "completed") {
     await command({
       type: "loop-publication-apply",
@@ -527,7 +539,12 @@ try {
 
   // Run B: a Claude reviewer pinned while the route is off. The pin must wait
   // visibly, never be substituted.
-  if (options.claude && !options.claudeModel && !options.noPinRun) {
+  if (
+    options.claude &&
+    !options.claudeModel &&
+    !options.noPinRun &&
+    !options.session
+  ) {
     const b = await runLoop(
       "b-claude-pin",
       {
@@ -551,7 +568,7 @@ try {
   }
 
   // Run C: a mixed Claude and Codex team on a Goal loop.
-  if (claude && options.claudeModel) {
+  if (claude && options.claudeModel && !options.session) {
     const member = (roleId, i, pin) => ({
       memberId: `${roleId}-${pin.provider}-${i}`,
       required: true,
@@ -681,6 +698,289 @@ try {
       }).catch(() => {});
     report.runs.push(c.record);
   }
+  // Run S: a native Topsl session.
+  if (options.session) {
+    const pin = (memberId, value) => ({
+      memberId,
+      required: true,
+      pin: value,
+      fallbacks: [],
+      preferences: { providers: [], models: [] },
+      source: { kind: "ui", reference: null, provenance: "explicit" },
+    });
+    const coordinators = [
+      pin("coordinator-codex", {
+        provider: "codex",
+        installationId: codex.id,
+        model,
+      }),
+      ...(claude && options.claudeModel
+        ? [
+            pin("coordinator-claude", {
+              provider: "claude",
+              installationId: claude.id,
+              model: options.claudeModel,
+            }),
+          ]
+        : []),
+    ];
+    const record = {
+      label: "s-session",
+      coordinators: coordinators.map(
+        (c) => `${c.memberId}=${c.pin.provider}/${c.pin.model}`,
+      ),
+      intakes: [],
+      goal: null,
+      loop: null,
+      ownerChoices: [],
+      transitions: [],
+    };
+    report.runs.push(record);
+    const query = (sessionId) => command({ type: "session-query", sessionId });
+    const intakeRecord = (i) => ({
+      text: i.text.slice(0, 200),
+      mode: i.mode,
+      stage: i.stage,
+      outcome: i.outcome
+        ? {
+            kind: i.outcome.kind,
+            intent: i.outcome.intent ?? null,
+            reply: (i.outcome.reply ?? "").slice(0, 600),
+          }
+        : null,
+      members: i.members.map((m) => ({
+        memberId: m.memberId,
+        provider: m.provider ?? null,
+        model: m.model ?? null,
+        state: m.state,
+      })),
+      reconciliationUsed: i.reconciliationUsed,
+      detail: i.detail,
+    });
+    // Waits for an intake to be decided; an owner choice among alternatives
+    // takes the first coordinator's, as the first "Use" button would.
+    const decide = async (sessionId, intakeId, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const view = await query(sessionId);
+        const intake = view.intakes.find((i) => i.id === intakeId);
+        if (intake?.stage === "awaiting-user") {
+          record.ownerChoices.push({
+            at: new Date().toISOString(),
+            intakeId,
+            alternatives: (intake.outcome?.options ?? []).map((a) =>
+              JSON.stringify(a).slice(0, 400),
+            ),
+            chosen: 0,
+          });
+          await command({
+            type: "session-choose",
+            sessionId,
+            intakeId,
+            option: 0,
+            commandId: `live-s-choose-${Date.now()}`,
+          });
+        } else if (
+          intake &&
+          ["decided", "failed", "stale", "stopped"].includes(intake.stage)
+        )
+          return { view, intake };
+        if (Date.now() > deadline)
+          throw new Error(
+            `Session intake ${intakeId} was not decided: ${intake?.stage} ${intake?.detail}`,
+          );
+        await sleep(3000);
+      }
+    };
+    const created = await command({
+      type: "session-create",
+      projectId,
+      title: "Live session",
+      configuration: { coordinators, team: "automatic" },
+      text: "What does value.ts export, and which other files are in this project?",
+      mode: "discuss",
+      kind: "code",
+      commandId: `live-s-create-${Date.now()}`,
+    });
+    const sessionId = created.sessionId;
+    record.sessionId = sessionId;
+    const first = await decide(sessionId, created.intakeId, 10 * 60_000);
+    record.intakes.push(intakeRecord(first.intake));
+    record.discussionStartedWork = first.view.session.queue.length > 0;
+    console.log(
+      `[s-session] discuss: ${first.intake.stage} ${first.intake.outcome?.kind ?? ""}`,
+    );
+    await shot("run-s-discuss");
+
+    const work = await command({
+      type: "session-message",
+      sessionId,
+      text: "Change value.ts so that it exports value = 2.",
+      mode: "work",
+      commandId: `live-s-work-${Date.now()}`,
+    });
+    const second = await decide(sessionId, work.intakeId, 10 * 60_000);
+    record.intakes.push(intakeRecord(second.intake));
+    console.log(
+      `[s-session] work: ${second.intake.stage} ${second.intake.outcome?.kind ?? ""}`,
+    );
+    // The goal runs on the automatic team until it awaits acceptance.
+    let goalId = null;
+    let last = "";
+    const deadline = Date.now() + 40 * 60_000;
+    for (;;) {
+      const view = await query(sessionId);
+      const item = view.session.queue.find((w) => w.kind === "goal");
+      goalId = item?.goalId ?? null;
+      const goals = goalId
+        ? (
+            await command({
+              type: "orchestration-query",
+              projectId,
+              conversationId: sessionId,
+            })
+          ).goals
+        : [];
+      const goal = goals.find((g) => g.goal.id === goalId);
+      const now = `${item?.state ?? "-"} | ${goal?.goal.state ?? "-"} | ${goal?.goal.detail ?? view.session.attention?.detail ?? ""}`;
+      if (now !== last) {
+        record.transitions.push({
+          at: new Date().toISOString(),
+          state: now.slice(0, 600),
+        });
+        last = now;
+        console.log(`[s-session] ${now.slice(0, 200)}`);
+      }
+      for (const round of goal?.rounds ?? []) {
+        if (
+          round.stage !== "awaiting-user" ||
+          record.ownerChoices.some((c) => c.roundId === round.id)
+        )
+          continue;
+        const proposals = round.contributions.filter(
+          (c) => c.validation.state === "valid" && c.phase !== "endorsement",
+        );
+        record.ownerChoices.push({
+          at: new Date().toISOString(),
+          roundId: round.id,
+          detail: round.detail,
+          proposals: proposals.map((c) => c.memberId),
+          chosen: proposals[0]?.memberId ?? null,
+        });
+        if (proposals[0])
+          await command({
+            type: "orchestration-branch-choose",
+            goalId,
+            roundId: round.id,
+            contributionId: proposals[0].id,
+            commandId: `live-s-branch-${Date.now()}`,
+          });
+      }
+      if (
+        goal &&
+        ["awaiting-acceptance", "accepted", "failed", "stopped"].includes(
+          goal.goal.state,
+        )
+      ) {
+        record.goal = {
+          goalId,
+          state: goal.goal.state,
+          detail: goal.goal.detail,
+          synthesis: (goal.goal.synthesis ?? "").slice(0, 1500),
+          groups: goal.groups.map((g) => ({
+            roleId: g.roleId,
+            assignments: g.assignments.map(
+              (a) =>
+                `${a.memberId}=${a.provider ?? "?"}/${a.model ?? "unresolved"} (${a.status})`,
+            ),
+          })),
+          automatic: Object.fromEntries(
+            Object.entries(view.session.automatic?.roles ?? {}).map(
+              ([roleId, r]) => [roleId, r.reason ?? null],
+            ),
+          ),
+        };
+        break;
+      }
+      if (Date.now() > deadline) throw new Error("The session goal timed out.");
+      await sleep(5000);
+    }
+    await shot("run-s-goal");
+    if (record.goal.state !== "awaiting-acceptance")
+      throw new Error(`The session goal ended ${record.goal.state}.`);
+    await command({
+      type: "orchestration-accept",
+      goalId,
+      commandId: `live-s-accept-${Date.now()}`,
+    });
+    await expect
+      .poll(async () => !!(await query(sessionId)).session.acceptedCheckpoint, {
+        timeout: 60_000,
+      })
+      .toBe(true);
+    const accepted = (await query(sessionId)).session.acceptedCheckpoint;
+    record.goal.accepted = { candidateId: accepted.candidateId };
+    record.goal.folderAfterAcceptance = (
+      await readFile(path.join(project, "value.ts"), "utf8")
+    ).trim();
+
+    // A Goal loop in the session starts from the accepted result.
+    const loop = await runLoop(
+      "s-loop",
+      {
+        conversationId: sessionId,
+        mode: "goal",
+        goals: [
+          {
+            text: "Add a one-line comment at the top of value.ts saying a Topsl loop edited it, keeping its export",
+            criteria: [
+              {
+                text: "value.ts starts with a one-line comment saying a Topsl loop edited it",
+                verification: { kind: "inspection" },
+              },
+            ],
+          },
+        ],
+        policy: {
+          scheduling: { reserveForDirectWork: 0 },
+          allowances: { runMemberTurns: options.maxTurns, rolling: null },
+          iteration: {
+            maxTurns: Math.min(25, options.maxTurns),
+            maxDelegatedTasks: 3,
+            maxRepairRounds: 1,
+            maxApproachesPerTarget: 2,
+          },
+        },
+      },
+      (v) =>
+        ["completed", "waiting", "stopped", "monitoring"].includes(v.run.state),
+      40 * 60_000,
+    );
+    record.loop = {
+      ...loop.record,
+      setupConditions: loop.view.run.setupConditions,
+    };
+    if (loop.view.run.state === "completed") {
+      await command({
+        type: "loop-publication-apply",
+        runId: loop.runId,
+        commandId: `live-s-${Date.now()}-publish`,
+      });
+      record.loop.published = (
+        await readFile(path.join(project, "value.ts"), "utf8")
+      ).trim();
+      record.loop.folderStatus = gitIn(project, "status", "--porcelain");
+    } else
+      await command({
+        type: "loop-control",
+        runId: loop.runId,
+        action: "stop",
+        commandId: `live-s-${Date.now()}-stop`,
+      }).catch(() => {});
+    const after = await query(sessionId);
+    record.finalQueue = after.session.queue.map((w) => `${w.kind}:${w.state}`);
+    record.finalCheckpoint = after.session.acceptedCheckpoint;
+  }
   report.result = "completed";
 } catch (error) {
   report.failure = String(error?.stack ?? error).slice(0, 4000);
@@ -712,7 +1012,9 @@ try {
     report.result !== "completed" ||
     report.runs.some(
       (r) =>
-        ["a-goal", "c-mixed"].includes(r.label) && r.finalState !== "completed",
+        (["a-goal", "c-mixed"].includes(r.label) &&
+          r.finalState !== "completed") ||
+        (r.label === "s-session" && r.loop?.finalState !== "completed"),
     )
   )
     options.keepProfile = true;

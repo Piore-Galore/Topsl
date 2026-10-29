@@ -12,6 +12,7 @@ import {
   decidePeers,
   effectiveIntent,
   parseSessionTurn,
+  sessionIntakePrompt,
 } from "../packages/orchestration/session-contracts";
 import { SessionSupervisor } from "../packages/orchestration/session-engine";
 import type { MemberTurn } from "../packages/orchestration/engine";
@@ -222,6 +223,34 @@ describe("session-v1 decisions", () => {
         "d",
       ).ok,
     ).toBe(false);
+  });
+
+  test("the intake prompt names each team field's values and forbids invented reads", () => {
+    const prompt = sessionIntakePrompt({
+      memberId: "coordinator-1",
+      instructions: "Coordinate.",
+      context: buildSessionContext({
+        messages: [],
+        decisions: [],
+        work: [],
+        checkpoint: null,
+        status: null,
+        team: [],
+      }),
+      message: "Change the value.",
+      mode: "work",
+      target: null,
+      teamMode: "automatic",
+      models: [],
+      inputDigest: "d",
+    });
+    // Live coordinators wrote a description as "purpose" for an existing
+    // role, and a Claude coordinator without file tools invented reads.
+    expect(prompt).toContain(
+      'exactly one of "implementation", "information", "candidate-review", not a description',
+    );
+    expect(prompt).toContain("null for an existing role");
+    expect(prompt).toContain("Never write tool calls or tool results as text.");
   });
 
   test("session context is bounded and keeps references to older history", () => {
@@ -861,6 +890,127 @@ describe("native sessions", () => {
     await reopened.tick();
     expect(intake(f, intakeId!).stage).toBe("decided");
     expect(f.driver.launches).toHaveLength(1);
+  });
+
+  test("many sessions in one project stay separate, and a long conversation's context reads only its latest messages", async () => {
+    const f = await setup();
+    const count = 30;
+    const created: Array<{ sessionId: string; intakeId: string | null }> = [];
+    for (let i = 0; i < count; i++)
+      created.push(
+        await f.sessions.create({
+          projectId: "p",
+          text: `Question ${i}`,
+          mode: "discuss",
+          commandId: cmd(),
+        }),
+      );
+    expect(
+      await run(f, () => created.every((c) => decided(f, c.intakeId!)())),
+    ).toBe(true);
+    for (const [i, c] of created.entries()) {
+      expect(intake(f, c.intakeId!).outcome).toMatchObject({ kind: "reply" });
+      expect(messages(f, c.sessionId).map((m) => m.text)[0]).toBe(
+        `Question ${i}`,
+      );
+      expect(messages(f, c.sessionId)).toHaveLength(2);
+      expect(f.sessions.intakes(c.sessionId)).toHaveLength(1);
+    }
+    expect(f.store.list(kinds.goal)).toHaveLength(0);
+    const threads = summarizeThreads({
+      projectId: "p",
+      ...f.orchestrator.threadFacts("p"),
+      runs: [],
+      sessions: f.sessions.list("p"),
+    });
+    expect(threads.filter((t) => t.kind === "session")).toHaveLength(count);
+    // A long conversation: 400 earlier messages, then a new one.
+    const long = created[0].sessionId;
+    for (let i = 0; i < 400; i++)
+      await f.orchestrator.note({
+        conversationId: long,
+        role: i % 2 ? "coordinator" : "user",
+        text: `Earlier ${i} `.repeat(400),
+        routing: { kind: "session", goalId: null },
+        commandId: cmd(),
+      });
+    const next = await f.sessions.message({
+      sessionId: long,
+      text: "And now?",
+      mode: "discuss",
+      commandId: cmd(),
+    });
+    const context = intake(f, next.intakeId!).context;
+    expect(context.messages).toHaveLength(CONTEXT_MESSAGES);
+    expect(context.messages.at(-1)!.text).toBe("And now?");
+    expect(context.messages.every((m) => m.text.length <= 2000)).toBe(true);
+    // 2 first messages + 400 notes + the new one; the latest 12 are included.
+    expect(context.omitted).toEqual({
+      fromSequence: 1,
+      toSequence: 403 - CONTEXT_MESSAGES,
+      count: 403 - CONTEXT_MESSAGES,
+    });
+    expect(JSON.stringify(context).length).toBeLessThan(40_000);
+    expect(await run(f, decided(f, next.intakeId!))).toBe(true);
+    // Other sessions saw none of it.
+    expect(messages(f, created[1].sessionId)).toHaveLength(2);
+  });
+
+  test("a loop in the session settles as completed or stopped and a promoted result becomes the session's", async () => {
+    const f = await setup();
+    const runs: Array<{
+      id: string;
+      conversationId: string;
+      title: string;
+      state: string;
+      started: boolean;
+      acceptedCandidateId: string | null;
+    }> = [];
+    const sessions = new SessionSupervisor(
+      f.store,
+      f.orchestrator,
+      f.driver,
+      () => {},
+      { runs: () => runs, stop: async () => {} },
+    );
+    const { sessionId } = await sessions.create({
+      projectId: "p",
+      commandId: cmd(),
+    });
+    runs.push(
+      {
+        id: "loop-a",
+        conversationId: sessionId,
+        title: "Loop A",
+        state: "active",
+        started: true,
+        acceptedCandidateId: null,
+      },
+      {
+        id: "loop-b",
+        conversationId: sessionId,
+        title: "Loop B",
+        state: "stopped",
+        started: true,
+        acceptedCandidateId: null,
+      },
+    );
+    await sessions.tick();
+    expect(session(f, sessionId).queue.map((w) => [w.runId, w.state])).toEqual([
+      ["loop-a", "running"],
+      ["loop-b", "stopped"],
+    ]);
+    Object.assign(runs[0], { state: "completed", acceptedCandidateId: "c-1" });
+    await sessions.tick();
+    const s = session(f, sessionId);
+    expect(s.queue.map((w) => [w.runId, w.state])).toEqual([
+      ["loop-a", "completed"],
+      ["loop-b", "stopped"],
+    ]);
+    expect(s.acceptedCheckpoint).toMatchObject({
+      candidateId: "c-1",
+      runId: "loop-a",
+    });
   });
 
   test("legacy conversations are backfilled without rewriting history, and their thread IDs resolve", async () => {

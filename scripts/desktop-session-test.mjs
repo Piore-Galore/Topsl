@@ -1,10 +1,12 @@
 import { navigate, openThread, selectProject } from "./desktop-navigation.mjs";
 import { _electron as electron, expect } from "@playwright/test";
-import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
-import { rmSync } from "node:fs";
+import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises";
+import { standIn } from "./desktop-stand-in.mjs";
+import { existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
 
 // Native Topsl sessions (docs/Native_Sessions_Plan.md), driven through
 // Topsl's own screens in Electron against a synthetic profile: session setup
@@ -14,22 +16,89 @@ import { execFileSync } from "node:child_process";
 // Codex runtime is the scripted stand-in the coordinator journey uses
 // (tests/fixtures/codex-desktop-coordinator.cjs); no model or account is
 // contacted, and the Opus and Astra labels are fixture catalog entries only.
-// The stand-in is a shell wrapper, which Topsl launches on macOS and Linux.
+// The journey needs a qualified coordinator, and Topsl's runtime qualification
+// runs on macOS and Linux only (packages/providers/qualification.ts). The
+// stand-in itself also starts on Windows (scripts/desktop-stand-in.mjs).
 if (process.platform === "win32") {
-  console.log("Desktop session journey skipped: it needs a shell wrapper.");
+  console.log(
+    "Desktop session journey skipped: Topsl's runtime qualification runs on macOS and Linux only, so no coordinator is qualified on Windows.",
+  );
   process.exit(0);
 }
-const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-session-"));
-const desktopEnvironment = { ...process.env, TOPSL_TEST_PROFILE: profile };
-delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
+// TOPSL_PACKAGED_APP runs the journey against a packaged executable, such as
+// release/mac-arm64/Topsl.app/Contents/MacOS/Topsl. A packaged app ignores
+// TOPSL_TEST_PROFILE, so it gets a disposable --user-data-dir with a seeded
+// passphrase vault (no OS keychain item), and HOME, CODEX_HOME and
+// CLAUDE_CONFIG_DIR inside the profile. The profile is outside the system
+// temporary folders, which a qualification refuses, and its path is short for
+// the context socket.
+// TOPSL_PACKAGED_APP=release finds this platform's unpacked build there.
+const packaged =
+  process.env.TOPSL_PACKAGED_APP === "release"
+    ? [
+        "release/mac-arm64/Topsl.app/Contents/MacOS/Topsl",
+        "release/mac/Topsl.app/Contents/MacOS/Topsl",
+        "release/win-unpacked/Topsl.exe",
+        "release/linux-unpacked/topsl",
+      ]
+        .map((candidate) => path.resolve(candidate))
+        .find((candidate) => existsSync(candidate))
+    : process.env.TOPSL_PACKAGED_APP
+      ? path.resolve(process.env.TOPSL_PACKAGED_APP)
+      : null;
+if (process.env.TOPSL_PACKAGED_APP && !packaged)
+  throw new Error("No packaged Topsl was found in release/.");
+const passphrase = "Topsl packaged session journey";
 await mkdir(path.resolve("node_modules/.cache"), { recursive: true });
-const qualificationDirectory = await mkdtemp(
-  path.resolve("node_modules/.cache/topsl-qualify-"),
-);
-process.on("exit", () =>
-  rmSync(qualificationDirectory, { recursive: true, force: true }),
-);
-desktopEnvironment.TOPSL_TEST_QUALIFICATION_DIR = qualificationDirectory;
+const profile = packaged
+  ? await mkdtemp(path.resolve("node_modules/.cache/tps-"))
+  : await mkdtemp(path.join(os.tmpdir(), "topsl-test-session-"));
+const desktopEnvironment = packaged
+  ? { ...process.env }
+  : { ...process.env, TOPSL_TEST_PROFILE: profile };
+delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
+if (packaged) {
+  delete desktopEnvironment.TOPSL_TEST_PROFILE;
+  delete desktopEnvironment.TOPSL_TEST_QUALIFICATION_DIR;
+  desktopEnvironment.HOME = path.join(profile, "native-home");
+  if (process.platform === "win32")
+    desktopEnvironment.USERPROFILE = desktopEnvironment.HOME;
+  desktopEnvironment.CODEX_HOME = path.join(profile, "native-home", ".codex");
+  process.on("exit", () => rmSync(profile, { recursive: true, force: true }));
+  // The product's passphrase vault format (apps/desktop/vault.ts).
+  const userData = path.join(profile, "user-data");
+  await mkdir(userData, { recursive: true, mode: 0o700 });
+  const salt = randomBytes(32);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(
+    "aes-256-gcm",
+    scryptSync(passphrase, salt, 32),
+    iv,
+  );
+  const data = Buffer.concat([
+    cipher.update(randomBytes(32).toString("hex"), "utf8"),
+    cipher.final(),
+  ]);
+  await writeFile(
+    path.join(userData, "vault.json"),
+    JSON.stringify({
+      method: "passphrase",
+      salt: salt.toString("hex"),
+      iv: iv.toString("hex"),
+      tag: cipher.getAuthTag().toString("hex"),
+      data: data.toString("base64"),
+    }),
+    { mode: 0o600 },
+  );
+} else {
+  const qualificationDirectory = await mkdtemp(
+    path.resolve("node_modules/.cache/topsl-qualify-"),
+  );
+  process.on("exit", () =>
+    rmSync(qualificationDirectory, { recursive: true, force: true }),
+  );
+  desktopEnvironment.TOPSL_TEST_QUALIFICATION_DIR = qualificationDirectory;
+}
 await mkdir(path.join(profile, "native-home", ".codex"), { recursive: true });
 await mkdir(path.join(profile, "claude-config", "projects"), {
   recursive: true,
@@ -52,17 +121,33 @@ git([
   "-qm",
   "base",
 ]);
-const launch = () =>
-  electron.launch({
+const launch = async () => {
+  const app = await electron.launch({
+    ...(packaged ? { executablePath: packaged } : {}),
     args: [
       ...(process.platform === "linux" && process.env.CI
         ? ["--no-sandbox"]
         : []),
-      ".",
+      // Chromium's mock keychain: a packaged Mac app otherwise reads the
+      // login keychain at startup, which can wait on a system prompt.
+      ...(packaged && process.platform === "darwin"
+        ? ["--use-mock-keychain"]
+        : []),
+      packaged ? `--user-data-dir=${path.join(profile, "user-data")}` : ".",
     ],
     env: desktopEnvironment,
     timeout: 90000,
   });
+  if (packaged) {
+    expect(await app.evaluate(({ app }) => app.isPackaged)).toBe(true);
+    const page = await app.firstWindow();
+    await page
+      .getByRole("textbox", { name: "Vault passphrase" })
+      .fill(passphrase);
+    await page.getByRole("button", { name: "Unlock / create vault" }).click();
+  }
+  return app;
+};
 await mkdir("test-results/sessions", { recursive: true });
 const shot = (page, name) =>
   page.screenshot({
@@ -106,13 +191,12 @@ try {
   projectId = (
     await page.evaluate(() => window.topsl.command({ type: "state" }))
   ).projects.find((p) => p.realPath === canonicalProject).id;
-  const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-  const wrapper = path.join(profile, "codex-session-fixture");
-  await writeFile(
-    wrapper,
-    `#!/bin/sh\nFIXTURE_TURN_DELAY_MS=300 exec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex-desktop-coordinator.cjs"))} "$@"\n`,
-  );
-  await chmod(wrapper, 0o700);
+  const wrapper = await standIn({
+    directory: profile,
+    name: "codex-session-fixture",
+    script: "tests/fixtures/codex-desktop-coordinator.cjs",
+    env: { FIXTURE_TURN_DELAY_MS: 300 },
+  });
   await app.evaluate((_, selected) => {
     globalThis.topslOpenPath = selected;
   }, wrapper);
@@ -352,6 +436,36 @@ try {
     .toBe("stopped");
 } catch (error) {
   if (page) await shot(page, "failure").catch(() => {});
+  // What the session's goals were doing, for a failure on a CI runner.
+  if (page && projectId && sessionId)
+    await page
+      .evaluate(
+        async ({ projectId, sessionId }) =>
+          (
+            await window.topsl.command({
+              type: "orchestration-query",
+              projectId,
+              conversationId: sessionId,
+            })
+          ).goals.map((g) => ({
+            goal: [g.goal.state, g.goal.detail],
+            rounds: (g.rounds ?? []).map((r) => [
+              r.purpose ?? r.kind,
+              r.stage,
+              r.state,
+              r.detail,
+              (r.members ?? []).map((m) => `${m.memberId} ${m.state}`),
+            ]),
+            tasks: (g.plan?.tasks ?? []).map((t) => [t.title, t.state]),
+            actions: g.actions,
+            checks: g.checks?.detail,
+          })),
+        { projectId, sessionId },
+      )
+      .then((goals) =>
+        console.log(`Session goals: ${JSON.stringify(goals, null, 1)}`),
+      )
+      .catch(() => {});
   throw error;
 } finally {
   await app.close();
@@ -386,5 +500,6 @@ try {
   await reopened.close();
 }
 console.log(
-  "Desktop session journey passed: a session with two pinned Codex stand-in coordinators answered a Discuss message with one shared response and two attributed contributions and no goal; a Work message became the session's goal; a pinned Reviewers role reached the session at a round boundary; the goal was accepted natively; a second goal continued from the accepted result without changing the project folder; night and paper themes and a 560 x 720 window had one heading and no horizontal overflow; stopping the session stopped its goal; and a restart restored the session, its transcript, queue and accepted result. Against a qualified Codex stand-in only.",
+  (packaged ? `Packaged (${packaged}) ` : "") +
+    "Desktop session journey passed: a session with two pinned Codex stand-in coordinators answered a Discuss message with one shared response and two attributed contributions and no goal; a Work message became the session's goal; a pinned Reviewers role reached the session at a round boundary; the goal was accepted natively; a second goal continued from the accepted result without changing the project folder; night and paper themes and a 560 x 720 window had one heading and no horizontal overflow; stopping the session stopped its goal; and a restart restored the session, its transcript, queue and accepted result. Against a qualified Codex stand-in only.",
 );

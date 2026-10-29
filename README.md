@@ -151,6 +151,12 @@ For [Recursive Looping](docs/Recursive_Looping.md#16-live-pilot-19-october-2026)
 node scripts/live-loop.mjs --codex "$(command -v codex)" --claude "$(command -v claude)" --max-turns 30
 ```
 
+With `--session` (and `--claude-model <id>` for a Claude peer coordinator), it instead runs a [native Topsl session](docs/Native_Sessions_Plan.md#follow-up-29-october-2026): a Discuss message, a Work message that becomes the session's goal and is accepted, and a Goal loop in the session that starts from that accepted result. Those turns count toward your Codex usage and, with Claude, your Claude usage.
+
+```sh
+node scripts/live-loop.mjs --codex "$(command -v codex)" --claude "$(command -v claude)" --claude-model claude-opus-5-5 --session --max-turns 30
+```
+
 The output packages are a macOS ZIP, Windows portable EXE, and Linux AppImage. They are personal-pilot builds without Developer ID signing/notarization or Windows publisher signing. macOS bundles use an ad-hoc signature to seal the finished app, helpers, and native modules. Packaging checks the bundle with Apple's strict signature verifier; both Mac CI jobs also extract the ZIP and verify it before recording checksums or uploading a release. An ad-hoc signature verifies bundle integrity but does not identify the publisher or provide Apple notarization. Native runtime compatibility and production eligibility are separate from compilation.
 
 ### macOS reports that Topsl is damaged

@@ -4,6 +4,7 @@ import type { ExecutionPurpose } from "../domain/role-groups";
 import type { TurnProtocol } from "../domain/recursive-loops";
 import {
   SESSION_PROTOCOL,
+  sessionRolePurposes,
   sessionIntakeResponseSchema,
   sessionWordingSchema,
   type ComposerMode,
@@ -160,6 +161,10 @@ function contextText(context: SessionContext): string {
 }
 
 /** The intake prompt one coordinator reads for one message. */
+// Live coordinators read "purpose" as a description of the work and gave
+// existing roles a title (29 October 2026), so the fields are spelled out.
+const teamFields = `Each team entry: "roleId" is an existing role ID from the team list or a new lowercase ID; "title", "instructions" and "purpose" are null for an existing role and are set only to create a new one, where "purpose" is the kind of work, exactly one of ${sessionRolePurposes.map((p) => `"${p}"`).join(", ")}, not a description; "count" is the number of members or null; "models" lists provider and model pairs from the observed list; "reason" says why.`;
+
 export function sessionIntakePrompt(input: {
   memberId: string;
   instructions: string;
@@ -174,8 +179,8 @@ export function sessionIntakePrompt(input: {
 }): string {
   const team =
     input.teamMode === "automatic"
-      ? "Team: automatic. When the work needs it, propose roles (existing role IDs, or a new role with title, instructions and purpose) with member counts and models from the observed list. The owner's pinned settings stay authoritative; your choices fill only open fields. Use team null when no change is needed."
-      : "Team: custom. Work within the owner's roster. You may propose models for open member slots of the roster's roles; do not create roles. Use team null when no change is needed.";
+      ? `Team: automatic. When the work needs it, propose roles (existing role IDs, or a new role with title, instructions and purpose) with member counts and models from the observed list. The owner's pinned settings stay authoritative; your choices fill only open fields. Use team null when no change is needed. ${teamFields}`
+      : `Team: custom. Work within the owner's roster. You may propose models for open member slots of the roster's roles; do not create roles. Use team null when no change is needed. ${teamFields}`;
   return [
     `You are coordinator ${input.memberId} of a Topsl session, one of its peer coordinators.`,
     `Role instructions: ${input.instructions}`,
@@ -190,8 +195,9 @@ export function sessionIntakePrompt(input: {
     input.peers?.length
       ? `Your peers answered differently. Reconcile if you can; otherwise keep your view.\n${input.peers.map((p) => `- ${p.memberId} (${p.intent}): ${p.reply}`).join("\n")}`
       : "",
+    "Your working folder is a read-only copy of the project: the session's accepted result, or the project folder before there is one. Describe files only from what you read in this turn or from the context above; if you could not read something, say so. Never write tool calls or tool results as text.",
     `Input digest (echo it exactly): ${input.inputDigest}`,
-    `Reply with one JSON object only: {"schemaVersion": 1, "protocolKind": "${SESSION_PROTOCOL}", "inputDigest": "${input.inputDigest}", "intent": "discuss" | "status" | "steer" | "new-work" | "clarify", "reply": "your answer to the owner", "question": null or "one clarifying question", "team": null or [{"roleId", "title", "instructions", "purpose", "count", "models": [{"provider", "model"}], "reason"}]}.`,
+    `Reply with one JSON object only: {"schemaVersion": 1, "protocolKind": "${SESSION_PROTOCOL}", "inputDigest": "${input.inputDigest}", "intent": "discuss" | "status" | "steer" | "new-work" | "clarify", "reply": "your answer to the owner", "question": null or "one clarifying question", "team": null or [{"roleId", "title": null or "...", "instructions": null or "...", "purpose": null or ${sessionRolePurposes.map((p) => `"${p}"`).join(" | ")}, "count": null or a number, "models": [{"provider", "model"}], "reason"}]}.`,
   ]
     .filter(Boolean)
     .join("\n\n");

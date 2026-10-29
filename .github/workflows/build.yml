@@ -70,6 +70,17 @@ jobs:
       - name: Verify extracted macOS package signature
         if: runner.os == 'macOS'
         run: npm run verify:mac-package
+      # The session journey against the unpacked package rather than `electron .`.
+      - name: Packaged session journey
+        if: runner.os != 'Linux'
+        run: node scripts/desktop-session-test.mjs
+        env:
+          TOPSL_PACKAGED_APP: release
+      - name: Linux packaged session journey
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node scripts/desktop-session-test.mjs
+        env:
+          TOPSL_PACKAGED_APP: release
       - name: Record package checksums
         run: node scripts/package-summary.mjs
       # No artifact or dependency-cache uploads: avoid storage charges as well as paid runners.

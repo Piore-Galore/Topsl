@@ -498,7 +498,26 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
         });
       }
       let tools: ToolBinding | undefined;
-      if (turn.purpose === "candidate-review" && source) {
+      // Codex reads its read-only copy through its own sandbox. Claude Code's
+      // read-only turns have no file tools, so a Claude coordinator or
+      // information turn reads its copy through Topsl's candidate reader when
+      // a qualification observed that reader for this runtime and model;
+      // without it, a live Claude coordinator asked about the project wrote
+      // invented tool calls and file contents (29 October 2026).
+      const reads =
+        turn.purpose === "candidate-review" ||
+        (a.provider === "claude" &&
+          !edit &&
+          !this.deps.purposeReadiness(
+            installation,
+            {
+              installationId: installation.id,
+              provider: "claude",
+              model: a.model,
+            },
+            "candidate-review",
+          ).blockers.length);
+      if (reads && source) {
         const candidate = this.snapshot(source);
         const grant = this.deps.context.grant(project, {
           visibility: { messageIds: [] },
@@ -752,6 +771,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       );
     const candidate = await captureCandidate(this.store, {
       root: copy.root,
+      owned: true,
       projectId: copy.projectId,
       workflowId: copy.goalId,
       authorAttemptId: attempt.id,
@@ -866,6 +886,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       );
       const combined = await captureCandidate(this.store, {
         root,
+        owned: true,
         projectId: input.projectId,
         workflowId: input.goalId,
         baseCandidateId: base.id,
@@ -917,6 +938,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       await writeManagedSnapshot({ ...source, files }, root, this.store);
       const captured = await captureCandidate(this.store, {
         root,
+        owned: true,
         projectId: input.projectId,
         workflowId: input.goalId,
         baseCandidateId: source.id,

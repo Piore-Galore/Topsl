@@ -9,6 +9,7 @@ import type {
 } from "../domain/role-groups";
 import {
   buildSessionContext,
+  CONTEXT_MESSAGES,
   nextWorkItem,
   sessionConfigurationSchema,
   settledWorkState,
@@ -654,9 +655,19 @@ export class SessionSupervisor {
   }
 
   private contextFor(session: TopslSession): SessionContext {
-    const messages = this.repo
-      .all<CoordinatorMessage>(kinds.message, session.projectId)
-      .filter((m) => m.conversationId === session.conversationId);
+    // Only the latest messages are read; sequences count from 1 in each
+    // conversation, so the earlier ones are referenced by their range.
+    const messages = this.store.page<CoordinatorMessage>(kinds.message, {
+      projectId: session.projectId,
+      conversationId: session.conversationId,
+      order: "desc",
+      limit: CONTEXT_MESSAGES,
+    }).items;
+    const oldest = Math.min(...messages.map((m) => m.sequence));
+    const omitted =
+      messages.length && oldest > 1
+        ? { fromSequence: 1, toSequence: oldest - 1, count: oldest - 1 }
+        : null;
     const decisions = this.intakes(session.id)
       .filter((i) => i.outcome && i.outcome.kind !== "failed")
       .map((i) => ({
@@ -717,6 +728,7 @@ export class SessionSupervisor {
         : null,
       status: active ? this.orchestrator.statusText(active) : null,
       team,
+      omitted,
     });
   }
 
@@ -850,8 +862,12 @@ export class SessionSupervisor {
   intakes(sessionId: string): SessionIntake[] {
     const session = this.repo.get<TopslSession>(kinds.session, sessionId);
     if (!session) return [];
-    return this.repo
-      .all<SessionIntake>(kinds.intake, session.projectId)
+    return [
+      ...this.store.iterate<SessionIntake>(kinds.intake, {
+        projectId: session.projectId,
+        conversationId: session.conversationId,
+      }),
+    ]
       .filter((i) => i.sessionId === sessionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
@@ -1787,7 +1803,14 @@ export class SessionSupervisor {
             workItemId: w.id,
             at: now(),
           };
-        return { ...w, state: "stopped" as const, updatedAt: now() };
+        return {
+          ...w,
+          state:
+            run?.state === "completed"
+              ? ("completed" as const)
+              : ("stopped" as const),
+          updatedAt: now(),
+        };
       }
       return w;
     });

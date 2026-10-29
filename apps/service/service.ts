@@ -499,6 +499,13 @@ export class Service {
         ? "This session is already running a goal or loop. Start this run when it finishes, or stop the current work first."
         : null;
     });
+    // A loop in a native session continues from its latest accepted result.
+    this.loops.startFrom = (run) => {
+      const session = this.orchestration.session(run.conversationId);
+      return session?.origin === "native"
+        ? (session.acceptedCheckpoint?.candidateId ?? null)
+        : null;
+    };
     const projectPaths = isolatedTest
       ? projectSourcePaths(path.join(directory, "native-home"), {})
       : projectSourcePaths();

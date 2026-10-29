@@ -1,7 +1,8 @@
 import { navigate, openThread } from "./desktop-navigation.mjs";
 import { throttleRenderer } from "./desktop-click-trace.mjs";
 import { _electron as electron, expect } from "@playwright/test";
-import { mkdtemp, mkdir, writeFile, realpath, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises";
+import { standIn } from "./desktop-stand-in.mjs";
 import { rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,9 +14,13 @@ import { execFileSync } from "node:child_process";
 // registered, connected and qualified through typed IPC as the main desktop
 // test does through the setup screen; no model or account is contacted, and
 // the Opus, Astra, Fable and Sol labels are fixture catalog entries only.
-// The stand-in is a shell wrapper, which Topsl launches on macOS and Linux.
+// The journey needs a qualified coordinator, and Topsl's runtime qualification
+// runs on macOS and Linux only (packages/providers/qualification.ts). The
+// stand-in itself also starts on Windows (scripts/desktop-stand-in.mjs).
 if (process.platform === "win32") {
-  console.log("Desktop coordinator journey skipped: it needs a shell wrapper.");
+  console.log(
+    "Desktop loop journey skipped: Topsl's runtime qualification runs on macOS and Linux only, so no coordinator is qualified on Windows.",
+  );
   process.exit(0);
 }
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-loop-"));
@@ -194,13 +199,12 @@ try {
     (p) => p.realPath === canonicalProject,
   ).id;
   // The Codex stand-in, registered, connected, catalogued and qualified.
-  const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-  const wrapper = path.join(profile, "codex-loop-fixture");
-  await writeFile(
-    wrapper,
-    `#!/bin/sh\nFIXTURE_TURN_DELAY_MS=600 exec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/codex-desktop-coordinator.cjs"))} "$@"\n`,
-  );
-  await chmod(wrapper, 0o700);
+  const wrapper = await standIn({
+    directory: profile,
+    name: "codex-loop-fixture",
+    script: "tests/fixtures/codex-desktop-coordinator.cjs",
+    env: { FIXTURE_TURN_DELAY_MS: 600 },
+  });
   await app.evaluate((_, selected) => {
     globalThis.topslOpenPath = selected;
   }, wrapper);

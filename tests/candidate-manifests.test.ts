@@ -728,3 +728,37 @@ test("manifest rollout disables new capture/context access without deleting reta
   );
   expect(contextRequest(f.store, "p", { method: "history" })).toEqual([]);
 });
+
+test("a Topsl-owned copy inside another Git checkout is captured as plain files; a project subfolder is still refused", async () => {
+  const f = await setup();
+  // The checkout around the profile, as when a profile or a home folder is
+  // kept in Git.
+  for (const args of [
+    ["init", "-q"],
+    [
+      "-c",
+      "user.email=f@example.test",
+      "-c",
+      "user.name=F",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "base",
+    ],
+  ])
+    await runFile(gitExecutable, args, { cwd: f.root });
+  const copy = path.join(f.root, "profile", "orchestration-integrations", "c1");
+  await mkdir(copy, { recursive: true });
+  await writeFile(path.join(copy, "value.ts"), "export const value = 2;\n");
+  const owned = await captureCandidate(f.store, {
+    ...select(copy, ["value.ts"]),
+    gitExecutable,
+    owned: true,
+  });
+  expect(owned.git).toBe(false);
+  expect(owned.files.map((x) => x.path)).toEqual(["value.ts"]);
+  await expect(
+    captureCandidate(f.store, { ...select(copy, ["value.ts"]), gitExecutable }),
+  ).rejects.toThrow(/Select the Git checkout root/);
+});
