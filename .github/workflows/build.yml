@@ -19,9 +19,8 @@ jobs:
     if: github.event.repository.private == false
     name: ${{ matrix.name }}
     # A slower Windows runner took 20 minutes for setup and tests alone,
-    # before the desktop smoke and packaging steps; Windows now also runs the
-    # coordinator, loop and session journeys and the packaged session journey.
-    timeout-minutes: 80
+    # before the desktop smoke and packaging steps.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

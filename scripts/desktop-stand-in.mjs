@@ -1,5 +1,4 @@
 import { chmod, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
@@ -10,7 +9,10 @@ import path from "node:path";
 // `.cmd` and `.bat` launchers, so on Windows it is a small native launcher
 // compiled with the C# compiler of the .NET Framework that Windows includes.
 // The launcher passes its arguments and standard handles to Node and keeps it
-// in a job object, so stopping the launcher also stops Node.
+// in a job object, so stopping the launcher also stops Node. On Windows CI
+// (29 October 2026) Topsl registered, connected and listed the models of a
+// Codex stand-in through it; the journeys that need a qualified coordinator
+// still skip there, because qualification runs on macOS and Linux only.
 
 const frameworkCompiler = path.join(
   process.env.WINDIR ?? "C:\\Windows",
@@ -19,11 +21,6 @@ const frameworkCompiler = path.join(
   "v4.0.30319",
   "csc.exe",
 );
-
-/** Whether this machine can make a stand-in Topsl launches. */
-export function standInAvailable() {
-  return process.platform !== "win32" || existsSync(frameworkCompiler);
-}
 
 /**
  * Writes the stand-in to `directory/name` (`name.exe` on Windows) and returns

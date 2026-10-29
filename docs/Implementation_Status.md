@@ -451,8 +451,8 @@ Follow-up, 29 October 2026: those items were addressed the same day; see [Native
 
 - **Loops in a session start from its accepted result.** `captureBase` copies the session's latest accepted result as checkpoint 0, with the project folder kept as the publication base ([Recursive Looping §18](Recursive_Looping.md#18-loops-in-native-sessions-29-october-2026)).
 - **Long conversations.** An intake reads the conversation's latest 12 messages through the store's conversation index instead of every message in the project, and refers to the earlier range by sequence; intakes are read per conversation.
-- **Windows journeys.** The session, coordinator and loop journeys use a compiled launcher stand-in on Windows ([TEST-DECISIONS](testing/TEST-DECISIONS.md#session-journeys-on-windows-and-on-the-package--29-october-2026)).
-- **Packaged runs.** `TOPSL_PACKAGED_APP` runs the session journey against the unpacked package, and CI runs it after packaging on every platform.
+- **Windows journeys.** The session, coordinator and loop journeys have a compiled launcher stand-in on Windows, which Topsl connected to in CI; they still skip there, because Topsl's runtime qualification runs on macOS and Linux only, so Windows has no qualified coordinator ([TEST-DECISIONS](testing/TEST-DECISIONS.md#session-journeys-on-windows-and-on-the-package--29-october-2026)). Coordinated sessions on Windows remain unsupported until qualification runs there.
+- **Packaged runs.** `TOPSL_PACKAGED_APP` runs the session journey against the unpacked package, and CI runs it after packaging (it skips on Windows, as above).
 - **Live procedure.** `node scripts/live-loop.mjs --codex <path> --claude <path> --claude-model <id> --session` runs Run S, a native session with real coordinators.
 
 **Defects found and fixed.**

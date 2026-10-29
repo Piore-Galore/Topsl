@@ -1,7 +1,7 @@
 import { navigate, openThread, selectProject } from "./desktop-navigation.mjs";
 import { _electron as electron, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises";
-import { standIn, standInAvailable } from "./desktop-stand-in.mjs";
+import { standIn } from "./desktop-stand-in.mjs";
 import { existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,11 +16,12 @@ import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
 // Codex runtime is the scripted stand-in the coordinator journey uses
 // (tests/fixtures/codex-desktop-coordinator.cjs); no model or account is
 // contacted, and the Opus and Astra labels are fixture catalog entries only.
-// The stand-in is a shell wrapper on macOS and Linux and a compiled launcher
-// on Windows (scripts/desktop-stand-in.mjs).
-if (!standInAvailable()) {
+// The journey needs a qualified coordinator, and Topsl's runtime qualification
+// runs on macOS and Linux only (packages/providers/qualification.ts). The
+// stand-in itself also starts on Windows (scripts/desktop-stand-in.mjs).
+if (process.platform === "win32") {
   console.log(
-    "Desktop session journey skipped: Windows has no .NET Framework C# compiler for its stand-in.",
+    "Desktop session journey skipped: Topsl's runtime qualification runs on macOS and Linux only, so no coordinator is qualified on Windows.",
   );
   process.exit(0);
 }
