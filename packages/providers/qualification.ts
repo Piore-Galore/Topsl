@@ -213,7 +213,14 @@ export function probeCommand(
   if (platform !== "win32")
     return "print" in probe
       ? ["/bin/sh", "-c", 'printf %s "$1"', "topsl", probe.print]
-      : ["/bin/sh", "-c", 'printf %s "$1" > "$2"', "topsl", probe.write, probe.file];
+      : [
+          "/bin/sh",
+          "-c",
+          'printf %s "$1" > "$2"',
+          "topsl",
+          probe.write,
+          probe.file,
+        ];
   // PowerShell also closes a single-quoted string at a typographic quote.
   const literal = (value: string) =>
       `'${value.replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&")}'`,
