@@ -1867,3 +1867,91 @@ describe("J-04: three coordinators, five reviewers, dependent work, minority fin
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 2026-10-29: in zod 4, `.partial()` fills defaults, so a scope that set one
+// completion field also set every other one to its default and overrode what
+// a broader scope or an earlier merge had set.
+
+describe("role completion settings set only the fields given", () => {
+  test("a completion field set at one scope keeps what broader scopes and earlier merges set", async () => {
+    const f = await setup();
+    const { goal } = await start(f, "Change the value.");
+    const set = (command: Record<string, unknown>) => {
+      const parsed = commandSchema.parse({
+        type: "orchestration-group-set",
+        projectId: "p",
+        roleId: "reviewer",
+        commandId: cmd(),
+        ...command,
+      });
+      if (parsed.type !== "orchestration-group-set")
+        throw new Error("unexpected");
+      return parsed;
+    };
+    const project = set({
+      level: "project-role",
+      settings: { completion: { retriesPerMember: 3, reconciliationTurns: 2 } },
+    });
+    const threshold = set({
+      level: "goal-role",
+      goalId: goal.id,
+      settings: { completion: { threshold: { kind: "count", count: 2 } } },
+    });
+    expect(threshold.settings).toEqual({
+      completion: { threshold: { kind: "count", count: 2 } },
+    });
+    await f.orchestrator.setGroup(project);
+    await f.orchestrator.setGroup(threshold);
+    let g = f.orchestrator.effective("p", goal.id, "reviewer");
+    expect(g.completion).toEqual({
+      ...completionPolicySchema.parse({}),
+      retriesPerMember: 3,
+      reconciliationTurns: 2,
+      threshold: { kind: "count", count: 2 },
+    });
+    // A merge at the same scope keeps the threshold it set before.
+    await f.orchestrator.setGroup(
+      set({
+        level: "goal-role",
+        goalId: goal.id,
+        mode: "merge",
+        settings: { completion: { optionalDeadlineSeconds: 60 } },
+      }),
+    );
+    g = f.orchestrator.effective("p", goal.id, "reviewer");
+    expect(g.completion).toMatchObject({
+      retriesPerMember: 3,
+      reconciliationTurns: 2,
+      threshold: { kind: "count", count: 2 },
+      optionalDeadlineSeconds: 60,
+    });
+  });
+
+  test("a stored revision written with every completion field keeps its meaning", () => {
+    // Revisions written before 2026-10-29 carry every completion field, the
+    // given ones and the defaults alike; they still override broader scopes.
+    const stored = completionPolicySchema.parse({
+      optionalDeadlineSeconds: 60,
+    });
+    const g = effectiveGroup({
+      projectId: "p",
+      goalId: "g",
+      role: builtInRoleDefinitions.reviewer,
+      memberLimit: 8,
+      layers: [
+        {
+          level: "project-role",
+          revisionId: "a",
+          settings: { completion: { retriesPerMember: 3 } },
+        },
+        {
+          level: "goal-role",
+          revisionId: "b",
+          settings: { completion: stored },
+        },
+      ],
+    });
+    expect(g.completion).toEqual(stored);
+  });
+});
