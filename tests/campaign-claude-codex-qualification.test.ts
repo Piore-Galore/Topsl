@@ -38,6 +38,7 @@ import { answerToolCall } from "../packages/providers/tool-calls";
 import { RuntimeManager } from "../packages/runtime/manager";
 import { RpcPeer } from "../packages/runtime/rpc";
 import { Service } from "../apps/service/service";
+import { createRequire } from "node:module";
 import { identity, nativeEnvironment } from "../packages/platform/system";
 import { now } from "../packages/domain/invariants";
 import { fixture } from "./helpers";
@@ -49,6 +50,9 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 const posix = process.platform !== "win32";
+const probeFixture = createRequire(import.meta.url)("./fixtures/probe-command.cjs") as {
+  probe: (argv: string[]) => { word: string; file?: string } | null;
+};
 const standIn = path.resolve("tests/fixtures/codex-qualify.cjs");
 const cache = path.resolve("node_modules/.cache");
 
@@ -129,12 +133,17 @@ const turnCapabilities = [
 // CQ-01: refusals before any process, canonical aliases, concurrency.
 // ---------------------------------------------------------------------------
 describe("CQ-01 qualification parent folder and refusal before any process", () => {
-  // Not applicable on Windows: runCodexQualification refuses win32 before it
-  // ever consults the parent folder ("Runtime qualification probes use POSIX
-  // shell commands..."; the platform-stubbed test below pins that refusal),
-  // and this alias list (/tmp, symlinks into the temp folder) is POSIX-shaped.
-  // Unverified on Windows: assertQualificationParent's handling of %TEMP%
-  // aliases (8.3 short names, junctions), which has no caller there.
+  test("the system temporary folder and a folder inside it are refused on every platform; a folder under the repository cache is accepted", async () => {
+    for (const candidate of [os.tmpdir(), path.join(os.tmpdir(), "topsl-campaign", "missing")])
+      await expect(assertQualificationParent(candidate), candidate).rejects.toThrow(
+        "Use a folder outside the system temporary folders.",
+      );
+    await expect(assertQualificationParent(await qualificationParent())).resolves.toBeUndefined();
+  });
+
+  // Not run on Windows: this alias list (/tmp, symlinks into the temporary
+  // folder) is POSIX-shaped. Unverified on Windows: the handling of %TEMP%
+  // aliases such as 8.3 short names and junctions.
   test.skipIf(!posix)("system temporary folders and their aliases are refused; a folder under the repository cache is accepted", async () => {
     const tmp = os.tmpdir(),
       real = await realpath(tmp),
@@ -203,10 +212,7 @@ describe("CQ-01 qualification parent folder and refusal before any process", () 
     },
   );
 
-  // Not applicable on Windows: the platform refusal precedes the quoting
-  // check there (pinned by the platform-stubbed test below), so the POSIX
-  // shell-quoting refusal cannot be reached.
-  test.skipIf(!posix)("a folder whose path the shell probes cannot quote is refused before the runtime starts, leaving no workspace", async () => {
+  test("a folder whose path the shell probes cannot quote is refused before the runtime starts, leaving no workspace", async () => {
     const f = await setup();
     const parent = await qualificationParent("topsl qualify campaign é-");
     await expect(
@@ -219,29 +225,6 @@ describe("CQ-01 qualification parent folder and refusal before any process", () 
     ).rejects.toThrow("contains characters the shell probes cannot quote safely");
     expect(f.connections()).toBe(0);
     expect(await readdir(parent)).toEqual([]);
-  });
-
-  test("on Windows the suite refuses before creating a folder or starting the runtime (platform stubbed)", async () => {
-    const f = await setup();
-    const parent = path.join(f.parent, "never-created");
-    const original = Object.getOwnPropertyDescriptor(process, "platform")!;
-    Object.defineProperty(process, "platform", { ...original, value: "win32" });
-    let error: unknown = null;
-    try {
-      await runCodexQualification({
-        adapter: f.adapter,
-        installation: f.installation,
-        model: "fixture-model",
-        parent,
-      });
-    } catch (e) {
-      error = e;
-    } finally {
-      Object.defineProperty(process, "platform", original);
-    }
-    expect(String(error)).toContain("available on macOS and Linux only");
-    expect(f.connections()).toBe(0);
-    expect(existsSync(parent)).toBe(false);
   });
 });
 
@@ -408,7 +391,7 @@ describe.skipIf(!posix)("CQ-01 / CQ-08 through the service commands (POSIX shell
 // ---------------------------------------------------------------------------
 // CQ-02: count adapter startTurn calls.
 // ---------------------------------------------------------------------------
-describe.skipIf(!posix)("CQ-02 model turns counted at the adapter", () => {
+describe("CQ-02 model turns counted at the adapter", () => {
   test("a passing run starts exactly three model turns and three sessions; the sandbox probes add no turn", async () => {
     const f = await setup();
     const { wrapped, counts } = counted(f.adapter);
@@ -589,10 +572,14 @@ async function sandboxRun(
   expect(counts.startTurn).toBe(3);
   return byName(report);
 }
-const target = (input: { argv: string[] }) => input.argv[5] ?? "";
-const isWrite = (input: { argv: string[] }) => input.argv[2] === 'printf %s "$1" > "$2"';
+/** The file a write probe targets, in this platform's probe command. */
+const target = (input: { argv: string[] }) => probeFixture.probe(input.argv)?.file ?? "";
+const isWrite = (input: { argv: string[] }) => target(input) !== "";
+/** Whether a write probe targets a file in the qualification's `folder`. */
+const into = (input: { argv: string[] }, folder: "workspace" | "outside") =>
+  path.basename(path.dirname(target(input))) === folder;
 
-describe.skipIf(!posix)("CQ-03 / CQ-04 sandbox probe matrix", () => {
+describe("CQ-03 / CQ-04 sandbox probe matrix", () => {
   test("CQ-03: a control that does not print `readable`, or exits nonzero, fails read-only even though the write was denied", async () => {
     for (const control of [
       { exitCode: 0, stdout: "", stderr: "" },
@@ -627,32 +614,32 @@ describe.skipIf(!posix)("CQ-03 / CQ-04 sandbox probe matrix", () => {
 
   test("CQ-04: inside failure, wrong inside bytes, outside reported success, a landed outside write reported as denied, or a stray outside file each fail workspace-write", async () => {
     const insideFails = await sandboxRun({}, (input, result) =>
-      input.mode === "edit" && target(input).includes("/workspace/") ? { ...result, exitCode: 1 } : result,
+      input.mode === "edit" && into(input, "workspace") ? { ...result, exitCode: 1 } : result,
     );
     expect(insideFails["workspace-write"].passed).toBe(false);
     expect(insideFails["workspace-write"].detail).toContain("did not land");
 
     const wrongBytes = await sandboxRun({}, async (input, result) => {
-      if (input.mode === "edit" && target(input).includes("/workspace/"))
+      if (input.mode === "edit" && into(input, "workspace"))
         await writeFile(target(input), "inside\n");
       return result;
     });
     expect(wrongBytes["workspace-write"].passed).toBe(false);
 
     const outsideClaimsSuccess = await sandboxRun({}, (input, result) =>
-      input.mode === "edit" && target(input).includes("/outside/") ? { ...result, exitCode: 0 } : result,
+      input.mode === "edit" && into(input, "outside") ? { ...result, exitCode: 0 } : result,
     );
     expect(outsideClaimsSuccess["workspace-write"]).toMatchObject({ passed: false });
     expect(outsideClaimsSuccess["workspace-write"].negativeControl.denied).toBe(true);
 
     const escaped = await sandboxRun({ FIXTURE_SANDBOX: "broken" }, (input, result) =>
-      input.mode === "edit" && target(input).includes("/outside/") ? { ...result, exitCode: 1 } : result,
+      input.mode === "edit" && into(input, "outside") ? { ...result, exitCode: 1 } : result,
     );
     expect(escaped["workspace-write"]).toMatchObject({ passed: false, meaning: "unsupported" });
     expect(escaped["workspace-write"].negativeControl.denied).toBe(false);
 
     const stray = await sandboxRun({}, async (input, result) => {
-      if (input.mode === "edit" && target(input).includes("/outside/"))
+      if (input.mode === "edit" && into(input, "outside"))
         await writeFile(path.join(path.dirname(target(input)), "unexpected.txt"), "x");
       return result;
     });
@@ -710,7 +697,7 @@ describe("CQ-05 reader probe grant boundaries", () => {
 // ---------------------------------------------------------------------------
 // CQ-06: an interrupt that does not end the turn interrupted.
 // ---------------------------------------------------------------------------
-describe.skipIf(!posix)("CQ-06 interrupt qualification", () => {
+describe("CQ-06 interrupt qualification", () => {
   test("an interrupt requested after streamed text whose turn reports completed does not qualify interrupt", async () => {
     const f = await setup();
     const { wrapped } = counted(f.adapter, {

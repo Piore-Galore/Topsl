@@ -11,8 +11,7 @@ import path from "node:path";
 // The launcher passes its arguments and standard handles to Node and keeps it
 // in a job object, so stopping the launcher also stops Node. On Windows CI
 // (29 October 2026) Topsl registered, connected and listed the models of a
-// Codex stand-in through it; the journeys that need a qualified coordinator
-// still skip there, because qualification runs on macOS and Linux only.
+// Codex stand-in through it.
 
 const frameworkCompiler = path.join(
   process.env.WINDIR ?? "C:\\Windows",

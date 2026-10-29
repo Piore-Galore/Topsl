@@ -22,8 +22,9 @@ import { randomUUID } from "node:crypto";
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-desktop-"));
 const desktopEnvironment = { ...process.env, TOPSL_TEST_PROFILE: profile };
 delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
-// A qualification refuses the temporary folders that hold the profile, and
-// runs on macOS and Linux only.
+// A qualification refuses the temporary folders that hold the profile. The
+// workflow teams' stand-in below is a shell wrapper, so they run on macOS and
+// Linux only.
 let qualificationDirectory = null;
 if (process.platform !== "win32") {
   await mkdir(path.resolve("node_modules/.cache"), { recursive: true });

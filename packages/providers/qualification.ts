@@ -193,6 +193,50 @@ export async function assertQualificationParent(parent: string): Promise<void> {
         `The qualification folder ${parent} is inside ${temporary}. Codex's workspace-write sandbox leaves that folder writable, so the outside-write probe could not be judged there. Use a folder outside the system temporary folders.`,
       );
 }
+/** The paths the probes can quote safely: a drive letter and backslashes are
+ * allowed on Windows only. */
+const quotablePath = (platform: NodeJS.Platform) =>
+  platform === "win32"
+    ? /^(?:[A-Za-z]:)?[A-Za-z0-9 ._\\\/-]+$/
+    : /^[A-Za-z0-9 ._\/-]+$/;
+/**
+ * The argv of a sandbox probe: print `print`, or write `content` to `file`.
+ * macOS and Linux run it in the POSIX shell, with the values as positional
+ * arguments. Windows has no POSIX shell, so it runs in Windows PowerShell as an
+ * encoded command: no `cmd.exe` or C runtime parses the values, which are
+ * single-quoted PowerShell literals, and a failed write exits with code 1.
+ */
+export function probeCommand(
+  probe: { print: string } | { write: string; file: string },
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  if (platform !== "win32")
+    return "print" in probe
+      ? ["/bin/sh", "-c", 'printf %s "$1"', "topsl", probe.print]
+      : ["/bin/sh", "-c", 'printf %s "$1" > "$2"', "topsl", probe.write, probe.file];
+  // PowerShell also closes a single-quoted string at a typographic quote.
+  const literal = (value: string) =>
+      `'${value.replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&")}'`,
+    action =
+      "print" in probe
+        ? `[Console]::Out.Write(${literal(probe.print)})`
+        : `[IO.File]::WriteAllText(${literal(probe.file)}, ${literal(probe.write)})`,
+    script = `$ErrorActionPreference = 'Stop'; try { ${action} } catch { [Console]::Error.Write($_.Exception.Message); exit 1 }`;
+  return [
+    path.win32.join(
+      process.env.SystemRoot ?? "C:\\Windows",
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-EncodedCommand",
+    Buffer.from(script, "utf16le").toString("base64"),
+  ];
+}
 /**
  * Runs bounded, consented operations against one trusted Codex runtime in a
  * disposable folder and reports what it observed. The caller owns consent and
@@ -228,10 +272,6 @@ export async function runCodexQualification(input: {
    * replace it to see the marker. */
   readerProbe?: (directory: string) => Promise<ReaderProbe>;
 }): Promise<QualificationReport> {
-  if (process.platform === "win32")
-    throw new Error(
-      "Runtime qualification probes use POSIX shell commands and are available on macOS and Linux only.",
-    );
   await assertQualificationParent(input.parent);
   const startedAt = now(),
     timeout = input.timeoutMs ?? turnTimeoutMs,
@@ -243,7 +283,7 @@ export async function runCodexQualification(input: {
   const root = await realpath(
     await mkdtemp(path.join(input.parent, "qualify-")),
   );
-  if (!/^[A-Za-z0-9 ._\/-]+$/.test(root)) {
+  if (!quotablePath(process.platform).test(root)) {
     await rm(root, { recursive: true, force: true });
     throw new Error(
       "The qualification folder path contains characters the shell probes cannot quote safely.",
@@ -476,7 +516,7 @@ export async function runCodexQualification(input: {
     content: string,
   ) =>
     input.adapter.sandboxCommand!(connection, {
-      argv: ["/bin/sh", "-c", 'printf %s "$1" > "$2"', "topsl", content, file],
+      argv: probeCommand({ write: content, file }),
       cwd: workspace,
       mode,
     });
@@ -601,7 +641,7 @@ export async function runCodexQualification(input: {
       const readOnlyFile = path.join(workspace, `readonly-${nonce}.txt`);
       try {
         const control = await input.adapter.sandboxCommand(connection, {
-            argv: ["/bin/sh", "-c", 'printf %s "$1"', "topsl", "readable"],
+            argv: probeCommand({ print: "readable" }),
             cwd: workspace,
             mode: "review",
           }),

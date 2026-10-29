@@ -13,15 +13,8 @@ import { execFileSync } from "node:child_process";
 // registered, connected and qualified through typed IPC as the main desktop
 // test does through the setup screen; no model or account is contacted, and
 // the Opus, Astra, Fable and Sol labels are fixture catalog entries only.
-// The journey needs a qualified coordinator, and Topsl's runtime qualification
-// runs on macOS and Linux only (packages/providers/qualification.ts). The
-// stand-in itself also starts on Windows (scripts/desktop-stand-in.mjs).
-if (process.platform === "win32") {
-  console.log(
-    "Desktop coordinator journey skipped: Topsl's runtime qualification runs on macOS and Linux only, so no coordinator is qualified on Windows.",
-  );
-  process.exit(0);
-}
+// The stand-in is a shell wrapper on macOS and Linux and a compiled launcher
+// on Windows (scripts/desktop-stand-in.mjs).
 const profile = await mkdtemp(
   path.join(os.tmpdir(), "topsl-test-coordinator-"),
 );

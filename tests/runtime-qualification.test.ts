@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
 import {
   chmod,
   lstat,
@@ -18,6 +21,7 @@ import { CodexAdapter, sandboxPolicy } from "../packages/providers/codex";
 import type { ProviderConnection } from "../packages/providers/contract";
 import {
   assertQualificationParent,
+  probeCommand,
   qualificationTurnBudget,
   runCodexQualification,
 } from "../packages/providers/qualification";
@@ -26,6 +30,12 @@ import { RpcPeer } from "../packages/runtime/rpc";
 import { identity, nativeEnvironment } from "../packages/platform/system";
 import { now } from "../packages/domain/invariants";
 import { fixture } from "./helpers";
+
+const probeFixture = createRequire(import.meta.url)(
+  "./fixtures/probe-command.cjs",
+) as {
+  probe: (argv: string[]) => { word: string; file?: string } | null;
+};
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -154,7 +164,83 @@ describe("runtime qualification suite", () => {
     });
   });
 
-  test.skipIf(process.platform === "win32")(
+  test("the sandbox probes are POSIX shell commands on macOS and Linux and encoded Windows PowerShell commands on Windows", () => {
+    const file = "C:\\Users\\o'brien\\q\u2019s\\workspace\\inside.txt",
+      content = "it's \u2018quoted\u2019";
+    expect(probeCommand({ print: "readable" }, "darwin")).toEqual([
+      "/bin/sh",
+      "-c",
+      'printf %s "$1"',
+      "topsl",
+      "readable",
+    ]);
+    expect(probeCommand({ write: content, file }, "linux")).toEqual([
+      "/bin/sh",
+      "-c",
+      'printf %s "$1" > "$2"',
+      "topsl",
+      content,
+      file,
+    ]);
+    const print = probeCommand({ print: "readable" }, "win32"),
+      write = probeCommand({ write: content, file }, "win32");
+    expect(print.slice(0, 5)).toEqual([
+      expect.stringMatching(
+        /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/,
+      ),
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+    ]);
+    expect(Buffer.from(print[5], "base64").toString("utf16le")).toBe(
+      "$ErrorActionPreference = 'Stop'; try { [Console]::Out.Write('readable') } catch { [Console]::Error.Write($_.Exception.Message); exit 1 }",
+    );
+    // Every quote PowerShell ends a literal at is doubled, and the stand-in
+    // reads the values back unchanged.
+    expect(Buffer.from(write[5], "base64").toString("utf16le")).toBe(
+      "$ErrorActionPreference = 'Stop'; try { [IO.File]::WriteAllText('C:\\Users\\o''brien\\q\u2019\u2019s\\workspace\\inside.txt', 'it''s \u2018\u2018quoted\u2019\u2019') } catch { [Console]::Error.Write($_.Exception.Message); exit 1 }",
+    );
+    expect(probeFixture.probe(print)).toEqual({ word: "readable" });
+    expect(probeFixture.probe(write)).toEqual({ word: content, file });
+    expect(probeFixture.probe(probeCommand({ write: content, file }, "linux"))).toEqual({ word: content, file });
+  });
+
+  // Outside any sandbox: the commands themselves, in this host's Windows
+  // PowerShell. Whether Codex's sandbox runs and confines them is what a live
+  // qualification observes.
+  test.runIf(process.platform === "win32")(
+    "on Windows the probe commands print, write exactly, and exit 1 when a write fails",
+    async () => {
+      const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-probe-")),
+        run = (argv: string[]) => {
+          const result = spawnSync(argv[0], argv.slice(1), {
+            encoding: "utf8",
+            windowsHide: true,
+          });
+          return {
+            exitCode: result.status,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          };
+        };
+      cleanup.push(() => rm(directory, { recursive: true, force: true }));
+      expect(run(probeCommand({ print: "readable" }))).toMatchObject({
+        exitCode: 0,
+        stdout: "readable",
+      });
+      const file = path.join(directory, "it's here.txt");
+      expect(run(probeCommand({ write: "inside", file })).exitCode).toBe(0);
+      expect(await readFile(file)).toEqual(Buffer.from("inside"));
+      const missing = path.join(directory, "missing", "outside.txt"),
+        failed = run(probeCommand({ write: "outside", file: missing }));
+      expect(failed.exitCode).toBe(1);
+      expect(failed.stderr).not.toBe("");
+      expect(existsSync(missing)).toBe(false);
+    },
+  );
+
+  test(
     "an enforcing runtime passes every probe within the turn budget and leaves no folder",
     async () => {
       const f = await setup(),
@@ -194,11 +280,18 @@ describe("runtime qualification suite", () => {
       expect(o["candidate-reader"].meaning).toBe("behavior-observed");
       expect(report.notTested).toEqual([]);
       expect(report.approvals).toEqual([]);
-      expect(o["read-only"].detail).toMatch(
-        /^Topsl ran the commands itself in the runtime's sandbox under the read-only policy, with no model turn\. A command printing a word ran\. The write to <folder>\/workspace\/readonly-[0-9a-f]+\.txt exited with code 1 \("\/bin\/sh: <folder>\/workspace\/readonly-[0-9a-f]+\.txt: Operation not permitted"\), and no file was created\.$/,
+      const denial = (file: string) =>
+        JSON.stringify(
+          process.platform === "win32"
+            ? `Access to the path '${file}' is denied.`
+            : `/bin/sh: ${file}: Operation not permitted`,
+        );
+      const nonce = o["read-only"].operationId.split(":").pop();
+      expect(o["read-only"].detail).toBe(
+        `Topsl ran the commands itself in the runtime's sandbox under the read-only policy, with no model turn. A command printing a word ran. The write to <folder>/workspace/readonly-${nonce}.txt exited with code 1 (${denial(path.join("<folder>", "workspace", `readonly-${nonce}.txt`))}), and no file was created.`,
       );
-      expect(o["workspace-write"].detail).toMatch(
-        /^Topsl ran the writes itself in the runtime's sandbox under the workspace-write policy, with no model turn\. The write inside the workspace exited with code 0 and landed\. The write to <folder>\/outside\/outside-[0-9a-f]+\.txt exited with code 1 \(".*: Operation not permitted"\) and was denied\.$/,
+      expect(o["workspace-write"].detail).toBe(
+        `Topsl ran the writes itself in the runtime's sandbox under the workspace-write policy, with no model turn. The write inside the workspace exited with code 0 and landed. The write to <folder>/outside/outside-${nonce}.txt exited with code 1 (${denial(path.join("<folder>", "outside", `outside-${nonce}.txt`))}) and was denied.`,
       );
       const frames = f.frames(),
         sent = (method: string) =>
@@ -230,43 +323,40 @@ describe("runtime qualification suite", () => {
       // The sandbox probes ran no model: Topsl sent the commands itself, under
       // the policies a review and an edit turn get.
       const workspace = turns[0].cwd;
+      // This platform's probe commands: the POSIX shell on macOS and Linux,
+      // Windows PowerShell on Windows.
+      const outside = path.join(path.dirname(workspace), "outside");
       expect(
-        commands.map((c) => [c.command.slice(2, 4), c.sandboxPolicy, c.cwd]),
+        commands.map((c) => [c.command, c.sandboxPolicy, c.cwd]),
       ).toEqual([
         [
-          ['printf %s "$1"', "topsl"],
+          probeCommand({ print: "readable" }),
           sandboxPolicy("review", workspace),
           workspace,
         ],
         [
-          ['printf %s "$1" > "$2"', "topsl"],
+          probeCommand({
+            write: "readonly",
+            file: path.join(workspace, `readonly-${nonce}.txt`),
+          }),
           sandboxPolicy("review", workspace),
           workspace,
         ],
         [
-          ['printf %s "$1" > "$2"', "topsl"],
+          probeCommand({
+            write: "inside",
+            file: path.join(workspace, `inside-${nonce}.txt`),
+          }),
           sandboxPolicy("edit", workspace),
           workspace,
         ],
         [
-          ['printf %s "$1" > "$2"', "topsl"],
+          probeCommand({
+            write: "outside",
+            file: path.join(outside, `outside-${nonce}.txt`),
+          }),
           sandboxPolicy("edit", workspace),
           workspace,
-        ],
-      ]);
-      expect(commands.map((c) => c.command.slice(4))).toEqual([
-        ["readable"],
-        [
-          "readonly",
-          expect.stringMatching(/\/workspace\/readonly-[0-9a-f]+\.txt$/),
-        ],
-        [
-          "inside",
-          expect.stringMatching(/\/workspace\/inside-[0-9a-f]+\.txt$/),
-        ],
-        [
-          "outside",
-          expect.stringMatching(/\/outside\/outside-[0-9a-f]+\.txt$/),
         ],
       ]);
       // The interrupt waited for the reply's first streamed text.
@@ -299,7 +389,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "the reader probe's file is only in its encrypted store before the runtime starts",
     async () => {
       const f = await setup();
@@ -332,7 +422,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "the reader passes only when Topsl answered read_range for the probe's file and the reply quotes its marker, and says how Codex reported the call",
     async () => {
       const details: Record<string, { passed: boolean; detail: string }> = {};
@@ -467,7 +557,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "the other probes still run when the reader cannot be prepared or its tools are refused",
     async () => {
       for (const [env, readerProbe, detail] of [
@@ -514,7 +604,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "a runtime whose sandbox lets writes land fails both write probes",
     async () => {
       const f = await setup({ FIXTURE_SANDBOX: "broken" }),
@@ -546,7 +636,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "a runtime that cannot run a command in its sandbox fails both write probes, and the other probes still run",
     async () => {
       const f = await setup({ FIXTURE_NO_EXEC: "1" }),
@@ -585,7 +675,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "an approval request during a turn is declined, so nothing runs",
     async () => {
       const f = await setup({ FIXTURE_ASK: "1" }),
@@ -624,7 +714,7 @@ describe("runtime qualification suite", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
+  test(
     "the stand-in refuses an interrupt sent before the reply streams, as Codex 0.163.0 did",
     async () => {
       const f = await setup(),
