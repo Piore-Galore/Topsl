@@ -19,8 +19,9 @@ jobs:
     if: github.event.repository.private == false
     name: ${{ matrix.name }}
     # A slower Windows runner took 20 minutes for setup and tests alone,
-    # before the desktop smoke and packaging steps.
-    timeout-minutes: 60
+    # before the desktop smoke and packaging steps; Windows now also runs the
+    # coordinator, loop and session journeys and the packaged session journey.
+    timeout-minutes: 80
     strategy:
       fail-fast: false
       matrix:
@@ -70,6 +71,17 @@ jobs:
       - name: Verify extracted macOS package signature
         if: runner.os == 'macOS'
         run: npm run verify:mac-package
+      # The session journey against the unpacked package rather than `electron .`.
+      - name: Packaged session journey
+        if: runner.os != 'Linux'
+        run: node scripts/desktop-session-test.mjs
+        env:
+          TOPSL_PACKAGED_APP: release
+      - name: Linux packaged session journey
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node scripts/desktop-session-test.mjs
+        env:
+          TOPSL_PACKAGED_APP: release
       - name: Record package checksums
         run: node scripts/package-summary.mjs
       # No artifact or dependency-cache uploads: avoid storage charges as well as paid runners.
