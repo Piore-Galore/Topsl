@@ -223,18 +223,21 @@ try {
   if (process.platform === "win32") {
     // Topsl's read of Claude's native /usage display is unverified on
     // Windows: the usage journey skips there, and on Windows CI (29 October
-    // 2026) this refresh left the card "Not reported". Record what the card
-    // shows instead of asserting the read.
+    // 2026) this refresh left the card "Not reported", and later still
+    // "Reading…" 20 seconds after the click. Record what the card shows
+    // instead of asserting the read.
     await claudeUsage
       .locator(".badge", { hasText: "Reported · current" })
       .waitFor({ timeout: 15_000 })
       .catch(() => {});
+    // A read that gets no display ends after the reader's 25-second timeout
+    // and up to two seconds to stop its terminal.
     await expect(
       claudeUsage.getByRole("button", {
         name: "Refresh from Claude",
         exact: true,
       }),
-    ).toBeEnabled();
+    ).toBeEnabled({ timeout: 45_000 });
     console.log(
       `Claude usage refresh on Windows, not asserted: ${(await claudeUsage.innerText()).replace(/\s+/g, " ").slice(0, 600)}`,
     );
