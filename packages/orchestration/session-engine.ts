@@ -1803,7 +1803,14 @@ export class SessionSupervisor {
             workItemId: w.id,
             at: now(),
           };
-        return { ...w, state: "stopped" as const, updatedAt: now() };
+        return {
+          ...w,
+          state:
+            run?.state === "completed"
+              ? ("completed" as const)
+              : ("stopped" as const),
+          updatedAt: now(),
+        };
       }
       return w;
     });

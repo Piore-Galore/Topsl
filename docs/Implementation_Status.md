@@ -442,3 +442,49 @@ Follow-up, 29 October 2026: CI on [PR #38](https://github.com/Piore-Galore/Topsl
 | Windows x64 | Vitest 1088 passed, 122 skipped; release 17/0; main and Atlas journeys passed; coordinator, loop and session journeys skipped | Passed |
 
 On Windows the session journey skipped because it needs a shell wrapper, like the coordinator and loop journeys (the loop journey's skip line still uses the coordinator journey's wording). Four-platform CI is now established for this branch. Live providers, Windows session and coordinator journeys, packaged builds, many sessions or long conversations, and a loop starting from a session's accepted result remain open.
+
+Follow-up, 29 October 2026: those items were addressed the same day; see [Native session follow-up — 29 October 2026](#native-session-follow-up--29-october-2026).
+
+## Native session follow-up — 29 October 2026
+
+**What changed.** After [PR #38](https://github.com/Piore-Galore/Topsl/pull/38) merged, branch `claude/session-gaps` closes the gaps listed above ([plan follow-up](Native_Sessions_Plan.md#follow-up-29-october-2026)):
+
+- **Loops in a session start from its accepted result.** `captureBase` copies the session's latest accepted result as checkpoint 0, with the project folder kept as the publication base ([Recursive Looping §18](Recursive_Looping.md#18-loops-in-native-sessions-29-october-2026)).
+- **Long conversations.** An intake reads the conversation's latest 12 messages through the store's conversation index instead of every message in the project, and refers to the earlier range by sequence; intakes are read per conversation.
+- **Windows journeys.** The session, coordinator and loop journeys use a compiled launcher stand-in on Windows ([TEST-DECISIONS](testing/TEST-DECISIONS.md#session-journeys-on-windows-and-on-the-package--29-october-2026)).
+- **Packaged runs.** `TOPSL_PACKAGED_APP` runs the session journey against the unpacked package, and CI runs it after packaging on every platform.
+- **Live procedure.** `node scripts/live-loop.mjs --codex <path> --claude <path> --claude-model <id> --session` runs Run S, a native session with real coordinators.
+
+**Defects found and fixed.**
+
+| Found by | Defect | Fix |
+| --- | --- | --- |
+| Live run 1 | A Claude Code coordinator has no file tools in a read-only turn. Asked about the project, Claude Opus 5.5 wrote invented tool calls and invented file contents (`src/value.ts`, `math.ts`) as text; the first answer was rejected, and the second kept writing for more than 10 minutes, so the intake never finished | Claude coordinator and information turns get Topsl's read-only candidate reader on their copy when a qualification observed it for that runtime and model (`launch` in [runtime-driver.ts](../packages/orchestration/runtime-driver.ts)); the intake prompt says the folder is a read-only copy and forbids describing unread files or writing tool calls as text |
+| Live run 2 | Both coordinators wrote a sentence as an existing role's `purpose`, which the `session-v1` contract allows only as `implementation`, `information` or `candidate-review` for a new role; the Work message's intake failed | The intake prompt spells out each team field and its values ([session-contracts.ts](../packages/orchestration/session-contracts.ts)) |
+| Packaged journey (Linux CI, then macOS) | Every coordinated goal stopped after its work round: integration captured a Topsl-owned folder inside a Git checkout (the journey's profile is under the repository's `node_modules/.cache`; a home folder kept in Git would do the same), and capture refused it as not the checkout root. The error was invisible because the service's background tick drops errors | Captures of Topsl-owned copies pass `owned`, which ignores Git around a folder without its own `.git` ([candidates.ts](../packages/workflows/candidates.ts)); a goal whose tick throws now records "Topsl could not advance this goal and will retry: …" ([engine.ts](../packages/orchestration/engine.ts)) |
+
+**Verification (macOS 27.0.1 arm64, Node 26.0.0, Electron 44.4.5).**
+
+| Command | Result |
+| --- | --- |
+| `env -u ANTHROPIC_BASE_URL npm test` (with `npm run typecheck` and `npm run test:release`) | Passed: 1210 tests and 5 skipped in 87 files (3 skipped); 18 release checks |
+| New tests | `a loop in a native session starts from the session's accepted result, not the project folder` and the Claude reader assertion in [loop-service.test.ts](../tests/loop-service.test.ts) (the reader assertion fails without the driver change); `checkpoint 0 can copy an accepted result instead of the folder…` in [loop-checkpoints.test.ts](../tests/loop-checkpoints.test.ts); `many sessions in one project stay separate, and a long conversation's context reads only its latest messages` (30 sessions; 403 messages) and the intake prompt test in [native-sessions.test.ts](../tests/native-sessions.test.ts); `a Topsl-owned copy inside another Git checkout…` in [candidate-manifests.test.ts](../tests/candidate-manifests.test.ts) |
+| `node scripts/desktop-session-test.mjs`, `desktop-coordinator-test.mjs`, `desktop-loop-test.mjs` | Passed with the shell-wrapper stand-in |
+| `npm run package`, then `TOPSL_PACKAGED_APP=release node scripts/desktop-session-test.mjs` | Passed against `release/mac-arm64/Topsl.app` (ad-hoc signed, 0.1.3) with Chromium's mock keychain. Without it, the packaged app stopped at startup on this Mac, apparently waiting on a keychain prompt |
+
+**Live run (29 October 2026, after the owner asked to continue with the open items).** `node scripts/live-loop.mjs --codex /opt/homebrew/bin/codex --claude /opt/homebrew/bin/claude --claude-model claude-opus-5-5 --session --max-turns 30` at `1091630`, from a clean checkout with a disposable profile. Codex CLI 0.163.0 (`gpt-6.1-sol`) and Claude Code 2.1.305 (`claude-opus-5-5`), each under the owner's native subscription sign-in. The turns counted against both accounts' usage. The report stays in `test-results/live-session-run/` and is not committed.
+
+| Step | Observed |
+| --- | --- |
+| Qualification | Codex qualified for coordinator, information and implementation purposes; its candidate reader was not qualified, so Codex could not review. Claude Code passed all seven observations (structured turn, read-only, workspace write, candidate reader, fresh session, native subscription, process lifecycle) |
+| Discuss message | Both peer coordinators (`coordinator-codex`, `coordinator-claude`) returned valid `session-v1` answers; the intake was decided as a reply with no reconciliation, and no work was queued |
+| Work message | Both coordinators answered `new-work`; the intake acted without reconciliation or an owner choice. The automatic team added one implementer ("One implementer can make and verify this single-line change.") |
+| Session goal | Codex implemented and Claude reviewed (Codex was not eligible to review); the goal reached **Awaiting acceptance** with no findings and was accepted through the native dialog. The project folder still read `export const value = 1;` |
+| Loop in the session | Its setup conditions included "Starts from the session's accepted result…". Iteration 1 was promoted after 6 member turns (Claude coordinator, Codex implementer, Claude reviewer and researcher), iteration 2 found no work, and the run completed. Publication wrote `// Edited by a Topsl loop.` above `export const value = 2;`, so the loop's work and the session's unapplied result reached the folder together (`M value.ts`) |
+| Session afterwards | Queue `goal:accepted`, then the loop (recorded as `stopped`; completed loops are now recorded as `completed`, see below); the accepted result is the loop's checkpoint |
+
+Two earlier passes, run before the fixes above and also live, stopped at the defects they found: pass 1 at the Claude coordinator's invented reads, pass 2 at the team-field contract. Their reports are in `test-results/live-session-run-1/` and `-2/`.
+
+The run showed one more defect, fixed after it: a session recorded a completed loop's work item as `stopped`. `sync` in [session-engine.ts](../packages/orchestration/session-engine.ts) now records `completed`, tested by `a loop in the session settles as completed or stopped…` in [native-sessions.test.ts](../tests/native-sessions.test.ts).
+
+This is one bounded run on one host with one small project. It does not establish larger teams, reconciliation or owner choices between real coordinators, long live conversations, or Codex as a reviewer.

@@ -956,6 +956,63 @@ describe("native sessions", () => {
     expect(messages(f, created[1].sessionId)).toHaveLength(2);
   });
 
+  test("a loop in the session settles as completed or stopped and a promoted result becomes the session's", async () => {
+    const f = await setup();
+    const runs: Array<{
+      id: string;
+      conversationId: string;
+      title: string;
+      state: string;
+      started: boolean;
+      acceptedCandidateId: string | null;
+    }> = [];
+    const sessions = new SessionSupervisor(
+      f.store,
+      f.orchestrator,
+      f.driver,
+      () => {},
+      { runs: () => runs, stop: async () => {} },
+    );
+    const { sessionId } = await sessions.create({
+      projectId: "p",
+      commandId: cmd(),
+    });
+    runs.push(
+      {
+        id: "loop-a",
+        conversationId: sessionId,
+        title: "Loop A",
+        state: "active",
+        started: true,
+        acceptedCandidateId: null,
+      },
+      {
+        id: "loop-b",
+        conversationId: sessionId,
+        title: "Loop B",
+        state: "stopped",
+        started: true,
+        acceptedCandidateId: null,
+      },
+    );
+    await sessions.tick();
+    expect(session(f, sessionId).queue.map((w) => [w.runId, w.state])).toEqual([
+      ["loop-a", "running"],
+      ["loop-b", "stopped"],
+    ]);
+    Object.assign(runs[0], { state: "completed", acceptedCandidateId: "c-1" });
+    await sessions.tick();
+    const s = session(f, sessionId);
+    expect(s.queue.map((w) => [w.runId, w.state])).toEqual([
+      ["loop-a", "completed"],
+      ["loop-b", "stopped"],
+    ]);
+    expect(s.acceptedCheckpoint).toMatchObject({
+      candidateId: "c-1",
+      runId: "loop-a",
+    });
+  });
+
   test("legacy conversations are backfilled without rewriting history, and their thread IDs resolve", async () => {
     const f = await setup();
     const legacy = await f.orchestrator.startConversation({
