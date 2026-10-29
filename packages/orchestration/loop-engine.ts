@@ -11,6 +11,7 @@ import {
   LOOP_FEATURE_FLAG,
   activeRoleCountProblem,
   functionPurpose,
+  applyLoopPolicyPatch,
   loopPolicySchema,
   requiredFunctions,
   type ActiveRolePurposeBinding,
@@ -35,6 +36,7 @@ import {
   type LoopOverride,
   type LoopPolicy,
   type LoopPolicyInput,
+  type LoopPolicyPatch,
   type LoopRound,
   type LoopRun,
   type LoopUsage,
@@ -724,13 +726,13 @@ export class LoopSupervisor {
    * The service records this authority once; ordinary iterations are not
    * approved one by one.
    */
-  authorityReview(runId: string, proposed?: Partial<LoopPolicyInput>) {
+  authorityReview(runId: string, proposed?: LoopPolicyPatch) {
     const run = this.run(runId);
     const policy = this.policy(runId);
-    const settings = loopPolicySchema.parse({
-      ...this.policySettings(policy),
-      ...(proposed ?? {}),
-    });
+    const settings = applyLoopPolicyPatch(
+      this.policySettings(policy),
+      proposed ?? {},
+    );
     const project = this.repo.require<Project>("project", run.projectId);
     const body = {
       runId,
@@ -1171,7 +1173,7 @@ export class LoopSupervisor {
   async updatePolicy(input: {
     runId: string;
     expectedRevision: number;
-    policy: Partial<LoopPolicyInput>;
+    policy: LoopPolicyPatch;
     digest?: string | null;
     commandId: string;
   }) {
@@ -1202,10 +1204,10 @@ export class LoopSupervisor {
               "This change widens what the run may execute; it needs your native confirmation.",
             );
         }
-        const settings = loopPolicySchema.parse({
-          ...this.policySettings(policy),
-          ...input.policy,
-        });
+        const settings = applyLoopPolicyPatch(
+          this.policySettings(policy),
+          input.policy,
+        );
         this.store.transaction(() => {
           this.store.save(loopKinds.policy, {
             ...policy,

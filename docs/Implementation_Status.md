@@ -417,6 +417,8 @@ Follow-up, 29 October 2026: the plan was reviewed and implemented the same day; 
 
 **Defect found during validation.** In zod 4, `.partial()` still fills field defaults, so a `session-update` that changed only roles reset the session's coordinators to one Auto coordinator. The Electron session journey caught it (its third message was answered by `coordinator-auto-1`); the commands now use `sessionConfigurationPatchSchema`, and `a command that changes one field keeps the others` parses the command through `commandSchema`. The same zod behavior applies to the existing `loop-policy-update` and to role groups' `completion` field; that predates this change and is not addressed here.
 
+Follow-up, 29 October 2026: both are fixed separately; see [Partial updates keep unsent fields — 29 October 2026](#partial-updates-keep-unsent-fields--29-october-2026).
+
 **Verification (macOS 27.0.1 arm64, Node 26.0.0, Electron 44.4.5; branch `claude/native-sessions` after `f84dd87`, uncommitted).** Fixture and stand-in evidence only.
 
 | Command | Result |
@@ -442,3 +444,26 @@ Follow-up, 29 October 2026: CI on [PR #38](https://github.com/Piore-Galore/Topsl
 | Windows x64 | Vitest 1088 passed, 122 skipped; release 17/0; main and Atlas journeys passed; coordinator, loop and session journeys skipped | Passed |
 
 On Windows the session journey skipped because it needs a shell wrapper, like the coordinator and loop journeys (the loop journey's skip line still uses the coordinator journey's wording). Four-platform CI is now established for this branch. Live providers, Windows session and coordinator journeys, packaged builds, many sessions or long conversations, and a loop starting from a session's accepted result remain open.
+
+## Partial updates keep unsent fields — 29 October 2026
+
+**What was wrong.** In zod 4, `schema.partial()` still fills field defaults: `z.object({a: z.number().default(1), b: z.number().default(2)}).partial().parse({a: 5})` returns `{a: 5, b: 2}`. Two commands relied on `.partial()` meaning "only the fields given", as `session-update` did before [Native Topsl sessions](#native-topsl-sessions--29-october-2026):
+
+| Command field | Effect before the fix |
+| --- | --- |
+| `loop-policy-update` `policy` (`loopPolicySchema.partial()`) | Every unsent policy field arrived with its default and replaced the stored value. On a started run any one-field update was refused, because the default `checks: []` counts as changing the protected protocol (reproduced on `main` at `2faae6b`). By reading the code: on an unstarted run it would reset the automatic-check grant, provider exclusions, bounds, allowances and the other settings, and every update looked like lifting provider exclusions, so the desktop asked for native confirmation each time. |
+| Role settings `completion` (`completionPolicySchema.partial()`), used by `orchestration-group-set`, `orchestration-policy-set`, `loop-override-set` and session roles | A scope that set one completion field, such as the threshold, stored every completion field. `effectiveGroup` then let those defaults override what broader scopes set (for example a project's `retriesPerMember: 3` fell back to 1 under a goal that set only the threshold), and a same-scope merge overwrote the fields set earlier. |
+
+Supervisor and membership tests passed hand-written partial objects without going through `commandSchema`, so they did not catch it.
+
+**Fix.** `optionalFields` ([patches.ts](../packages/domain/patches.ts)) makes a shape's fields optional and drops their defaults. `loopPolicyPatchSchema` and `applyLoopPolicyPatch` ([recursive-loops.ts](../packages/domain/recursive-loops.ts)) replace the partial policy: unsent fields keep their stored values, group fields such as `iteration.maxTurns` merge one level deep, and the merged policy is validated as a whole in `updatePolicy` and `authorityReview` ([Recursive Looping §19](Recursive_Looping.md#19-policy-updates-keep-unsent-fields-29-october-2026)). `completionPolicyPatchSchema` ([role-groups.ts](../packages/domain/role-groups.ts)) replaces the partial completion, so an unsent completion field defers to a broader scope ([Coordinator teams](Coordinator_Teams.md)). `loop-create` is unchanged: a new run has nothing to reset.
+
+**Stored records.** Not migrated and their meaning is unchanged. Policy records are complete settings. Role-group revisions written before this fix carry every completion field, the given ones and the defaults alike, and still override broader scopes with all of them; the stored values cannot tell which fields the owner meant. A new revision at that scope stores only the fields it sends.
+
+**Verification (macOS 27.0.1 arm64, Node 26.0.0, Electron 44.4.5; branch `claude/partial-update-defaults` from `2faae6b`).** Fixture tests only; no Electron journey, live provider, CI or packaged build was run for this change.
+
+| Command | Result |
+| --- | --- |
+| `npm test -- tests/campaign-loops-state.test.ts tests/campaign-teams-auto.test.ts -t "only the fields\|changes only the fields\|keeps its meaning"` | Passed, 4 tests: *a one-field command keeps the run's other settings, including grouped fields* and *the monitoring delay rule applies to the merged settings* (loop policy on a started run); *a completion field set at one scope keeps what broader scopes and earlier merges set* and *a stored revision written with every completion field keeps its meaning* (role groups). Each parses its commands through `commandSchema` |
+| The same command with the four source files restored from `2faae6b` | 3 failed, 1 passed: the three command tests fail on the filled defaults; the stored-revision test passes on both, as intended |
+| `npm run check` | Passed: typecheck; 1209 tests passed and 5 skipped in 87 files (3 skipped), the 1205 of [Native Topsl sessions](#native-topsl-sessions--29-october-2026) plus these 4; 18 release checks; build. The existing renderer chunk-size warning remains |

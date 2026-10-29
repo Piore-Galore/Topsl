@@ -3,6 +3,7 @@ import { roleGroupSettingsSchema, roleIdSchema } from "./role-groups";
 import {
   activeRoleCountProblem,
   criterionVerificationSchema,
+  loopPolicyPatchSchema,
   loopPolicySchema,
 } from "./recursive-loops";
 
@@ -97,7 +98,7 @@ export const loopCommands = [
     type: z.literal("loop-policy-update"),
     runId: id,
     expectedRevision: z.number().int().nonnegative(),
-    policy: loopPolicySchema.partial(),
+    policy: loopPolicyPatchSchema,
     commandId,
   }),
   z
