@@ -1827,11 +1827,14 @@ try {
       panel.getByRole("list", { name: "Claude Code sessions", exact: true });
     const stepTerminal = (panel) =>
       panel.getByRole("region", { name: "Native terminal", exact: true });
-    // The terminal's rows joined, so a wrapped line reads whole.
+    // The terminal's rows joined, so a wrapped line reads whole. xterm stops
+    // rendering a terminal outside the viewport, so it is scrolled into view
+    // first: on macOS CI (Intel at e470c3e, ecf8434 and 8ef954c, Apple
+    // silicon at 378dd08) the review step's rows stayed empty for 30 seconds.
     const stepScreen = (panel) =>
       stepTerminal(panel)
-        .locator(".xterm-rows")
-        .innerText()
+        .scrollIntoViewIfNeeded({ timeout: 2_000 })
+        .then(() => stepTerminal(panel).locator(".xterm-rows").innerText())
         .then((text) =>
           text.replaceAll(String.fromCharCode(160), " ").replaceAll("\n", ""),
         )
