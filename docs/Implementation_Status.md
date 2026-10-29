@@ -453,7 +453,7 @@ Follow-up, 29 October 2026: those items were addressed the same day; see [Native
 
 - **Loops in a session start from its accepted result.** `captureBase` copies the session's latest accepted result as checkpoint 0, with the project folder kept as the publication base ([Recursive Looping §18](Recursive_Looping.md#18-loops-in-native-sessions-29-october-2026)).
 - **Long conversations.** An intake reads the conversation's latest 12 messages through the store's conversation index instead of every message in the project, and refers to the earlier range by sequence; intakes are read per conversation.
-- **Windows journeys.** The session, coordinator and loop journeys have a compiled launcher stand-in on Windows, which Topsl connected to in CI; they still skip there, because Topsl's runtime qualification runs on macOS and Linux only, so Windows has no qualified coordinator ([TEST-DECISIONS](testing/TEST-DECISIONS.md#session-journeys-on-windows-and-on-the-package--29-october-2026)). Coordinated sessions on Windows remain unsupported until qualification runs there.
+- **Windows journeys.** The session, coordinator and loop journeys have a compiled launcher stand-in on Windows, which Topsl connected to in CI; they still skipped there at the time, because Topsl's runtime qualification ran on macOS and Linux only, so Windows had no qualified coordinator (*follow-up the same day:* [Runtime qualification on Windows](#runtime-qualification-on-windows--29-october-2026)) ([TEST-DECISIONS](testing/TEST-DECISIONS.md#session-journeys-on-windows-and-on-the-package--29-october-2026)). Coordinated sessions on Windows remain unsupported until qualification runs there.
 - **Packaged runs.** `TOPSL_PACKAGED_APP` runs the session journey against the unpacked package, and CI runs it after packaging (it skips on Windows, as above).
 - **Live procedure.** `node scripts/live-loop.mjs --codex <path> --claude <path> --claude-model <id> --session` runs Run S, a native session with real coordinators.
 
@@ -515,3 +515,53 @@ Supervisor and membership tests passed hand-written partial objects without goin
 | `npm test -- tests/campaign-loops-state.test.ts tests/campaign-teams-auto.test.ts -t "only the fields\|changes only the fields\|keeps its meaning"` | Passed, 4 tests: *a one-field command keeps the run's other settings, including grouped fields* and *the monitoring delay rule applies to the merged settings* (loop policy on a started run); *a completion field set at one scope keeps what broader scopes and earlier merges set* and *a stored revision written with every completion field keeps its meaning* (role groups). Each parses its commands through `commandSchema` |
 | The same command with the four source files restored from `2faae6b` | 3 failed, 1 passed: the three command tests fail on the filled defaults; the stored-revision test passes on both, as intended |
 | `npm run check` | Passed: typecheck; 1209 tests passed and 5 skipped in 87 files (3 skipped), the 1205 of [Native Topsl sessions](#native-topsl-sessions--29-october-2026) plus these 4; 18 release checks; build. The existing renderer chunk-size warning remains |
+
+## Runtime qualification on Windows — 29 October 2026
+
+**Change.** `runCodexQualification` ([qualification.ts](../packages/providers/qualification.ts)) no longer refuses Windows. Its two sandbox probes, printing a word and writing a file, are built by `probeCommand`:
+
+| Platform | Probe command | Folder paths the probes accept |
+| --- | --- | --- |
+| macOS, Linux | `/bin/sh -c 'printf %s "$1"'` (and `… > "$2"`), values as positional arguments, as before | Letters, digits, space, `.`, `_`, `-`, `/` |
+| Windows | `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand …`: `[Console]::Out.Write(…)` or `[IO.File]::WriteAllText(…)` inside `try`/`catch`, which exits 1 on failure. Values are single-quoted PowerShell literals with every quote PowerShell ends a literal at doubled; no `cmd.exe` or C runtime parses them | The same, plus a drive letter and `\` |
+
+Everything else in the suite is unchanged: each probe still passes only when Topsl's own check of the folder confirms the expected state, so a sandbox that does not hold fails the probe as `unsupported`.
+
+**Why.** Coordinated sessions, goals and loops need a qualified coordinator, so the refusal left them unavailable on Windows, and the session, coordinator and loop journeys skipped there ([Native session follow-up](#native-session-follow-up--29-october-2026)). The refusal existed only because the probes were POSIX shell commands.
+
+**Tests.**
+
+- *the sandbox probes are POSIX shell commands on macOS and Linux and encoded Windows PowerShell commands on Windows* ([runtime-qualification.test.ts](../tests/runtime-qualification.test.ts)) checks both forms on every platform, including a path and content with straight and typographic quotes, and reads them back through the stand-in's parser ([probe-command.cjs](../tests/fixtures/probe-command.cjs)).
+- *on Windows the probe commands print, write exactly, and exit 1 when a write fails* runs the real Windows PowerShell commands on Windows only, outside any sandbox.
+- The qualification stand-in ([codex-qualify.cjs](../tests/fixtures/codex-qualify.cjs)) accepts both forms. The qualification tests that run it with Node directly now run on Windows as well: 8 in runtime-qualification.test.ts, and CQ-02, CQ-03/CQ-04, CQ-06 and the quoting refusal in [campaign-claude-codex-qualification.test.ts](../tests/campaign-claude-codex-qualification.test.ts). Their command assertions compare against this platform's `probeCommand`. The platform-stubbed test that pinned the Windows refusal was removed, and a temporary-folder refusal check now runs on every platform. Tests that launch a `#!/bin/sh` stand-in, and the POSIX alias list of temporary folders, still skip on Windows ([TEST-DECISIONS](testing/TEST-DECISIONS.md#runtime-qualification-on-windows--29-october-2026)).
+- The session, coordinator and loop journeys no longer skip on Windows; their stand-in there is the compiled launcher ([desktop-stand-in.mjs](../scripts/desktop-stand-in.mjs)). On Windows the coordinator journey records, but does not assert, what the Claude usage card shows after **Refresh from Claude**: on the first Windows CI run of this change (`aef591a`) the journey qualified the Codex stand-in and then failed there, because the card stayed "Not reported". The workflow-team part of `desktop-test.mjs` still uses a shell-wrapper stand-in and runs on macOS and Linux only.
+
+**Verification (macOS 27.0.1 arm64, Node 26.0.0, Electron 44.4.5; branch `claude/windows-qualification` from `8ef954c`).**
+
+| Command | Result |
+| --- | --- |
+| `npm run typecheck` | Passed |
+| `env -u ANTHROPIC_BASE_URL npm test` | Passed: 1216 tests and 6 skipped in 87 files (3 skipped) |
+| `npm run test:release` | Passed: 18 checks |
+| `npm run build`, then `node scripts/desktop-session-test.mjs`, `desktop-coordinator-test.mjs`, `desktop-loop-test.mjs` | Passed on macOS with the shell-wrapper stand-in |
+
+Nothing above ran on Windows; the Windows evidence is the remote CI below.
+
+**Remote CI (29 October 2026, PR [#41](https://github.com/Piore-Galore/Topsl/pull/41) at `b2bb8da`).** "Compile Topsl" ([run 40841110187](https://github.com/Piore-Galore/Topsl/actions/runs/40841110187)) and "Round 2 lifecycle stress" ([run 40841110179](https://github.com/Piore-Galore/Topsl/actions/runs/40841110179)) passed on all four runners: macOS Apple silicon, macOS Intel, Windows x64 and Linux x64. On Windows x64:
+
+| Step | Result |
+| --- | --- |
+| `npm run check` | Passed: 1120 tests and 102 skipped in 90 files (4 skipped), including runtime-qualification.test.ts (16 tests, 4 skipped) and campaign-claude-codex-qualification.test.ts (23 tests, 9 skipped) |
+| `npm run test:desktop` | Passed: the desktop journey, encrypted restart persistence, the coordinator journey, the atlas, the loop journey and the session journey. The coordinator, loop and session journeys qualified the compiled launcher stand-in as a Windows coordinator |
+| `node scripts/desktop-session-test.mjs` against `release\win-unpacked\Topsl.exe` | Passed: the session journey on the packaged app |
+| Round 2 lifecycle stress | Passed: 20 of 20 iterations, each 33 tests and 2 skipped |
+
+The coordinator journey logged the Claude usage card after **Refresh from Claude** as "Read failed … Claude did not return a supported /usage display", so the native `/usage` read itself still fails on Windows (see *Not established*). Earlier Windows runs of this change failed at that card (`aef591a`, `35aeb5f`); a macOS Apple silicon failure at `378dd08` is the xterm read described in [TEST-DECISIONS](testing/TEST-DECISIONS.md#runtime-qualification-on-windows--29-october-2026). This is CI against stand-ins; it does not qualify a live Codex or Claude runtime on Windows.
+
+**Not established.**
+
+- **Live Codex on Windows.** No live Codex runtime has been qualified on Windows. Whether Codex's sandbox runs Windows PowerShell under `command/exec`, and whether its read-only and workspace-write policies confine those writes there, is what a live qualification would observe; the probes fail closed if it does not.
+- **Temporary folder aliases on Windows.** The temporary-folder refusal is tested on Windows only for `os.tmpdir()` and a folder inside it, not for aliases such as 8.3 short names or junctions.
+- **Claude usage reads on Windows.** Reading Claude Code's native `/usage` display through a stand-in had never run on Windows (the usage journey skips there because its stand-in is a shell wrapper). Its first Windows run, in the coordinator journey, did not report usage, and on the run at `35aeb5f` the card still read "Reading…" 20 seconds after the click, inside the reader's 25-second timeout. The journey now waits up to 45 seconds for the read to end before logging the card. At `b2bb8da` the read ended as "Read failed": Claude did not return a supported `/usage` display. The cause is not diagnosed.
+- **Claude coordinators on Windows.** How Claude Code exits on Topsl's interrupt there is unverified, so an interrupted Claude turn may end `uncertain` and need reconciliation ([Claude structured route](#claude-structured-route--19-october-2026)).
+- **Process cleanup on Windows.** Topsl stops a runtime by a Windows process-tree kill and observes its CIM descendants, not a process group ([process-lifecycle.ts](../packages/runtime/process-lifecycle.ts)); live coverage of this is thin.

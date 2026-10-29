@@ -16,15 +16,8 @@ import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
 // Codex runtime is the scripted stand-in the coordinator journey uses
 // (tests/fixtures/codex-desktop-coordinator.cjs); no model or account is
 // contacted, and the Opus and Astra labels are fixture catalog entries only.
-// The journey needs a qualified coordinator, and Topsl's runtime qualification
-// runs on macOS and Linux only (packages/providers/qualification.ts). The
-// stand-in itself also starts on Windows (scripts/desktop-stand-in.mjs).
-if (process.platform === "win32") {
-  console.log(
-    "Desktop session journey skipped: Topsl's runtime qualification runs on macOS and Linux only, so no coordinator is qualified on Windows.",
-  );
-  process.exit(0);
-}
+// The stand-in is a shell wrapper on macOS and Linux and a compiled launcher
+// on Windows (scripts/desktop-stand-in.mjs).
 // TOPSL_PACKAGED_APP runs the journey against a packaged executable, such as
 // release/mac-arm64/Topsl.app/Contents/MacOS/Topsl. A packaged app ignores
 // TOPSL_TEST_PROFILE, so it gets a disposable --user-data-dir with a seeded

@@ -22,8 +22,9 @@ import { randomUUID } from "node:crypto";
 const profile = await mkdtemp(path.join(os.tmpdir(), "topsl-test-desktop-"));
 const desktopEnvironment = { ...process.env, TOPSL_TEST_PROFILE: profile };
 delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
-// A qualification refuses the temporary folders that hold the profile, and
-// runs on macOS and Linux only.
+// A qualification refuses the temporary folders that hold the profile. The
+// workflow teams' stand-in below is a shell wrapper, so they run on macOS and
+// Linux only.
 let qualificationDirectory = null;
 if (process.platform !== "win32") {
   await mkdir(path.resolve("node_modules/.cache"), { recursive: true });
@@ -1826,11 +1827,14 @@ try {
       panel.getByRole("list", { name: "Claude Code sessions", exact: true });
     const stepTerminal = (panel) =>
       panel.getByRole("region", { name: "Native terminal", exact: true });
-    // The terminal's rows joined, so a wrapped line reads whole.
+    // The terminal's rows joined, so a wrapped line reads whole. xterm stops
+    // rendering a terminal outside the viewport, so it is scrolled into view
+    // first: on macOS CI (Intel at e470c3e, ecf8434 and 8ef954c, Apple
+    // silicon at 378dd08) the review step's rows stayed empty for 30 seconds.
     const stepScreen = (panel) =>
       stepTerminal(panel)
-        .locator(".xterm-rows")
-        .innerText()
+        .scrollIntoViewIfNeeded({ timeout: 2_000 })
+        .then(() => stepTerminal(panel).locator(".xterm-rows").innerText())
         .then((text) =>
           text.replaceAll(String.fromCharCode(160), " ").replaceAll("\n", ""),
         )

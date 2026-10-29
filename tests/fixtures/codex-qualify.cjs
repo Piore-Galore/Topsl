@@ -30,6 +30,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 const { threadResponse } = require("./codex-thread.cjs");
+const { probe } = require("./probe-command.cjs");
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.163.0-qualify-fixture");
   process.exit(0);
@@ -56,16 +57,14 @@ function inside(file, root) {
   return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 /** Runs one of Topsl's sandbox probe commands under `policy`. Only the two
- * forms the suite sends are known: printing a word, and writing one to a
+ * probes the suite sends are known: printing a word, and writing one to a
  * file, which the sandbox blocks outside the policy's writable roots. */
 function exec(argv, policy) {
-  const [shell, flag, script, , word, file] = Array.isArray(argv) ? argv : [];
-  if (shell !== "/bin/sh" || flag !== "-c")
+  const known = probe(argv);
+  if (!known)
     return { exitCode: 127, stdout: "", stderr: "fixture: unknown command" };
-  if (script === 'printf %s "$1"')
-    return { exitCode: 0, stdout: word, stderr: "" };
-  if (script !== 'printf %s "$1" > "$2"' || typeof file !== "string")
-    return { exitCode: 127, stdout: "", stderr: "fixture: unknown command" };
+  const { word, file } = known;
+  if (file === undefined) return { exitCode: 0, stdout: word, stderr: "" };
   const allowed =
     process.env.FIXTURE_SANDBOX === "broken" ||
     (policy?.type === "workspaceWrite" &&
@@ -74,7 +73,10 @@ function exec(argv, policy) {
     return {
       exitCode: 1,
       stdout: "",
-      stderr: `/bin/sh: ${file}: Operation not permitted`,
+      stderr:
+        argv[0] === "/bin/sh"
+          ? `/bin/sh: ${file}: Operation not permitted`
+          : `Access to the path '${file}' is denied.`,
     };
   fs.writeFileSync(file, word);
   return { exitCode: 0, stdout: "", stderr: "" };
