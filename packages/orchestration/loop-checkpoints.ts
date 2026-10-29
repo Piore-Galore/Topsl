@@ -211,6 +211,7 @@ export class RuntimeLoopDriver implements LoopDriver {
       await writeManagedSnapshot({ ...input.source, files }, root, this.store);
       const captured = await captureCandidate(this.store, {
         root,
+        owned: true,
         projectId: input.projectId,
         workflowId: input.workflowId,
         authorAttemptId: null,

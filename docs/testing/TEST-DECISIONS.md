@@ -525,6 +525,14 @@ Coordinator work now starts in a native Topsl session ([plan and record](../Nati
 | — | New [session journey](../../scripts/desktop-session-test.mjs) in `npm run test:desktop` | The plan's setup, discussion, delegation, override, second-goal, theme, compact and restart journey |
 | The sidebar helper clicked the **Navigation** toggle with Playwright's 30-second wait | It clicks with a 2-second wait and reads the layout again when the toggle has gone | In the full `npm run test:desktop` run the Atlas journey's zoom reset switched the layout back to the aside between the check and the click, and the click waited out its timeout on a hidden toggle; the journey passed alone |
 
+## Session journeys on Windows and on the package — 29 October 2026
+
+| Changed | Journeys now | Why |
+| --- | --- | --- |
+| The coordinator, loop and session journeys exited on Windows ("it needs a shell wrapper"; the loop journey printed the coordinator journey's line) | They run on Windows with a native launcher from [desktop-stand-in.mjs](../../scripts/desktop-stand-in.mjs), compiled with the .NET Framework C# compiler Windows includes; each prints its own skip line only where that compiler is missing | Topsl's structured broker refuses `.cmd` launchers by design (`preflight` in [manager.ts](../../packages/runtime/manager.ts)), so the stand-in must be an `.exe`. The launcher passes arguments and standard handles to Node and holds it in a kill-on-close job object. macOS and Linux keep the shell wrapper |
+| The session journey ran only as `electron .` | With `TOPSL_PACKAGED_APP` (a path, or `release` to find this platform's unpacked build) it launches the package with a disposable `--user-data-dir`, a seeded passphrase vault and `HOME`, `USERPROFILE`, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` inside the profile; CI runs it after packaging | A packaged app ignores `TOPSL_TEST_PROFILE`. The passphrase vault avoids creating an OS keychain item. The profile lives under `node_modules/.cache` because a qualification refuses the system temporary folders. On this Mac the packaged app still stopped at startup, which suggests a keychain prompt for the existing "topsl Safe Storage" item (`safeStorage.isEncryptionAvailable` runs before the vault method is read) that a script cannot answer; packaged evidence comes from CI runners |
+| Windows CI job timeout 60 minutes | 80 minutes | Windows now also runs three journeys and the packaged session journey |
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

@@ -61,7 +61,7 @@ The plan was reviewed against the code before implementation. It fits the existi
 | Safe boundaries | A configuration change, or an endorsed automatic team change, waits while the active goal has a round collecting, reconciling or endorsing, then applies. An intake whose configuration changed restarts once with fresh inputs; its earlier answers cannot act | Existing rounds already go stale on any group change; waiting avoids discarding in-flight work |
 | Inherited defaults | A native session captures the project policy and project-role settings when created. Conversations from before sessions keep following the project's defaults as they change | Preserves legacy behavior; new sessions are not silently changed by project edits |
 | Continuity | A session goal continues from the latest accepted result through a Topsl-owned copy bound to the new goal (`continueFrom`); its coordinators read that copy. Applying such a goal still needs the project folder to match its baseline, so the earlier goal is applied first (*inference*) | The plan's continuity requirement within the existing apply check, which refuses a folder that does not match the goal's starting point |
-| Loops | Loops stay optional work items. A loop created in a session's conversation is its work item; a loop start is refused while the session runs other work, and a stopped or completed run with a promoted iteration sets the session's accepted result. A loop still captures its base from the project folder | Bounded change to the loop engine; starting a loop from the session's accepted result is left open |
+| Loops | Loops stay optional work items. A loop created in a session's conversation is its work item; a loop start is refused while the session runs other work, and a stopped or completed run with a promoted iteration sets the session's accepted result. A loop still captures its base from the project folder | Bounded change to the loop engine; starting a loop from the session's accepted result is left open (implemented in the [follow-up](#follow-up-29-october-2026)) |
 | Provider tools | The existing **Sessions** project destination is labelled **Provider tools**; its stored view value stays `sessions` | "Session" now names a Topsl session; saved navigation keeps working |
 | Legacy queue | A running legacy goal holds a backfilled session's queue, so new work waits behind it | "Run one goal or loop at a time" without interrupting legacy executions |
 
@@ -78,3 +78,17 @@ The plan was reviewed against the code before implementation. It fits the existi
 | Screens | New session page (coordinator picker, team setup, composer mode), the session view (shared responses with **Contributions**, alternatives, attention banner, **Target**, session controls, **Team** and **Work** panes beside the goal panes), the sidebar's sessions, and **Provider tools** | [project-home.tsx](../apps/desktop/renderer/coordinator/project-home.tsx), [session-thread.tsx](../apps/desktop/renderer/coordinator/session-thread.tsx), [session-panes.tsx](../apps/desktop/renderer/coordinator/session-panes.tsx), [threads.ts](../packages/domain/threads.ts) |
 
 Validation is recorded in [Implementation status](Implementation_Status.md#native-topsl-sessions--29-october-2026).
+
+## Follow-up (29 October 2026)
+
+After [PR #38](https://github.com/Piore-Galore/Topsl/pull/38) merged, the gaps it left open were addressed on branch `claude/session-gaps`:
+
+| Gap | What changed | Source |
+| --- | --- | --- |
+| A loop started from the project folder | A loop in a native session copies the session's latest accepted result as checkpoint 0; the folder stays the publication base | `startFrom` in [loop-engine.ts](../packages/orchestration/loop-engine.ts), `captureBase` in [loop-checkpoints.ts](../packages/orchestration/loop-checkpoints.ts), [service.ts](../apps/service/service.ts) |
+| Long conversations | An intake reads only the conversation's latest messages through the store's conversation index, and references the earlier range by sequence; a session's intakes are read by conversation instead of the whole project | `contextFor` and `intakes` in [session-engine.ts](../packages/orchestration/session-engine.ts), `buildSessionContext` in [sessions.ts](../packages/domain/sessions.ts) |
+| Windows session, coordinator and loop journeys skipped | The journeys' stand-in is a compiled launcher on Windows, because Topsl refuses `.cmd` launchers for structured turns | [desktop-stand-in.mjs](../scripts/desktop-stand-in.mjs) |
+| No packaged evidence | The session journey runs against the unpacked package with `TOPSL_PACKAGED_APP`, and CI runs it after packaging on every platform | [desktop-session-test.mjs](../scripts/desktop-session-test.mjs), [build.yml](../.github/workflows/build.yml) |
+| No live evidence | `live-loop.mjs --session` runs a session with real Codex and Claude Code coordinators: discussion, a goal on the automatic team, acceptance, and a loop in the session from that result | [live-loop.mjs](../scripts/live-loop.mjs) |
+
+Results: [Implementation status](Implementation_Status.md#native-session-follow-up--29-october-2026).

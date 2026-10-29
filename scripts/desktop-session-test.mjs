@@ -127,6 +127,11 @@ const launch = async () => {
       ...(process.platform === "linux" && process.env.CI
         ? ["--no-sandbox"]
         : []),
+      // Chromium's mock keychain: a packaged Mac app otherwise reads the
+      // login keychain at startup, which can wait on a system prompt.
+      ...(packaged && process.platform === "darwin"
+        ? ["--use-mock-keychain"]
+        : []),
       packaged ? `--user-data-dir=${path.join(profile, "user-data")}` : ".",
     ],
     env: desktopEnvironment,
@@ -430,6 +435,36 @@ try {
     .toBe("stopped");
 } catch (error) {
   if (page) await shot(page, "failure").catch(() => {});
+  // What the session's goals were doing, for a failure on a CI runner.
+  if (page && projectId && sessionId)
+    await page
+      .evaluate(
+        async ({ projectId, sessionId }) =>
+          (
+            await window.topsl.command({
+              type: "orchestration-query",
+              projectId,
+              conversationId: sessionId,
+            })
+          ).goals.map((g) => ({
+            goal: [g.goal.state, g.goal.detail],
+            rounds: (g.rounds ?? []).map((r) => [
+              r.purpose ?? r.kind,
+              r.stage,
+              r.state,
+              r.detail,
+              (r.members ?? []).map((m) => `${m.memberId} ${m.state}`),
+            ]),
+            tasks: (g.plan?.tasks ?? []).map((t) => [t.title, t.state]),
+            actions: g.actions,
+            checks: g.checks?.detail,
+          })),
+        { projectId, sessionId },
+      )
+      .then((goals) =>
+        console.log(`Session goals: ${JSON.stringify(goals, null, 1)}`),
+      )
+      .catch(() => {});
   throw error;
 } finally {
   await app.close();

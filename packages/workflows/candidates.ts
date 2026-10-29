@@ -99,6 +99,12 @@ export interface CandidateSelection {
   reviewedSourcePaths?: string[];
   /** Native-approved output capture pins the proposed hash before publication. */
   expectedOutputHashes?: Record<string, string>;
+  /**
+   * A Topsl-owned copy, such as an integration or a member's copy. Without a
+   * `.git` of its own, a Git checkout around it (a profile inside a checkout,
+   * or a home folder kept in Git) is not its Git basis.
+   */
+  owned?: boolean;
 }
 // build/ and release/ are deliberately absent: tracked source there is source.
 const protectedPath =
@@ -363,6 +369,14 @@ export async function gitWorkingTreeChanges(
     .filter((entry) => entry.length > 3)
     .map((entry) => entry.slice(3));
 }
+const noGit = {
+  git: false,
+  baseRevision: null,
+  tracked: [],
+  excluded: [],
+  untracked: [],
+  ignored: [],
+};
 async function gitBasis(
   root: string,
   executable: string,
@@ -534,7 +548,10 @@ export async function captureCandidate(
   cancelled(selection.signal);
   const limits = captureLimits(selection),
     root = await rootIdentity(selection.root),
-    git = await gitBasis(root.root, await gitProgram(selection.gitExecutable));
+    git =
+      selection.owned && !(await exists(path.join(root.root, ".git")))
+        ? noGit
+        : await gitBasis(root.root, await gitProgram(selection.gitExecutable));
   const approvedUntracked = [
     ...new Set(
       (selection.approvedUntracked ?? []).map((p) => candidateRelativePath(p)),
@@ -1027,11 +1044,16 @@ export async function assertCandidateCurrent(
   const current = await rootIdentity(snapshot.sourceRoot);
   if (current.identity !== snapshot.workspaceIdentity)
     throw new Error("Candidate workspace identity changed.");
-  const git = await gitBasis(
-    current.root,
-    await gitProgram(gitExecutable),
-    snapshot.formatVersion !== 2,
-  );
+  // A snapshot captured without Git, whose folder still has no .git of its
+  // own, keeps that basis when a checkout appears around it (see `owned`).
+  const git =
+    !snapshot.git && !(await exists(path.join(current.root, ".git")))
+      ? noGit
+      : await gitBasis(
+          current.root,
+          await gitProgram(gitExecutable),
+          snapshot.formatVersion !== 2,
+        );
   if (git.git !== snapshot.git || git.baseRevision !== snapshot.baseRevision)
     throw new Error("Candidate Git basis changed; evidence is stale.");
   if (git.git) {

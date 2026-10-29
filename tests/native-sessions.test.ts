@@ -12,6 +12,7 @@ import {
   decidePeers,
   effectiveIntent,
   parseSessionTurn,
+  sessionIntakePrompt,
 } from "../packages/orchestration/session-contracts";
 import { SessionSupervisor } from "../packages/orchestration/session-engine";
 import type { MemberTurn } from "../packages/orchestration/engine";
@@ -222,6 +223,34 @@ describe("session-v1 decisions", () => {
         "d",
       ).ok,
     ).toBe(false);
+  });
+
+  test("the intake prompt names each team field's values and forbids invented reads", () => {
+    const prompt = sessionIntakePrompt({
+      memberId: "coordinator-1",
+      instructions: "Coordinate.",
+      context: buildSessionContext({
+        messages: [],
+        decisions: [],
+        work: [],
+        checkpoint: null,
+        status: null,
+        team: [],
+      }),
+      message: "Change the value.",
+      mode: "work",
+      target: null,
+      teamMode: "automatic",
+      models: [],
+      inputDigest: "d",
+    });
+    // Live coordinators wrote a description as "purpose" for an existing
+    // role, and a Claude coordinator without file tools invented reads.
+    expect(prompt).toContain(
+      'exactly one of "implementation", "information", "candidate-review", not a description',
+    );
+    expect(prompt).toContain("null for an existing role");
+    expect(prompt).toContain("Never write tool calls or tool results as text.");
   });
 
   test("session context is bounded and keeps references to older history", () => {

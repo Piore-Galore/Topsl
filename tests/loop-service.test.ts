@@ -630,6 +630,20 @@ test("a pinned Claude reviewer reviews the candidate through Topsl's candidate r
       tool: "list",
       outcome: "answered",
     });
+  // Claude coordinator turns read their copy through the same reader, since
+  // Claude Code's read-only turns have no file tools of their own.
+  const purposeOfRun = new Map(
+    f.service.store
+      .list<ExecutionAttempt>("attempt")
+      .map((a) => [
+        a.legacyRunId,
+        f.service.store.get<{ purpose: string }>("member-session", a.id)
+          ?.purpose,
+      ]),
+  );
+  const purposes = new Set(calls.map((c) => purposeOfRun.get(c.runId)));
+  expect(purposes).toContain("candidate-review");
+  expect(purposes).toContain("coordinator-contribution");
 });
 
 test("a stalled Claude coordinator turn is stopped, recorded as failed and retried, and the loop completes", async () => {

@@ -4244,7 +4244,17 @@ export class Orchestrator {
     try {
       await this.driver.sync?.();
       for (const goal of this.repo.all<Goal>(kinds.goal))
-        await this.tickGoal(goal.id);
+        try {
+          await this.tickGoal(goal.id);
+        } catch (error) {
+          // One goal's failure must not stop the others or vanish: the
+          // service's background tick reports nothing, so the goal says why
+          // it cannot advance, and the next tick tries again.
+          const current = this.repo.get<Goal>(kinds.goal, goal.id);
+          const detail = `Topsl could not advance this goal and will retry: ${safeError(error)}`;
+          if (current && current.detail !== detail)
+            this.saveGoal(current, { detail });
+        }
     } finally {
       this.ticking = false;
       // Progress made here, such as a returned review completing its round,
