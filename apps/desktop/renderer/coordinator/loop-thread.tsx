@@ -199,13 +199,17 @@ export function LoopThread({
       <article className="loop-run" aria-label={`Loop run ${r.title}`}>
         <header className="thread-header loop-header">
           {session && (
-            <button
-              type="button"
-              className="back-link"
-              onClick={() => onThread(`session:${session.id}`)}
-            >
-              ← Back to session
-            </button>
+            // The row takes the header's width; the link only its text, so
+            // an overlaid pane never covers the part that responds.
+            <div className="back-row">
+              <button
+                type="button"
+                className="back-link"
+                onClick={() => onThread(`session:${session.id}`)}
+              >
+                ← Back to session
+              </button>
+            </div>
           )}
           <div className="thread-title">
             <h1>{r.title}</h1>

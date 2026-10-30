@@ -297,10 +297,12 @@ describe("the excerpt a session freezes", () => {
 describe("importing through the service", () => {
   const services: Array<{ service: Service; directory: string }> = [];
   afterEach(async () => {
-    for (const s of services.splice(0)) {
-      await s.service.close().catch(() => {});
-      await rm(s.directory, { recursive: true, force: true });
-    }
+    const closing = services.splice(0);
+    // Every service closes before any folder is removed: a reopened service
+    // shares its folder, and Windows refuses to delete an open database.
+    for (const s of closing) await s.service.close().catch(() => {});
+    for (const directory of new Set(closing.map((s) => s.directory)))
+      await rm(directory, { recursive: true, force: true });
   });
   async function setup() {
     const f = await fixture();

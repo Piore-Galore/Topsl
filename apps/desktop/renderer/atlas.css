@@ -1544,15 +1544,15 @@ button.link {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.loop-header .back-link {
+.loop-header .back-row {
   flex-basis: 100%;
-  justify-self: start;
+}
+.loop-header .back-link {
   border: 0;
   background: transparent;
   padding: 0;
   min-height: 0;
   color: var(--accent);
-  text-align: left;
 }
 .session-index {
   list-style: none;

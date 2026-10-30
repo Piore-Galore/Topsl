@@ -1951,9 +1951,13 @@ export class SessionSupervisor {
           dirty = true;
         }
       }
-    const active = queue.find((w) => w.id === session.activeWorkId);
-    const activeWorkId =
-      active && active.state === "running" ? active.id : null;
+    // The running goal stays active; otherwise a started loop is the
+    // session's running work, which Work shows under Now.
+    const active =
+      queue.find(
+        (w) => w.id === session.activeWorkId && w.state === "running",
+      ) ?? queue.find((w) => w.kind === "loop" && w.state === "running");
+    const activeWorkId = active?.id ?? null;
     if (activeWorkId !== session.activeWorkId) dirty = true;
     if (!dirty) return session;
     return this.save(session, { queue, activeWorkId });
