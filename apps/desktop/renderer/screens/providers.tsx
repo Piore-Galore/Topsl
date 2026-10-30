@@ -21,7 +21,21 @@ type Props = {
   setPlan: (plan: LifecyclePlan | null) => void;
 };
 
-export function ApplicationsScreen({
+/** Who keeps an executable up to date, as the owner reads it. */
+const ownerText: Record<Installation["owner"], string> = {
+  homebrew: "Homebrew",
+  npm: "npm",
+  external: "Inside an application bundle; that application updates it",
+  system: "System",
+  unknown: "Unknown",
+};
+
+/**
+ * Providers (docs/UX_Cleanup_Plan.md §2): the Codex and Claude Code CLIs
+ * only, with discovery, version checks, trust, sign-in, qualification,
+ * installation and updates. Desktop applications are not managed.
+ */
+export function ProvidersScreen({
   state,
   act,
   connect,
@@ -32,7 +46,7 @@ export function ApplicationsScreen({
     <>
       <div className="page-heading">
         <div>
-          <h1>Applications</h1>
+          <h1>Providers</h1>
         </div>
         <div className="actions">
           <ActionButton onClick={() => void act({ type: "select-runtime" })}>
@@ -53,15 +67,13 @@ export function ApplicationsScreen({
             <strong>This is a test profile.</strong>
             <span>
               {" "}
-              Topsl doesn't search for applications here, so it lists only the
-              ones the test set up. Your usual profile still finds what's
-              installed.
+              Topsl doesn't search for providers here, so it lists only the ones
+              the test set up. Your usual profile still finds what's installed.
             </span>
           </div>
         </div>
       )}
       <ProviderUsage state={state} />
-      <div className="eyebrow">RUNTIMES AND APPLICATIONS</div>
       <div className="application-grid application-catalog">
         {state.applications.map((app) => {
           const installations = state.installations.filter(
@@ -78,15 +90,13 @@ export function ApplicationsScreen({
                 </div>
                 <div>
                   <h2>{app.name}</h2>
-                  <span className="muted tiny">
-                    {app.kind === "cli" ? "CLI RUNTIME" : "DESKTOP APPLICATION"}
-                  </span>
+                  <span className="muted tiny">CLI</span>
                 </div>
                 <Badge tone={installations.length ? "good" : ""}>
                   {installations.length
                     ? "Installed"
                     : !supported
-                      ? "Native app unavailable"
+                      ? "Unavailable on this system"
                       : state.testProfile
                         ? "Not searched"
                         : "Not found"}
@@ -114,17 +124,10 @@ export function ApplicationsScreen({
                       </div>
                       <dl>
                         <div>
-                          <dt>Owner / channel</dt>
+                          <dt>Updated by</dt>
                           <dd>
-                            {i.owner} / {i.channel}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Native auto-updates</dt>
-                          <dd>
-                            {i.nativeAutoUpdates === "unknown"
-                              ? "Unknown · owner controlled"
-                              : i.nativeAutoUpdates}
+                            {ownerText[i.owner] ?? i.owner}
+                            {i.owner === "homebrew" ? ` · ${i.channel}` : ""}
                           </dd>
                         </div>
                         <div>
@@ -170,32 +173,24 @@ export function ApplicationsScreen({
                               Connect / test
                             </ActionButton>
                           )}
-                        <ActionButton
-                          onClick={() =>
-                            void act({
-                              type: "check-updates",
-                              id: i.id,
-                            })
-                          }
-                        >
-                          Check for updates
-                        </ActionButton>
-                        <ActionButton
-                          onClick={() => preview(i, app.id, "update")}
-                        >
-                          Update…
-                        </ActionButton>
-                        {app.kind === "desktop" && (
-                          <ActionButton
-                            onClick={() =>
-                              void act({
-                                type: "open-application",
-                                id: i.id,
-                              })
-                            }
-                          >
-                            Open
-                          </ActionButton>
+                        {i.owner !== "external" && (
+                          <>
+                            <ActionButton
+                              onClick={() =>
+                                void act({
+                                  type: "check-updates",
+                                  id: i.id,
+                                })
+                              }
+                            >
+                              Check for updates
+                            </ActionButton>
+                            <ActionButton
+                              onClick={() => preview(i, app.id, "update")}
+                            >
+                              Update…
+                            </ActionButton>
+                          </>
                         )}
                       </div>
                       {app.id === "anthropic.claude-code-cli" &&
@@ -261,7 +256,7 @@ export function ApplicationsScreen({
                   })
                 }
               >
-                Official download / native installer ↗
+                Official installation guide ↗
               </ActionButton>
             </article>
           );
@@ -272,9 +267,7 @@ export function ApplicationsScreen({
           <h2>Operations</h2>
         </div>
         {!state.jobs.length ? (
-          <div className="empty-row">
-            No downloads or updates yet. Approved operations will appear here.
-          </div>
+          <div className="empty-row">No downloads or updates yet.</div>
         ) : (
           state.jobs.map((j) => (
             <div key={j.id} className="job">

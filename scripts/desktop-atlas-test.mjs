@@ -43,14 +43,12 @@ try {
       checkboxChecked: false,
     });
   }, folder);
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Atlas 项目", exact: true }),
-  ).toBeVisible();
-  // Adding a project opens its New session page.
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  // Adding a project opens its New session page, the message box first.
   await expect(page.getByRole("region", { name: "New session" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "New session" })).toContainText(
+    "Atlas 项目",
+  );
   selectedProject = (
     await page.evaluate(() =>
       window.topsl.command({ type: "navigation-query" }),
@@ -72,15 +70,12 @@ try {
       theme,
     );
     for (const view of [
-      "Overview",
-      "Provider tools",
       "New session",
-      "Tasks",
-      "Changes",
-      "Context",
-      "History",
-      "Synchronization",
-      "Applications",
+      "All sessions",
+      "Project settings",
+      "Provider tools",
+      "Advanced workflows",
+      "Providers",
       "Settings",
       "Projects",
     ]) {
@@ -244,15 +239,101 @@ try {
     globalThis.atlasFolder = folder;
   }, secondFolder);
   await navigate(page, "Projects");
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  await expect(page.getByRole("region", { name: "New session" })).toContainText(
+    "Second harbor",
+  );
+  // A project opens at its last viewed session.
+  await selectProject(page, "Atlas 项目");
   await expect(
-    page.getByRole("heading", { name: "Second harbor", exact: true }),
+    page.getByRole("heading", {
+      name: "Chart the harbor before the tide turns.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  // Rapid switching lands on the project chosen last, at its own place.
+  const tree = page.getByRole("list", { name: "Projects and sessions" });
+  for (let round = 0; round < 3; round++) {
+    await tree
+      .getByRole("button", { name: "Second harbor", exact: true })
+      .click();
+    await tree.getByRole("button", { name: "Atlas 项目", exact: true }).click();
+  }
+  await tree
+    .getByRole("button", { name: "Second harbor", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "New session" })).toContainText(
+    "Second harbor",
+  );
+  await expect(
+    page.getByRole("region", { name: "Session", exact: true }),
+  ).toHaveCount(0);
+  await selectProject(page, "Atlas 项目");
+  await expect(
+    page.getByRole("heading", {
+      name: "Chart the harbor before the tide turns.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  // The project menu by keyboard: open, move, close with Escape, and choose.
+  const menuButton = page.getByRole("button", {
+    name: "Project menu for Atlas 项目",
+  });
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+  const menu = page.getByRole("menu", { name: "Atlas 项目 menu" });
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "Project settings" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(menuButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    menu.getByRole("menuitem", { name: "Advanced workflows" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Advanced workflows", level: 1 }),
+  ).toBeVisible();
+  await expect(menuButton).toBeFocused();
+  // All sessions reaches every session past 200, by pages and by search.
+  const atlasProject = selectedProject;
+  await page.evaluate(async (projectId) => {
+    for (let i = 0; i < 205; i++)
+      await window.topsl.command({
+        type: "session-create",
+        projectId,
+        kind: "code",
+        mode: "discuss",
+        text: `Survey leg ${String(i).padStart(3, "0")}`,
+        commandId: `atlas-many-${i}`,
+      });
+  }, atlasProject);
+  await navigate(page, "All sessions");
+  const index = page.getByRole("region", { name: "All sessions" });
+  await expect(index).toContainText("206 sessions");
+  for (let shown = 50; shown < 206; shown += 50)
+    await index
+      .getByRole("button", { name: `Show more (${shown} of 206)` })
+      .click();
+  await expect(index.getByRole("listitem")).toHaveCount(206);
+  await index
+    .getByRole("searchbox", { name: "Search sessions" })
+    .or(index.getByRole("textbox", { name: "Search sessions" }))
+    .fill("survey leg 007");
+  await index.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(index).toContainText("1 matching session");
+  await index.getByRole("button", { name: "Survey leg 007" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Survey leg 007", exact: true }),
   ).toBeVisible();
   await selectProject(page, "Atlas 项目");
   await expect(
-    page.getByRole("heading", { name: "Atlas 项目", exact: true }),
+    page.getByRole("heading", { name: "Survey leg 007", exact: true }),
   ).toBeVisible();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 560, height: 720 });
@@ -262,15 +343,12 @@ try {
       theme,
     );
     for (const view of [
-      "Overview",
-      "Provider tools",
       "New session",
-      "Tasks",
-      "Changes",
-      "Context",
-      "History",
-      "Synchronization",
-      "Applications",
+      "All sessions",
+      "Project settings",
+      "Provider tools",
+      "Advanced workflows",
+      "Providers",
       "Settings",
       "Projects",
     ]) {
@@ -292,11 +370,11 @@ try {
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5),
   );
-  await shot("enlarged-overview");
+  await shot("enlarged-advanced-workflows");
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1),
   );
-  await navigate(page, "History");
+  await navigate(page, "Provider tools");
   await expect
     .poll(
       async () =>
@@ -306,7 +384,7 @@ try {
           )
         ).projectView,
     )
-    .toBe("history");
+    .toBe("sessions");
   expect(errors).toEqual([]);
   await writeFile(
     path.join(output, "report.json"),
@@ -329,7 +407,7 @@ const reopened = await launch();
 try {
   const page = await reopened.firstWindow();
   await expect(
-    page.getByRole("heading", { name: "History", exact: true }),
+    page.getByRole("heading", { name: "Provider tools", exact: true }),
   ).toBeVisible({ timeout: 45000 });
   expect(
     (
@@ -343,5 +421,5 @@ try {
   await rm(profile, { recursive: true, force: true });
 }
 console.log(
-  `Atlas desktop passed: all destinations in both themes at standard and compact sizes, rendered palette contrast, draft retention, terminal continuity, native navigation dialog and restart. Evidence: ${output}`,
+  `Atlas desktop passed: all destinations in both themes at standard and compact sizes, rendered palette contrast, draft retention, terminal continuity, per-project resume and rapid project switching, the project menu by keyboard with focus returned, All sessions past 200 sessions by pages and search, native navigation dialog and restart. Evidence: ${output}`,
 );

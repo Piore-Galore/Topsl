@@ -114,12 +114,10 @@ try {
   }, project);
   const confirmations = () => app.evaluate(() => globalThis.topslConfirmations);
   await navigate(page, "Projects");
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "coordinator-project", exact: true }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  await expect(page.getByRole("region", { name: "New session" })).toContainText(
+    "coordinator-project",
+  );
   projectId = (
     await page.evaluate(() => window.topsl.command({ type: "state" }))
   ).projects.find((p) => p.realPath === canonicalProject).id;
@@ -162,7 +160,7 @@ try {
 
   // Usage remaining: both native read paths, with local stand-ins, and an
   // owner-set budget saved and removed on screen.
-  await navigate(page, "Applications");
+  await navigate(page, "Providers");
   const usage = page.getByRole("region", { name: "Usage remaining" });
   const codexUsage = usage.getByRole("article", {
     name: "Codex usage remaining",
@@ -315,24 +313,20 @@ try {
   // New session returns there from a conversation.
   await navigate(page, "New session");
   const home = page.getByRole("region", { name: "New session" });
-  await expect(
-    home.getByRole("heading", { name: "coordinator-project", exact: true }),
-  ).toBeVisible();
-  const defaults = home.locator("details", {
-    has: page.getByText("Project role defaults", { exact: true }),
-  });
-  const editor = home.locator("fieldset.role-editor");
+  await expect(home).toContainText("coordinator-project");
+  // Role defaults new sessions capture are in Project settings.
+  const settings = page.getByRole("region", { name: "Project settings" });
+  const defaults = settings.getByRole("list", { name: "Role defaults" });
+  const editor = settings.locator("fieldset.role-editor");
   const members = (title) =>
     editor.getByRole("list", { name: `${title} members`, exact: true });
-  /** The project's defaults, edited on the New session page. */
+  /** The project's defaults, edited in Project settings. */
   const openDefaults = async (title) => {
-    if (!(await home.count())) await navigate(page, "New session");
-    if ((await defaults.getAttribute("open")) === null)
-      await defaults.locator("summary").click();
+    if (!(await settings.isVisible())) await navigate(page, "Project settings");
     await defaults
       .getByRole("listitem")
       .filter({ hasText: `${title}:` })
-      .getByRole("button", { name: "Edit", exact: true })
+      .getByRole("button", { name: `Edit ${title} default`, exact: true })
       .click();
     await expect(editor.locator("legend")).toHaveText(
       new RegExp(`^${title}: `),
@@ -419,7 +413,21 @@ try {
   ).toBeVisible();
   const goal = section.getByRole("article", { name: `Goal ${goalText}` });
   await expect(goal).toBeVisible();
-  const goalControls = section.getByRole("group", { name: "Goal controls" });
+  // A goal's controls and plan are in the session's Work pane.
+  const workPane = section.getByRole("complementary", { name: "Work details" });
+  const openWork = async () => {
+    await openGoal();
+    const toggle = section
+      .getByRole("group", { name: "Thread panes" })
+      .getByRole("button", { name: /^Work/ });
+    if ((await toggle.getAttribute("aria-pressed")) !== "true")
+      await toggle.click();
+    await expect(workPane).toBeVisible();
+  };
+  await openWork();
+  const goalControls = workPane
+    .getByRole("group", { name: "Goal controls" })
+    .first();
   await goalControls
     .getByRole("button", { name: "Pause", exact: true })
     .click();
@@ -428,13 +436,14 @@ try {
     goalControls.getByRole("button", { name: "Resume" }),
   ).toBeVisible();
   const goalId = (await query()).goals[0].goal.id;
-  const reviewerLine = goal
-    .locator(".team-summary li")
-    .filter({ hasText: "Reviewers:" });
+  // The card summarizes the team on one line, role by role.
+  const teamLine = goal.locator(".team-line");
 
   // Add and pin: three reviewers by name, in the conversation and the editor.
   await send("Change the reviewers. Review with Astra, Sol and Fable.");
-  await expect(reviewerLine).toContainText("Reviewers: Astra + Sol + Fable");
+  await expect(teamLine).toContainText(
+    /Reviewers: Astra \+ Sol \+ Fable(?! \+)/,
+  );
   await openDefaults("Reviewers");
   await editor.getByLabel("Selection").selectOption("exact");
   for (const name of ["Astra", "Sol", "Fable"]) await add(name);
@@ -457,7 +466,7 @@ try {
 
   // Remove: Fable leaves the roster.
   await send("Change the reviewers. Review with Astra and Sol.");
-  await expect(reviewerLine).toContainText("Reviewers: Astra + Sol");
+  await expect(teamLine).toContainText(/Reviewers: Astra \+ Sol(?! \+)/);
   await openDefaults("Reviewers");
   await member("Reviewers", "Fable")
     .getByRole("button", { name: "Remove", exact: true })
@@ -470,7 +479,7 @@ try {
 
   // Return one member to Auto: Sol's slot stays, chosen automatically.
   await send("Change the reviewers. Use two reviewers; include Astra.");
-  await expect(reviewerLine).toContainText("Reviewers: Astra + 1 Auto");
+  await expect(teamLine).toContainText(/Reviewers: Astra \+ 1 Auto(?! \+)/);
   await openDefaults("Reviewers");
   await member("Reviewers", "Sol")
     .getByRole("button", { name: "Return to Auto", exact: true })
@@ -510,11 +519,8 @@ try {
   await send(
     "Change the team. Coordinate with Opus and Astra, review with Fable and Sol.",
   );
-  const coordinatorLine = goal
-    .locator(".team-summary li")
-    .filter({ hasText: "Coordinators:" });
-  await expect(coordinatorLine).toContainText("Coordinators: Opus + Astra");
-  await expect(reviewerLine).toContainText("Reviewers: Fable + Sol");
+  await expect(teamLine).toContainText(/Coordinators: Opus \+ Astra(?! \+)/);
+  await expect(teamLine).toContainText(/Reviewers: Fable \+ Sol(?! \+)/);
   await shot(page, "coordinator-ui01-thread");
   for (const [title, roleId, names] of [
     ["Coordinators", "coordinator", ["Opus", "Astra"]],
@@ -546,15 +552,11 @@ try {
   // The goal runs to "awaiting acceptance" with the conversation's team:
   // round progress and member cards in the Plan pane while it runs, then
   // the review group.
-  await openGoal();
+  await openWork();
   await goalControls
     .getByRole("button", { name: "Resume", exact: true })
     .click();
-  await section
-    .getByRole("group", { name: "Thread panes" })
-    .getByRole("button", { name: "Plan", exact: true })
-    .click();
-  const planPane = section.getByRole("complementary", { name: "Plan details" });
+  const planPane = workPane;
   const coordinatorRound = planPane.getByRole("region", {
     name: "coordinator round",
   });
@@ -829,5 +831,5 @@ try {
   await reopened.close();
 }
 console.log(
-  "Desktop coordinator journey passed: UI-01 role editor and conversation produce the same persisted settings for pin, remove and return to Auto, and the whole role returns to Auto; a goal from the conversation runs to awaiting acceptance with coordinator and reviewer member cards and round progress, and is accepted through Topsl's native dialog; UI-02 a fifth reviewer is added and edited by keyboard in a 560 x 720 window with counts that follow the list; settings survive a restart; Applications shows the stand-in's reported Codex allowance, Claude's as unavailable in Topsl, and an owner-set Codex budget saved and removed. Against a qualified Codex stand-in only.",
+  "Desktop coordinator journey passed: UI-01 role editor and conversation produce the same persisted settings for pin, remove and return to Auto, and the whole role returns to Auto; a goal from the conversation runs to awaiting acceptance with coordinator and reviewer member cards and round progress, and is accepted through Topsl's native dialog; UI-02 a fifth reviewer is added and edited by keyboard in a 560 x 720 window with counts that follow the list; role defaults are edited in Project settings and goal controls in Work; settings survive a restart; Providers shows the stand-in's reported Codex allowance, Claude's as unavailable in Topsl, and an owner-set Codex budget saved and removed. Against a qualified Codex stand-in only.",
 );

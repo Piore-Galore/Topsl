@@ -56,11 +56,11 @@ describe("approval and scheduling invariants", () => {
   );
 });
 describe("command and network boundary", () => {
-  test("a vendor desktop's update eligibility is not inferred from a public installer feed", async () => {
+  test("a CLI inside an application bundle gets no update from a public feed", async () => {
     expect(
-      await resolveRelease("openai.desktop", {
-        owner: "vendor",
-        appId: "openai.desktop",
+      await resolveRelease("openai.codex-cli", {
+        owner: "external",
+        appId: "openai.codex-cli",
         channel: "native",
       } as any),
     ).toBeNull();
@@ -105,10 +105,16 @@ describe("command and network boundary", () => {
     ).toThrow("publisher");
     expect(() =>
       assertArtifactPublisher(
-        "anthropic.claude-desktop",
-        "https://persistent.oaistatic.com/codex-app-prod/app.zip",
+        "anthropic.claude-code-cli",
+        "https://github.com/openai/codex/releases/download/rust-v1/codex.tar.gz",
       ),
     ).toThrow("publisher");
+    // Desktop installer hosts are no longer publishers Topsl downloads from.
+    expect(() =>
+      assertDownloadUrl(
+        "https://persistent.oaistatic.com/codex-app-prod/app.zip",
+      ),
+    ).toThrow();
   });
   test("selects architecture-specific metadata", () => {
     const m = {

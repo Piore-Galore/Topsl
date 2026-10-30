@@ -48,15 +48,15 @@ import { breadcrumb, useThreadIndex } from "./state/threads";
 import { summarizeUsage } from "../../../packages/domain/usage";
 import { SettingsScreen } from "./screens/settings";
 import { HistoryScreen } from "./screens/history";
-import { ApplicationsScreen } from "./screens/applications";
+import { ProvidersScreen } from "./screens/providers";
 import {
   WorkbenchSidebar,
   type GlobalPage,
 } from "./components/workbench-sidebar";
 import { AtlasIcon, Brand, Badge } from "./components/atlas";
 import {
+  projectDestinations,
   projectView as validProjectView,
-  projectViews,
   viewLabel,
   type ProjectView,
 } from "../../../packages/domain/navigation";
@@ -130,7 +130,13 @@ function App() {
   const activeAction = useRef<string | null>(null),
     operationTargets = useRef(new Map<string, string>());
   const inFlight = useRef(new Set<string>());
-  const [projectView, setProjectView] = useState<ProjectView>("overview");
+  const [projectView, setProjectView] = useState<ProjectView>("coordinator");
+  /** The section a destination opens at, such as Advanced workflows' Activity. */
+  const [section, setSection] = useState<string | null>(null);
+  /** An import the New session page attaches, by project (Settings → Imports). */
+  const [attachments, setAttachments] = useState<Record<string, string>>({});
+  /** Fences a project's last-viewed lookup against a later project choice. */
+  const projectTicket = useRef(0);
   const [navigationReady, setNavigationReady] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
@@ -236,6 +242,7 @@ function App() {
         if (state.projects.some((project) => project.id === saved.projectId)) {
           setProjectId(saved.projectId);
           setProjectView(validProjectView(saved.projectView));
+          setSection(saved.section ?? null);
           setThreadId(saved.threadId ?? null);
           setPage("project");
         }
@@ -287,30 +294,58 @@ function App() {
       !state.projects.some((project) => project.id === projectId)
     ) {
       setProjectId("");
-      setProjectView("overview");
+      setProjectView("coordinator");
       setThreadId(null);
       setPage("projects");
     }
   }, [state, navigationReady]);
-  function openProjectView(view: ProjectView) {
+  function openProjectView(view: ProjectView, next: string | null = null) {
     setProjectView(view);
+    setSection(next);
     setPage("project");
     setNavOpen(false);
   }
-  /** Opens a project at its home: a new conversation with its coordinators. */
-  function selectProject(id: string) {
+  /** Switches the selected project, leaving its terminal and chat behind. */
+  function switchProject(id: string) {
+    projectTicket.current++;
+    if (id === projectId) return;
     setProjectId(id);
     setThreadId(null);
     setConversationId("");
     setAttachedSnapshot(null);
     setTerminalId("");
-    openProjectView("coordinator");
   }
-  /** Opens one coordinator thread, or the project's home with none. */
+  /**
+   * Opens a project where the owner left it: its last viewed session, else
+   * its newest one, else New session. A later choice wins over a lookup
+   * still in flight, so rapid switching lands on the last project chosen.
+   */
+  function openProject(id: string) {
+    switchProject(id);
+    const ticket = projectTicket.current;
+    openProjectView("coordinator");
+    void window.topsl
+      .command({ type: "navigation-query", projectId: id })
+      .then((saved) => {
+        if (ticket === projectTicket.current) setThreadId(saved.threadId);
+      })
+      .catch(() => {});
+  }
+  /** Opens one of a project's destinations from its menu. */
+  function selectView(view: ProjectView, id = projectId) {
+    switchProject(id);
+    openProjectView(view);
+  }
+  /** Opens one session or loop, or the project's New session page with none. */
   function openThread(next: string | null, inProject = projectId) {
-    if (inProject !== projectId) selectProject(inProject);
+    switchProject(inProject);
     setThreadId(next);
     openProjectView("coordinator");
+  }
+  /** Settings → Imports: New session in that project with the import attached. */
+  function continueImport(id: string, referenceId: string) {
+    setAttachments((current) => ({ ...current, [id]: referenceId }));
+    openThread(null, id);
   }
   const project = state?.projects.find((p) => p.id === projectId);
   const threadIndex = useThreadIndex(
@@ -389,7 +424,7 @@ function App() {
   async function addProject() {
     const origin = selectedProject.current;
     const result = await act({ type: "project-add" });
-    if (result && selectedProject.current === origin) selectProject(result.id);
+    if (result && selectedProject.current === origin) openProject(result.id);
   }
   async function newConversation() {
     if (!projectId) return;
@@ -506,8 +541,8 @@ function App() {
           open={navOpen}
           close={() => setNavOpen(false)}
           navigate={setPage}
-          selectProject={selectProject}
-          selectView={openProjectView}
+          openProject={openProject}
+          selectView={selectView}
           addProject={addProject}
           palette={() => setPalette(true)}
           threads={threadIndex}
@@ -577,8 +612,8 @@ function App() {
                   {key.split(":")[0].replaceAll("-", " ")}…
                 </p>
               ))}
-            {page === "applications" && (
-              <ApplicationsScreen
+            {page === "providers" && (
+              <ProvidersScreen
                 state={state}
                 act={act}
                 connect={connect}
@@ -592,11 +627,9 @@ function App() {
                 busy={false}
                 act={act}
                 addProject={addProject}
-                selectProject={selectProject}
+                selectProject={openProject}
                 openTerminal={(id, terminal) => {
-                  setProjectId(id);
-                  setConversationId("");
-                  setAttachedSnapshot(null);
+                  switchProject(id);
                   setTerminalId(terminal);
                   openProjectView("sessions");
                 }}
@@ -605,13 +638,21 @@ function App() {
             <div hidden={page !== "project"}>
               <Coordination
                 key={projectId}
-                projectId={projectId}
-                projectName={project?.name}
-                projectPath={project?.path}
+                project={project}
                 view={projectView}
+                section={section}
                 onView={openProjectView}
                 threadId={threadId}
                 onThread={(next) => openThread(next)}
+                attachment={attachments[projectId] ?? null}
+                onAttachment={(referenceId) =>
+                  setAttachments((current) => {
+                    const next = { ...current };
+                    if (referenceId) next[projectId] = referenceId;
+                    else delete next[projectId];
+                    return next;
+                  })
+                }
                 sessionsContent={
                   <>
                     {project &&
@@ -622,30 +663,10 @@ function App() {
                           {project.availability === "missing" ||
                           project.availability === "changed"
                             ? "Relink this folder in Projects before starting a session."
-                            : "Trust this discovered folder in Projects before starting a session."}
+                            : "Trust this folder in Projects before starting a session."}
                         </span>
                       )}
-                    {!project ? (
-                      <div className="onboarding">
-                        <span className="empty-compass">
-                          <AtlasIcon name="overview" />
-                        </span>
-                        <h2>Start with a project.</h2>
-                        <p>
-                          Choose a folder, review your runtime, then open a
-                          native session. Your history and handoffs stay in the
-                          local vault.
-                        </p>
-                        <div className="onboarding-steps">
-                          <span>01 · Connect a tool</span>
-                          <span>02 · Trust a folder</span>
-                          <span>03 · Start a session</span>
-                        </div>
-                        <ActionButton onClick={() => setPage("applications")}>
-                          Manage applications
-                        </ActionButton>
-                      </div>
-                    ) : (
+                    {!project ? null : (
                       <>
                         <div className="runtime-bar">
                           <label>
@@ -1041,17 +1062,15 @@ function App() {
                 projectId={projectId}
                 project={project}
                 setConfigPlan={setConfigPlan}
-                setDetail={setDetail}
+                continueImport={continueImport}
               />
             )}
           </main>
-          <footer className="statusbar">
-            <span>
-              {Object.values(pending).some(Boolean)
-                ? "Operations pending"
-                : "Ready"}
-            </span>
-          </footer>
+          {Object.values(pending).some(Boolean) && (
+            <footer className="statusbar">
+              <span role="status">Operations pending</span>
+            </footer>
+          )}
         </div>
         {plan && (
           <Modal title={`Review ${plan.action}`} close={() => setPlan(null)}>
@@ -1189,7 +1208,7 @@ function App() {
         {palette && (
           <Modal title="Command palette" close={() => setPalette(false)}>
             <div className="palette">
-              {(["projects", "applications", "settings"] as GlobalPage[]).map(
+              {(["projects", "providers", "settings"] as GlobalPage[]).map(
                 (target) => (
                   <ActionButton
                     key={target}
@@ -1202,12 +1221,12 @@ function App() {
                   </ActionButton>
                 ),
               )}
-              {projectViews.map((view) => (
+              {projectDestinations.map((view) => (
                 <ActionButton
                   key={view}
                   disabled={!projectId}
                   onClick={() => {
-                    // The coordinator opens as the project's home.
+                    // Sessions open at the project's New session page.
                     if (view === "coordinator") openThread(null);
                     else openProjectView(view);
                     setPalette(false);
@@ -1222,7 +1241,7 @@ function App() {
                   void addProject();
                 }}
               >
-                Add trusted project →
+                Add project →
               </ActionButton>
               <ActionButton
                 disabled={state.testProfile}
@@ -1231,7 +1250,7 @@ function App() {
                   void act({ type: "discover" });
                 }}
               >
-                Discover applications →
+                Discover providers →
               </ActionButton>
             </div>
           </Modal>

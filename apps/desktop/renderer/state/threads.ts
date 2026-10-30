@@ -94,7 +94,6 @@ export function breadcrumb(input: {
   viewLabel: string;
   threadTitle?: string | null;
 }): string {
-  if (input.page === "applications") return "Topsl / Applications";
   if (input.page !== "project")
     return `Topsl / ${input.page.replace(/^./, (c) => c.toUpperCase())}`;
   const project = input.projectName ?? "Project";

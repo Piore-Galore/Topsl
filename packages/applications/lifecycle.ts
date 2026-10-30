@@ -28,6 +28,21 @@ import {
   runFile,
 } from "../platform/system";
 import { casks, homebrew } from "./discovery";
+
+/**
+ * Refuses a plan for an application Topsl no longer manages: a desktop
+ * application from before docs/UX_Cleanup_Plan.md §2, or one whose target
+ * was its parent application.
+ */
+function assertManaged(plan: LifecyclePlan): void {
+  if (
+    !catalog.some((app) => app.id === plan.appId) ||
+    "nativeApplicationPath" in plan
+  )
+    throw new Error(
+      "Topsl no longer manages desktop applications. This operation was retired and nothing was run.",
+    );
+}
 import { officialFetch, resolveRelease } from "./releases";
 
 export interface LifecycleDependencies {
@@ -183,22 +198,12 @@ export class Lifecycle {
       throw new Error("Installation does not match the selected application.");
     if (action === "update" && !installation)
       throw new Error("Choose the installation to update.");
-    if (installation?.owner === "desktop") {
-      const parent = this.deps
-        .installations()
-        .find(
-          (i) =>
-            i.managementUnitId === installation!.managementUnitId &&
-            i.appId.endsWith("desktop"),
-        );
-      if (!parent)
-        throw new Error(
-          "This runtime updates with its desktop application. Discover or open the parent application.",
-        );
-      installation = parent;
-      appId = parent.appId;
-      installationId = parent.id;
-    }
+    // A CLI inside an application bundle is that application's to update;
+    // Topsl manages no desktop application (docs/UX_Cleanup_Plan.md §2).
+    if (installation?.owner === "external")
+      throw new Error(
+        "This runtime lives inside an application bundle, which updates it. Update that application yourself; Topsl keeps using this executable.",
+      );
     const release = await (this.deps.release ?? resolveRelease)(
       appId,
       action === "download" ? undefined : installation,
@@ -254,10 +259,6 @@ export class Lifecycle {
         route === "native"
           ? catalog.find((a) => a.id === appId)!.website
           : null,
-      nativeApplicationPath:
-        route === "native" && action === "update" && appId.endsWith("desktop")
-          ? installation!.path
-          : null,
       effects: [
         release
           ? `Target ${release.version}; ${release.source}.`
@@ -269,11 +270,7 @@ export class Lifecycle {
           ? "Save verified artifact only. Nothing is executed."
           : route === "package-manager"
             ? "Run this one package update. Homebrew may request native elevation and install required dependencies. Automatic metadata refresh is disabled."
-            : action === "install" && release && appId.endsWith("desktop")
-              ? "Download and checksum-verify the official archive, then open it in the native installer. Complete placement, publisher verification, and any elevation there, then reconcile."
-              : action === "update" && appId.endsWith("desktop")
-                ? "Open the installed application's own update controls. Its existing owner determines the eligible version and channel; complete the native flow, then reconcile."
-                : "Open the official installation flow. Complete installation and elevation in the native UI, then reconcile.",
+            : "Open the official installation flow. Complete installation and elevation in the native UI, then reconcile.",
         action === "download"
           ? "Cancelled or interrupted downloads restart from byte zero."
           : "Wait for affected sessions to close. Existing processes are never force-closed. Restart the native application to use the new version.",
@@ -291,6 +288,7 @@ export class Lifecycle {
     const plan = this.store.get<LifecyclePlan>("plan", id);
     if (!plan || plan.digest !== reviewedDigest)
       throw new Error("Reviewed plan is missing or changed.");
+    assertManaged(plan);
     if (
       this.store.get("consumed-approval", id) ||
       this.store.list<LifecycleJob>("job").some((j) => j.planId === id)
@@ -357,6 +355,7 @@ export class Lifecycle {
     this.busy.add(plan.managementUnitId);
     let mutationStarted = false;
     try {
+      assertManaged(plan);
       const installation = plan.installationId
         ? this.installation(plan.installationId)
         : undefined;
@@ -447,24 +446,7 @@ export class Lifecycle {
         );
         await this.reconcile(job.id, true);
       } else {
-        let target = plan.nativeApplicationPath ?? plan.nativeUrl!;
-        if (
-          plan.action === "install" &&
-          plan.release &&
-          plan.appId.endsWith("desktop")
-        ) {
-          const controller = new AbortController();
-          this.controllers.set(job.id, controller);
-          target = await this.download(job, plan.release, controller.signal);
-          job.acquiredPath = target;
-          if (process.platform === "darwin")
-            await runFile("/usr/bin/xattr", [
-              "-w",
-              "com.apple.quarantine",
-              `0083;${Math.floor(Date.now() / 1000).toString(16)};Topsl;${uid()}`,
-              target,
-            ]);
-        }
+        const target = plan.nativeUrl!;
         this.change(job, {
           state: "awaiting-native",
           detail:

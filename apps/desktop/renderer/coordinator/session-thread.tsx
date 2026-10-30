@@ -11,18 +11,11 @@ import { Freshness } from "../components/freshness";
 import { useDraft } from "../state/drafts";
 import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
 import { answering, planTasks, threadTimeline } from "../state/thread-view";
-import { Composer, PaneToggles, SidePane, TaskList } from "./composer";
-import {
-  ChangesPane,
-  ChecksPane,
-  GoalCard,
-  PlanPane,
-  ReviewPane,
-  TeamPane,
-  openFindings,
-  type GoalPane,
-} from "./goal-card";
-import { Contributions, SessionTeamPane, WorkPane } from "./session-panes";
+import { Composer, PaneToggles, SidePane } from "./composer";
+import { GoalCard, TeamPane, openFindings, type GoalPane } from "./goal-card";
+import { Contributions, SessionTeamPane } from "./session-panes";
+import { ResultsPane, WorkPane, type ResultsTab } from "./work-pane";
+import { ReferenceCard } from "./project-home";
 import {
   Errors,
   endedGoal,
@@ -34,7 +27,8 @@ import {
 } from "./shared";
 
 const author = { user: "You", service: "Topsl", coordinator: "Coordinators" };
-type Pane = GoalPane | "work";
+/** The session's three detail destinations (docs/UX_Cleanup_Plan.md §1). */
+type Pane = "work" | "team" | "results";
 
 export const composerModeHints: Record<ComposerMode, string> = {
   auto: "The coordinators decide whether this is discussion, a status question, steering or new work, and ask when it is unclear.",
@@ -77,19 +71,26 @@ export function ComposerModes({
 /**
  * One native Topsl session (docs/Native_Sessions_Plan.md): one transcript,
  * the coordinators' shared responses with their attributed contributions,
- * each goal's card, the session's work queue and team, and a composer whose
- * messages the coordinators interpret. Goals keep their own controls.
+ * each goal's card with what waits on the owner, and a composer whose
+ * messages the coordinators interpret. Details open in three panes: Work
+ * (what runs now, its plan, the queue, history and Create loop), Team (the
+ * session's team and goal-only overrides) and Results (review, checks and
+ * changes). Links from the transcript open the pane at the goal they name.
  */
 export function SessionThread({
   projectId,
   sessionId,
+  onThread,
 }: {
   projectId: string;
   sessionId: string;
+  onThread: (threadId: string | null) => void;
 }) {
   const [snapshot, setSnapshot] = useState<any>(null);
   const [query, setQuery] = useState<any>(null);
+  const [loopsEnabled, setLoopsEnabled] = useState(false);
   const [pane, setPane] = useState<Pane | null>(null);
+  const [resultsTab, setResultsTab] = useState<ResultsTab>("review");
   const [focus, setFocus] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [mode, setMode] = useState<ComposerMode | null>(null);
@@ -99,17 +100,19 @@ export function SessionThread({
   const reads = useRef(new ScopedReadFence(projectId));
   async function refresh() {
     const ticket = reads.current.begin();
-    const [value, sessionValue] = await Promise.all([
+    const [value, sessionValue, loops] = await Promise.all([
       window.topsl.command({
         type: "orchestration-query",
         projectId,
         conversationId: sessionId,
       }),
       window.topsl.command({ type: "session-query", sessionId }),
+      window.topsl.command({ type: "loop-query", projectId }),
     ]);
     if (!reads.current.accept(ticket, value)) return;
     setSnapshot(value);
     setQuery(sessionValue);
+    setLoopsEnabled(!!loops?.enabled);
   }
   const freshness = useScopedRefresh(projectId, refresh);
   const { run, errors } = useCommandRunner(refresh, sessionId);
@@ -138,9 +141,14 @@ export function SessionThread({
         : (conversation?.title ?? "Session");
   const composerMode = mode ?? session?.configuration.composerMode ?? "auto";
   const aimed = current && target === "current" ? current : null;
-  const openPane = (next: Pane | null, goalId?: string) => {
+  /** Opens a pane at a goal: plan in Work, findings, checks or changes in Results. */
+  const openPane = (next: GoalPane | Pane | null, goalId?: string) => {
     if (goalId) setFocus(goalId);
-    setPane(next);
+    if (next === "plan") setPane("work");
+    else if (next === "review" || next === "checks" || next === "changes") {
+      setResultsTab(next);
+      setPane("results");
+    } else setPane(next);
   };
   async function send() {
     const text = draft.trim();
@@ -169,7 +177,6 @@ export function SessionThread({
   const byIntake = new Map(intakes.map((i) => [i.id, i]));
   const pending = answering(intakes);
   const panes: Array<{ id: Pane; title: string; count?: number }> = [
-    { id: "team", title: "Team" },
     {
       id: "work",
       title: "Work",
@@ -177,16 +184,15 @@ export function SessionThread({
         ["queued", "waiting-configuration"].includes(w.state),
       ).length,
     },
-    ...(focused
-      ? ([
-          { id: "plan", title: "Plan" },
-          { id: "review", title: "Review", count: openFindings(focused) },
-          { id: "checks", title: "Checks" },
-          { id: "changes", title: "Changes" },
-        ] as const)
-      : []),
+    { id: "team", title: "Team" },
+    {
+      id: "results",
+      title: "Results",
+      count: focused ? openFindings(focused) : 0,
+    },
   ];
   const paneTitle = panes.find((p) => p.id === pane)?.title ?? "";
+  const tasks = current ? planTasks(current) : [];
   const state = session
     ? session.control === "paused"
       ? "paused"
@@ -229,9 +235,9 @@ export function SessionThread({
           )}
           {session && (
             <PaneToggles
-              panes={panes as any}
-              open={pane as any}
-              onOpen={(next) => openPane(next as Pane)}
+              panes={panes}
+              open={pane}
+              onOpen={(next) => openPane(next)}
             />
           )}
         </div>
@@ -251,6 +257,19 @@ export function SessionThread({
       )}
       <div className="thread-layout">
         <div className="thread-main">
+          {session?.reference && (
+            <ReferenceCard
+              title={session.reference.fileName}
+              provider={session.reference.provider}
+              formatLabel={session.reference.formatLabel}
+              included={
+                session.reference.messageCount
+                  ? `newest ${session.reference.includedMessages} of ${session.reference.messageCount} messages`
+                  : "text excerpt"
+              }
+              omissions={session.reference.omissions}
+            />
+          )}
           <ol className="transcript" aria-label="Conversation">
             {conversation &&
               threadTimeline(conversation.messages, goals, about).map(
@@ -260,14 +279,8 @@ export function SessionThread({
                       <li key={item.key} className="turn-card">
                         <GoalCard
                           view={item.goal}
-                          projectId={projectId}
                           run={run}
-                          controls
                           onPane={(next, goalId) => openPane(next, goalId)}
-                          onChangeRole={(goalId, roleId) => {
-                            setEditing(roleId);
-                            openPane("team", goalId);
-                          }}
                         />
                       </li>
                     );
@@ -326,11 +339,21 @@ export function SessionThread({
             ))}
           </ol>
           <div className="thread-footer">
-            {current && (
-              <TaskList
-                revision={current.plan?.revision ?? null}
-                tasks={planTasks(current)}
-              />
+            {tasks.length > 0 && (
+              <p className="plan-line">
+                Plan: {tasks.filter((t) => t.state === "completed").length} of{" "}
+                {tasks.length} tasks done
+                {tasks.some((t) => t.state === "blocked")
+                  ? ` · ${tasks.filter((t) => t.state === "blocked").length} blocked`
+                  : ""}{" "}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => openPane("plan", current?.goal.id)}
+                >
+                  Work
+                </button>
+              </p>
             )}
             <Composer
               value={draft}
@@ -389,15 +412,31 @@ export function SessionThread({
         </div>
         {pane && snapshot && query && (
           <SidePane title={paneTitle} onClose={() => setPane(null)}>
+            {pane === "work" && session && (
+              <WorkPane
+                session={session}
+                goals={goals}
+                focused={focused ?? null}
+                onFocus={setFocus}
+                run={run}
+                projectId={projectId}
+                loopsEnabled={loopsEnabled}
+                onThread={(next) => onThread(next)}
+              />
+            )}
             {pane === "team" && (
               <>
                 <SessionTeamPane query={query} snapshot={snapshot} run={run} />
                 {focused && (
-                  <details>
+                  <details open={!!editing}>
                     <summary>
-                      This goal's team:{" "}
+                      Overrides for one goal only:{" "}
                       {threadTitle(focused.goal.objective, 40)}
                     </summary>
+                    <p className="muted">
+                      These change this goal's roles and nothing else; the
+                      session's team above applies to new work.
+                    </p>
                     <TeamPane
                       view={focused}
                       snapshot={snapshot}
@@ -410,22 +449,16 @@ export function SessionThread({
                 )}
               </>
             )}
-            {pane === "work" && session && (
-              <WorkPane session={session} goals={goals} run={run} />
+            {pane === "results" && (
+              <ResultsPane
+                goals={goals}
+                focused={focused ?? null}
+                onFocus={setFocus}
+                tab={resultsTab}
+                onTab={setResultsTab}
+                run={run}
+              />
             )}
-            {focused &&
-              goals.length > 1 &&
-              !["team", "work"].includes(pane) && (
-                <p className="muted">Goal: {focused.goal.objective}</p>
-              )}
-            {pane === "plan" && focused && <PlanPane view={focused} />}
-            {pane === "review" && focused && (
-              <ReviewPane view={focused} run={run} />
-            )}
-            {pane === "checks" && focused && (
-              <ChecksPane view={focused} run={run} />
-            )}
-            {pane === "changes" && focused && <ChangesPane view={focused} />}
           </SidePane>
         )}
       </div>

@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import { Freshness } from "../components/freshness";
 import { useDraft } from "../state/drafts";
 import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
-import { loopTimeline } from "../state/thread-view";
+import { loopTimeline, queuePositions } from "../state/thread-view";
+import type { TopslSession } from "../../../../packages/domain/sessions";
 import { Composer, PaneToggles, SidePane } from "./composer";
 import {
   BacklogPane,
@@ -87,11 +88,15 @@ function RunControls({ r, run }: { r: any; run: any }) {
 export function LoopThread({
   projectId,
   runId,
+  onThread,
 }: {
   projectId: string;
   runId: string;
+  onThread: (threadId: string | null) => void;
 }) {
   const [view, setView] = useState<any>(null);
+  /** The native session this loop belongs to, if any. */
+  const [session, setSession] = useState<TopslSession | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [messages, setMessages] = useState<any[]>([]);
   const [missing, setMissing] = useState(false);
@@ -112,14 +117,23 @@ export function LoopThread({
       type: "loop-inspect",
       runId,
     });
-    const thread: any = await window.topsl.command({
-      type: "orchestration-query",
-      projectId,
-      conversationId: inspected.run.conversationId,
-    });
+    const [thread, owner]: any[] = await Promise.all([
+      window.topsl.command({
+        type: "orchestration-query",
+        projectId,
+        conversationId: inspected.run.conversationId,
+      }),
+      window.topsl
+        .command({
+          type: "session-query",
+          sessionId: inspected.run.conversationId,
+        })
+        .catch(() => null),
+    ]);
     if (!reads.current.accept(ticket, inspected)) return;
     setEnabled(query.enabled);
     setView(inspected);
+    setSession(owner?.session?.origin === "native" ? owner.session : null);
     setMessages(
       (thread.conversations?.[0]?.messages ?? []).filter(
         (m: any) => m.routing?.kind === "loop-steer",
@@ -175,6 +189,8 @@ export function LoopThread({
     if (sent) setDraft("");
   }
   const current = view.current;
+  const item = session?.queue.find((w) => w.runId === r.id);
+  const position = session ? queuePositions(session.queue)[item?.id ?? ""] : 0;
   return (
     <section
       aria-label="Recursive loop"
@@ -182,6 +198,15 @@ export function LoopThread({
     >
       <article className="loop-run" aria-label={`Loop run ${r.title}`}>
         <header className="thread-header loop-header">
+          {session && (
+            <button
+              type="button"
+              className="back-link"
+              onClick={() => onThread(`session:${session.id}`)}
+            >
+              ← Back to session
+            </button>
+          )}
           <div className="thread-title">
             <h1>{r.title}</h1>
             <span className="badge">
@@ -267,10 +292,20 @@ export function LoopThread({
               {!r.started && !ended && (
                 <li className="turn-card">
                   <section className="decision" aria-label="Start the run">
-                    <h3>Needs you: review and start</h3>
+                    <h3>
+                      {session
+                        ? `Awaiting start · ${position ? `position ${position} in the session's queue` : "not in the session's queue"}`
+                        : "Needs you: review and start"}
+                    </h3>
                     <p>
                       Creating did not start any work. Review and start shows
                       what the run will do and records that authority once.
+                      {session && position > 1
+                        ? " It can start once the work before it in the session finishes or is removed."
+                        : ""}
+                      {session && session.control === "paused"
+                        ? " The session is paused; resume it first."
+                        : ""}
                     </p>
                   </section>
                 </li>
