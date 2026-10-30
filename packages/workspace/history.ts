@@ -3,14 +3,9 @@ import type {
   ContextSnapshot,
   ContextSnapshotOmissions,
   Conversation,
-  Project,
   Provider,
 } from "../domain/types";
 import { hash, now, uid } from "../domain/invariants";
-import {
-  HistoryReconciler,
-  discoverExplicitHistoryIdentity,
-} from "../history/reconcile";
 
 /** What a handoff snapshot includes at most. */
 export const handoffLimits = {
@@ -123,28 +118,4 @@ export function previewHandoff(
   };
   store.immutable("snapshot", snapshot);
   return snapshot;
-}
-/** Explicit finite-file import uses the durable, source-bound reconciler. */
-export async function importHistory(
-  store: Store,
-  project: Project,
-  provider: Provider,
-  file: string,
-): Promise<{ conversationId: string; imported: number }> {
-  const sessionId = await discoverExplicitHistoryIdentity(provider, file);
-  // The compatibility helper accepts an explicitly supplied project; ordinary service
-  // calls already have this record. No other folder/profile is discovered or granted.
-  if (!store.get("project", project.id)) store.put("project", project);
-  const reconciler = new HistoryReconciler(store);
-  const source = await reconciler.approve({
-    project,
-    provider,
-    profileId: "explicit-import",
-    sessionId,
-    file,
-  });
-  const result = await reconciler.reconcile(source.id, {
-    completeTrailing: true,
-  });
-  return { conversationId: result.conversationId, imported: result.imported };
 }

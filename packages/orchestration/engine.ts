@@ -87,6 +87,8 @@ import { reviewSchema } from "../workflows/builder-reviewer";
 import type { TurnProtocol } from "../domain/recursive-loops";
 import type { TopslSession } from "../domain/sessions";
 import { sessionActiveRoles, withSessionLayers } from "./session-layers";
+import { sessionReference } from "../workspace/imports";
+import { referencePromptBlock } from "../domain/history-imports";
 
 /** One member turn the engine asks a driver to run. */
 export interface MemberTurn {
@@ -1022,6 +1024,8 @@ export class Orchestrator {
     message?: boolean;
     /** A native session's work item (docs/Native_Sessions_Plan.md). */
     session?: Goal["session"];
+    /** The session's frozen import, carried by every round as reference. */
+    reference?: Goal["reference"];
   }) {
     const conversation = this.repo.require<CoordinatorConversation>(
       kinds.conversation,
@@ -1068,6 +1072,7 @@ export class Orchestrator {
           constraints: input.constraints ?? [],
           grant: { ...goal.grant, ...input.grant },
           ...(input.session ? { session: input.session } : {}),
+          ...(input.reference ? { reference: input.reference } : {}),
         };
         this.store.put(kinds.goal, next);
         if (input.message !== false)
@@ -1637,6 +1642,7 @@ export class Orchestrator {
       topologyRevisionId: goal.loop?.topologyRevisionId ?? null,
       dependencyBundleId: input.dependency?.bundleId ?? null,
       dependencyDigest: input.dependency?.digest ?? null,
+      ...(goal.reference ? { referenceDigest: goal.reference.digest } : {}),
     };
     const members: RoundMember[] = usable.map((a) => ({
       memberId: a.memberId,
@@ -1803,7 +1809,26 @@ export class Orchestrator {
     return this.repo.role(round.projectId, round.roleId).purpose;
   }
 
+  /**
+   * A member's prompt. Planning, work and review rounds of a goal whose
+   * session started with an import also carry that frozen reference,
+   * labelled apart from the owner's request (docs/UX_Cleanup_Plan.md §3).
+   */
   private prompt(
+    goal: Goal,
+    round: RoleRound,
+    member: RoundMember,
+    role: RoleDefinition,
+  ): string {
+    const body = this.promptBody(goal, round, member, role);
+    const reference =
+      member.phase === "endorsement"
+        ? null
+        : sessionReference(this.store, goal.reference?.id);
+    return reference ? `${body}\n\n${referencePromptBlock(reference)}` : body;
+  }
+
+  private promptBody(
     goal: Goal,
     round: RoleRound,
     member: RoundMember,

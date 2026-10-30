@@ -64,12 +64,7 @@ const paths: Record<string, ReactNode> = {
       <path d="M4 8a9 9 0 1 1-1 7M4 3v5h5M12 7v5l3 2" />
     </>
   ),
-  synchronization: (
-    <>
-      <path d="M4 8h15l-4-4m5 12H5l4 4M4 8v4m16 4v-4" />
-    </>
-  ),
-  applications: (
+  providers: (
     <>
       <rect x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -91,6 +86,20 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+    </>
+  ),
+};
+/** Destinations drawn with another destination's figure. */
+const aliases: Record<string, string> = {
+  "all-sessions": "history",
+  "project-settings": "settings",
+  advanced: "tasks",
+  imports: "history",
 };
 
 export function AtlasIcon({
@@ -111,23 +120,8 @@ export function AtlasIcon({
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      {paths[name] ?? paths.overview}
+      {paths[aliases[name] ?? name] ?? paths.overview}
     </svg>
-  );
-}
-
-export function Panel({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="atlas-panel">
-      <h2>{title}</h2>
-      {children}
-    </section>
   );
 }
 

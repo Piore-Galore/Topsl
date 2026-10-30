@@ -456,6 +456,11 @@ export function parseEnvelope(
 // evidence and recent lessons, never the run's whole transcript.
 
 export interface LoopPromptContext {
+  /**
+   * The native session's frozen import, by identity, so the round's input
+   * digest covers it; the launch appends its text (docs/UX_Cleanup_Plan.md §3).
+   */
+  reference?: { id: string; digest: string } | null;
   mode: LoopMode;
   stage: LoopDecisionStage;
   memberId: string;

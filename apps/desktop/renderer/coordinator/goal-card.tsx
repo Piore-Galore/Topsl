@@ -72,25 +72,19 @@ export function GoalControls({
 }
 
 /**
- * One goal as the coordinators' turn in the thread: its state, team, the
- * coordinators' answer, and only the decisions that wait on the owner.
- * Rounds, plan, findings, checks and changes open in the thread's panes.
+ * One goal as the coordinators' turn in the thread: its state, a one-line
+ * team summary, the coordinators' answer, and only the decisions that wait
+ * on the owner (docs/UX_Cleanup_Plan.md §1). Its controls, plan, team and
+ * results live in the session's Work, Team and Results panes.
  */
 export function GoalCard({
   view,
-  projectId,
   run,
-  controls,
   onPane,
-  onChangeRole,
 }: {
   view: any;
-  projectId: string;
   run: Run;
-  /** Shown on goals other than the thread's latest, whose controls are in the header. */
-  controls: boolean;
   onPane: (pane: GoalPane, goalId: string) => void;
-  onChangeRole: (goalId: string, roleId: string) => void;
 }) {
   const g = view.goal;
   const [checkPlans, setCheckPlans] = useState<any[]>([]);
@@ -111,19 +105,25 @@ export function GoalCard({
         </strong>
         <span className="muted">{g.detail}</span>
       </header>
-      <ul className="team-summary">
-        {shownRoles(view).map((x: any) => (
-          <li key={x.roleId}>
-            <strong>{x.title}:</strong> {teamLine(x.group, x.assignments)}{" "}
-            {x.group.conflicts.length > 0 && (
-              <span role="status">({x.group.conflicts.join(" ")})</span>
-            )}
-            <button type="button" onClick={() => onChangeRole(g.id, x.roleId)}>
-              Change
-            </button>
-          </li>
+      <p className="team-line">
+        {shownRoles(view)
+          .map((x: any) => `${x.title}: ${teamLine(x.group, x.assignments)}`)
+          .join(" · ")}{" "}
+        <button
+          type="button"
+          className="link"
+          onClick={() => onPane("team", g.id)}
+        >
+          Team
+        </button>
+      </p>
+      {shownRoles(view)
+        .filter((x: any) => x.group.conflicts.length > 0)
+        .map((x: any) => (
+          <p key={x.roleId} role="status">
+            {x.title}: {x.group.conflicts.join(" ")}
+          </p>
         ))}
-      </ul>
       {current && (
         <p className="round-progress">
           {label(current.roleId)} · {label(current.kind)}
@@ -133,12 +133,11 @@ export function GoalCard({
             className="link"
             onClick={() => onPane("plan", g.id)}
           >
-            Round details
+            Work
           </button>
         </p>
       )}
       {g.synthesis && <div className="synthesis">{g.synthesis}</div>}
-      {controls && <GoalControls view={view} projectId={projectId} run={run} />}
 
       {awaiting.map((r: any) => (
         <section key={r.id} className="decision" aria-label="Choose a proposal">
@@ -412,10 +411,6 @@ export function TeamPane({
     editing && view.groups.find((x: any) => x.roleId === editing)?.group;
   return (
     <div className="pane-section">
-      <p className="muted">
-        Changes here apply to this goal only. The session's team is above;
-        project defaults for new sessions are on the project's New session page.
-      </p>
       <ul className="team-summary">
         {view.groups.map((x: any) => (
           <li key={x.roleId}>

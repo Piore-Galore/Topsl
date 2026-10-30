@@ -61,23 +61,24 @@ for (const [builder, reviewer] of teams) {
 const claudeConfig = path.join(profile, "claude-config");
 await mkdir(path.join(claudeConfig, "projects"), { recursive: true });
 desktopEnvironment.CLAUDE_CONFIG_DIR = claudeConfig;
+// Native metadata a profile from before the cleanup would have read. Topsl no
+// longer discovers projects (docs/UX_Cleanup_Plan.md §2), so these files must
+// neither add a project nor change.
 const nativeHome = path.join(profile, "native-home");
 const nativeCodex = path.join(nativeHome, ".codex");
 await mkdir(nativeCodex, { recursive: true });
-const discoveredProject = path.join(profile, "discovered-project");
-await mkdir(discoveredProject);
-const canonicalDiscovered = await realpath(discoveredProject);
+const secondProject = path.join(profile, "second-project");
+await mkdir(secondProject);
+const canonicalSecond = await realpath(secondProject);
 const nativeProjects = path.join(nativeCodex, ".codex-global-state.json");
-await writeFile(
-  nativeProjects,
-  JSON.stringify({
-    "electron-saved-workspace-roots": [canonicalProject, canonicalDiscovered],
-  }),
-);
+const nativeProjectsText = JSON.stringify({
+  "electron-saved-workspace-roots": [canonicalProject, canonicalSecond],
+});
+await writeFile(nativeProjects, nativeProjectsText);
 const nativeClaudeText = JSON.stringify({
   projects: {
     [canonicalProject]: { hasTrustDialogAccepted: true },
-    [canonicalDiscovered]: { hasTrustDialogAccepted: true },
+    [canonicalSecond]: { hasTrustDialogAccepted: true },
   },
 });
 await writeFile(path.join(nativeHome, ".claude.json"), nativeClaudeText);
@@ -130,9 +131,14 @@ try {
   const page = await app.firstWindow();
   await throttleRenderer(page);
   page.on("pageerror", (e) => errors.push(e.message));
-  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible({ timeout: 45000 });
-  await navigate(page, "Applications");
-  await expect(page.locator(".application-catalog .application-card")).toHaveCount(4);
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible({ timeout: 45000 });
+  await navigate(page, "Providers");
+  // Only the two provider CLIs are catalogued; desktop applications are not.
+  await expect(
+    page.locator(".application-catalog .application-card"),
+  ).toHaveCount(2);
   // A test profile never searches for applications, and says so. An
   // application without a native build for this platform keeps its own label.
   await expect(page.getByText("This is a test profile.")).toBeVisible();
@@ -151,7 +157,7 @@ try {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
   await mkdir("test-results", { recursive: true });
   await page.screenshot({
-    path: "test-results/applications.png",
+    path: "test-results/providers.png",
     fullPage: true,
   });
   const boundary = await page.evaluate(async () => {
@@ -177,12 +183,12 @@ try {
     });
   }, project);
   await navigate(page, "Projects");
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  // A new project opens at New session, since it has no session yet.
   await expect(
-    page.getByRole("heading", { name: "fixture-project", exact: true }),
+    page.getByRole("heading", { name: "New session", exact: true }),
   ).toBeVisible();
+  await expect(page.locator(".project-home")).toContainText("fixture-project");
   await navigate(page, "Provider tools");
   await page.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect(page.locator(".conversation-heading")).toContainText("Chat 1");
@@ -191,166 +197,97 @@ try {
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".project-card")).toHaveCount(1);
-  await page
-    .getByRole("button", { name: "Enable project discovery…", exact: true })
-    .click();
+  // Projects are a local catalog: Add folder, Rename and Move.
+  await app.evaluate(({ dialog }, selected) => {
+    dialog.showOpenDialog = async () => ({
+      canceled: false,
+      filePaths: [selected],
+    });
+  }, secondProject);
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  await navigate(page, "Projects");
   await expect(page.locator(".project-card")).toHaveCount(2);
-  const discoveredCard = page.getByRole("article", {
-    name: "discovered-project",
+  const secondCard = page.getByRole("article", {
+    name: "second-project",
     exact: true,
   });
-  await expect(discoveredCard).toContainText("Needs trust");
-  await expect(discoveredCard).toContainText("Codex desktop saved folders");
-  await expect(discoveredCard).toContainText("Claude shared project metadata");
-  await discoveredCard
-    .getByRole("button", { name: "Trust folder…", exact: true })
+  await expect(secondCard).toContainText("Trusted folder");
+  await secondCard.getByRole("button", { name: "Rename", exact: true }).click();
+  await secondCard
+    .getByRole("textbox", { name: "New name for second-project" })
+    .fill("Second project 二");
+  await secondCard
+    .getByRole("button", { name: "Save name", exact: true })
     .click();
-  await expect(discoveredCard).toContainText("Trusted folder");
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: "test-results/projects.png", fullPage: true });
+  await expect(
+    page.getByRole("heading", { name: "Second project 二", exact: true }),
+  ).toBeVisible();
+  // The newest project is first; moving it down puts fixture-project first.
+  await expect(page.locator(".project-card").first()).toContainText(
+    "Second project 二",
+  );
   await page
-    .getByRole("button", { name: "Pause discovery", exact: true })
+    .getByRole("button", { name: "Move Second project 二 down", exact: true })
     .click();
-  const externalProject = path.join(profile, "external-project");
-  await mkdir(externalProject);
-  await writeFile(
-    nativeProjects,
-    JSON.stringify({
-      "electron-saved-workspace-roots": [
-        canonicalProject,
-        canonicalDiscovered,
-        await realpath(externalProject),
-      ],
-    }),
+  await expect(page.locator(".project-card").first()).toContainText(
+    "fixture-project",
   );
   await expect(
-    page.getByRole("button", { name: "Refresh projects", exact: true }),
-  ).toBeDisabled();
-  await page
-    .getByRole("button", { name: "Enable project discovery…", exact: true })
-    .click();
-  await expect(page.locator(".project-card")).toHaveCount(3);
+    page
+      .getByRole("list", { name: "Projects and sessions" })
+      .getByRole("button")
+      .filter({ hasText: /fixture-project|Second project/ })
+      .first(),
+  ).toContainText("fixture-project");
+  // The native metadata was neither imported nor changed.
   expect(await readFile(path.join(nativeHome, ".claude.json"), "utf8")).toBe(
     nativeClaudeText,
   );
-  await page
-    .getByRole("textbox", { name: "Filter projects", exact: true })
-    .fill("discovered-project");
-  await expect(page.locator(".project-card")).toHaveCount(1);
-  await page
-    .getByRole("textbox", { name: "Filter projects", exact: true })
-    .fill("");
-  if (process.platform !== "win32") {
-    // Native shell wrapper is a test fixture only; shipped code never generates executables.
-    const fixtureExecutable = path.join(profile, "codex-project-fixture");
-    const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-    await writeFile(
-      fixtureExecutable,
-      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve("tests/fixtures/projects.cjs"))} "$@"\n`,
-    );
-    await chmod(fixtureExecutable, 0o700);
-    await app.evaluate(({ dialog }, selected) => {
-      dialog.showOpenDialog = async () => ({
-        canceled: false,
-        filePaths: [selected],
-      });
-    }, fixtureExecutable);
-    const installation = await page.evaluate(() =>
-      window.topsl.command({ type: "select-runtime" }),
-    );
-    await expect
-      .poll(
-        async () =>
-          (await page.evaluate(() => window.topsl.command({ type: "state" })))
-            .installations.length,
-      )
-      .toBe(1);
-    await page.evaluate(
-      (id) => window.topsl.command({ type: "trust-installation", id }),
-      installation.id,
-    );
-    const registry = page.getByRole("region", {
-      name: "Codex project synchronization",
-    });
-    await registry
-      .getByRole("combobox", { name: "Codex sync runtime" })
-      .selectOption(installation.id);
-    await registry.getByRole("button", { name: "Enable Codex sync…" }).click();
-    await expect(registry).toContainText("Registry synced");
-    await registry
-      .locator("summary")
-      .filter({ hasText: "registered projects" })
-      .click();
-    await expect(registry.locator(".native-project-row")).toHaveCount(2);
-    const nativeRow = registry
-      .locator(".native-project-row")
-      .filter({ hasText: "discovered-project" });
-    await nativeRow
-      .getByRole("button", { name: "Rename", exact: true })
-      .click();
-    await nativeRow
-      .getByRole("textbox", { name: "Rename discovered-project", exact: true })
-      .fill("Renamed shared project");
-    await nativeRow
-      .getByRole("button", { name: "Save name", exact: true })
-      .click();
-    await expect(
-      registry
-        .locator(".native-project-row")
-        .filter({ hasText: "Renamed shared project" }),
-    ).toBeVisible();
-    await registry
-      .getByRole("button", {
-        name: "Move Renamed shared project up",
-        exact: true,
-      })
-      .click();
-    await expect(registry.locator(".native-project-row").first()).toContainText(
-      "Renamed shared project",
-    );
-    await registry
-      .getByRole("button", { name: "Pause Codex sync", exact: true })
-      .click();
-    await expect(registry).toContainText("Paused");
-    await registry.getByRole("button", { name: "Enable Codex sync…" }).click();
-    await expect(registry).toContainText("Registry synced");
-    await expect(registry.locator(".native-project-row")).toHaveCount(2);
-    await page.screenshot({
-      path: "test-results/codex-projects.png",
-      fullPage: true,
-    });
-    await registry
-      .locator("summary")
-      .filter({ hasText: "registered projects" })
-      .click();
-    const requests = (
-      await readFile(
-        path.join(nativeCodex, "topsl-project-requests.jsonl"),
-        "utf8",
-      )
-    )
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(
-      requests.every(
-        (r) => r.method === "initialize" || r.method.startsWith("project/"),
-      ),
-    ).toBe(true);
-  }
+  expect(await readFile(nativeProjects, "utf8")).toBe(nativeProjectsText);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "test-results/projects.png", fullPage: true });
+  // Settings → Imports: preview, import, search and continue in a session.
   await app.evaluate(({ dialog }, selected) => {
     dialog.showOpenDialog = async () => ({
       canceled: false,
       filePaths: [selected],
     });
   }, transcript);
-  await navigate(page, "History");
-  await page
-    .getByRole("button", { name: "Import Codex JSONL", exact: true })
+  await navigate(page, "Settings");
+  const imports = page.getByRole("region", { name: "Imports", exact: true });
+  await imports
+    .getByRole("combobox", { name: "Project", exact: true })
+    .selectOption({ label: "fixture-project" });
+  await imports.getByRole("button", { name: "Choose file…" }).click();
+  const importPreview = imports.getByRole("article", {
+    name: "Import preview",
+  });
+  await expect(importPreview).toContainText("Codex session (JSON Lines)");
+  await expect(importPreview).toContainText("2 messages");
+  await expect(importPreview).toContainText("desktop-fixture-session");
+  await importPreview
+    .getByRole("button", { name: "Import", exact: true })
     .click();
+  await expect(imports).toContainText("Imported fixture.jsonl.");
+  await imports.getByRole("textbox", { name: "Search imports" }).fill("quartz");
+  await imports.getByRole("button", { name: "Search", exact: true }).click();
+  const importList = imports.getByRole("list", { name: "Imported histories" });
+  await expect(importList.getByRole("listitem")).toHaveCount(1);
+  await page.screenshot({ path: "test-results/imports.png", fullPage: true });
+  await importList
+    .getByRole("listitem")
+    .first()
+    .getByRole("button", { name: "Continue in Topsl" })
+    .click();
+  const attached = page.getByRole("region", { name: "Attached reference" });
+  await expect(attached).toContainText("Reference: fixture.jsonl");
+  await expect(attached).toContainText("newest 2 of 2 messages");
   await expect(
-    page.getByRole("button", { name: /Imported codex/ }),
-  ).toBeVisible();
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toHaveValue("");
+  await attached.getByRole("button", { name: "Remove reference" }).click();
+  await expect(attached).toHaveCount(0);
+  await navigate(page, "Provider tools");
   await page
     .getByRole("textbox", { name: "Search project history" })
     .fill("quartz");
@@ -383,13 +320,13 @@ try {
   const stateBeforeBench = await page.evaluate(() =>
     window.topsl.command({ type: "state" }),
   );
-  const projectIds = [canonicalProject, canonicalDiscovered].map(
+  const projectIds = [canonicalProject, canonicalSecond].map(
     (root) =>
       stateBeforeBench.projects.find((project) => project.realPath === root).id,
   );
   const streamFixtures = [];
   for (let stream = 0; stream < 4; stream++) {
-    const root = stream % 2 ? canonicalDiscovered : canonicalProject;
+    const root = stream % 2 ? canonicalSecond : canonicalProject;
     const file = path.join(profile, `history-benchmark-${stream}.jsonl`);
     const records = [
       {
@@ -420,21 +357,30 @@ try {
         filePaths: [selected],
       });
     }, file);
+    const importBegin = Date.now();
     const imported = await page.evaluate(
-      ({ projectId }) =>
-        window.topsl.command({
-          type: "history-import",
+      async ({ projectId }) => {
+        const preview = await window.topsl.command({
+          type: "history-import-preview",
           projectId,
           provider: "codex",
-        }),
+        });
+        return window.topsl.command({
+          type: "history-import-commit",
+          projectId,
+          previewId: preview.id,
+          contentHash: preview.contentHash,
+        });
+      },
       { projectId: projectIds[stream % 2] },
     );
-    expect(imported.imported).toBe(25000);
+    expect(imported.reference.messageCount).toBe(25000);
     streamFixtures.push({
       file,
       projectId: projectIds[stream % 2],
-      conversationId: imported.conversationId,
+      conversationId: imported.reference.conversationId,
       stream,
+      importMs: Date.now() - importBegin,
     });
   }
   await navigate(page, "Provider tools");
@@ -466,101 +412,6 @@ try {
         return performance.now() - begin;
       }, projectIds[0]),
     );
-  const streamLatency = [];
-  for (const fixture of streamFixtures)
-    await appendFile(
-      fixture.file,
-      JSON.stringify({
-        type: "response_item",
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [
-            {
-              type: "output_text",
-              text: `Late stream ${fixture.stream} · isolated scoped update`,
-            },
-          ],
-        },
-      }) + "\n",
-    );
-  const reconciledAt = await page.evaluate(
-    async ({ projectIds, selected }) => {
-      const sources = (
-        await Promise.all(
-          projectIds.map((projectId) =>
-            window.topsl.command({ type: "synchronization-query", projectId }),
-          ),
-        )
-      )
-        .flatMap((value) => value.historySources)
-        .filter((source) => source.selectedFile.includes("history-benchmark-"));
-      await Promise.all(
-        sources.map((source) =>
-          window.topsl.command({
-            type: "native-history-reconcile",
-            requestId: crypto.randomUUID(),
-            projectId: source.projectId,
-            id: source.id,
-            expectedRevision: source.revision,
-          }),
-        ),
-      );
-      return performance.now();
-    },
-    { projectIds, selected: streamFixtures[0].conversationId },
-  );
-  await expect(page.locator(".virtual-transcript")).toContainText(
-    "Late stream 0",
-  );
-  expect(await page.locator(".virtual-transcript").textContent()).not.toContain(
-    "Late stream 1",
-  );
-  streamLatency.push(
-    await page.evaluate((begin) => performance.now() - begin, reconciledAt),
-  );
-  const selectedCommandToRender = [];
-  for (let sample = 0; sample < 5; sample++) {
-    const fixture = streamFixtures[0],
-      text = `Selected fixture update ${sample}`;
-    await appendFile(
-      fixture.file,
-      JSON.stringify({
-        type: "response_item",
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text }],
-        },
-      }) + "\n",
-    );
-    const source = await page.evaluate(
-      async (projectId) =>
-        (
-          await window.topsl.command({
-            type: "synchronization-query",
-            projectId,
-          })
-        ).historySources.find((source) =>
-          source.selectedFile.endsWith("history-benchmark-0.jsonl"),
-        ),
-      fixture.projectId,
-    );
-    const begin = Date.now();
-    await page.evaluate(
-      (source) =>
-        window.topsl.command({
-          type: "native-history-reconcile",
-          requestId: crypto.randomUUID(),
-          projectId: source.projectId,
-          id: source.id,
-          expectedRevision: source.revision,
-        }),
-      source,
-    );
-    await expect(page.locator(".virtual-transcript")).toContainText(text);
-    selectedCommandToRender.push(Date.now() - begin);
-  }
   const coordination = await page.evaluate(
     (projectId) =>
       window.topsl.command({ type: "coordination-query", projectId }),
@@ -622,20 +473,20 @@ try {
   // than a developer's, so set the width this section checks.
   await page.setViewportSize({ width: 1280, height: 900 });
   await navigate(page, "Tasks");
-  const projectNav = page.getByRole("navigation", {
-    name: "Project navigation",
-  });
+  // Older workflows and their tasks are under Advanced workflows.
+  const sections = page.getByRole("tablist", { name: "Section" });
   const interactions = [];
   for (let sample = 0; sample < 20; sample++) {
-    const name = sample % 2 ? "Overview" : "Tasks";
+    const name = sample % 2 ? "Activity" : "Builder–reviewer";
     const begin = Date.now();
-    await projectNav.getByRole("button", { name, exact: true }).click();
-    await expect(
-      page.getByRole("heading", { name: name === "Overview" ? "fixture-project" : name, exact: true }).first(),
-    ).toBeVisible();
+    await sections.getByRole("tab", { name }).click();
+    await expect(sections.getByRole("tab", { name })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     interactions.push(Date.now() - begin);
   }
-  await projectNav.getByRole("button", { name: "Tasks", exact: true }).click();
+  await sections.getByRole("tab", { name: "Activity" }).click();
   await page.getByRole("button", { name: /Inspect Unicode 项目/ }).click();
   await page
     .getByRole("button", { name: /Alternate task for late inspector response/ })
@@ -836,7 +687,7 @@ try {
   );
   await page.getByRole("button", { name: "Navigation", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Applications", exact: true }),
+    page.getByRole("button", { name: "Providers", exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
   const p95 = (values) =>
@@ -857,7 +708,7 @@ try {
     workload: {
       messages: 100000,
       projects: 2,
-      nativeSources: 4,
+      importedFiles: 4,
       sourceBytes: await Promise.all(
         streamFixtures.map(
           async (fixture) => (await readFile(fixture.file)).length,
@@ -871,25 +722,18 @@ try {
       electronProcessesBefore: benchmarkMemoryBefore,
       historyIpcQueryP95Ms: p95(historyQueries),
       ordinaryUiInteractionP95Ms: p95(interactions),
-      selectedStreamCommitResponseToRenderedTextMs: streamLatency[0],
-      selectedReconciliationCommandStartToRenderedTextP95Ms: p95(
-        selectedCommandToRender,
-      ),
-      selectedReconciliationSamplesMs: selectedCommandToRender,
+      importPreviewAndCommitMs: streamFixtures.map((f) => f.importMs),
       electronProcesses: await app.evaluate(({ app }) =>
-        app
-          .getAppMetrics()
-          .map((metric) => ({
-            type: metric.type,
-            cpu: metric.cpu.percentCPUUsage,
-            memory: metric.memory,
-          })),
+        app.getAppMetrics().map((metric) => ({
+          type: metric.type,
+          cpu: metric.cpu.percentCPUUsage,
+          memory: metric.memory,
+        })),
       ),
     },
     limits: [
-      "Native JSONL source fixtures; no model turn or paid route.",
-      "Stream latency measures after four concurrent reconciliation command responses; service commit time and provider latency are excluded.",
-      "Selected command-start to paint samples include IPC, full-source reparse and durable reconciliation; they are conservative upper bounds, not direct commit-to-paint samples.",
+      "Exported JSONL fixtures imported as one-off snapshots; no model turn or paid route.",
+      "Import time spans the preview read and the commit of the previewed text, including search indexing.",
       "Interaction timing includes Playwright locator/visibility overhead; this is a measurement, not a release SLA.",
     ],
   };
@@ -950,7 +794,7 @@ try {
     path: "test-results/projects-compact.png",
     fullPage: true,
   });
-  await navigate(page, "Applications");
+  await navigate(page, "Providers");
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,
   );
@@ -2264,7 +2108,7 @@ try {
   }
   expect(errors).toEqual([]);
   console.log(
-    "Desktop passed: protected vault, catalog, typed IPC, shared project discovery/deduplication/trust/pause/refresh, Codex registry create/rename/order/pause/resume (macOS/Linux), history import/search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode, the Claude Code transcript read turned on only through Topsl's confirmation, and all four teams (Codex and Codex, Claude and Codex, Codex and Claude, Claude and Claude) set up, run and accepted through the screens against stand-ins, with Claude Code steps opened in Topsl's terminal and handed back by paste and from a fixture transcript (macOS/Linux).",
+    "Desktop passed: protected vault, the two-CLI Providers catalog, typed IPC, the local project catalog with add/rename/move and untouched native metadata, Settings → Imports preview/import/search and Continue in Topsl with a removable reference, 100,000 imported messages, provider history search, handoff, configuration approval, themes, compact layout, command palette, Codex-only team qualified against a stand-in (macOS/Linux), Codex chat presets with No asking unavailable before a qualification, and approval cards for a denied command and an allowed file change, against a stand-in (macOS/Linux), a native terminal in Plan that is remembered and one in Bypass only after Topsl's confirmation against a stand-in, auto-accept turned on only through Topsl's confirmation, with the terminal menu starting in its mode, the Claude Code transcript read turned on only through Topsl's confirmation, and all four teams (Codex and Codex, Claude and Codex, Codex and Claude, Claude and Claude) set up, run and accepted through the screens against stand-ins, with Claude Code steps opened in Topsl's terminal and handed back by paste and from a fixture transcript (macOS/Linux).",
   );
   console.log(`Isolated test profile: ${profile}`);
 } catch (error) {
@@ -2289,18 +2133,25 @@ try {
   const state = await page.evaluate(() =>
     window.topsl.command({ type: "state" }),
   );
-  expect(state.projects).toHaveLength(3);
+  expect(state.projects).toHaveLength(2);
   // Paper, picked last in Settings, is kept rather than replaced by System.
   expect(state.theme).toBe("paper");
-  expect(state.projectSync.enabled).toBe(true);
+  // The local catalog keeps its names and order across the restart.
+  expect(state.projects.map((project) => project.name)).toEqual([
+    "fixture-project",
+    "Second project 二",
+  ]);
+  expect(state).not.toHaveProperty("projectSync");
+  expect(state.projects.every((project) => project.trusted)).toBe(true);
   expect(
-    state.projects.find((project) => project.realPath === canonicalDiscovered)
-      .trusted,
-  ).toBe(true);
-  expect(
-    state.projects.find((project) => project.name === "external-project")
-      .trusted,
-  ).toBe(false);
+    (
+      await page.evaluate(
+        (projectId) =>
+          window.topsl.command({ type: "history-imports", projectId }),
+        state.projects[0].id,
+      )
+    ).total,
+  ).toBe(3);
   expect(state.messages.length).toBeLessThanOrEqual(200);
   const persisted = await page.evaluate(
     async (projectId) =>
@@ -2320,14 +2171,9 @@ try {
   expect(navigation.projectId).toBe(
     state.projects.find((project) => project.realPath === canonicalProject).id,
   );
-  expect(navigation.projectView).toBe("tasks");
+  // Tasks now open as Advanced workflows.
+  expect(navigation.projectView).toBe("advanced");
   if (process.platform !== "win32") {
-    expect(state.codexProjectSync.enabled).toBe(true);
-    expect(state.codexProjectSync.status).toBe("ready");
-    expect(state.codexProjectSync.projects.map((p) => p.name)).toEqual([
-      "Renamed shared project",
-      "fixture-project",
-    ]);
     // The project still remembers Plan, its last ordinary terminal mode.
     expect(state.terminalModes).toEqual([
       expect.objectContaining({ claude: "plan" }),

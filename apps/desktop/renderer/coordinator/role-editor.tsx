@@ -399,8 +399,8 @@ export function RoleEditor({
       {!options.length ? (
         <p className="muted">
           No model catalog is loaded for these runtimes. Inspect a Codex runtime
-          or qualify Claude Code under Applications to list its models, or pin
-          the model ID you type above.
+          or qualify Claude Code under Providers to list its models, or pin the
+          model ID you type above.
         </p>
       ) : (
         !filtered.length && (

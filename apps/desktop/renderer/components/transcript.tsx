@@ -116,7 +116,7 @@ export function Transcript({
     visible = items.slice(start, start + 12 + OVERSCAN * 2);
   return (
     <section className="transcript" aria-label="Conversation transcript">
-      <Freshness state={freshness} retry={freshness.retry} quiet />
+      <Freshness state={freshness} retry={freshness.retry} />
       {error && <p role="alert">{error}</p>}
       {cursor && (
         <button disabled={pending} onClick={() => void load(true)}>

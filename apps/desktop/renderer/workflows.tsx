@@ -159,9 +159,7 @@ export function Workflows({
       className="workflow-section"
     >
       <h2>{view === "changes" ? "Candidate review" : "Build and review"}</h2>
-      {projectId && (
-        <Freshness state={freshness} retry={freshness.retry} quiet />
-      )}
+      {projectId && <Freshness state={freshness} retry={freshness.retry} />}
       <p className="muted">
         One request, a fresh review of captured files, up to two repair rounds,
         required checks and explicit acceptance. Independent filesystem

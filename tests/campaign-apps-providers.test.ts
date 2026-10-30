@@ -250,7 +250,7 @@ describe("APP-04 artifact selection and publisher allowlist", () => {
     });
     stubMetadata(cask("https://downloads.claude.ai/releases/darwin/arm64/Claude.dmg"));
     expect(
-      await resolveRelease("anthropic.claude-desktop", undefined, "darwin", "arm64"),
+      await resolveRelease("anthropic.claude-code-cli", undefined, "darwin", "arm64"),
     ).toMatchObject({ version: "1.4.0", sha256: sha, artifactName: "Claude.dmg" });
     for (const [url, arch, message] of [
       ["https://downloads.claude.ai/releases/darwin/x64/Claude.dmg", "arm64", "architecture"],
@@ -266,13 +266,13 @@ describe("APP-04 artifact selection and publisher allowlist", () => {
           : cask(url),
       );
       await expect(
-        resolveRelease("anthropic.claude-desktop", undefined, "darwin", arch),
+        resolveRelease("anthropic.claude-code-cli", undefined, "darwin", arch),
         `${url} on ${arch}`,
       ).rejects.toThrow(message);
     }
     stubMetadata(cask("https://downloads.claude.ai/releases/darwin/arm64/Claude.dmg", { sha256: "not-a-hash" }));
     expect(
-      await resolveRelease("anthropic.claude-desktop", undefined, "darwin", "arm64"),
+      await resolveRelease("anthropic.claude-code-cli", undefined, "darwin", "arm64"),
     ).toBeNull();
     // Claude Code on Linux uses only the advertised Linux variant for the host.
     stubMetadata(
@@ -349,8 +349,8 @@ describe("APP-04 artifact selection and publisher allowlist", () => {
       expect(() => assertDownloadUrl(url), url).toThrow("allowlist");
     expect(() =>
       assertArtifactPublisher(
-        "openai.desktop",
-        "https://persistent.oaistatic.com/elsewhere/ChatGPT.dmg",
+        "openai.codex-cli",
+        "https://downloads.claude.ai/claude-code-releases/2.1.0/darwin-arm64/claude",
       ),
     ).toThrow("does not match");
   });

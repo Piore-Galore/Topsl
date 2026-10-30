@@ -71,27 +71,25 @@ async function outcome(
   return f.store.get<LifecycleJob>("job", id)!;
 }
 describe("application lifecycle", () => {
-  test("native desktop updates open the existing application and cannot claim an unchanged version was updated", async () => {
+  test("a desktop plan from before the retirement is refused before anything runs", async () => {
     const f = await setup({ release: async () => null });
-    const i = {
-      ...f.installation,
-      appId: "openai.desktop" as const,
-      owner: "vendor" as const,
-      channel: "native",
+    const retired = {
+      ...plan({
+        appId: "openai.desktop" as any,
+        installationId: f.installation.id,
+        expectedRevision: f.installation.revisionId,
+        action: "update",
+        route: "native",
+      }),
+      nativeApplicationPath: "/Applications/Codex.app",
     };
-    f.setInstallations([i]);
-    const p = await f.lifecycle.preview(i.appId, i.id, "update");
-    expect(p.nativeApplicationPath).toBe(i.path);
-    expect(p.release).toBeNull();
-    const j = await f.lifecycle.approve(p.id, p.digest);
-    await outcome(f, j.id);
-    expect(f.deps.nativeOpen).toHaveBeenCalledWith(i.path);
-    f.deps.processes = vi.fn(async () => [42]);
-    expect((await f.lifecycle.reconcile(j.id)).state).toBe("uncertain");
-    f.setInstallations([
-      { ...i, version: "2.0.0", revisionId: "new-revision" },
-    ]);
-    expect((await f.lifecycle.reconcile(j.id)).actualVersion).toBe("2.0.0");
+    retired.digest = planDigest(retired);
+    f.store.immutable("plan", retired);
+    await expect(
+      f.lifecycle.approve(retired.id, retired.digest),
+    ).rejects.toThrow("no longer manages desktop applications");
+    expect(f.store.list("job")).toEqual([]);
+    expect(f.deps.nativeOpen).not.toHaveBeenCalled();
   });
   test("a closed native flow can confirm unchanged without claiming an update or retaining its lock", async () => {
     const f = await setup({ release: async () => null });
@@ -336,23 +334,13 @@ describe("application lifecycle", () => {
     ]);
     expect((await f.lifecycle.reconcile(job.id)).state).toBe("uncertain");
   });
-  test("bundled Codex resolves to its parent desktop update owner", async () => {
+  test("a CLI inside an application bundle stays usable but is not updated by Topsl", async () => {
     const f = await setup();
-    const parent = {
-      ...f.installation,
-      id: "desktop",
-      appId: "openai.desktop" as const,
-      owner: "vendor" as const,
-    };
-    f.setInstallations([{ ...f.installation, owner: "desktop" }, parent]);
-    const p = await f.lifecycle.preview(
-      "openai.codex-cli",
-      f.installation.id,
-      "update",
-    );
-    expect(p.appId).toBe("openai.desktop");
-    expect(p.installationId).toBe("desktop");
-    expect(p.route).toBe("native");
+    f.setInstallations([{ ...f.installation, owner: "external" }]);
+    await expect(
+      f.lifecycle.preview("openai.codex-cli", f.installation.id, "update"),
+    ).rejects.toThrow("application bundle");
+    expect(f.store.list("plan")).toEqual([]);
   });
   test("an older metadata release cannot cause a downgrade", async () => {
     const f = await setup({

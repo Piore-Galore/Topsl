@@ -903,7 +903,7 @@ export class RuntimeManager {
       throw new Error("Runtime dispatch is stopped for shutdown.");
     if (!installation.trusted)
       throw new Error(
-        "Review and trust this executable in Applications first.",
+        "Review and trust this executable in Providers first.",
       );
     if ((await identity(installation.path)).identity !== installation.identity)
       throw new Error(
