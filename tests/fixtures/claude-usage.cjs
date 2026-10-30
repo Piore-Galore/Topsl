@@ -43,7 +43,12 @@ if (knob("silent")) {
   process.stdout.write(
     "\x1b]0;Claude\x07Settings  Status   Config   Usage   Stats\r\nLoading usage data…\r\nEsc to cancel",
   );
-  setTimeout(() => process.stdout.write("\x1b[2K\x1b[1A\x1b[GCurrent ses"), 20);
+  // Ink-style repaint: erase both earlier lines, then write the new frame in
+  // two parts, which a Windows pseudoconsole repaints separately.
+  setTimeout(
+    () => process.stdout.write("\x1b[2K\x1b[1A\x1b[2K\x1b[GCurrent ses"),
+    20,
+  );
   setTimeout(
     () =>
       process.stdout.write(

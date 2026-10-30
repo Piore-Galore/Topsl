@@ -546,6 +546,18 @@ Coordinator work now starts in a native Topsl session ([plan and record](../Nati
 | The workflow journey in `desktop-test.mjs` read a Claude step's terminal rows where they were | It scrolls the terminal into view before reading the rows | The review step's read timed out with empty rows on macOS CI four times: Intel at `e470c3e`, `ecf8434` and `main`'s `8ef954c`, and Apple silicon at `378dd08`. xterm 6.0.0 stops rendering a terminal outside the viewport, which would leave the rows empty. This cause is inferred from xterm's code and the symptom; it was not reproduced locally, where the journey passes either way. With the scroll, both Mac runners passed at `35aeb5f` and `b2bb8da` |
 | — | Still skipped on Windows: tests that launch a `#!/bin/sh` stand-in under the runtime manager ("POSIX shell stand-in"), the temporary-folder alias list, and the workflow-team part of `desktop-test.mjs` | Their stand-ins are shell wrappers; making them portable is separate work |
 
+## Claude usage read on Windows — 29 October 2026
+
+The reader now parses the screen a terminal shows, not the raw stream ([status](../Implementation_Status.md#claude-usage-reading--19-october-2026), follow-up of 29 October).
+
+| Changed | Tests now | Why |
+| --- | --- | --- |
+| The coordinator journey logged the Claude usage card on Windows instead of asserting it | It asserts the read on every platform: "Reported · current", both percentages, the Fable window, the reset label, and no account identifier | The Windows failure was the stream parser under ConPTY, now fixed. Windows CI at `486c37e` passed these assertions and the usage journey |
+| `desktop-usage-test.mjs` exited on Windows ("its executable fixture is a shell wrapper") and was not in `npm run test:desktop`'s default list | It gets its stand-in from `standIn` (the compiled launcher on Windows) and runs by default, so CI runs it on all four platforms | The launcher passes the stand-in's output through a pseudoconsole: in a Windows-only probe, Node directly, the launcher, and the launcher without `STARTF_USESTDHANDLES` delivered identical output |
+| [claude-usage.cjs](../../tests/fixtures/claude-usage.cjs) repainted by erasing one of its two earlier lines | It erases both, as Ink does, and still writes the heading in two parts | A terminal showed "Current sessionata…", a residue of "Loading usage data…". The stream parser never saw it; a screen reader does |
+| — | *reads a Windows pseudoconsole repaint that moves the cursor into the middle of a heading* uses the shape ConPTY sent in the probe; *reads what the terminal shows…* covers overwrites, erases, wrapping, scrolling, line insertion and an incomplete sequence | Unit coverage of `terminalScreen` on every platform; the Claude usage integration tests still launch a `#!/bin/sh` stand-in and skip on Windows |
+| *shutdown cancels a native usage read…* polled for the stand-in's start with Vitest's 1-second default | It waits up to 10 seconds | Its account read and terminal start take 960–1015 ms on this Mac (8 runs, with and without this change), and it failed 3 of 4 runs here while a stray test process loaded the host. The [orchestration defect repairs](#orchestration-defect-repairs--20-october-2026) had recorded the same flake and left it unfixed |
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.
