@@ -121,6 +121,8 @@ test("Work → Create loop queues drafts that start only in order, in a running 
   await f.start(a);
   expect(f.run(a)).toMatchObject({ started: true, desiredState: "running" });
   expect(f.item(a).state).toBe("running");
+  // The started loop is the session's running work, shown under Now in Work.
+  expect(f.session().activeWorkId).toBe(f.item(a).id);
   await expect(f.start(b)).rejects.toThrow("already running a goal or loop");
   // Session controls reach the running loop.
   await f.control("pause");

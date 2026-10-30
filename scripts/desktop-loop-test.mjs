@@ -209,10 +209,16 @@ async function openRun(title) {
   if (!(await runArticle(title).isVisible())) {
     await openThread(page, "loop-project", sessionOf.get(title));
     const pane = await work();
+    // A running loop is under Now, other work in lists. After a restart the
+    // window can still be restoring the run's page when this looks; on Linux
+    // CI (pull request 42, with bb98fa5) Work then had no entry for it,
+    // because a started loop was missing from Work.
     await pane
-      .getByRole("listitem")
+      .getByRole("region", { name: "Running now", exact: true })
+      .or(pane.getByRole("listitem"))
       .filter({ hasText: title })
       .getByRole("button", { name: /Open loop|Review and start/ })
+      .first()
       .click();
   }
   await expect(runArticle(title)).toBeVisible();
@@ -394,6 +400,12 @@ try {
   app = await launch();
   page = await app.firstWindow();
   await throttleRenderer(page);
+  // The reopened window has the app's default size, which a CI runner's
+  // screen can narrow: on macOS Apple silicon at bb98fa5 it was below 1200
+  // px, where a run's pane overlays the page and covered the middle of the
+  // full-width Back to session button. A narrow window, set here, checks
+  // that layout on every runner.
+  await page.setViewportSize({ width: 1024, height: 768 });
   page.on("pageerror", (e) => errors.push(e.message));
   // The window reopens where it was; wait for the service, not a screen.
   await expect(page.locator(".app-shell")).toBeVisible({ timeout: 45000 });

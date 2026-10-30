@@ -1,7 +1,7 @@
 # Session-first UX cleanup and CLI-only integration
 
 **Recorded:** 30 October 2026.
-**Status:** Implemented on 30 October 2026 on branch `claude/windows-qualification` (uncommitted working tree), with fixture tests and Electron journeys against stand-in providers ([review](#review-30-october-2026), [implementation record](#implementation-record-30-october-2026), [validation](#validation-30-october-2026)). Live-provider, packaged and CI evidence for this change are not established.
+**Status:** Implemented on 30 October 2026 as `bb98fa5` on branch `claude/windows-qualification` ([pull request 43](https://github.com/Piore-Galore/Topsl/pull/43)), with fixture tests and Electron journeys against stand-in providers ([review](#review-30-october-2026), [implementation record](#implementation-record-30-october-2026), [validation](#validation-30-october-2026), [CI follow-up](#ci-follow-up-30-october-2026)). Live-provider evidence for this change is not established; packaged and other-platform evidence is limited to the pull request's CI.
 **Related documents:** [Topsl design](Topsl_Design.md), [implementation status](Implementation_Status.md), [project synchronization](Project_Synchronization.md), [native Topsl sessions](Native_Sessions_Plan.md), and [recursive looping](Recursive_Looping.md).
 
 ## Summary
@@ -137,3 +137,43 @@ Defects found and fixed during validation: a start and a removal of the same loo
 Selected captures: [ui-evidence/2026-10-30-session-first](ui-evidence/2026-10-30-session-first/).
 
 **Not established.** Live Codex and Claude Code routes, packaged builds, remote CI and other operating systems did not run this change. Screen-reader and IME acceptance remain open. The auxiliary harnesses `scripts/campaign-ui-test.mjs` and `scripts/campaign-packaged-test.mjs` still target retired screens and were not updated or run; `scripts/round2-ui-test.mjs` and `scripts/desktop-usage-test.mjs` were updated but not run.
+
+### CI follow-up (30 October 2026)
+
+The working tree above was committed as `bb98fa5` and opened as [pull request 43](https://github.com/Piore-Galore/Topsl/pull/43). The first GitHub run on `bb98fa5`:
+
+| Workflow and job | Result |
+| --- | --- |
+| Compile Topsl on Linux x64 and macOS Intel | Passed |
+| Compile Topsl on macOS Apple silicon | Failed in **Desktop acceptance smoke**. After the loop journey's restart, its click on **← Back to session** with the Organization pane open timed out because the pane's role list received the click. Later steps were skipped. |
+| Compile Topsl on Windows x64 | Failed in **Typecheck, integration tests, and application build**: 1 of 1,208 tests. Cleanup after the restart case in `tests/history-imports.test.ts` hit `EBUSY` deleting `history.sqlite-wal`. Later steps were skipped, so no Windows desktop journey ran. |
+| Round 2 lifecycle stress on macOS Apple silicon, macOS Intel and Linux x64 | Passed (Windows x64 was still running when this was recorded) |
+
+[Pull request 42](https://github.com/Piore-Galore/Topsl/pull/42) merged `bb98fa5` into its branch. Its session reported the same two failures, plus one in its Compile Topsl run on Linux x64 that passed on pull request 43. After the restart, the loop journey's `openRun` timed out looking for the running loop in its session's Work. That job's log was not read here; the failure was reproduced locally (below).
+
+**Causes and fixes.**
+
+- **Back to session (macOS Apple silicon).** The loop page's back link stretched across the whole header, and Playwright clicks an element's center. Below 1200 px a run's pane overlays the right side of the page, so it covered that center but not the visible text. After the restart the window takes the app's default 1280 × 880, which the runner's screen evidently narrowed below 1200 px. That is inferred: the runner's screen size was not read.
+  - The link now sits in a full-width row but responds only over its own text ([loop-thread.tsx](../apps/desktop/renderer/coordinator/loop-thread.tsx), [atlas.css](../apps/desktop/renderer/atlas.css)).
+  - The journey now sets 1024 × 768 after the restart, so every runner checks the overlaid layout ([desktop-loop-test.mjs](../scripts/desktop-loop-test.mjs)).
+- **EBUSY (Windows x64).** The test's cleanup closed the first service and removed the folder while the reopened service that shared it still held the database open. macOS and Linux allow deleting an open file; Windows does not. Cleanup now closes every service before removing any folder ([history-imports.test.ts](../tests/history-imports.test.ts)).
+- **A running loop missing from Work (pull request 42, Linux x64).** This is a product defect, not only a test gap. Starting a loop marked its queue item running but never made it the session's active work. Work shows the active item under **Now** and lists only waiting and settled items, so a started loop appeared nowhere in Work until it settled. The journey reached Work only when the run's page was not yet showing after the restart, which is a timing difference between runners.
+  - The session's `sync` now makes a started loop the active work when no goal is ([session-engine.ts](../packages/orchestration/session-engine.ts)). Scheduling already waited for any running item, so nothing else starts differently.
+  - `tests/session-loops.test.ts` asserts the started loop is the active work.
+  - The journey's `openRun` also looks under **Now** ([desktop-loop-test.mjs](../scripts/desktop-loop-test.mjs)).
+
+**Local verification** on the host above:
+
+| Command | Result |
+| --- | --- |
+| Before the fix: `env -u ANTHROPIC_BASE_URL node scripts/desktop-loop-test.mjs` with the viewport after the restart temporarily forced to 1024 × 700 | Failed with the same message as CI |
+| The same at 1100 × 760, and with the viewport before the restart at 1100 × 900 | Passed: at 1100 px the button's center lay just left of the overlay |
+| After the back-link fix, the same at 1024 × 700 | Passed |
+| `env -u ANTHROPIC_BASE_URL npm test -- tests/history-imports.test.ts` | Passed: 14 tests. macOS does not lock open files, so this does not exercise the Windows failure. |
+| Before the Work fix: the loop journey with `openRun` temporarily forced to go through Work every time | Failed after the restart with the locator pull request 42 reported. With only the journey's locator widened to **Now**, it still failed, which exposed the product defect. |
+| After the Work fix, the same forced run | Passed |
+| `npx tsc --noEmit -p .`, `npx prettier --check` on the changed files, and `env -u ANTHROPIC_BASE_URL npm test -- tests/session-loops.test.ts tests/session-references.test.ts tests/history-imports.test.ts` | Clean; 20 tests passed |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` with the back-link fix, before the Work fix | Main (with encrypted restart), coordinator, Atlas and loop journeys passed. The session journey then stalled: after its restart the app did not exit when the journey closed it, so the run was stopped after three hours. Run alone afterwards, `node scripts/desktop-session-test.mjs` passed. The stall's cause is not established. |
+| `env -u ANTHROPIC_BASE_URL npm run check`, then `env -u ANTHROPIC_BASE_URL npm run test:desktop`, with all three fixes | Passed: TypeScript; 1203 tests and 5 skipped in 88 files (2 skipped); 18 release checks; the build. Then all five desktop journeys, the session journey included. |
+
+The GitHub run on the fix commit is not recorded here; pull request 43 shows it.
