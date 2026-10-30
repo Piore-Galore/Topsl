@@ -171,7 +171,7 @@ export function evaluateStepReadiness(input: {
     blockers.push({
       code: "executable-untrusted",
       detail:
-        "Trust this Claude Code executable in Applications before its step can open.",
+        "Trust this Claude Code executable in Providers before its step can open.",
       action: "review-executable",
     });
   if (input.selection.model !== claudeStepModel || input.selection.effort)

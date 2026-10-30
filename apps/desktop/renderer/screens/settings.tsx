@@ -10,6 +10,7 @@ import { claudeTranscriptOptions } from "../../../../packages/domain/claude-step
 import { claudeRouteOptions } from "../../../../packages/domain/claude-route";
 import { ActionButton } from "../components/action-button";
 import { Badge } from "../components/atlas";
+import { ImportsSection } from "./imports";
 type Configuration = {
   path: string;
   text: string;
@@ -26,7 +27,8 @@ type Props = {
   projectId: string;
   project: AppState["projects"][number] | undefined;
   setConfigPlan: (plan: ConfigurationPlan | null) => void;
-  setDetail: (detail: { title: string; text: string } | null) => void;
+  /** Opens New session in the project with this import attached. */
+  continueImport: (projectId: string, referenceId: string) => void;
 };
 export function SettingsScreen({
   state,
@@ -38,7 +40,7 @@ export function SettingsScreen({
   projectId,
   project,
   setConfigPlan,
-  setDetail,
+  continueImport,
 }: Props) {
   return (
     <>
@@ -62,6 +64,11 @@ export function SettingsScreen({
           ))}
         </div>
       </section>
+      <ImportsSection
+        state={state}
+        projectId={projectId}
+        onContinue={continueImport}
+      />
       <h2 className="settings-group-title" id="agent-behavior">
         Agent behavior
       </h2>
@@ -292,30 +299,6 @@ export function SettingsScreen({
         ) : (
           <p>No native files have been changed through Topsl.</p>
         )}
-      </section>
-      <section className="settings-card">
-        <h2 id="context-connection">Project context connection</h2>
-        <p>
-          Allow a native MCP client to search one project’s Topsl history. The
-          connection has no administrative authority and expires when Topsl
-          closes.
-        </p>
-        <ActionButton
-          disabled={!projectId}
-          onClick={async () => {
-            const result = await act({
-              type: "context-enable",
-              projectId,
-            });
-            if (result)
-              setDetail({
-                title: "Read-only project context",
-                text: `Grant file: ${result.file}\n\n${result.expires}\n\nRun the companion with a Node.js installation:\nnode ${JSON.stringify(result.companionPath)} mcp ${JSON.stringify(result.file)}\n\nUse this executable and argument list in your native MCP configuration. Keep the grant file private.`,
-              });
-          }}
-        >
-          Create grant for {project?.name ?? "a project"}
-        </ActionButton>
       </section>
     </>
   );

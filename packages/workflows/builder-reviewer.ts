@@ -707,7 +707,7 @@ export class BuilderReviewerWorkflow {
               : {
                   supported: false,
                   detail:
-                    "Trust this Claude Code executable in Applications before its step can open.",
+                    "Trust this Claude Code executable in Providers before its step can open.",
                 }
             : this.driver.capabilities(
                 assignment,

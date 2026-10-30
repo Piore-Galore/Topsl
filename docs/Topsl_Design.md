@@ -12,6 +12,8 @@
 
 A working personal-pilot implementation now accompanies this blueprint. See [implementation status and acceptance evidence](Implementation_Status.md) for the concrete supported paths and remaining gates; the full design below continues to define the target architecture.
 
+**Follow-up — 30 October 2026:** The [session-first UX cleanup and CLI-only integration plan](UX_Cleanup_Plan.md) supersedes the affected navigation, desktop-app management, native project discovery/synchronization, and import targets below, and is implemented with stand-in evidence ([status](Implementation_Status.md#session-first-cleanup-and-cli-only-integration--30-october-2026)). It retains Atlas, moves specialized workflows under secondary navigation, makes projects a local catalog, and adds explicit export imports with session continuation. Sections that it changes carry a dated note: §5.8, §14, §20.4 and §20.11.
+
 This is a complete revision of the supplied v2.0 design. It retains the native-runtime architecture, shared history, explicit provider handoffs, and configuration ownership model. It adds application downloads, installation, and updates, corrects event scoping and release sequencing, and distinguishes a personal pilot from a production-supported distributed product. The accompanying [design review](Topsl_Design_Review.md) records findings, resolutions, and verification gates.
 
 | Area | Version 2.1 decision |
@@ -421,6 +423,8 @@ Provide a small `topsl` CLI for opening the GUI, registering a project, viewing 
 A full-screen Topsl TUI may be added later. The Atlas visual direction keeps ordinary graphical controls and discoverable actions.
 
 ### 5.8 Initial application catalog and acquisition routes
+
+*Revised 30 October 2026 — implemented:* the catalog holds `openai.codex-cli` and `anthropic.claude-code-cli` only ([cleanup plan §2](UX_Cleanup_Plan.md#2-retire-desktop-and-native-discovery-features)). Desktop catalog entries, their installation detection, bundle scanning, release checks, installers, launches and folder deep links are retired. A CLI inside an application bundle is owned `external`: usable, and never updated by Topsl. The desktop rows below are the earlier target, kept as a record.
 
 Catalog definitions use stable application IDs separate from provider model IDs and installation IDs. A catalog entry describes an application; many installations, releases, and runtime bindings may refer to it.
 
@@ -1323,6 +1327,8 @@ The same native profile may be referenced by several surfaces. Give the underlyi
 
 ## 14. History synchronization
 
+*Revised 30 October 2026 — implemented:* continuous observation of native history sources is retired. Imports are explicit, finite snapshots of one exported file, previewed and committed in **Settings → Imports**, with no connection to their source ([cleanup plan §3](UX_Cleanup_Plan.md#3-import-exports-and-continue-in-topsl)). Discovery and consent of native history sources (§14.2) and their incremental reconciliation (§14.4) describe the earlier target.
+
 ### 14.1 Source ownership
 
 There are three directions:
@@ -1935,6 +1941,8 @@ Use adaptive density: concise summaries and primary actions lead to dedicated ed
 
 ### 20.4 Main window
 
+*Revised 30 October 2026 — implemented with stand-in evidence:* the [session-first cleanup](UX_Cleanup_Plan.md#1-simplify-the-everyday-experience) keeps Atlas and makes sessions the workspace. The sidebar holds **New session**, **Projects**, the project tree (sessions and standalone loops, newest first, marked when waiting on the owner) with one menu per project (**All sessions**, **Project settings**, **Provider tools**, **Advanced workflows**), **Providers** and **Settings**. A project opens at its last viewed session, else its newest, else New session. New session puts the message box first with one Auto coordinator and an Automatic team summarized; Run mode is gone, and loops are created in a session's **Work**. A session's details are **Work** (running work and its controls, plan, queue, history, Create loop), **Team** (session team and one-goal overrides) and **Results** (review, checks, changes). Overview, Tasks, Changes and Context are sections of Advanced workflows; History is Provider history in Provider tools; Synchronization is retired and opens Project settings. The tables below record the earlier layouts.
+
 *Revised 29 October 2026 — implemented with stand-in evidence:* [Native Topsl sessions](Native_Sessions_Plan.md) make the persistent **session** the primary workspace. The sidebar's **+ New session** opens the project's **New session** page: **Run mode: Session** (or a loop mode), a combined Claude Code/Codex **Coordinators** picker (empty is one Auto coordinator), an **Automatic** or **Custom** team, and the composer with **Auto / Discuss / Work**. Each project in the tree lists its sessions (`session:<conversationId>`), including discussion-only sessions, and loop runs recorded outside a session (`loop:<runId>`); a session waiting on the owner is marked **Choose**, **Configure team** or **Choose model** in addition to the goal and loop markers below. A session opens one transcript with the coordinators' shared responses and their attributed contributions, each goal's card, a composer **Target** (current goal or New goal), **Pause session**/**Stop session**, and the panes **Team** (session coordinators, team mode, roles with who chose them and why, the role editor saving to the session, and the focused goal's own team), **Work** (the queue and the latest accepted result), and the focused goal's Plan, Review, Checks and Changes. The **Sessions** project destination is labelled **Provider tools**; its stored view value stays `sessions`. A saved `goal:<conversationId>` thread opens that conversation's session. Evidence and limits: [Implementation status](Implementation_Status.md#native-topsl-sessions--29-october-2026).
 
 *Retired 29 October 2026:* "New conversation", "Single goal" and the goal thread (`goal:<id>`) as the way into coordinator work, and message routing by punctuation and steering phrases for session messages. The owner asked for persistent sessions across goals with peer coordinators and discussion alongside work; the 28 October layout below remains the base the session view extends.
@@ -2044,6 +2052,8 @@ At smaller window sizes, collapse the sidebar and inspector before reducing text
 A release must support completing setup, a cross-provider task, a plugin configuration change, a permissions review, and a history search using keyboard alone and using a mouse. Test both themes at ordinary and increased zoom. Visual simplicity must not hide account, billing, authorization, or partial-sync warnings.
 
 ### 20.11 Applications screen and journeys
+
+*Revised 30 October 2026 — implemented:* the screen is **Providers**, a global destination listing the Codex and Claude Code CLIs only ([cleanup plan §2](UX_Cleanup_Plan.md#2-retire-desktop-and-native-discovery-features)). The journeys below that involve desktop applications are retired.
 
 Keep Applications under **Settings → Connections**, with entry points from onboarding and the command palette. The main project workspace remains focused on work. Separate catalog products from their installed copies; expand an application to select a specific host/installation before updating.
 

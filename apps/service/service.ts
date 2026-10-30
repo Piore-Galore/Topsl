@@ -1,4 +1,7 @@
-import { projectView as validProjectView } from "../../packages/domain/navigation";
+import {
+  projectSection,
+  projectView as validProjectView,
+} from "../../packages/domain/navigation";
 import { parseThreadId, summarizeThreads } from "../../packages/domain/threads";
 import path from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
@@ -12,12 +15,6 @@ import {
 import { WorkflowDrafts } from "../../packages/workflows/drafts";
 import { SyncRepository } from "../../packages/sync/reconciler";
 import { RevisionRepository } from "../../packages/context/revisions";
-import { HistoryReconciler } from "../../packages/history/reconcile";
-import type {
-  NativeHistorySource,
-  NativeProjectLink,
-  SyncField,
-} from "../../packages/domain/sync";
 import type {
   AppId,
   AppState,
@@ -130,27 +127,20 @@ import type {
   Workspace,
 } from "../../packages/domain/workflow";
 import { Configuration } from "../../packages/workspace/configuration";
-import {
-  importHistory,
-  previewHandoff,
-} from "../../packages/workspace/history";
+import { previewHandoff } from "../../packages/workspace/history";
 import { ContextServer } from "../../packages/workspace/context";
+import { HistoryImports } from "../../packages/workspace/imports";
 import {
-  ProjectSync,
-  projectSourcePaths,
+  ProjectCatalog,
   requireProjectFolder,
 } from "../../packages/workspace/projects";
-import { desktopProjectRoute } from "../../packages/workspace/project-opening";
+import { retireNativeIntegration } from "../../packages/persistence/migrations/native-retirement";
 import { Orchestrator } from "../../packages/orchestration/engine";
 import { RuntimeOrchestrationDriver } from "../../packages/orchestration/runtime-driver";
 import { SessionSupervisor } from "../../packages/orchestration/session-engine";
 import { LoopSupervisor } from "../../packages/orchestration/loop-engine";
 import { RuntimeLoopDriver } from "../../packages/orchestration/loop-checkpoints";
 import { LOOP_FEATURE_FLAG } from "../../packages/domain/recursive-loops";
-import {
-  CodexProjectSync,
-  orderLocalProjects,
-} from "../../packages/workspace/codex-projects";
 
 export interface TrustedInput {
   selectedPath?: string;
@@ -170,7 +160,6 @@ export class Service {
   readonly store: Store;
   readonly synchronization: SyncRepository;
   readonly revisions: RevisionRepository;
-  readonly nativeHistory: HistoryReconciler;
   readonly lifecycle: Lifecycle;
   readonly runtime: RuntimeManager;
   readonly assisted: AssistedWorkflows;
@@ -185,13 +174,15 @@ export class Service {
   readonly context: ContextServer;
   /** Why the context socket could not listen at start, if it could not. */
   private contextFailure: string | null = null;
-  readonly projects: ProjectSync;
-  readonly codexProjects: CodexProjectSync;
+  /** The local project catalog (docs/UX_Cleanup_Plan.md §2). */
+  readonly projects: ProjectCatalog;
   /** The coordinator feature: goals, role groups and rounds (docs/Coordinator_Teams.md). */
   readonly orchestration: Orchestrator;
   /** Recursive Looping (experimental): the loop supervisor above the coordinator engine. */
   readonly loops: LoopSupervisor;
   readonly sessions: SessionSupervisor;
+  /** Explicit export imports (docs/UX_Cleanup_Plan.md §3). */
+  readonly imports: HistoryImports;
   private timer?: ReturnType<typeof setInterval>;
   private ownershipTimer?: ReturnType<typeof setInterval>;
   private workflowTimer?: ReturnType<typeof setInterval>;
@@ -219,10 +210,11 @@ export class Service {
     private qualificationDirectory?: string,
   ) {
     this.store = new Store(path.join(directory, "history.sqlite"), key);
+    // Before any recovery or background service can resume retired work.
+    retireNativeIntegration(this.store);
     this.assisted = new AssistedWorkflows(this.store);
     this.synchronization = new SyncRepository(this.store);
     this.revisions = new RevisionRepository(this.store);
-    this.nativeHistory = new HistoryReconciler(this.store);
     try {
       this.coordinator = new Coordinator(this.store, "local-profile");
     } catch (error) {
@@ -477,6 +469,7 @@ export class Service {
         exportRoot: path.join(directory, "loop-exports"),
       },
     );
+    this.imports = new HistoryImports(this.store, () => this.changed());
     this.sessions = new SessionSupervisor(
       this.store,
       this.orchestration,
@@ -487,18 +480,20 @@ export class Service {
         stop: async (runId, commandId) => {
           await this.loops.control({ runId, action: "stop", commandId });
         },
+        control: async (runId, action, commandId) => {
+          await this.loops.control({ runId, action, commandId });
+        },
+      },
+      {
+        check: (projectId, referenceId) =>
+          void this.imports.require(projectId, referenceId),
+        freeze: (input) => this.imports.freeze(input),
       },
     );
-    // A native session runs one goal or loop at a time.
-    this.loops.startGuards.push((run) => {
-      const session = this.orchestration.session(run.conversationId);
-      if (session?.origin !== "native") return null;
-      return session.queue.some(
-        (w) => w.state === "running" && w.runId !== run.id,
-      )
-        ? "This session is already running a goal or loop. Start this run when it finishes, or stop the current work first."
-        : null;
-    });
+    // A native session runs one goal or loop at a time, in queue order,
+    // and only while the session runs (docs/UX_Cleanup_Plan.md §4).
+    this.loops.startGuards.push((run) => this.sessions.loopAdmission(run));
+    this.loops.resumeGuards.push((run) => this.sessions.loopResumeRefusal(run));
     // A loop in a native session continues from its latest accepted result.
     this.loops.startFrom = (run) => {
       const session = this.orchestration.session(run.conversationId);
@@ -506,21 +501,7 @@ export class Service {
         ? (session.acceptedCheckpoint?.candidateId ?? null)
         : null;
     };
-    const projectPaths = isolatedTest
-      ? projectSourcePaths(path.join(directory, "native-home"), {})
-      : projectSourcePaths();
-    this.projects = new ProjectSync(
-      this.store,
-      () => this.changed(true),
-      projectPaths,
-    );
-    this.codexProjects = new CodexProjectSync(
-      this.store,
-      this.projects,
-      directory,
-      projectPaths.codexHome,
-      () => this.changed(true),
-    );
+    this.projects = new ProjectCatalog(this.store, () => this.changed(true));
     this.lifecycle = new Lifecycle(this.store, directory, {
       installations: () => this.store.list("installation"),
       discover: () => this.discover(),
@@ -626,8 +607,44 @@ export class Service {
     }
     this.changed();
   }
+  /**
+   * Runs a loop operation in its native session's order, if it has one, and
+   * brings the session's queue up to date with it before the next operation.
+   */
+  private inSessionOf<T>(runId: string, operation: () => Promise<T>) {
+    const run = this.store.get<{ conversationId: string }>("loop-run", runId);
+    const session = run && this.orchestration.session(run.conversationId);
+    if (session?.origin !== "native") return operation();
+    return this.sessions.serial(session.id, async () => {
+      try {
+        return await operation();
+      } finally {
+        this.sessions.refresh(session.id);
+        this.changed();
+      }
+    });
+  }
+  /** A project's sessions and standalone loops, newest activity first. */
+  private projectThreads(projectId: string) {
+    return summarizeThreads({
+      projectId,
+      ...this.orchestration.threadFacts(projectId),
+      runs: this.loops.list(projectId),
+      sessions: this.sessions.list(projectId),
+    });
+  }
+  /** The thread ID, resolved, when it still exists in this project. */
+  private threadIn(projectId: string, threadId: unknown): string | null {
+    const parsed = parseThreadId(threadId);
+    if (!parsed) return null;
+    const owner =
+      parsed.kind === "loop"
+        ? this.store.get<{ projectId: string }>("loop-run", parsed.id)
+        : this.store.get<{ projectId: string }>("orch-conversation", parsed.id);
+    if (owner?.projectId !== projectId) return null;
+    return this.sessions.resolveThread(threadId as string)?.threadId ?? null;
+  }
   state(includeMessages = true): AppState {
-    const codexProjectSync = this.codexProjects.state();
     return {
       locked: false,
       lockReason: null,
@@ -641,12 +658,8 @@ export class Service {
       installations: this.store.list("installation"),
       checks: this.store.list("check"),
       jobs: this.store.list("job"),
-      projects: orderLocalProjects(
-        this.store.list<Project>("project"),
-        codexProjectSync.projects,
-      ),
-      projectSync: this.projects.state(),
-      codexProjectSync,
+      projects: this.projects.list(),
+      projectOrderRevision: this.projects.orderRevision(),
       conversations: includeMessages ? this.store.list("conversation") : [],
       messages: includeMessages
         ? this.store
@@ -792,18 +805,16 @@ export class Service {
     this.assisted.beginOpen(input.projectId, input.id);
     this.changed();
     try {
-      const result: ProjectOpenResult = installation.appId.endsWith("cli")
-        ? {
-            terminalId: await this.runtime.terminal(installation, project, {
-              mode,
-              confirmedMode,
-            }),
-            projectPath: project.realPath,
-            route: "terminal",
-            detail:
-              "Native surface opened. Paste the reviewed pinned handoff explicitly; progress and stopping are externally controlled.",
-          }
-        : await desktopProjectRoute(installation, project);
+      const result: ProjectOpenResult = {
+        terminalId: await this.runtime.terminal(installation, project, {
+          mode,
+          confirmedMode,
+        }),
+        projectPath: project.realPath,
+        route: "terminal",
+        detail:
+          "Native surface opened. Paste the reviewed pinned handoff explicitly; progress and stopping are externally controlled.",
+      };
       this.assisted.opened(input.projectId, input.id, result.route);
       this.changed();
       return result;
@@ -1124,11 +1135,8 @@ export class Service {
     return {
       projectId,
       observations: this.synchronization.observations(projectId),
-      fields: this.synchronization.fields(projectId),
-      links: this.synchronization.links(projectId),
       sharedHeads: this.revisions.heads(projectId),
       sharedRevisions: this.revisions.revisions(projectId),
-      historySources: this.nativeHistory.sources(projectId),
       configuration: this.synchronization.configuration(projectId),
       inputs,
     };
@@ -1185,8 +1193,9 @@ export class Service {
   private async project(id: string): Promise<Project> {
     return requireProjectFolder(this.require<Project>("project", id));
   }
+  /** Re-checks known project folders; nothing is discovered. */
   private async refreshProjects(): Promise<void> {
-    await this.projects.refresh();
+    await this.projects.refreshAvailability();
     for (const project of this.store.iterate<Project>("project")) {
       try {
         this.coordinator.repository.ensureWorkspace(project);
@@ -1194,8 +1203,6 @@ export class Service {
         /* Missing/changed folders remain unverified; dispatch revalidates. */
       }
     }
-    // A failed native API probe is visible in Projects and must not block vault startup.
-    await this.codexProjects.refresh().catch(() => {});
   }
   async discover(): Promise<Installation[]> {
     if (this.discovery) return this.discovery;
@@ -1937,10 +1944,28 @@ export class Service {
       }
       case "navigation-query": {
         const savedNavigation = this.store.get<any>("preference", "navigation");
+        if (command.projectId) {
+          // A project opens at its last viewed session, else its newest
+          // session or loop, else the New session page.
+          this.require<Project>("project", command.projectId);
+          const remembered = this.threadIn(
+            command.projectId,
+            savedNavigation?.lastThreads?.[command.projectId],
+          );
+          return {
+            projectId: command.projectId,
+            threadId:
+              remembered ??
+              this.projectThreads(command.projectId)[0]?.threadId ??
+              null,
+          };
+        }
+        const legacyView = savedNavigation?.projectView;
         return {
           projectId: savedNavigation?.projectId ?? null,
           workflowId: savedNavigation?.workflowId ?? null,
-          projectView: validProjectView(savedNavigation?.projectView),
+          projectView: validProjectView(legacyView),
+          section: projectSection(legacyView),
           // A goal thread saved before sessions opens its session.
           threadId: parseThreadId(savedNavigation?.threadId)
             ? (this.sessions.resolveThread(savedNavigation.threadId)
@@ -1948,8 +1973,20 @@ export class Service {
             : null,
         };
       }
-      case "navigation-save":
+      case "navigation-save": {
         const previous = this.store.get<any>("preference", "navigation");
+        const lastThreads: Record<string, string> = {
+          ...(previous?.lastThreads ?? {}),
+        };
+        // Only an open session or loop is remembered; tools and the New
+        // session page keep the project's last viewed session.
+        if (
+          command.projectId &&
+          command.projectView === "coordinator" &&
+          command.threadId &&
+          this.threadIn(command.projectId, command.threadId)
+        )
+          lastThreads[command.projectId] = command.threadId;
         this.store.put("preference", {
           id: "navigation",
           projectId: command.projectId,
@@ -1960,8 +1997,31 @@ export class Service {
               : null),
           projectView: command.projectView,
           threadId: command.threadId ?? null,
+          lastThreads,
         });
         return null;
+      }
+      case "project-threads-page": {
+        this.require<Project>("project", command.projectId);
+        const words = (command.query ?? "")
+          .toLowerCase()
+          .split(/\s+/)
+          .filter(Boolean);
+        const threads = this.projectThreads(command.projectId).filter((t) =>
+          words.every((w) =>
+            `${t.title} ${t.state} ${t.kind}`.toLowerCase().includes(w),
+          ),
+        );
+        const start = Number(command.cursor ?? 0) || 0;
+        return {
+          threads: threads.slice(start, start + command.limit),
+          total: threads.length,
+          nextCursor:
+            start + command.limit < threads.length
+              ? String(start + command.limit)
+              : null,
+        };
+      }
       case "scope-events":
         this.require<Project>("project", command.projectId);
         return {
@@ -2073,19 +2133,19 @@ export class Service {
         return command.projectIds
           .filter((projectId) => this.store.get<Project>("project", projectId))
           .map((projectId) => {
-            const threads = summarizeThreads({
-              projectId,
-              ...this.orchestration.threadFacts(projectId),
-              runs: this.loops.list(projectId),
-              sessions: this.sessions.list(projectId),
-            });
+            const threads = this.projectThreads(projectId);
+            // Up to as many older threads that wait on the owner follow the
+            // newest ones; the count covers every waiting thread, and All
+            // sessions lists the rest (docs/UX_Cleanup_Plan.md §4).
+            let waiting = 0;
             return {
               projectId,
               total: threads.length,
               needsYou: threads.filter((t) => t.needsYou).length,
-              // Threads waiting on the owner are listed past the limit.
               threads: threads.filter(
-                (t, index) => index < command.limit || t.needsYou,
+                (t, index) =>
+                  index < command.limit ||
+                  (!!t.needsYou && waiting++ < command.limit),
               ),
             };
           });
@@ -2216,18 +2276,37 @@ export class Service {
       case "loop-create": {
         this.require<Project>("project", command.projectId);
         const { type: _, ...input } = command;
-        return this.loops.create(input);
+        if (!input.conversationId) return this.loops.create(input);
+        // A loop created in a session joins that session's work queue.
+        const conversation = this.store.get<{ projectId: string }>(
+          "orch-conversation",
+          input.conversationId,
+        );
+        if (conversation?.projectId !== input.projectId)
+          throw new Error("That session belongs to another project.");
+        const sessionId = input.conversationId;
+        return this.sessions.serial(sessionId, async () => {
+          const created = await this.loops.create(input);
+          if (this.orchestration.session(sessionId))
+            this.sessions.refresh(sessionId);
+          this.changed();
+          return created;
+        });
       }
-      case "loop-start":
+      case "loop-start": {
         if (!trusted.digest)
           throw new Error(
             "Starting a loop establishes its authority; it needs your native confirmation of what the run will do.",
           );
-        return this.loops.start({
-          runId: command.runId,
-          digest: trusted.digest,
-          commandId: command.commandId,
-        });
+        const digest = trusted.digest;
+        return this.inSessionOf(command.runId, () =>
+          this.loops.start({
+            runId: command.runId,
+            digest,
+            commandId: command.commandId,
+          }),
+        );
+      }
       case "loop-goals-update": {
         const { type: _, ...input } = command;
         return this.loops.updateGoals(input);
@@ -2245,7 +2324,9 @@ export class Service {
       case "loop-override-release":
         return this.loops.releaseOverride(command);
       case "loop-control":
-        return this.loops.control(command);
+        return this.inSessionOf(command.runId, () =>
+          this.loops.control(command),
+        );
       case "loop-message":
         return this.loops.message(command);
       case "loop-checkpoint-export":
@@ -2335,125 +2416,11 @@ export class Service {
         this.checks.cancelWorkflow(command.id);
         return result;
       }
-      case "sync-field-push": {
-        if (!trusted.approved)
-          throw new Error(
-            "Native field writes require review of their exact value, direction and source revision.",
-          );
-        const field = this.require<SyncField>("sync-field", command.id);
-        if (
-          field.projectId !== command.projectId ||
-          field.revision !== command.expectedRevision ||
-          field.state !== "push-required" ||
-          field.field !== "name" ||
-          typeof field.local !== "string" ||
-          !/^[^\x00-\x1f\x7f]{1,200}$/.test(field.local)
-        )
-          throw new Error(
-            "Refresh and explicitly resolve a supported native name before pushing local intent.",
-          );
-        const link = this.require<NativeProjectLink>(
-          "native-project-link",
-          field.targetId,
-        );
-        if (
-          link.projectId !== field.projectId ||
-          link.provider !== "codex" ||
-          link.state !== "linked" ||
-          link.profileId !== this.codexProjects.boundProfileId()
-        )
-          throw new Error(
-            "This native write route or exact profile binding is unavailable. No fallback operation was sent.",
-          );
-        await this.codexProjects.rename(
-          link.nativeGroupId,
-          link.sourceRevision,
-          field.local,
-        );
-        const result = this.require<SyncField>("sync-field", field.id);
-        this.changed();
-        return {
-          field: result,
-          detail:
-            "Supported registry readback recorded; visible native sidebar remains a separate observation.",
-        };
-      }
       case "synchronization-query": {
         this.require<Project>("project", command.projectId);
         return this.observed(command.projectId, () =>
           this.synchronizationSnapshot(command.projectId),
         );
-      }
-      case "sync-field-intent": {
-        const field = this.require<SyncField>("sync-field", command.id);
-        if (
-          field.projectId !== command.projectId ||
-          field.authority === "provider"
-        )
-          throw new Error(
-            "This field belongs to another project or is provider-owned.",
-          );
-        const result = this.synchronization.reconcileField({
-          ...field,
-          expectedRevision: command.expectedRevision,
-          local: command.local,
-          authority: command.authority,
-          evidence: {
-            level: "topsl-transaction",
-            source: "explicit-local-field-intent",
-            observedAt: now(),
-            detail:
-              "User selected field intent and ownership; provider write/readback remains separate.",
-          },
-        });
-        if (field.field === "name" && typeof command.local === "string")
-          this.store.save("project", {
-            ...this.require<Project>("project", command.projectId),
-            name: command.local,
-          });
-        this.changed();
-        return result;
-      }
-      case "sync-field-resolve": {
-        const field = this.require<SyncField>("sync-field", command.id);
-        if (field.projectId !== command.projectId)
-          throw new Error("Synchronization field belongs to another project.");
-        const result = this.synchronization.resolveField(
-          command.id,
-          command.expectedRevision,
-          command.direction,
-        );
-        if (field.field === "name" && typeof result.local === "string")
-          this.store.save("project", {
-            ...this.require<Project>("project", command.projectId),
-            name: result.local,
-          });
-        this.changed();
-        return result;
-      }
-      case "native-link-state":
-      case "native-root-map": {
-        const link = this.require<NativeProjectLink>(
-          "native-project-link",
-          command.id,
-        );
-        if (link.projectId !== command.projectId)
-          throw new Error("Native project link belongs to another project.");
-        const result =
-          command.type === "native-link-state"
-            ? this.synchronization.setLinkState(
-                command.id,
-                command.expectedRevision,
-                command.state,
-              )
-            : this.synchronization.mapNativeRoot(
-                command.id,
-                command.expectedRevision,
-                command.nativeRoot,
-                command.workspaceId,
-              );
-        this.changed();
-        return result;
       }
       case "shared-revision-publish": {
         this.require<Project>("project", command.projectId);
@@ -2509,41 +2476,6 @@ export class Service {
           command.expectedRevision,
           command.specificationId,
         );
-        this.changed();
-        return result;
-      }
-      case "native-history-approve": {
-        if (!trusted.selectedPath || !trusted.approved)
-          throw new Error(
-            "Explicit native transcript selection and approval are required for each source/profile.",
-          );
-        const source = await this.nativeHistory.approve({
-          project: await this.project(command.projectId),
-          provider: command.provider,
-          profileId: command.profileId,
-          sessionId: command.sessionId,
-          file: trusted.selectedPath,
-        });
-        this.changed();
-        return source;
-      }
-      case "native-history-reconcile":
-      case "native-history-pause": {
-        const source = this.require<NativeHistorySource>(
-          "native-history-source",
-          command.id,
-        );
-        if (
-          source.projectId !== command.projectId ||
-          source.revision !== command.expectedRevision
-        )
-          throw new Error(
-            "History source scope or revision changed; refresh before this operation.",
-          );
-        const result =
-          command.type === "native-history-pause"
-            ? this.nativeHistory.pause(source.id, command.expectedRevision)
-            : await this.nativeHistory.reconcile(source.id);
         this.changed();
         return result;
       }
@@ -3176,14 +3108,6 @@ export class Service {
         if (!app) throw new Error("Unknown application.");
         return { openUrl: app[command.kind] };
       }
-      case "open-application": {
-        const i = this.installation(command.id);
-        if (!i.appId.endsWith("desktop"))
-          throw new Error(
-            "Open CLI applications through a project’s native terminal.",
-          );
-        return { openPath: i.path };
-      }
       case "project-add": {
         if (!trusted.selectedPath || !trusted.approved)
           throw new Error(
@@ -3191,50 +3115,20 @@ export class Service {
           );
         const project = await this.projects.add(trusted.selectedPath);
         this.coordinator.repository.ensureWorkspace(project);
-        await this.codexProjects.refresh().catch(() => {});
         return project;
       }
-      case "project-sync-enable":
-        if (command.enabled && !trusted.approved)
-          throw new Error(
-            "Native folder discovery requires a native user confirmation.",
-          );
-        await this.projects.enable(command.enabled);
-        return this.projects.state();
-      case "project-sync-refresh":
-        if (!this.projects.enabled())
-          throw new Error("Enable project discovery first.");
-        await this.projects.refresh();
-        return this.projects.state();
-      case "codex-project-sync-enable":
-        if (!trusted.approved)
-          throw new Error(
-            "Native project synchronization requires confirmation of the runtime and profile.",
-          );
-        await this.codexProjects.enable(command.installationId);
-        return this.codexProjects.state();
-      case "codex-project-sync-pause":
-        await this.codexProjects.pause();
-        return this.codexProjects.state();
-      case "codex-project-sync-refresh":
-        if (!this.codexProjects.state().enabled)
-          throw new Error("Enable Codex project synchronization first.");
-        await this.codexProjects.refresh();
-        return this.codexProjects.state();
-      case "codex-project-rename":
-        await this.codexProjects.rename(
+      case "project-rename":
+        return this.projects.rename(
           command.id,
-          command.expectedRevision,
+          command.expectedName,
           command.name,
         );
-        return this.codexProjects.state();
-      case "codex-project-move":
-        await this.codexProjects.move(
+      case "project-move":
+        return this.projects.move(
           command.id,
-          command.beforeProjectId,
+          command.direction,
           command.expectedOrderRevision,
         );
-        return this.codexProjects.state();
       case "project-trust":
         if (!trusted.approved || !trusted.selectedPath)
           throw new Error("Project trust requires a native user confirmation.");
@@ -3244,7 +3138,6 @@ export class Service {
             trusted.selectedPath,
           );
           this.coordinator.repository.ensureWorkspace(project);
-          await this.codexProjects.refresh().catch(() => {});
           return project;
         }
       case "project-relink":
@@ -3268,7 +3161,7 @@ export class Service {
           const project = await this.projects.relink(
             command.id,
             trusted.selectedPath,
-            (updated) => {
+            (updated: Project) => {
               if (
                 this.runtime.isProjectBusy(command.id) ||
                 [
@@ -3288,7 +3181,6 @@ export class Service {
               this.coordinator.repository.relinkDefaultWorkspace(updated);
             },
           );
-          await this.codexProjects.refresh().catch(() => {});
           return project;
         }
       case "project-copy-path":
@@ -3319,23 +3211,9 @@ export class Service {
             detail: "The native terminal uses this shared project folder.",
           } satisfies ProjectOpenResult;
         }
-        if (command.permissionMode !== "provider-default")
-          throw new Error(
-            "Topsl sets a permission mode only for a native terminal. The desktop app keeps its own.",
-          );
-        if (
-          this.runtime.isProjectBusy(project.id) ||
-          this.store
-            .list<any>("run")
-            .some(
-              (run) =>
-                run.projectId === project.id && run.status === "uncertain",
-            )
-        )
-          throw new Error(
-            "Close or reconcile this project's native sessions before opening another application.",
-          );
-        return desktopProjectRoute(installation, project);
+        throw new Error(
+          "Topsl opens projects in the Codex or Claude Code CLI.",
+        );
       }
       case "conversation-add": {
         await this.project(command.projectId);
@@ -3353,18 +3231,29 @@ export class Service {
       case "history-search":
         await this.project(command.projectId);
         return this.store.search(command.projectId, command.query);
-      case "history-import": {
-        if (!trusted.selectedPath || !trusted.approved)
-          throw new Error("Select a transcript in the native dialog.");
-        const result = await importHistory(
-          this.store,
-          await this.project(command.projectId),
-          command.provider,
-          trusted.selectedPath,
-        );
-        this.changed();
-        return result;
-      }
+      case "history-import-preview":
+        if (!trusted.selectedPath)
+          throw new Error("Choose the exported file in the native dialog.");
+        this.require<Project>("project", command.projectId);
+        return this.imports.preview({
+          projectId: command.projectId,
+          provider: command.provider,
+          file: trusted.selectedPath,
+        });
+      case "history-import-commit":
+        this.require<Project>("project", command.projectId);
+        return this.imports.commit(command);
+      case "history-imports":
+        this.require<Project>("project", command.projectId);
+        return this.imports.list(command);
+      case "history-import-read":
+        return this.imports.read(command);
+      case "history-import-excerpt":
+        return this.imports.excerptSummary(command.projectId, command.id);
+      case "history-import-delete":
+        if (!trusted.approved)
+          throw new Error("Deleting an import needs a native confirmation.");
+        return this.imports.delete(command);
       case "history-delete": {
         if (!trusted.approved)
           throw new Error("Deletion needs a native confirmation.");
@@ -3704,12 +3593,7 @@ export class Service {
     this.closePromise = (async () => {
       this.context.close();
       this.readers.clear();
-      await Promise.all([
-        this.checks.shutdown(),
-        this.runtime.close(),
-        this.projects.close(),
-        this.codexProjects.close(),
-      ]);
+      await Promise.all([this.checks.shutdown(), this.runtime.close()]);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const settled = await Promise.race([
         Promise.allSettled([

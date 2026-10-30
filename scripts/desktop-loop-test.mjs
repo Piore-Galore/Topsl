@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-// Recursive Looping (experimental) as loop conversations, driven through
+// Recursive Looping (experimental) inside native sessions, created through a
+// session's Work → Create loop (docs/UX_Cleanup_Plan.md §4) and driven through
 // Topsl's own screens in Electron against a synthetic profile. The Codex runtime is a
 // scripted stand-in (tests/fixtures/codex-desktop-coordinator.cjs) that is
 // registered, connected and qualified through typed IPC as the main desktop
@@ -143,17 +144,77 @@ const settled = () =>
     .toBe(0);
 const command = (value) =>
   page.evaluate((value) => window.topsl.command(value), value);
-/** The project's New session page, in a loop run mode. */
-async function openLoops(mode) {
+/** The session each run was created in, by run title. */
+const sessionOf = new Map();
+const sessionThread = () =>
+  page.getByRole("region", { name: "Session", exact: true });
+/**
+ * Starts a session with one Discuss message, which the stand-in coordinator
+ * answers without starting work, so the session's queue holds only loops.
+ */
+async function startSession(question) {
   await navigate(page, "New session");
   const home = page.getByRole("region", { name: "New session" });
-  await home.getByRole("radio", { name: new RegExp(`^${mode}`) }).check();
-  return home;
+  await home
+    .getByRole("group", { name: "Composer mode" })
+    .getByRole("radio", { name: "Discuss", exact: true })
+    .check();
+  await home.getByRole("textbox", { name: "Message" }).fill(question);
+  await home
+    .getByRole("button", { name: "Start session", exact: true })
+    .click();
+  await expect(
+    sessionThread().getByRole("heading", { name: question, exact: true }),
+  ).toBeVisible();
 }
-/** Opens a run's conversation from the sidebar unless it is already open. */
+/** Opens the open session's Work pane. */
+async function work() {
+  const toggle = sessionThread()
+    .getByRole("group", { name: "Thread panes" })
+    .getByRole("button", { name: /^Work/ });
+  if ((await toggle.getAttribute("aria-pressed")) !== "true")
+    await toggle.click();
+  return sessionThread().getByRole("complementary", { name: "Work details" });
+}
+/**
+ * Work → Create loop in the open session: the run is created as a draft at
+ * the end of the queue, and its page opens from Work.
+ */
+async function createLoop(mode, text, session) {
+  const pane = await work();
+  const form = pane.getByRole("region", { name: "Create loop" });
+  // The heading's disclosure; the form's own submit button shares the name.
+  const disclosure = form
+    .getByRole("button", { name: "Create loop", exact: true })
+    .first();
+  if ((await disclosure.getAttribute("aria-expanded")) !== "true")
+    await disclosure.click();
+  const kind = form.getByRole("group", { name: "Loop kind" });
+  await kind
+    .getByRole("radio", { name: mode === "goal" ? "Goal loop" : "Endless" })
+    .check();
+  await form
+    .getByRole("textbox", { name: mode === "goal" ? /Goals/ : /Priorities/ })
+    .fill(text);
+  await form
+    .getByRole("button", { name: "Create loop", exact: true })
+    .last()
+    .click();
+  await expect(form.getByRole("status")).toContainText("Nothing has started");
+  sessionOf.set(text.replace(/\.$/, "").slice(0, 120), session);
+  await form.getByRole("button", { name: "Open loop", exact: true }).click();
+}
+/** Opens a run from its session's Work pane unless it is already open. */
 async function openRun(title) {
-  if (!(await runArticle(title).isVisible()))
-    await openThread(page, "loop-project", title);
+  if (!(await runArticle(title).isVisible())) {
+    await openThread(page, "loop-project", sessionOf.get(title));
+    const pane = await work();
+    await pane
+      .getByRole("listitem")
+      .filter({ hasText: title })
+      .getByRole("button", { name: /Open loop|Review and start/ })
+      .click();
+  }
   await expect(runArticle(title)).toBeVisible();
   return runArticle(title);
 }
@@ -182,12 +243,10 @@ try {
   ).toBeVisible({ timeout: 45000 });
   await answerDialogs(app, project);
   await navigate(page, "Projects");
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "loop-project", exact: true }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  await expect(page.getByRole("region", { name: "New session" })).toContainText(
+    "loop-project",
+  );
   projectId = (await command({ type: "state" })).projects.find(
     (p) => p.realPath === canonicalProject,
   ).id;
@@ -222,14 +281,19 @@ try {
     }),
   ).not.toBeNull();
 
-  // The run mode selector on the project's New session page: Session
-  // starts a native session; the loop modes create runs.
+  // Loops are created in a session's Work; the experimental feature is
+  // turned on there.
   await page.setViewportSize({ width: 1280, height: 900 });
-  await navigate(page, "New session");
-  await expect(page.getByRole("radio", { name: /^Session/ })).toBeChecked();
-  let loops = await openLoops("Goal loop");
-  await expect(loops).toContainText("Experimental");
-  await loops
+  const sessionA = "What does file.ts export?";
+  await startSession(sessionA);
+  const pane = await work();
+  const form = pane.getByRole("region", { name: "Create loop" });
+  await expect(form).toContainText("Experimental");
+  await form
+    .getByRole("button", { name: "Create loop", exact: true })
+    .first()
+    .click();
+  await form
     .getByRole("button", {
       name: "Turn on experimental Recursive Looping",
       exact: true,
@@ -237,16 +301,16 @@ try {
     .click();
 
   // Goal loop A: create, start under native authority, and steer while it runs.
-  await loops
-    .getByRole("textbox", { name: "Message", exact: true })
-    .fill("Change the value to two.");
-  await loops.getByRole("button", { name: "Create run", exact: true }).click();
-  // Creating opens the run's own conversation, which starts with the goals.
+  await createLoop("goal", "Change the value to two.", sessionA);
+  // The loop's page leads back to its session and shows its queue position.
   const a = runArticle("Change the value to two");
   await expect(a).toBeVisible();
+  await expect(a).toContainText(
+    "Awaiting start · position 1 in the session's queue",
+  );
   await expect(
-    a.getByRole("list", { name: "Conversation" }).getByRole("listitem").first(),
-  ).toContainText("Change the value to two.");
+    a.getByRole("button", { name: "← Back to session", exact: true }),
+  ).toBeVisible();
   await a
     .getByRole("button", { name: "Review and start", exact: true })
     .click();
@@ -332,9 +396,12 @@ try {
   await throttleRenderer(page);
   page.on("pageerror", (e) => errors.push(e.message));
   // The window reopens where it was; wait for the service, not a screen.
-  await expect(page.getByRole("contentinfo")).toContainText("Ready", {
-    timeout: 45000,
-  });
+  await expect(page.locator(".app-shell")).toBeVisible({ timeout: 45000 });
+  await expect
+    .poll(async () => (await command({ type: "state" })).locked, {
+      timeout: 45000,
+    })
+    .toBe(false);
   await answerDialogs(app, project);
   // The window reopens on the run's conversation.
   await openRun("Change the value to two");
@@ -383,12 +450,23 @@ try {
   await expect(changes).toContainText("One Astra coordinator");
   await shot(page, "loop-goal-completed");
 
-  // Goal loop B: stop during child work fences everything and settles.
-  loops = await openLoops("Goal loop");
-  await loops
-    .getByRole("textbox", { name: "Message", exact: true })
-    .fill("Change the value to two in a second run.");
-  await loops.getByRole("button", { name: "Create run", exact: true }).click();
+  // Back to the session: its Work shows run A settled in the history.
+  await runArticle("Change the value to two")
+    .getByRole("button", { name: "← Back to session", exact: true })
+    .click();
+  await expect(
+    (await work()).getByRole("region", { name: "History" }),
+  ).toContainText("Change the value to two");
+
+  // Goal loop B, in a session of its own so it starts from the folder: stop
+  // during child work fences everything and settles.
+  const sessionB = "Where is the value kept?";
+  await startSession(sessionB);
+  await createLoop(
+    "goal",
+    "Change the value to two in a second run.",
+    sessionB,
+  );
   const titleB = "Change the value to two in a second run";
   const b = runArticle(titleB);
   await expect(b).toBeVisible();
@@ -466,27 +544,41 @@ try {
   )
     throw new Error("The publication dialog must name machine promotion.");
 
-  // Endless: with the published value there is no worthwhile work, so it monitors.
-  // Switching modes keeps the typed text. Refreshes are held until the form
-  // has settled with the text in it, so the page cannot depend on a project
-  // refresh (the loop failure recorded with F-01 in
+  // Endless: with the published value there is no worthwhile work, so it
+  // monitors. Switching the loop kind keeps the typed text. Refreshes are held
+  // until the form has settled with the text in it, so the page cannot
+  // depend on a project refresh (the loop failure recorded with F-01 in
   // docs/testing/TEST-DECISIONS.md).
-  loops = await openLoops("Goal loop");
+  const sessionC = "Is anything left to improve?";
+  await startSession(sessionC);
+  const createC = (await work()).getByRole("region", { name: "Create loop" });
+  await createC
+    .getByRole("button", { name: "Create loop", exact: true })
+    .first()
+    .click();
   await holdRefreshes(app, true);
   await settled();
-  const improve = loops.getByRole("textbox", { name: "Message", exact: true });
+  const improve = createC.getByRole("textbox", { name: /Goals/ });
   await improve.fill("Keep improving the fixture. Prioritize correctness.");
-  // Keyboard: the mode selector is an ordinary radio group.
-  await page.getByRole("radio", { name: /^Goal loop/ }).focus();
+  // Keyboard: the loop kind is an ordinary radio group.
+  await createC.getByRole("radio", { name: "Goal loop" }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("radio", { name: /^Endless/ })).toBeChecked();
+  await expect(createC.getByRole("radio", { name: "Endless" })).toBeChecked();
   await page.setViewportSize({ width: 760, height: 900 });
   await settled();
-  await expect(improve).toHaveValue(
-    "Keep improving the fixture. Prioritize correctness.",
-  );
+  await expect(
+    createC.getByRole("textbox", { name: /Priorities/ }),
+  ).toHaveValue("Keep improving the fixture. Prioritize correctness.");
   await holdRefreshes(app, false);
-  await loops.getByRole("button", { name: "Create run", exact: true }).click();
+  await createC
+    .getByRole("button", { name: "Create loop", exact: true })
+    .last()
+    .click();
+  sessionOf.set(
+    "Keep improving the fixture. Prioritize correctness.",
+    sessionC,
+  );
+  await createC.getByRole("button", { name: "Open loop", exact: true }).click();
   const c = runArticle("Keep improving the fixture. Prioritize correctness.");
   await c
     .getByRole("button", { name: "Review and start", exact: true })
@@ -527,21 +619,13 @@ try {
       { timeout: 30000 },
     )
     .toBe("paused");
-  // The run's conversation can no longer be steered, and the project's page
-  // keeps Stop for it.
+  // The run can no longer be steered, and its page keeps Stop for it.
   await expect(
     c.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeDisabled();
-  loops = await openLoops("Endless");
-  const existing = loops.getByRole("region", { name: "Existing runs" });
-  await expect(existing).toContainText("Paused");
+  await expect(c).toContainText("Paused");
   await shot(page, "loop-feature-off-existing-run");
-  await existing
-    .getByRole("button", {
-      name: "Stop Keep improving the fixture. Prioritize correctness.",
-      exact: true,
-    })
-    .click();
+  await c.getByRole("button", { name: "Stop", exact: true }).click();
   await expect
     .poll(
       async () =>
@@ -551,7 +635,7 @@ try {
     .toBe("stopped");
   if (errors.length) throw new Error(`Page errors: ${errors.join("; ")}`);
   console.log(
-    `Desktop loop journey passed: mode selector, Goal loop with live steering, restart and resume (${unknown.length ? `${unknown.length} member turn(s) cut off by the restart shown as Reconciliation needed and reconciled` : "no member turn cut off by the restart"}), automatic organization change, stop during child work, publication, Endless monitoring in a compact window, Stop while the feature is off.`,
+    `Desktop loop journey passed: loops created in sessions through Work → Create loop with queue position and Back to session, Goal loop with live steering, restart and resume (${unknown.length ? `${unknown.length} member turn(s) cut off by the restart shown as Reconciliation needed and reconciled` : "no member turn cut off by the restart"}), automatic organization change, stop during child work, publication, Endless monitoring in a compact window, Stop while the feature is off.`,
   );
 } catch (error) {
   if (page) await shot(page, "loop-failure").catch(() => {});

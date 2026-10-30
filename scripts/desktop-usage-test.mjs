@@ -37,7 +37,7 @@ try {
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
   await expect(
-    page.getByRole("button", { name: "Applications", exact: true }),
+    page.getByRole("button", { name: "Providers", exact: true }),
   ).toBeVisible({ timeout: 45_000 });
   await app.evaluate(
     ({ dialog }, { project, wrapper }) => {
@@ -70,7 +70,7 @@ try {
     (id) => window.topsl.command({ type: "trust-installation", id }),
     runtime.id,
   );
-  await page.getByRole("button", { name: "Applications", exact: true }).click();
+  await page.getByRole("button", { name: "Providers", exact: true }).click();
   const card = page.getByRole("article", { name: "Claude usage remaining" });
   const refresh = card.getByRole("button", {
     name: "Refresh from Claude",

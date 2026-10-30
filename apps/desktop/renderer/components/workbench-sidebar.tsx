@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "../../../../packages/domain/types";
 import {
-  projectViews,
   viewLabel,
   type ProjectView,
 } from "../../../../packages/domain/navigation";
@@ -15,10 +14,88 @@ const kindTitle = {
   "goal-loop": "Goal loop",
   endless: "Endless",
 } as const;
-/** Project tools: every project destination except the coordinator. */
-const toolViews = projectViews.filter((v) => v !== "coordinator");
+/** The project menu's destinations (docs/UX_Cleanup_Plan.md §1). */
+const menuViews: ProjectView[] = [
+  "all-sessions",
+  "project-settings",
+  "sessions",
+  "advanced",
+];
 
-export type GlobalPage = "projects" | "applications" | "settings";
+export type GlobalPage = "projects" | "providers" | "settings";
+
+/**
+ * One project's menu: All sessions, Project settings, Provider tools and
+ * Advanced workflows. Arrow keys move between its items; Escape closes it
+ * and returns focus to its button.
+ */
+function ProjectMenu({
+  projectName,
+  current,
+  choose,
+  close,
+  trigger,
+}: {
+  projectName: string;
+  current: ProjectView | null;
+  choose: (view: ProjectView) => void;
+  close: () => void;
+  trigger: HTMLButtonElement | null;
+}) {
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    list.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const outside = (event: MouseEvent) => {
+      if (
+        !list.current?.contains(event.target as Node) &&
+        !trigger?.contains(event.target as Node)
+      )
+        close();
+    };
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, []);
+  const items = () => [
+    ...(list.current?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+  ];
+  return (
+    <ul
+      ref={list}
+      className="project-menu"
+      role="menu"
+      aria-label={`${projectName} menu`}
+      onKeyDown={(event) => {
+        const buttons = items();
+        const index = buttons.indexOf(document.activeElement as any);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+          trigger?.focus();
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const step = event.key === "ArrowDown" ? 1 : -1;
+          buttons[(index + step + buttons.length) % buttons.length]?.focus();
+        } else if (event.key === "Tab") close();
+      }}
+    >
+      {menuViews.map((view) => (
+        <li key={view} role="none">
+          <button
+            type="button"
+            role="menuitem"
+            className={current === view ? "selected" : ""}
+            aria-current={current === view ? "page" : undefined}
+            onClick={() => choose(view)}
+          >
+            <AtlasIcon name={view} />
+            <span>{viewLabel(view)}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function WorkbenchSidebar({
   state,
@@ -28,7 +105,7 @@ export function WorkbenchSidebar({
   open,
   close,
   navigate,
-  selectProject,
+  openProject,
   selectView,
   addProject,
   palette,
@@ -43,20 +120,22 @@ export function WorkbenchSidebar({
   open: boolean;
   close: () => void;
   navigate: (page: GlobalPage) => void;
-  selectProject: (id: string) => void;
-  selectView: (view: ProjectView) => void;
+  /** Opens a project at its last viewed session. */
+  openProject: (id: string) => void;
+  selectView: (view: ProjectView, projectId: string) => void;
   addProject: () => void;
   palette: () => void;
   threads: Record<string, ProjectThreads>;
   threadId: string | null;
-  /** Opens a thread of a project, or that project's home with none. */
+  /** Opens a thread of a project, or that project's New session page with none. */
   openThread: (threadId: string | null, projectId: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(projectId ? [projectId] : []),
   );
-  const [toolsOpen, setToolsOpen] = useState(true);
-  // The selected project is always expanded, so its conversations show.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const triggers = useRef(new Map<string, HTMLButtonElement>());
+  // The selected project is always expanded, so its sessions show.
   useEffect(() => {
     if (projectId && !expanded.has(projectId))
       setExpanded((current) => new Set(current).add(projectId));
@@ -102,7 +181,7 @@ export function WorkbenchSidebar({
     >
       <AtlasIcon name={target} />
       <span>{viewLabel(target)}</span>
-      {target === "applications" &&
+      {target === "providers" &&
         state.checks.some((check) => check.status === "available") && (
           <span className="count">
             {
@@ -139,7 +218,7 @@ export function WorkbenchSidebar({
       </nav>
       <div className="sidebar-projects">
         <div className="eyebrow">
-          PROJECT
+          PROJECTS
           <ActionButton aria-label="Add project" onClick={addProject}>
             +
           </ActionButton>
@@ -150,6 +229,11 @@ export function WorkbenchSidebar({
             const open = expanded.has(project.id);
             const selected = project.id === projectId;
             const hidden = list ? list.total - list.threads.length : 0;
+            const menuOpen = menuFor === project.id;
+            const current =
+              selected && page === "project" && view !== "coordinator"
+                ? view
+                : null;
             return (
               <li
                 key={project.id}
@@ -167,7 +251,7 @@ export function WorkbenchSidebar({
                   <ActionButton
                     className="project-name"
                     onClick={() => {
-                      openThread(null, project.id);
+                      openProject(project.id);
                       close();
                     }}
                   >
@@ -182,7 +266,47 @@ export function WorkbenchSidebar({
                       <span className="visually-hidden"> waiting on you</span>
                     </span>
                   )}
+                  <button
+                    type="button"
+                    className={`project-menu-button ${current ? "selected" : ""}`}
+                    aria-label={`Project menu for ${project.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    ref={(node) => {
+                      if (node) triggers.current.set(project.id, node);
+                      else triggers.current.delete(project.id);
+                    }}
+                    onClick={() => setMenuFor(menuOpen ? null : project.id)}
+                  >
+                    <AtlasIcon name="more" />
+                  </button>
                 </div>
+                {current && !menuOpen && (
+                  // Where the owner is in the project's menu; it reopens it.
+                  <ActionButton
+                    className="nav current-destination selected"
+                    aria-current="page"
+                    onClick={() => setMenuFor(project.id)}
+                  >
+                    <AtlasIcon name={current} />
+                    <span>{viewLabel(current)}</span>
+                  </ActionButton>
+                )}
+                {menuOpen && (
+                  <ProjectMenu
+                    projectName={project.name}
+                    current={current}
+                    trigger={triggers.current.get(project.id) ?? null}
+                    close={() => setMenuFor(null)}
+                    choose={(next) => {
+                      setMenuFor(null);
+                      selectView(next, project.id);
+                      // Keyboard users stay where they were in the sidebar.
+                      triggers.current.get(project.id)?.focus();
+                      close();
+                    }}
+                  />
+                )}
                 {open && (
                   <ul
                     className="thread-list"
@@ -226,65 +350,27 @@ export function WorkbenchSidebar({
                         <ActionButton
                           className="thread-more"
                           onClick={() => {
-                            openThread(null, project.id);
+                            selectView("all-sessions", project.id);
                             close();
                           }}
                         >
-                          {hidden} older in {project.name}
+                          All {list!.total} sessions
                         </ActionButton>
                       </li>
                     )}
                   </ul>
-                )}
-                {selected && (
-                  <div className="project-tools">
-                    <ActionButton
-                      className="tools-toggle"
-                      aria-expanded={toolsOpen}
-                      onClick={() => setToolsOpen(!toolsOpen)}
-                    >
-                      Project tools
-                    </ActionButton>
-                    {toolsOpen && (
-                      <nav
-                        className="project-navigation"
-                        aria-label="Project navigation"
-                      >
-                        {toolViews.map((item) => (
-                          <ActionButton
-                            key={item}
-                            className={`nav ${page === "project" && view === item ? "selected" : ""}`}
-                            aria-current={
-                              page === "project" && view === item
-                                ? "page"
-                                : undefined
-                            }
-                            onClick={() => {
-                              selectView(item);
-                              close();
-                            }}
-                          >
-                            <AtlasIcon name={item} />
-                            <span>{viewLabel(item)}</span>
-                          </ActionButton>
-                        ))}
-                      </nav>
-                    )}
-                  </div>
                 )}
               </li>
             );
           })}
         </ul>
         {!state.projects.length && (
-          <p className="tiny">
-            Add a folder to begin. Native tools are under Applications.
-          </p>
+          <p className="tiny">Add a folder to begin.</p>
         )}
       </div>
       <div className="sidebar-bottom">
         <nav aria-label="Application navigation">
-          {globalLink("applications")}
+          {globalLink("providers")}
           {globalLink("settings")}
         </nav>
         <ActionButton
@@ -297,10 +383,7 @@ export function WorkbenchSidebar({
           Command palette{" "}
           <kbd>{state.platform.startsWith("darwin") ? "⌘" : "Ctrl"} K</kbd>
         </ActionButton>
-        <div className="vault-status">
-          <span className="status-dot" /> Local vault unlocked
-        </div>
-        <small>Personal pilot · {state.version}</small>
+        <small>Topsl {state.version}</small>
       </div>
     </>
   );

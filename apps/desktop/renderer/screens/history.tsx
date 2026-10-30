@@ -30,35 +30,7 @@ export function HistoryScreen({
 }: Props) {
   return (
     <>
-      <h2>Conversations and imports</h2>
-      <div className="runtime-bar">
-        <div className="actions">
-          <ActionButton
-            disabled={!projectId}
-            onClick={() =>
-              void act({
-                type: "history-import",
-                projectId,
-                provider: "codex",
-              })
-            }
-          >
-            Import Codex JSONL
-          </ActionButton>
-          <ActionButton
-            disabled={!projectId}
-            onClick={() =>
-              void act({
-                type: "history-import",
-                projectId,
-                provider: "claude",
-              })
-            }
-          >
-            Import Claude JSONL
-          </ActionButton>
-        </div>
-      </div>
+      <h2>Provider history</h2>
       <form
         className="search"
         onSubmit={async (e) => {
@@ -144,7 +116,7 @@ export function HistoryScreen({
                 openConversation(c.id);
               }}
             >
-              {c.title} →
+              {c.title}
             </ActionButton>
             <span>{new Date(c.createdAt).toLocaleDateString()}</span>
             <ActionButton
@@ -155,13 +127,10 @@ export function HistoryScreen({
           </div>
         ))
       ) : (
-        <div className="onboarding">
-          <h2>A clear record of your work.</h2>
-          <p>
-            Structured sessions appear here. Import native transcripts when you
-            want them included in search and handoffs.
-          </p>
-        </div>
+        <p className="muted">
+          No provider conversations yet. Exported histories are imported in
+          Settings → Imports.
+        </p>
       )}
     </>
   );

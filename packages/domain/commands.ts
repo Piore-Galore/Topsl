@@ -8,6 +8,7 @@ import {
 } from "./orchestration-commands";
 import { loopCommands } from "./loop-commands";
 import { sessionCommands } from "./session-commands";
+import { importCommands } from "./import-commands";
 import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
@@ -50,6 +51,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...candidateReviewCommands,
   ...orchestrationCommands,
   ...loopCommands,
+  ...importCommands,
   ...sessionCommands,
   z.object({ type: z.literal("environment-detect"), projectId: id }),
   z.object({
@@ -420,7 +422,19 @@ export const commandSchema = z.discriminatedUnion("type", [
     /** The open coordinator thread (`goal:<id>` or `loop:<id>`), if any. */
     threadId: z.string().max(300).nullable().optional(),
   }),
-  z.object({ type: z.literal("navigation-query") }),
+  /**
+   * The saved location. With `projectId`, that project's last viewed
+   * session, else its newest one, else none (the New session page).
+   */
+  z.object({ type: z.literal("navigation-query"), projectId: id.optional() }),
+  /** One page of a project's sessions and standalone loops, newest first. */
+  z.object({
+    type: z.literal("project-threads-page"),
+    projectId: id,
+    cursor: z.string().max(20).nullable().optional(),
+    limit: z.number().int().min(1).max(200).default(50),
+    query: z.string().max(500).optional(),
+  }),
   z.object({ type: z.literal("managed-workspaces-query"), projectId: id }),
   z.object({
     type: z.literal("workspace-create-preview"),
@@ -496,54 +510,7 @@ export const commandSchema = z.discriminatedUnion("type", [
     id,
     expectedRevision: z.number().int().positive(),
   }),
-  z.object({
-    type: z.literal("sync-field-push"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
-  }),
   z.object({ type: z.literal("synchronization-query"), projectId: id }),
-  z.object({
-    type: z.literal("sync-field-intent"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
-    local: z.union([
-      z.string().max(10000),
-      z.number().finite(),
-      z.boolean(),
-      z.null(),
-      z.array(z.string().max(4096)).max(2000),
-    ]),
-    authority: z.enum(["topsl", "follow-native"]),
-  }),
-  z.object({
-    type: z.literal("sync-field-resolve"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
-    direction: z.enum(["follow-native", "keep-topsl"]),
-  }),
-  z.object({
-    type: z.literal("native-link-state"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
-    state: z.enum(["linked", "unlinked"]),
-  }),
-  z.object({
-    type: z.literal("native-root-map"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
-    nativeRoot: z.string().min(1).max(4096),
-    workspaceId: id,
-  }),
   z.object({
     type: z.literal("shared-revision-publish"),
     requestId: id,
@@ -583,28 +550,6 @@ export const commandSchema = z.discriminatedUnion("type", [
     id,
     expectedRevision: z.number().int().positive(),
     specificationId: id,
-  }),
-  z.object({
-    type: z.literal("native-history-approve"),
-    requestId: id,
-    projectId: id,
-    provider: z.enum(["codex", "claude"]),
-    profileId: id,
-    sessionId: id,
-  }),
-  z.object({
-    type: z.literal("native-history-reconcile"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
-  }),
-  z.object({
-    type: z.literal("native-history-pause"),
-    requestId: id,
-    projectId: id,
-    id,
-    expectedRevision: z.number().int().positive(),
   }),
   z.object({ type: z.literal("builder-reviewer-query"), projectId: id }),
   z.object({ type: z.literal("builder-reviewer-inspect"), id }),
@@ -774,7 +719,6 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("lifecycle-cancel"), id }),
   z.object({ type: z.literal("lifecycle-reconcile"), id }),
   z.object({ type: z.literal("lifecycle-retry-preview"), id }),
-  z.object({ type: z.literal("open-application"), id }),
   z.object({
     type: z.literal("open-docs"),
     appId: id,
@@ -782,32 +726,21 @@ export const commandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("show-download"), id }),
   z.object({ type: z.literal("project-add") }),
-  z.object({ type: z.literal("project-sync-enable"), enabled: z.boolean() }),
-  z.object({ type: z.literal("project-sync-refresh") }),
-  z.object({
-    type: z.literal("codex-project-sync-enable"),
-    installationId: id,
-  }),
-  z.object({ type: z.literal("codex-project-sync-pause") }),
-  z.object({ type: z.literal("codex-project-sync-refresh") }),
-  z.object({
-    type: z.literal("codex-project-rename"),
-    id,
-    expectedRevision: id,
-    name: z
-      .string()
-      .trim()
-      .min(1)
-      .max(200)
-      .regex(/^[^\x00-\x1f\x7f]+$/),
-  }),
-  z.object({
-    type: z.literal("codex-project-move"),
-    id,
-    beforeProjectId: id.nullable(),
-    expectedOrderRevision: id,
-  }),
   z.object({ type: z.literal("project-trust"), id }),
+  /** Renames a project in Topsl; the folder is not touched. */
+  z.object({
+    type: z.literal("project-rename"),
+    id,
+    expectedName: z.string().max(200),
+    name: z.string().min(1).max(200),
+  }),
+  /** Moves a project one place in the catalog's order. */
+  z.object({
+    type: z.literal("project-move"),
+    id,
+    direction: z.enum(["up", "down"]),
+    expectedOrderRevision: z.number().int().nonnegative(),
+  }),
   z.object({ type: z.literal("project-relink"), id }),
   z.object({
     type: z.literal("project-open"),
@@ -825,11 +758,6 @@ export const commandSchema = z.discriminatedUnion("type", [
     type: z.literal("history-search"),
     projectId: id,
     query: z.string().max(500),
-  }),
-  z.object({
-    type: z.literal("history-import"),
-    projectId: id,
-    provider: z.enum(["codex", "claude"]),
   }),
   z.object({ type: z.literal("history-delete"), id }),
   z.object({ type: z.literal("runtime-connect"), id }),

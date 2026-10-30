@@ -337,7 +337,7 @@ describe.skipIf(process.platform === "win32")(
         codex: "read-only",
       });
     });
-    test("opening a folder from Projects passes the chosen mode, and a desktop app takes none", async () => {
+    test("opening a folder from Projects passes the chosen mode, and opens only a provider CLI", async () => {
       const f = await setup();
       const opened: { terminalId: string } = await f.service.command({
         type: "project-open",
@@ -379,7 +379,7 @@ describe.skipIf(process.platform === "win32")(
           permissionMode: "read-only",
         }),
       ).rejects.toThrow(
-        "Topsl sets a permission mode only for a native terminal.",
+        "Topsl opens projects in the Codex or Claude Code CLI.",
       );
     });
     test("a login terminal takes no permission mode", async () => {
