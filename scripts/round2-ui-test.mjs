@@ -5,13 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import { throttleRenderer } from "./desktop-click-trace.mjs";
 const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-round2-ui-"));
-const output = path.resolve("test-results/round2-ui");
+// TOPSL_ROUND2_UI_EVIDENCE writes a later run elsewhere, so earlier evidence is kept.
+const output = path.resolve(
+  process.env.TOPSL_ROUND2_UI_EVIDENCE ?? "test-results/round2-ui",
+);
 await mkdir(output, { recursive: true });
+// The screen under test is today's Advanced workflows (docs/UX_Cleanup_Plan.md
+// §1): its own Section tabs choose Builder–reviewer, Candidate review or
+// Activity. The fixture adds only a project picker, standing in for the
+// sidebar, so a project switch remounts the screen as Coordination's key does.
 const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import{AdvancedWorkflows}from'${path.resolve("apps/desktop/renderer/screens/advanced-workflows.tsx")}';
 import'${path.resolve("apps/desktop/renderer/style.css")}';
 import'${path.resolve("apps/desktop/renderer/atlas.css")}';
-function Fixture(){const[project,setProject]=useState('project'),[view,setView]=useState('tasks');return <main style={{maxWidth:1100,margin:'auto',padding:20}}><label>Fixture project<select value={project} onChange={e=>setProject(e.target.value)}><option value="project">项目 Alpha · /tmp/路径</option><option value="other">Project Beta</option></select></label><nav aria-label="Project navigation">{['tasks','changes'].map(v=><button key={v} onClick={()=>setView(v)}>{v==='tasks'?'Tasks':'Changes'}</button>)}</nav><AdvancedWorkflows key={project} projectId={project} section={view==='changes'?'changes':'workflows'} onSection={(s)=>setView(s==='changes'?'changes':'tasks')}/></main>}createRoot(document.getElementById('root')).render(<Fixture/>);`;
+function Fixture(){const[project,setProject]=useState('project'),[section,setSection]=useState('workflows');return <main style={{maxWidth:1100,margin:'auto',padding:20}}><label>Fixture project<select value={project} onChange={e=>setProject(e.target.value)}><option value="project">项目 Alpha · /tmp/路径</option><option value="other">Project Beta</option></select></label><AdvancedWorkflows key={project} projectId={project} section={section} onSection={setSection}/></main>}createRoot(document.getElementById('root')).render(<Fixture/>);`;
 await build({
   stdin: { contents: entry, loader: "tsx", resolveDir: process.cwd() },
   bundle: true,
@@ -47,11 +54,23 @@ try {
   const page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
   await throttleRenderer(page);
-  // The view's page heading. The Task list's own "Tasks" heading is an h2, so
-  // without the level this matches two elements once the list has rendered.
+  // The page heading, with Builder–reviewer (the old Tasks destination)
+  // selected in the screen's own Section tabs.
   await expect(
-    page.getByRole("heading", { name: "Tasks", exact: true, level: 1 }),
+    page.getByRole("heading", {
+      name: "Advanced workflows",
+      exact: true,
+      level: 1,
+    }),
   ).toBeVisible();
+  const sectionTab = (name) =>
+    page
+      .getByRole("tablist", { name: "Section" })
+      .getByRole("tab", { name, exact: true });
+  await expect(sectionTab("Builder–reviewer")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   const setup = page.locator(".guided-workflow");
   await setup.locator("summary").first().focus();
   await page.keyboard.press("Space");
@@ -648,7 +667,7 @@ try {
       ),
     )
     .toBe(true);
-  await page.getByRole("navigation", { name: "Project navigation" }).getByRole("button", { name: "Tasks", exact: true }).click();
+  await sectionTab("Builder–reviewer").click();
   await setup.getByRole("heading", { name: "Team", exact: true }).focus();
   await page.screenshot({ path: path.join(output, "guided-compact.png") });
   await artifacts
@@ -726,10 +745,8 @@ try {
     global.fixture.holdTaskInspections = true;
     global.fixture.notify();
   });
-  await page
-    .getByRole("navigation", { name: "Project navigation" })
-    .getByRole("button", { name: "Tasks", exact: true })
-    .click();
+  // Task activity and its inspector are in the Activity section.
+  await sectionTab("Activity").click();
   const taskA = page.getByRole("button", { name: /Inspect Unicode 项目/ }),
     taskB = page.getByRole("button", { name: /Alternate task/ }),
     taskInspector = page.getByRole("complementary", { name: "Task inspector" });
