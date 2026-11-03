@@ -751,6 +751,51 @@ describe("native sessions", () => {
     ).toMatchObject({ implementation: "implementer", review: "reviewer" });
   });
 
+  test("a custom team created with the owner's own role owns it; another session cannot reuse its ID", async () => {
+    const f = await setup();
+    // What New session sends for "Add your own role".
+    const own = {
+      settings: {},
+      title: "API writer",
+      instructions:
+        "Writes the HTTP handlers.\nKeeps the OpenAPI file in step.",
+      purpose: "candidate-review" as const,
+    };
+    const a = await f.sessions.create({
+      projectId: "p",
+      configuration: {
+        team: "custom",
+        roles: { implementer: { settings: {} }, "api-writer-ab12": own },
+      },
+      commandId: cmd(),
+    });
+    const role = f.orchestrator.repo.role("p", "api-writer-ab12");
+    expect(role).toMatchObject({
+      title: "API writer",
+      instructions: own.instructions,
+      purpose: "candidate-review",
+      ownerConversationId: a.sessionId,
+    });
+    expect(
+      f.sessions
+        .query(a.sessionId)
+        .roles.find((r) => r.role.id === "api-writer-ab12"),
+    ).toMatchObject({ owned: true, pinned: true });
+    const b = await f.sessions.create({ projectId: "p", commandId: cmd() });
+    expect(
+      f.orchestrator.repo
+        .visibleRoles("p", b.sessionId)
+        .some((r) => r.id === "api-writer-ab12"),
+    ).toBe(false);
+    await expect(
+      f.sessions.create({
+        projectId: "p",
+        configuration: { team: "custom", roles: { "api-writer-ab12": own } },
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/belongs to another session/);
+  });
+
   test("a command that changes one field keeps the others", async () => {
     const f = await setup();
     const { sessionId } = await f.sessions.create({

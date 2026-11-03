@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { Freshness } from "../components/freshness";
 import { useDraft } from "../state/drafts";
 import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
@@ -17,11 +17,13 @@ import {
   CoordinatorPicker,
   coordinatorOptions,
   providerName,
+  rolePurposes,
 } from "./session-panes";
 import { ComposerModes } from "./session-thread";
 import {
   CheckFields,
   Errors,
+  OpenProviders,
   checksFrom,
   emptyCheck,
   newCommandId,
@@ -29,6 +31,39 @@ import {
   useRuntimeRefresh,
   type CheckDraft,
 } from "./shared";
+
+/** A role the owner defines for the new session only. */
+interface OwnRole {
+  roleId: string;
+  title: string;
+  instructions: string;
+  purpose: (typeof rolePurposes)[number][0];
+}
+
+/**
+ * A role ID from the title. The short suffix keeps it apart from roles
+ * other sessions own, which this page cannot see.
+ */
+function ownRoleId(title: string, taken: string[]): string {
+  const slug =
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/^(?![a-z])/, "role-")
+      .slice(0, 50)
+      .replace(/-+$/, "") || "role";
+  for (;;) {
+    const id = `${slug}-${crypto.randomUUID().slice(0, 4)}`;
+    if (!taken.includes(id)) return id;
+  }
+}
+
+const emptyOwnRole = {
+  title: "",
+  instructions: "",
+  purpose: "implementation" as OwnRole["purpose"],
+};
 
 /** What a new session would freeze from an attached import. */
 interface Excerpt {
@@ -91,8 +126,9 @@ export function ReferenceCard({
  * The New session page (docs/UX_Cleanup_Plan.md §1): the message box comes
  * first, with one Auto coordinator and an Automatic team summarized beside
  * it. Choosing models, the team, the goal kind and a required check are
- * explicit controls. An import from Settings → Imports can be attached; the
- * owner's next message starts the session.
+ * explicit controls; a custom team takes project roles and roles the owner
+ * defines for this session. An import from Settings → Imports can be
+ * attached; the owner's next message starts the session.
  */
 export function ProjectHome({
   projectId,
@@ -112,6 +148,9 @@ export function ProjectHome({
   const [coordinators, setCoordinators] = useState<MemberIntent[]>([]);
   const [team, setTeam] = useState<TeamMode>("automatic");
   const [roster, setRoster] = useState<string[]>([]);
+  const [ownRoles, setOwnRoles] = useState<OwnRole[]>([]);
+  const [roleDraft, setRoleDraft] = useState(emptyOwnRole);
+  const openProviders = useContext(OpenProviders);
   const [composerMode, setComposerMode] = useState<ComposerMode>("auto");
   const [kind, setKind] = useState<"code" | "information">("code");
   const [check, setCheck] = useState<CheckDraft>(emptyCheck);
@@ -155,9 +194,11 @@ export function ProjectHome({
     ? coordinators
         .map((m) =>
           m.pin
-            ? (options.find((o) => o.model === m.pin?.model)?.name ??
-              m.pin.model ??
-              "Pinned")
+            ? `${
+                options.find((o) => o.model === m.pin?.model)?.name ??
+                m.pin.model ??
+                "Pinned"
+              }${m.pin.effort ? ` (${m.pin.effort})` : ""}`
             : "Auto",
         )
         .join(", ")
@@ -180,13 +221,20 @@ export function ProjectHome({
         composerMode,
         roles:
           team === "custom"
-            ? Object.fromEntries(roster.map((r) => [r, { settings: {} }]))
+            ? Object.fromEntries([
+                ...roster.map((r) => [r, { settings: {} }]),
+                ...ownRoles.map(({ roleId, ...role }) => [
+                  roleId,
+                  { settings: {}, ...role },
+                ]),
+              ])
             : {},
       },
       commandId: newCommandId(),
     });
     if (started?.sessionId) {
       setText("");
+      setOwnRoles([]);
       onAttachment(null);
       onThread(`session:${started.sessionId}`);
     }
@@ -203,8 +251,15 @@ export function ProjectHome({
       <Errors errors={errors} />
       {snapshot && !readyRoutes.length && (
         <p role="status" className="session-attention">
-          No provider can coordinate yet. Qualify Codex or Claude Code under
-          Providers; the session waits until one can answer.
+          <span>
+            No provider can coordinate yet. Qualify Codex or Claude Code under
+            Providers; the session waits until one can answer.
+          </span>
+          {openProviders && (
+            <button type="button" onClick={openProviders}>
+              Open Providers
+            </button>
+          )}
         </p>
       )}
       {attachment &&
@@ -252,10 +307,17 @@ export function ProjectHome({
           className="team-summary-button"
           aria-expanded={customizing}
           aria-controls="session-setup"
-          onClick={() => setCustomizing(!customizing)}
+          onClick={() => {
+            // Runtime changes reach this page up to two seconds late; the
+            // picker reads the routes afresh when it opens.
+            if (!customizing) void refresh();
+            setCustomizing(!customizing);
+          }}
         >
           Coordinator: {coordinatorSummary} · Team:{" "}
-          {team === "automatic" ? "Automatic" : `Custom (${roster.length})`}
+          {team === "automatic"
+            ? "Automatic"
+            : `Custom (${roster.length + ownRoles.length})`}
         </button>
         <details className="composer-options-panel">
           <summary>
@@ -294,50 +356,158 @@ export function ProjectHome({
             value={coordinators}
             onChange={setCoordinators}
           />
-          <fieldset className="mode-selector" aria-label="Team setup">
+          <fieldset className="team-setup" aria-label="Team setup">
             <legend>Team</legend>
-            {(
-              [
-                ["automatic", "Automatic"],
-                ["custom", "Custom"],
-              ] as const
-            ).map(([value, title]) => (
-              <label key={value} className={team === value ? "selected" : ""}>
-                <input
-                  type="radio"
-                  name="session-team-mode"
-                  checked={team === value}
-                  onChange={() => setTeam(value)}
-                />
-                {title}
-              </label>
-            ))}
+            <div className="segmented">
+              {(
+                [
+                  ["automatic", "Automatic"],
+                  ["custom", "Custom"],
+                ] as const
+              ).map(([value, title]) => (
+                <label key={value} className={team === value ? "selected" : ""}>
+                  <input
+                    type="radio"
+                    name="session-team-mode"
+                    checked={team === value}
+                    onChange={() => setTeam(value)}
+                  />
+                  {title}
+                </label>
+              ))}
+            </div>
             <p className="muted">
               {team === "automatic"
                 ? "Coordinators choose roles and models within your permissions and limits, and explain each choice in Team."
-                : "Coordinators work within the roles you pick."}
+                : "Coordinators work within the roles you pick or add here."}
             </p>
             {team === "custom" && (
-              <ul className="roster-picker" aria-label="Custom roster">
-                {teamRoles.map((r: any) => (
-                  <li key={r.role.id}>
+              <>
+                {teamRoles.length > 0 && (
+                  <ul className="roster-picker" aria-label="Custom roster">
+                    {teamRoles.map((r: any) => (
+                      <li key={r.role.id}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={roster.includes(r.role.id)}
+                            onChange={(e) =>
+                              setRoster(
+                                e.target.checked
+                                  ? [...roster, r.role.id]
+                                  : roster.filter((x) => x !== r.role.id),
+                              )
+                            }
+                          />
+                          {r.role.title}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {ownRoles.length > 0 && (
+                  <ul className="own-roles" aria-label="Your roles">
+                    {ownRoles.map((r) => (
+                      <li key={r.roleId}>
+                        <span>
+                          <strong>{r.title}</strong>{" "}
+                          <span className="muted tiny">
+                            · {rolePurposes.find(([v]) => v === r.purpose)?.[1]}
+                          </span>
+                          <span className="muted own-role-instructions">
+                            {r.instructions}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`Remove role ${r.title}`}
+                          onClick={() =>
+                            setOwnRoles(
+                              ownRoles.filter((x) => x.roleId !== r.roleId),
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <details className="own-role-create" open={!teamRoles.length}>
+                  <summary>Add your own role</summary>
+                  <div className="role-create">
                     <label>
+                      Role title
                       <input
-                        type="checkbox"
-                        checked={roster.includes(r.role.id)}
+                        value={roleDraft.title}
+                        placeholder="For example: API writer"
+                        maxLength={200}
                         onChange={(e) =>
-                          setRoster(
-                            e.target.checked
-                              ? [...roster, r.role.id]
-                              : roster.filter((x) => x !== r.role.id),
-                          )
+                          setRoleDraft({ ...roleDraft, title: e.target.value })
                         }
                       />
-                      {r.role.title}
                     </label>
-                  </li>
-                ))}
-              </ul>
+                    <label>
+                      What this role does
+                      <textarea
+                        rows={3}
+                        value={roleDraft.instructions}
+                        maxLength={8000}
+                        placeholder="For example: Writes the HTTP handlers and keeps the OpenAPI file in step."
+                        onChange={(e) =>
+                          setRoleDraft({
+                            ...roleDraft,
+                            instructions: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Kind of work
+                      <select
+                        value={roleDraft.purpose}
+                        onChange={(e) =>
+                          setRoleDraft({
+                            ...roleDraft,
+                            purpose: e.target.value as OwnRole["purpose"],
+                          })
+                        }
+                      >
+                        {rolePurposes.map(([value, title]) => (
+                          <option key={value} value={value}>
+                            {title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={
+                        !roleDraft.title.trim() ||
+                        !roleDraft.instructions.trim()
+                      }
+                      onClick={() => {
+                        const title = roleDraft.title.trim();
+                        setOwnRoles([
+                          ...ownRoles,
+                          {
+                            roleId: ownRoleId(title, [
+                              ...teamRoles.map((r: any) => r.role.id),
+                              ...ownRoles.map((r) => r.roleId),
+                            ]),
+                            title,
+                            instructions: roleDraft.instructions.trim(),
+                            purpose: roleDraft.purpose,
+                          },
+                        ]);
+                        setRoleDraft(emptyOwnRole);
+                      }}
+                    >
+                      Add role
+                    </button>
+                  </div>
+                </details>
+              </>
             )}
           </fieldset>
         </div>

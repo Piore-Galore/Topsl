@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useEffect, useRef, useState } from "react";
 import type { Command } from "../../../../packages/domain/commands";
 import type { GoalCheckDefinition } from "../../../../packages/domain/role-groups";
 
@@ -32,6 +32,10 @@ export const stateTone: Record<string, string> = {
 };
 
 export type Run = (key: string, command: Command) => Promise<any>;
+
+/** Opens Providers, where runtimes are connected and qualified; null where
+ * the screen has no way there. */
+export const OpenProviders = createContext<(() => void) | null>(null);
 
 /**
  * Re-reads a screen when the application state changes, at most every two

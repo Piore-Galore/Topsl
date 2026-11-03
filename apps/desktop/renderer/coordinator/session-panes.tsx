@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type { Command } from "../../../../packages/domain/commands";
 import type {
   MemberIntent,
@@ -9,13 +9,15 @@ import type {
   TopslSession,
 } from "../../../../packages/domain/sessions";
 import {
+  EffortSelect,
   RoleEditor,
   filterModelOptions,
   modelOptions,
+  routeBlockers,
   teamLine,
   type ModelOption,
 } from "./role-editor";
-import { label, newCommandId, type Run } from "./shared";
+import { OpenProviders, label, newCommandId, type Run } from "./shared";
 
 /**
  * Native session panes (docs/Native_Sessions_Plan.md): the coordinator
@@ -39,22 +41,15 @@ const intentLabel: Record<string, string> = {
 };
 
 /** One combined Claude Code and Codex list of coordinator models. */
-export function coordinatorOptions(
-  routes: any[],
-): Array<ModelOption & { efforts: string[] }> {
-  return modelOptions(routes, "coordinator-contribution").map((o) => ({
-    ...o,
-    efforts:
-      routes
-        .find((r) => r.installationId === o.installationId)
-        ?.models.find((m: any) => m.model === o.model)?.efforts ?? [],
-  }));
+export function coordinatorOptions(routes: any[]): ModelOption[] {
+  return modelOptions(routes, "coordinator-contribution");
 }
 
 /**
  * Picks the session's coordinators. Empty is one Auto coordinator; each
- * selected model is pinned and stays pinned. Unavailable models are listed
- * with the reason, and cannot be added.
+ * selected model is pinned and stays pinned. Models are grouped by runtime;
+ * a runtime that cannot coordinate says why in one line per cause, with a way
+ * to Providers, and its models cannot be added.
  */
 export function CoordinatorPicker({
   routes,
@@ -66,6 +61,7 @@ export function CoordinatorPicker({
   onChange: (value: MemberIntent[]) => void;
 }) {
   const [search, setSearch] = useState("");
+  const openProviders = useContext(OpenProviders);
   const options = coordinatorOptions(routes);
   const shown = filterModelOptions(options, search) as typeof options;
   const add = (pin: MemberIntent["pin"]) =>
@@ -101,33 +97,20 @@ export function CoordinatorPicker({
                     ? " (prepares the shared wording)"
                     : ""}
                 </span>
-                {m.pin && option && option.efforts.length > 0 && (
-                  <select
-                    aria-label={`Effort for ${option.name}`}
-                    value={m.pin.effort ?? ""}
-                    onChange={(e) =>
+                {m.pin && (
+                  <EffortSelect
+                    pin={m.pin}
+                    options={options}
+                    onChange={(effort) =>
                       onChange(
                         value.map((x) =>
                           x.memberId === m.memberId
-                            ? {
-                                ...x,
-                                pin: {
-                                  ...x.pin!,
-                                  effort: e.target.value || undefined,
-                                },
-                              }
+                            ? { ...x, pin: { ...x.pin!, effort } }
                             : x,
                         ),
                       )
                     }
-                  >
-                    <option value="">Default effort</option>
-                    {option.efforts.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {label(effort)}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 )}
                 <button
                   type="button"
@@ -154,8 +137,8 @@ export function CoordinatorPicker({
           Auto: one coordinator, chosen from the ready models.
         </p>
       )}
-      <label>
-        Find a model{" "}
+      <label className="model-search">
+        Find a model
         <input
           type="search"
           value={search}
@@ -163,39 +146,108 @@ export function CoordinatorPicker({
           onChange={(e) => setSearch(e.target.value)}
         />
       </label>
-      <ul className="model-options" aria-label="Coordinator models">
-        {shown.map((o) => (
-          <li key={o.key} className={o.available ? "" : "unavailable"}>
-            <span>
-              <strong>{o.name}</strong> · {providerName(o.provider)} ·{" "}
-              <code>{o.model}</code>
-              {o.efforts.length ? ` · effort ${o.efforts.join("/")}` : ""}
-              {!o.available && <span className="muted"> · {o.reason}</span>}
-            </span>
-            <button
-              type="button"
-              disabled={!o.available}
-              aria-label={`Add ${o.name} (${providerName(o.provider)}) as a coordinator`}
-              onClick={() =>
-                add({
-                  label: o.name,
-                  provider: o.provider,
-                  installationId: o.installationId,
-                  model: o.model,
-                })
-              }
+      <div className="model-groups">
+        {routes.map((route) => {
+          const status = routeBlockers(route, "coordinator-contribution");
+          const group = shown.filter(
+            (o) => o.installationId === route.installationId,
+          );
+          if (search.trim() && !group.length) return null;
+          const name = providerName(route.provider);
+          return (
+            <section
+              key={route.installationId}
+              className="model-group"
+              aria-label={`${name} coordinator models`}
             >
-              Add
-            </button>
-          </li>
-        ))}
-        {!options.length && (
-          <li className="muted">
-            No coordinator model is observed yet. Qualify Claude Code or Codex
-            under Providers.
-          </li>
+              <div className="model-group-heading">
+                <strong>{name}</strong>
+                {status.reasons.length ? (
+                  <span className="badge warm">Not ready</span>
+                ) : (
+                  <span className="badge good">Ready</span>
+                )}
+                {status.reasons.length > 0 && openProviders && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={openProviders}
+                  >
+                    Open Providers
+                  </button>
+                )}
+              </div>
+              {status.reasons.map((reason) => (
+                <p key={reason} className="muted model-group-reason">
+                  {reason}
+                </p>
+              ))}
+              {status.details.length > 0 && (
+                <details className="model-group-details">
+                  <summary>What {name} reported</summary>
+                  <ul>
+                    {status.details.map((detail) => (
+                      <li key={detail}>{detail}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {group.length ? (
+                <ul className="model-options" aria-label={`${name} models`}>
+                  {group.map((o) => (
+                    <li
+                      key={o.key}
+                      className={o.available ? "" : "unavailable"}
+                    >
+                      <span className="model-label">
+                        {o.name !== o.model && <strong>{o.name}</strong>}{" "}
+                        <code>{o.model}</code>
+                        {o.efforts.length > 0 && (
+                          <span className="muted tiny">
+                            {" "}
+                            · effort {o.efforts.join("/")}
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!o.available}
+                        title={o.available ? undefined : o.reason}
+                        aria-label={`Add ${o.name} (${name}) as a coordinator`}
+                        onClick={() =>
+                          add({
+                            label: o.name,
+                            provider: o.provider,
+                            installationId: o.installationId,
+                            model: o.model,
+                          })
+                        }
+                      >
+                        Add
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">
+                  {route.provider === "claude"
+                    ? "No Claude model is qualified yet. Claude Code has no model list, so a model appears here once a qualification under Providers saw Claude Code run it."
+                    : "Codex has not reported its models. Choose Connect / test under Providers."}
+                </p>
+              )}
+            </section>
+          );
+        })}
+        {!routes.length && (
+          <p className="muted">
+            No trusted Codex or Claude Code runtime yet. Locate or trust one
+            under Providers, then qualify it.
+          </p>
         )}
-      </ul>
+        {search.trim() !== "" && routes.length > 0 && !shown.length && (
+          <p className="muted">No observed model matches the search.</p>
+        )}
+      </div>
       <button type="button" onClick={() => add(null)}>
         Add an Auto coordinator
       </button>
@@ -204,7 +256,7 @@ export function CoordinatorPicker({
 }
 
 /** The roles a new custom role can be created with. */
-const purposes = [
+export const rolePurposes = [
   ["implementation", "Implementation"],
   ["information", "Research"],
   ["candidate-review", "Review"],
@@ -234,7 +286,7 @@ export function SessionTeamPane({
     roleId: "",
     title: "",
     instructions: "",
-    purpose: "implementation" as (typeof purposes)[number][0],
+    purpose: "implementation" as (typeof rolePurposes)[number][0],
   });
   const update = (key: string, patch: Partial<SessionConfiguration>) =>
     run(key, {
@@ -277,7 +329,7 @@ export function SessionTeamPane({
             <li key={c.memberId}>
               <strong>{c.memberId}:</strong>{" "}
               {c.model
-                ? `${providerName(c.provider)} · ${c.model}`
+                ? `${providerName(c.provider)} · ${c.model}${c.effort ? ` · ${c.effort} effort` : ""}`
                 : "unresolved"}{" "}
               ·{" "}
               {c.selection === "auto"
@@ -460,7 +512,7 @@ export function SessionTeamPane({
                 })
               }
             >
-              {purposes.map(([value, title]) => (
+              {rolePurposes.map(([value, title]) => (
                 <option key={value} value={value}>
                   {title}
                 </option>

@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   AppState,
   Installation,
   LifecyclePlan,
 } from "../../../../packages/domain/types";
 import type { Command } from "../../../../packages/domain/commands";
+import type { ProviderModel } from "../../../../packages/providers/contract";
 import { ActionButton } from "../components/action-button";
 import { Badge } from "../components/atlas";
 import { ProviderUsage } from "../components/allowance";
+import { useRuntimeRefresh } from "../coordinator/shared";
 
 type Props = {
   state: AppState;
@@ -193,12 +195,13 @@ export function ProvidersScreen({
                           </>
                         )}
                       </div>
-                      {app.id === "anthropic.claude-code-cli" &&
-                        i.trusted &&
-                        state.claudeStructuredRoute?.enabled &&
-                        i.compatibility === "compatible" && (
-                          <ClaudeQualification installation={i} act={act} />
-                        )}
+                      {i.trusted && (
+                        <RuntimeQualification
+                          installation={i}
+                          routeEnabled={!!state.claudeStructuredRoute?.enabled}
+                          act={act}
+                        />
+                      )}
                       {check && (
                         <p className="check-detail">
                           {check.detail}
@@ -352,67 +355,252 @@ export function ProvidersScreen({
   );
 }
 
-/** Qualifies a connected Claude Code runtime for one model. Claude Code has
- * no model list, so the owner names the model; Topsl's own dialog lists the
- * live turns before any start. */
-function ClaudeQualification({
+interface QualificationStatus {
+  state: "current" | "missing" | "stale";
+  running: boolean;
+  models: ProviderModel[];
+  reports: Array<{
+    acceptanceId: string | null;
+    expiresAt: string;
+    createdAt: string;
+    report: {
+      model: string;
+      error: string | null;
+      observations: Array<{ capability: string; passed: boolean }>;
+    };
+  }>;
+}
+
+/** What one qualification run passed and missed, in a sentence or two. */
+function qualificationSummary(result: any): string {
+  const observations: any[] = result.report?.observations ?? [];
+  const names = (passed: boolean) =>
+    observations
+      .filter((o) => !!o.passed === passed)
+      .map((o) => o.capability)
+      .join(", ") || "none";
+  return [
+    result.acceptanceId
+      ? `Recorded until ${new Date(result.expiresAt).toLocaleString()}.`
+      : "Nothing was recorded.",
+    `Passed: ${names(true)}.`,
+    `Not passed: ${names(false)}.`,
+    result.report?.reportedModel !== undefined
+      ? `Claude Code reported model ${result.report.reportedModel ?? "none"}.`
+      : "",
+    result.report?.error ? `Stopped: ${result.report.error}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * Qualifies a trusted runtime for coordinators and teams, and says whether
+ * its current qualification still holds. Codex lists its models after
+ * Connect / test; Claude Code has no model list, so the owner names the
+ * model. Topsl's own dialog lists the live turns before any start.
+ */
+function RuntimeQualification({
   installation,
+  routeEnabled,
   act,
 }: {
   installation: Installation;
+  routeEnabled: boolean;
   act: (command: Command) => Promise<any>;
 }) {
-  const [model, setModel] = useState(""),
-    [summary, setSummary] = useState("");
+  const claude = installation.appId === "anthropic.claude-code-cli";
+  const name = claude ? "Claude" : "Codex";
+  const [status, setStatus] = useState<QualificationStatus | null>(null);
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [summary, setSummary] = useState("");
+  async function load() {
+    try {
+      setStatus(
+        await window.topsl.command({
+          type: "runtime-qualification-query",
+          id: installation.id,
+        }),
+      );
+    } catch {
+      setStatus(null);
+    }
+  }
+  useEffect(() => {
+    void load();
+  }, [
+    installation.id,
+    installation.revisionId,
+    installation.compatibility,
+    routeEnabled,
+  ]);
+  useRuntimeRefresh(load);
+  const models = status?.models ?? [];
+  // Codex: the chosen model, else the one the runtime reports as default.
+  const codexModel =
+    models.find((m) => m.model === model) ??
+    models.find((m) => m.isDefault) ??
+    models[0];
+  const efforts = codexModel?.supportedReasoningEfforts ?? [];
+  const recorded = status?.reports.find(
+    (r) => r.acceptanceId && Date.parse(r.expiresAt) > Date.now(),
+  );
+  const last = status?.reports[0];
+  const blocked =
+    claude && !routeEnabled
+      ? "route"
+      : installation.compatibility !== "compatible"
+        ? "connect"
+        : !claude && !models.length
+          ? "models"
+          : null;
+  async function qualify() {
+    const chosen = claude ? model : (codexModel?.model ?? "");
+    if (!chosen) return;
+    const result = await act({
+      type: "runtime-qualify",
+      id: installation.id,
+      model: chosen,
+      ...(!claude && effort && efforts.includes(effort) ? { effort } : {}),
+    });
+    if (result) setSummary(qualificationSummary(result));
+    await load();
+  }
   return (
-    <div className="actions wrap">
-      <label>
-        Claude model to qualify
-        <input
-          value={model}
-          placeholder="claude-opus-5-5"
-          onChange={(event) => setModel(event.target.value.trim())}
-        />
-      </label>
-      <ActionButton
-        disabled={!model}
-        title="Runs 4 live Claude Code turns after you review them"
-        onClick={async () => {
-          const result = await act({
-            type: "runtime-qualify",
-            id: installation.id,
-            model,
-          });
-          if (!result) return;
-          const observations: any[] = result.report?.observations ?? [];
-          setSummary(
-            [
-              result.acceptanceId
-                ? `Recorded until ${new Date(result.expiresAt).toLocaleString()}.`
-                : "Nothing was recorded.",
-              `Passed: ${
-                observations
-                  .filter((o) => o.passed)
-                  .map((o) => o.capability)
-                  .join(", ") || "none"
-              }.`,
-              `Not passed: ${
-                observations
-                  .filter((o) => !o.passed)
-                  .map((o) => o.capability)
-                  .join(", ") || "none"
-              }.`,
-              `Claude Code reported model ${result.report?.reportedModel ?? "none"}.`,
-              result.report?.error ? `Stopped: ${result.report.error}` : "",
-            ]
-              .filter(Boolean)
-              .join(" "),
-          );
-        }}
-      >
-        Qualify Claude runtime
-      </ActionButton>
+    <section
+      className="runtime-qualification"
+      aria-label={`${name} qualification`}
+    >
+      <div className="installation-heading">
+        <strong>Qualification</strong>
+        <Badge
+          tone={
+            status?.state === "current"
+              ? "good"
+              : status?.state === "stale"
+                ? "warm"
+                : ""
+          }
+        >
+          {!status
+            ? "Not read"
+            : status.running
+              ? "Running…"
+              : status.state === "current"
+                ? "Qualified"
+                : status.state === "stale"
+                  ? "Needs qualifying again"
+                  : "Not qualified"}
+        </Badge>
+      </div>
+      <p className="muted">
+        {status?.state === "current"
+          ? `Coordinators and teams can use this runtime${
+              recorded
+                ? `. Last recorded with ${recorded.report.model} until ${new Date(recorded.expiresAt).toLocaleString()}`
+                : ""
+            }.`
+          : status?.state === "stale"
+            ? "The last qualification no longer matches this executable, account or host. Coordinators and teams can use this runtime again after a new one passes."
+            : "Coordinators and teams can use this runtime only after a qualification passes: a few live turns that check its permissions, recorded for 30 days."}
+        {claude && models.length > 0
+          ? ` Qualified Claude models: ${models.map((m) => m.model).join(", ")}.`
+          : ""}
+      </p>
+      {last && !last.acceptanceId && !summary && (
+        <p className="muted">
+          The last attempt ({new Date(last.createdAt).toLocaleString()})
+          recorded nothing
+          {last.report.error ? `: ${last.report.error}` : "."}
+        </p>
+      )}
+      {blocked === "route" ? (
+        <div className="actions wrap">
+          <p>
+            Claude Code's structured route is off. Turn it on to let Topsl run
+            Claude Code under your login for coordinators and teams, then
+            connect and qualify a model.
+          </p>
+          <ActionButton
+            onClick={() =>
+              void act({ type: "claude-structured-route-set", enabled: true })
+            }
+          >
+            Turn on structured route…
+          </ActionButton>
+        </div>
+      ) : blocked === "connect" ? (
+        <p>
+          Choose Connect / test first; qualifying needs a connected runtime.
+        </p>
+      ) : blocked === "models" ? (
+        <p>
+          Codex reported no models. Choose Connect / test to read them again.
+        </p>
+      ) : (
+        <div className="qualification-form">
+          {claude ? (
+            <label>
+              Claude model to qualify
+              <input
+                value={model}
+                placeholder="claude-opus-5-5"
+                onChange={(event) => setModel(event.target.value.trim())}
+              />
+            </label>
+          ) : (
+            <>
+              <label>
+                Codex model to qualify
+                <select
+                  value={codexModel?.model ?? ""}
+                  onChange={(event) => {
+                    setModel(event.target.value);
+                    setEffort("");
+                  }}
+                >
+                  {models.map((m) => (
+                    <option key={m.model} value={m.model}>
+                      {m.name || m.model}
+                      {m.isDefault ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {efforts.length > 0 && (
+                <label>
+                  Effort
+                  <select
+                    value={effort}
+                    onChange={(event) => setEffort(event.target.value)}
+                  >
+                    <option value="">Runtime default</option>
+                    {efforts.map((e) => (
+                      <option key={e} value={e}>
+                        {e}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </>
+          )}
+          <ActionButton
+            className="primary"
+            disabled={(claude ? !model : !codexModel) || !!status?.running}
+            title={
+              claude
+                ? "Runs 4 live Claude Code turns after you review them"
+                : "Runs up to 3 live model turns after you review them"
+            }
+            onClick={() => void qualify()}
+          >
+            Qualify {name} runtime
+          </ActionButton>
+        </div>
+      )}
       {summary && <p role="status">{summary}</p>}
-    </div>
+    </section>
   );
 }

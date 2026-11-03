@@ -369,14 +369,19 @@ describe.skipIf(!posix)("CQ-01 / CQ-08 through the service commands (POSIX shell
         "Review the qualification operations and their model-turn budget first.",
       );
     expect(existsSync(log)).toBe(false);
-    expect(
-      (await service.command({ type: "runtime-qualification-query", id: installation.id })).reports,
-    ).toEqual([]);
+    // Providers reads the binding's state and its current catalog with the reports.
+    expect(await service.command({ type: "runtime-qualification-query", id: installation.id })).toMatchObject({
+      state: "missing",
+      running: false,
+      models: [{ model: "fixture-model" }],
+      reports: [],
+    });
     for (let n = 0; n < 6; n++) {
       const result = await service.command(command, { approved: true });
       expect(result.report.turnsStarted).toBe(3);
     }
     const query = await service.command({ type: "runtime-qualification-query", id: installation.id });
+    expect(query.state).toBe("current");
     expect(query.reports).toHaveLength(5);
     expect(new Set(query.reports.map((r: any) => r.id)).size).toBe(5);
     expect(new Set(query.reports.map((r: any) => r.acceptanceId)).size).toBe(5);

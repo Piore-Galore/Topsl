@@ -694,11 +694,12 @@ export class RuntimeManager {
           : undefined;
     // Claude Code has no model list: the owner names a model, and the
     // qualification adds it to the catalog only if Claude Code reports
-    // running that exact model. Topsl passes Claude no effort.
+    // running that exact model. Its turns run with no effort: effort is not
+    // part of the permission profile, so it is chosen per member instead.
     if (claude) {
       if (selection.effort)
         throw new Error(
-          "Topsl passes Claude Code no reasoning effort; qualify a Claude runtime with a model only.",
+          "A Claude qualification takes no reasoning effort; qualify a Claude runtime with a model only, and choose effort per coordinator or member.",
         );
       if (!/^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,199}$/.test(selection.model))
         throw new Error(
@@ -810,11 +811,13 @@ export class RuntimeManager {
         runtimeRevision: string;
         executableIdentity: string;
         accountKey?: string;
+        efforts?: string[];
       }>("runtime-model-catalog", installation.id),
       current =
         catalog?.runtimeRevision === installation.revisionId &&
         catalog.executableIdentity === installation.identity &&
-        catalog.accountKey === report.account.accountKey;
+        catalog.accountKey === report.account.accountKey,
+      efforts = current ? (catalog.efforts ?? []) : [];
     const observedAt = now(),
       models = (current ? catalog.models : []).filter(
         (m) => m.model !== report.model,
@@ -834,10 +837,12 @@ export class RuntimeManager {
           description:
             "Claude Code reported this model in a qualification turn.",
           isDefault: false,
+          supportedReasoningEfforts: efforts,
           metadataSource: "runtime",
           observedAt,
         } satisfies ProviderModel,
       ],
+      efforts,
       observedAt,
     });
   }
@@ -854,6 +859,32 @@ export class RuntimeManager {
     ]
       .filter((r) => r.installationId === installationId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  /**
+   * Whether this exact binding has a current qualification, and the models
+   * its current catalog observed, for Providers. A Claude catalog holds only
+   * models a qualification saw Claude Code report.
+   */
+  qualificationStatus(installation: Installation): {
+    state: "current" | "missing" | "stale";
+    running: boolean;
+    models: ProviderModel[];
+  } {
+    const catalog = this.store.get<{
+      models: ProviderModel[];
+      runtimeRevision: string;
+      executableIdentity: string;
+    }>("runtime-model-catalog", installation.id);
+    return {
+      state: this.acceptance.resolve(this.binding(installation), installation)
+        .freshness.state,
+      running: this.qualifying.has(installation.id),
+      models:
+        catalog?.runtimeRevision === installation.revisionId &&
+        catalog.executableIdentity === installation.identity
+          ? catalog.models
+          : [],
+    };
   }
   isProjectBusy(id: string): boolean {
     return (
@@ -902,9 +933,7 @@ export class RuntimeManager {
     if (this.closing)
       throw new Error("Runtime dispatch is stopped for shutdown.");
     if (!installation.trusted)
-      throw new Error(
-        "Review and trust this executable in Providers first.",
-      );
+      throw new Error("Review and trust this executable in Providers first.");
     if ((await identity(installation.path)).identity !== installation.identity)
       throw new Error(
         "The installed executable changed. Rediscover and reconnect before running.",
@@ -922,7 +951,7 @@ export class RuntimeManager {
   }
   async inspect(
     installation: Installation,
-  ): Promise<{ models: any[]; account: any; info: any }> {
+  ): Promise<{ models: any[]; efforts?: string[]; account: any; info: any }> {
     await this.preflight(installation);
     if (installation.appId === "anthropic.claude-code-cli")
       return this.inspectClaude(installation);
@@ -995,12 +1024,16 @@ export class RuntimeManager {
         executableIdentity: string;
         accountKey?: string;
       }>("runtime-model-catalog", installation.id);
-      const models =
-        catalog?.runtimeRevision === installation.revisionId &&
-        catalog.executableIdentity === installation.identity &&
-        catalog.accountKey === account.accountKey
-          ? catalog.models
-          : [];
+      // Claude Code lists its effort levels once, for every model, so each
+      // qualified model offers the levels this executable's `--help` lists.
+      const efforts = result.efforts ?? [],
+        models = (
+          catalog?.runtimeRevision === installation.revisionId &&
+          catalog.executableIdentity === installation.identity &&
+          catalog.accountKey === account.accountKey
+            ? catalog.models
+            : []
+        ).map((m) => ({ ...m, supportedReasoningEfforts: efforts }));
       this.store.put("runtime-model-catalog", {
         id: installation.id,
         runtimeRevision: installation.revisionId,
@@ -1008,6 +1041,7 @@ export class RuntimeManager {
         accountKey: account.accountKey,
         profileId: account.profileId,
         models,
+        efforts,
         observedAt: now(),
       });
       return { ...result, models };
@@ -1544,8 +1578,7 @@ export class RuntimeManager {
     }
     // Only a message's first delta is written at once. The rest wait in
     // memory, and the timed write that stores them tells the window.
-    if (event.type === "message-delta" && !this.draft(active, event))
-      return;
+    if (event.type === "message-delta" && !this.draft(active, event)) return;
     if (event.type === "message") {
       // The final text replaces the draft, which is never written again.
       const id = `${run.id}:${event.itemId}`,

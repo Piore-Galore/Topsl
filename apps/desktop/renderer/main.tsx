@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
   AppState,
@@ -198,6 +198,10 @@ function App() {
   async function act(command: Command): Promise<any> {
     const scopeTicket = scopeGeneration.current;
     const scoped = "projectId" in command || "conversationId" in command;
+    // A runtime command for Provider tools' selected runtime is dropped once
+    // another runtime is selected there; one from Providers for any other
+    // runtime keeps its result and error.
+    const runtimeAtStart = selectedRuntime.current;
     const inScope = () =>
       (!scoped || scopeTicket === scopeGeneration.current) &&
       (!("projectId" in command) ||
@@ -207,6 +211,7 @@ function App() {
         command.conversationId === selectedConversation.current) &&
       (!command.type.startsWith("runtime-") ||
         !("id" in command) ||
+        command.id !== runtimeAtStart ||
         command.id === selectedRuntime.current);
     const key = [
       command.type,
@@ -451,15 +456,35 @@ function App() {
     setTerminalModeChoice(null);
     if (id) setTerminalId(id);
   }
+  const openProviders = useCallback(() => {
+    setNavOpen(false);
+    setPage("providers");
+  }, []);
   async function connect(i: Installation) {
     const result = await act({ type: "runtime-connect", id: i.id });
     if (result) {
       if (selectedRuntime.current === i.id) setModels(result.models);
       // Discovery preserves the requested model and selected native session.
       setModel((current) => current);
+      // What the owner acts on first; the runtime's full answer follows.
+      const names = (result.models ?? []).map(
+        (m: any) => `${m.name || m.model}${m.isDefault ? " (default)" : ""}`,
+      );
       setDetail({
         title: "Native connection",
-        text: JSON.stringify(result, null, 2),
+        text: [
+          "Connected. No model request was sent.",
+          i.appId === "anthropic.claude-code-cli"
+            ? names.length
+              ? `Qualified Claude models: ${names.join(", ")}.`
+              : "Claude Code has no model list. Qualify a model under Qualification to add it."
+            : names.length
+              ? `Codex reported ${names.length} ${names.length === 1 ? "model" : "models"}: ${names.join(", ")}.`
+              : "Codex reported no models.",
+          "",
+          "Full response:",
+          JSON.stringify(result, null, 2),
+        ].join("\n"),
       });
     }
   }
@@ -638,6 +663,7 @@ function App() {
             <div hidden={page !== "project"}>
               <Coordination
                 key={projectId}
+                onProviders={openProviders}
                 project={project}
                 view={projectView}
                 section={section}

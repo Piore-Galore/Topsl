@@ -1014,7 +1014,11 @@ async function codexConnection(session) {
     .click();
   const connection = page.getByRole("dialog", { name: "Native connection" });
   await appear("the Codex connection", connection, 60000);
-  const connected = JSON.parse(await connection.locator("pre").innerText());
+  // A summary comes first; the runtime's answer follows "Full response:".
+  const text = await connection.locator("pre").innerText();
+  const connected = JSON.parse(
+    text.slice(text.indexOf("Full response:\n") + "Full response:\n".length),
+  );
   await connection.getByRole("button", { name: "Close dialog" }).click();
   // Only the account kind and plan are kept, never the sign-in identity.
   session.account = {

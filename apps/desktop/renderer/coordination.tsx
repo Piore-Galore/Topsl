@@ -7,6 +7,7 @@ import { advancedSections } from "../../../packages/domain/navigation";
 import type { Project } from "../../../packages/domain/types";
 export type { ProjectView } from "../../../packages/domain/navigation";
 import { CoordinatorView } from "./coordinator";
+import { OpenProviders } from "./coordinator/shared";
 import { AllSessions } from "./screens/all-sessions";
 import { ProjectSettings } from "./screens/project-settings";
 import { AdvancedWorkflows } from "./screens/advanced-workflows";
@@ -29,6 +30,7 @@ export function Coordination({
   historyContent,
   attachment,
   onAttachment,
+  onProviders,
 }: {
   project?: Project;
   view: ProjectView;
@@ -43,6 +45,8 @@ export function Coordination({
   /** An import the New session page attaches, from Settings → Imports. */
   attachment: string | null;
   onAttachment: (referenceId: string | null) => void;
+  /** Opens Providers, where a runtime is connected and qualified. */
+  onProviders?: () => void;
 }) {
   const projectId = project?.id ?? "";
   const [advancedShown, setAdvancedShown] = useState(view === "advanced");
@@ -64,15 +68,17 @@ export function Coordination({
   return (
     <section className="coordination-view" aria-label="Project">
       {view === "coordinator" && (
-        <CoordinatorView
-          projectId={projectId}
-          projectName={project.name}
-          projectPath={project.path}
-          threadId={threadId}
-          onThread={onThread}
-          attachment={attachment}
-          onAttachment={onAttachment}
-        />
+        <OpenProviders.Provider value={onProviders ?? null}>
+          <CoordinatorView
+            projectId={projectId}
+            projectName={project.name}
+            projectPath={project.path}
+            threadId={threadId}
+            onThread={onThread}
+            attachment={attachment}
+            onAttachment={onAttachment}
+          />
+        </OpenProviders.Provider>
       )}
       {view === "all-sessions" && (
         <AllSessions

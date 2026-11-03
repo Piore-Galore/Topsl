@@ -135,6 +135,13 @@ label {
   font-size: 13px;
   color: var(--muted);
 }
+/* A checkbox or radio sits beside its text, not above it. Zero added
+   specificity, so label.checkbox and component rules still win. */
+label:where(:has(> input[type="checkbox"], > input[type="radio"])) {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
 input::placeholder,
 textarea::placeholder {
   color: var(--muted);
@@ -1318,11 +1325,13 @@ button.link {
   align-items: center;
   gap: 6px;
 }
+/* One column: side by side, each half of the 860px page was too narrow
+   for model names, reasons and their Add buttons. */
 .session-setup {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  margin-bottom: 12px;
+  margin: 12px 0;
 }
 .coordinator-picker {
   min-width: 0;
@@ -1343,6 +1352,7 @@ button.link {
   padding: 0;
   list-style: none;
   max-height: 220px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 .model-options li,
@@ -1354,6 +1364,123 @@ button.link {
   padding: 4px 0;
   border-bottom: 1px solid var(--line);
   overflow-wrap: anywhere;
+}
+/* The text takes the room and wraps; the controls keep their size. */
+.model-options .model-label,
+.picked-coordinators li > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.model-options li > button,
+.picked-coordinators li > button,
+.picked-coordinators li > select {
+  flex: none;
+}
+.model-options li > button {
+  min-height: 30px;
+  padding: 3px 12px;
+}
+.model-search input {
+  width: 100%;
+}
+.model-groups {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0;
+}
+.model-group {
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.model-group-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.model-group-heading .text-button {
+  margin-left: auto;
+  min-height: 28px;
+}
+.model-group-reason {
+  margin: 4px 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.model-group-details > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.model-group-details ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.team-setup {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.team-setup legend {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+.team-setup > p {
+  margin: 0;
+}
+.team-setup .segmented {
+  justify-self: start;
+}
+.team-setup .roster-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  max-height: none;
+  margin: 0;
+}
+.team-setup .roster-picker label {
+  color: var(--ink);
+  cursor: pointer;
+}
+.own-roles {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.own-roles li {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.own-roles li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.own-roles li > button {
+  flex: none;
+}
+.own-role-instructions {
+  display: block;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.own-role-create > summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.own-role-create[open] > summary {
+  margin-bottom: 6px;
 }
 .model-options li.unavailable {
   color: var(--muted);
@@ -1399,19 +1526,43 @@ button.link {
   background: var(--warm-soft);
   color: var(--warm-ink);
 }
-.session-team .role-create {
+/* A session's roles: one row each, its controls wrapping beneath. */
+.session-team ul[aria-label="Session roles"] {
+  list-style: none;
+  padding: 0;
+}
+.session-team ul[aria-label="Session roles"] > li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.session-team ul[aria-label="Session roles"] .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.session-team ul[aria-label="Session roles"] .actions button {
+  min-height: 30px;
+  padding: 3px 10px;
+}
+.role-create {
   display: grid;
   gap: 6px;
 }
-.session-team .role-create input,
-.session-team .role-create textarea {
+.role-create input,
+.role-create textarea {
   width: 100%;
   max-width: 100%;
 }
-@media (max-width: 1199px) {
-  .session-setup {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.role-create > button {
+  justify-self: start;
+}
+.session-attention > span {
+  flex: 1 1 320px;
+}
+.session-attention > button {
+  margin-left: auto;
 }
 
 /* Session-first cleanup (docs/UX_Cleanup_Plan.md): the project menu, the
@@ -1640,4 +1791,35 @@ button.link {
   .import-preview dl {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* Providers: a runtime's qualification for coordinators and teams. */
+.runtime-qualification {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.runtime-qualification p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.runtime-qualification .actions p {
+  flex: 1 1 100%;
+}
+.qualification-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.qualification-form label {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.qualification-form input,
+.qualification-form select {
+  width: 100%;
 }

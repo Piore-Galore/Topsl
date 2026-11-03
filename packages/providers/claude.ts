@@ -1,4 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  execFile,
+  spawn,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
+import os from "node:os";
 import { z } from "zod";
 import { EventEmitter } from "node:events";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
@@ -453,11 +458,18 @@ export interface ClaudeTurnTools {
   names: string[];
 }
 
+/**
+ * The turn's arguments. `effort` is the member's chosen effort level, passed
+ * as `--effort` only when one is chosen; it is not part of the permission
+ * profile a qualification fingerprints (runtime-binding.ts), so choosing one
+ * keeps the runtime's qualification.
+ */
 export function claudeArguments(
   model: string,
   sessionId: string,
   mode: "review" | "edit",
   tools?: ClaudeTurnTools,
+  effort?: string,
 ): string[] {
   if (tools && mode !== "review")
     throw new Error("Topsl's tools are declared only on a review session.");
@@ -475,6 +487,7 @@ export function claudeArguments(
     "--include-partial-messages",
     "--model",
     model,
+    ...(effort ? ["--effort", effort] : []),
     "--session-id",
     sessionId,
     // Claude Code 2.1.302's safe mode also drops the servers --mcp-config
@@ -495,6 +508,60 @@ export function claudeArguments(
     "--allowedTools",
     allowed,
   ];
+}
+
+/**
+ * The effort levels a Claude Code `--help` lists for `--effort`, such as
+ * "(low, medium, high, xhigh, max)" in 2.1.305; none when it has no such
+ * option, so Topsl never passes one it did not see.
+ */
+export function claudeEffortLevels(help: string): string[] {
+  // The option's own block: its line and the description lines under it, up
+  // to the next option.
+  const lines = help.split(/\r?\n/);
+  const first = lines.findIndex((line) => /^\s*--effort\b/.test(line));
+  if (first < 0) return [];
+  const block = [lines[first]];
+  for (const line of lines.slice(first + 1)) {
+    if (/^\s*-/.test(line) || !line.trim()) break;
+    block.push(line);
+  }
+  const listed = /\(([^)]*)\)/.exec(block.join(" "));
+  if (!listed) return [];
+  const levels = listed[1].split(",").map((level) => level.trim());
+  return levels.every((level) => /^[a-z][a-z0-9-]{0,31}$/.test(level))
+    ? [...new Set(levels)]
+    : [];
+}
+
+/** Reads `claude --help`, which starts no session or model turn. A failed
+ * read lists no levels; it never fails the connection. */
+export function readClaudeEfforts(
+  executable: string,
+  signal: AbortSignal,
+): Promise<string[]> {
+  return new Promise((resolve) => {
+    // On Windows, Node refuses a `.cmd` or `.bat` launched without a shell by
+    // throwing `spawn EINVAL` synchronously, before any callback runs.
+    try {
+      execFile(
+        executable,
+        ["--help"],
+        {
+          cwd: os.homedir(),
+          env: nativeEnvironment(),
+          timeout: 10_000,
+          maxBuffer: 256_000,
+          windowsHide: true,
+          signal,
+          encoding: "utf8",
+        },
+        (error, stdout) => resolve(error ? [] : claudeEffortLevels(stdout)),
+      );
+    } catch {
+      resolve([]);
+    }
+  });
 }
 
 /** Starts one Claude Code process for a turn. */
@@ -521,6 +588,8 @@ export interface ClaudeAdapterOptions {
   transport?: ClaudeTransport;
   /** Replaces the native account read for a test. */
   readAccount?: (executable: string) => Promise<ProviderAccount>;
+  /** Replaces the effort levels read from `--help` for a test. */
+  readEfforts?: (executable: string) => Promise<string[]>;
   /** Replaces the stall deadlines for a test. */
   stall?: Partial<typeof claudeStallLimits>;
 }
@@ -639,6 +708,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       // Claude Code has no model list. Models enter Topsl's catalog only when
       // a qualification saw Claude Code report the model it was asked for.
       models: [],
+      // The effort levels this version's `--help` lists, for every model.
+      efforts: await this.readEfforts(client.executable),
       account: account.sanitized,
       info: {
         platformFamily: "claude-code-print",
@@ -656,6 +727,11 @@ export class ClaudeAdapter implements ProviderAdapter {
         sanitized: { type: "fixture", email: null, planType: null },
       };
     return this.readAccount(client.executable);
+  }
+  private readEfforts(executable: string): Promise<string[]> {
+    return this.options.readEfforts
+      ? this.options.readEfforts(executable)
+      : readClaudeEfforts(executable, AbortSignal.timeout(15_000));
   }
   private readAccount(executable: string): Promise<ProviderAccount> {
     return this.options.readAccount
@@ -716,6 +792,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         executable: client.executable,
         cwd: client.cwd,
         model: turn.requestedModel,
+        ...(turn.requestedEffort ? { effort: turn.requestedEffort } : {}),
         sessionId: nativeSessionId,
         mode: turn.mode,
         prompt: turn.prompt,
@@ -864,6 +941,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       executable: string;
       cwd: string;
       model: string;
+      /** The member's effort level, from this runtime's catalog. */
+      effort?: string;
       sessionId: string;
       mode: "review" | "edit";
       prompt: string;
@@ -881,6 +960,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         input.sessionId,
         input.mode,
         input.tools,
+        input.effort,
       ),
       live = !this.fixtureTransport,
       process = this.fixtureTransport

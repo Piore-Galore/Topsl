@@ -188,6 +188,9 @@ export interface ProviderAdapter {
   connect(executable: string, cwd: string): ProviderConnection;
   inspect(connection: ProviderConnection): Promise<{
     models: ProviderModel[];
+    /** Effort levels the runtime accepts for every model, when it has no
+     * per-model list (Claude Code's `--help`). */
+    efforts?: string[];
     account: ProviderAccount["sanitized"] | null;
     info: { platformFamily: string | null; platformOs: string | null };
   }>;

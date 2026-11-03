@@ -3354,8 +3354,8 @@ export class Service {
         return result;
       }
       case "runtime-qualification-query":
-        this.installation(command.id);
         return {
+          ...this.runtime.qualificationStatus(this.installation(command.id)),
           reports: this.runtime.qualificationReports(command.id).slice(0, 5),
         };
       case "run-start": {

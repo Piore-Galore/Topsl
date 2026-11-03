@@ -36,25 +36,92 @@ export interface ModelOption {
   installationId: string;
   model: string;
   name: string;
+  /** Effort levels the runtime's catalog lists for this model. */
+  efforts: string[];
   available: boolean;
   reason: string;
+}
+
+/** Capabilities every structured purpose needs; all missing means the
+ * runtime has no current qualification at all. */
+const baseCapabilities = ["structured-turn", "native-subscription"];
+
+/**
+ * Why a route cannot serve a purpose: one short line per cause, each saying
+ * where to fix it, and the runtime's own blocker text behind them.
+ */
+export function routeBlockers(
+  route: any,
+  purpose: string,
+): { reasons: string[]; details: string[] } {
+  const readiness = route.purposes?.[purpose];
+  const details: string[] =
+    readiness && !readiness.ready ? readiness.blockers : [];
+  const codes = details.map((b) => b.split(": ")[0]);
+  // The first fix the owner must make, alone: the rest follow from it.
+  if (codes.includes("executable-untrusted"))
+    return {
+      reasons: ["Its executable is not trusted. Trust it under Providers."],
+      details,
+    };
+  if (codes.includes("authentication-route-unapproved"))
+    return {
+      reasons: [
+        "Claude Code's structured route is off. Turn it on under Providers, then qualify a model.",
+      ],
+      details,
+    };
+  const reasons = new Set<string>();
+  // A Claude catalog exists only after a qualification, which says so itself.
+  if (
+    !route.catalog.fresh &&
+    (route.provider !== "claude" || route.models.length)
+  )
+    reasons.add(
+      "Its model list is stale or not from the signed-in account. Choose Connect / test under Providers.",
+    );
+  const unqualified: string[] = [];
+  for (const blocker of details) {
+    const split = blocker.indexOf(": ");
+    const code = split > 0 ? blocker.slice(0, split) : "";
+    const detail = split > 0 ? blocker.slice(split + 2) : blocker;
+    if (
+      [
+        "permission-profile-unverified",
+        "authentication-required",
+        "process-lifecycle-unverified",
+        "candidate-reader-unavailable",
+      ].includes(code)
+    )
+      unqualified.push(detail.split(" ")[0]);
+    else if (code === "claude-route-unqualified")
+      reasons.add(
+        detail.includes("no longer matches")
+          ? "Its qualification no longer matches this executable, account or host. Qualify it again under Providers."
+          : "Not qualified yet. Qualify it under Providers.",
+      );
+    else reasons.add(detail);
+  }
+  if (unqualified.length)
+    reasons.add(
+      baseCapabilities.every((c) => unqualified.includes(c))
+        ? "Not qualified yet. Qualify it under Providers."
+        : `Its qualification did not pass ${unqualified.join(", ")}. Qualify it again under Providers.`,
+    );
+  return { reasons: [...reasons], details };
 }
 
 export function modelOptions(routes: any[], purpose: string): ModelOption[] {
   return routes.flatMap((r) =>
     r.models.map((m: any) => {
-      const readiness = r.purposes?.[purpose];
-      const reason = !r.catalog.fresh
-        ? "Catalog is stale or not bound to the signed-in account."
-        : readiness && !readiness.ready
-          ? readiness.blockers.join(" ")
-          : "";
+      const reason = routeBlockers(r, purpose).reasons.join(" ");
       return {
         key: `${r.installationId}:${m.model}`,
         provider: r.provider,
         installationId: r.installationId,
         model: m.model,
         name: m.name,
+        efforts: m.efforts ?? [],
         available: !reason,
         reason,
       };
@@ -97,6 +164,47 @@ export function typedModelPin(
   )
     return null;
   return provider ? { provider, model } : { model };
+}
+
+/**
+ * A pinned member's effort: the runtime's default or one of the levels its
+ * catalog lists for the model. A saved level the catalog no longer lists
+ * stays shown, marked, so it is never changed silently.
+ */
+export function EffortSelect({
+  pin,
+  options,
+  onChange,
+}: {
+  pin: MemberPin;
+  options: ModelOption[];
+  onChange: (effort: string | undefined) => void;
+}) {
+  const efforts =
+    options.find(
+      (o) =>
+        o.model === pin.model && (!pin.provider || o.provider === pin.provider),
+    )?.efforts ?? [];
+  if (!efforts.length && !pin.effort) return null;
+  const name = pin.label ?? pin.model ?? "this member";
+  return (
+    <select
+      className="effort-select"
+      aria-label={`Effort for ${name}`}
+      value={pin.effort ?? ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+    >
+      <option value="">Default effort</option>
+      {pin.effort && !efforts.includes(pin.effort) && (
+        <option value={pin.effort}>{label(pin.effort)} · not listed now</option>
+      )}
+      {efforts.map((effort) => (
+        <option key={effort} value={effort}>
+          {label(effort)} effort
+        </option>
+      ))}
+    </select>
+  );
 }
 
 /**
@@ -298,6 +406,21 @@ export function RoleEditor({
                 ? ` (fallback: ${m.fallbacks.map((f) => f.label ?? f.model).join(", ")})`
                 : ""}
             </span>{" "}
+            {m.pin && (
+              <EffortSelect
+                pin={m.pin}
+                options={options}
+                onChange={(effort) =>
+                  setMembers(
+                    members.map((x) =>
+                      x.memberId === m.memberId
+                        ? { ...x, pin: { ...x.pin!, effort } }
+                        : x,
+                    ),
+                  )
+                }
+              />
+            )}{" "}
             <label>
               <input
                 type="checkbox"

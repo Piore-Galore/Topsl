@@ -1,9 +1,9 @@
 // A Claude Code 2.1.302 print/stream-json stand-in for the Claude runtime
-// qualification and the live route's own checks. It answers `auth status
-// --json`, reports the tools its arguments grant (and the tools of an MCP
-// server named by --mcp-config, which it lists over HTTP), and acts out each
-// qualification probe from the prompt. No model is contacted, and nothing
-// here is evidence for any live model, route or billing path.
+// qualification and the live route's own checks. It answers `--version`,
+// `--help` and `auth status --json`, reports the tools its arguments grant (and the tools
+// of an MCP server named by --mcp-config, which it lists over HTTP), and acts
+// out each qualification probe from the prompt. No model is contacted, and
+// nothing here is evidence for any live model, route or billing path.
 //
 // FIXTURE_READONLY=broken   the read-only turn writes its file anyway
 // FIXTURE_WRITE=skip-outside the edit turn never tries the outside write
@@ -14,6 +14,8 @@
 // FIXTURE_EXTRA_TOOL=1      init reports a Bash tool nobody granted
 // FIXTURE_MODEL=<id>        the model Claude Code reports instead of --model
 // FIXTURE_LOG=<file>        appends each run's arguments as a JSON line
+// FIXTURE_NO_EFFORT=1       `--help` lists no --effort option (an older
+//                           Claude Code)
 // FIXTURE_STALL=silent      writes nothing after init and never ends
 // FIXTURE_STALL=after-message ends the model message, then writes nothing
 //                           and never ends (as Claude Code 2.1.302 did live)
@@ -27,8 +29,33 @@
 //                           itself 300 ms later (code 0, no result)
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
+// Trusting an executable runs `--version`; it is not logged as a run.
+if (argv.length === 1 && argv[0] === "--version") {
+  process.stdout.write("2.1.302 (Claude Code qualification stand-in)\n");
+  process.exit(0);
+}
 if (process.env.FIXTURE_LOG)
   fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify(argv) + "\n");
+if (argv.length === 1 && argv[0] === "--help") {
+  // The --effort block as Claude Code 2.1.305 prints it.
+  process.stdout.write(
+    [
+      "Usage: claude [options] [command] [prompt]",
+      "",
+      "Options:",
+      "  --disable-slash-commands              Disable all skills",
+      ...(process.env.FIXTURE_NO_EFFORT
+        ? []
+        : [
+            "  --effort <level>                      Effort level for the current session",
+            "                                        (low, medium, high, xhigh, max)",
+          ]),
+      "  --fallback-model <model>              Enable automatic fallback to specified",
+      "",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
 if (argv[0] === "auth" && argv[1] === "status") {
   process.stdout.write(
     JSON.stringify({
