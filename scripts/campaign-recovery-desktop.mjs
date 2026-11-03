@@ -592,7 +592,10 @@ async function stall() {
         .waitFor({ timeout: 60000 })
         .then(() => "completed"),
       c.page
-        .getByText("concurrency budget is full", { exact: false })
+        // The limit's wording since 4 November 2026 (W4-5), and before it.
+        .getByText(
+          /as many provider turns as it allows|concurrency budget is full/,
+        )
         .first()
         .waitFor({ timeout: 60000 })
         .then(() => "refused: capacity"),
@@ -641,22 +644,27 @@ async function stall() {
       .selectOption(conversationId);
     [run] = await runsOf(page, conversationId);
     r.observe("afterReopen", { status: run.status, error: run.error });
+    // Since 4 November 2026 (W4-3) Topsl stops a turn that never ends its
+    // interrupt, so the run is already interrupted; an older build left it
+    // uncertain for reconciliation.
     r.check(
-      "after the reopen the stalled run is uncertain",
-      run.status === "uncertain",
-      run.status,
+      "after the reopen the stalled run is settled: interrupted, or uncertain for reconciliation",
+      ["interrupted", "uncertain"].includes(run.status),
+      [run.status, run.error],
     );
-    await page
-      .getByRole("button", { name: "Inspect & reconcile", exact: true })
-      .click();
-    await expect
-      .poll(async () => (await runsOf(page, conversationId))[0].status, {
-        timeout: 15000,
-      })
-      .toBe("interrupted")
-      .catch(() => {});
-    [run] = await runsOf(page, conversationId);
-    r.check("Inspect & reconcile settles it", run.status === "interrupted", [
+    if (run.status === "uncertain") {
+      await page
+        .getByRole("button", { name: "Inspect & reconcile", exact: true })
+        .click();
+      await expect
+        .poll(async () => (await runsOf(page, conversationId))[0].status, {
+          timeout: 15000,
+        })
+        .toBe("interrupted")
+        .catch(() => {});
+      [run] = await runsOf(page, conversationId);
+    }
+    r.check("the stalled run ends interrupted", run.status === "interrupted", [
       run.status,
       run.error,
     ]);

@@ -33,6 +33,12 @@ export const orchestrationCommands = [
     type: z.literal("orchestration-query"),
     projectId: id,
     conversationId: id.nullable().optional(),
+    /**
+     * Only what setting up work needs (policy, capacity, routes, roles), with
+     * no conversations or goals: New session and Project settings read it
+     * after every change, and the full view grows with the project (W4-6).
+     */
+    setup: z.boolean().optional(),
   }),
   /** The sidebar's goal and loop threads for each project, newest first. */
   z.object({

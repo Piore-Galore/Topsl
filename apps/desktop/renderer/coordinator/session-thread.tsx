@@ -365,7 +365,11 @@ export function SessionThread({
             {pending.map((i) => (
               <li key={i.id} className="turn coordinator pending" role="status">
                 <span className="turn-author">Coordinators</span>
-                <div className="turn-text muted">Answering… {i.detail}</div>
+                <div className="turn-text muted">
+                  {i.members.some((m: any) => m.uncertainRunId)
+                    ? "Waiting for you: a coordinator's turn has an unknown outcome."
+                    : `Answering… ${i.detail}`}
+                </div>
                 {i.members
                   .filter((m: any) => m.uncertainRunId)
                   .map((m: any) => (

@@ -2169,6 +2169,7 @@ export class Service {
         const view = this.orchestration.view(
           command.projectId,
           command.conversationId,
+          { setup: command.setup },
         );
         // What each goal's candidate changes, for Results → Changes (W3-3).
         return {

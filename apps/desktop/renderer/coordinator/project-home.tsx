@@ -165,6 +165,7 @@ export function ProjectHome({
     const value = await window.topsl.command({
       type: "orchestration-query",
       projectId,
+      setup: true,
     });
     if (reads.current.accept(ticket, value)) setSnapshot(value);
   }

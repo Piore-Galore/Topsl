@@ -315,6 +315,23 @@ test("a two-coordinator, two-reviewer goal runs through real attempts, copies, c
     { path: "part-2.ts", change: "added" },
   ];
   expect(listed.candidateChanges).toEqual(changes);
+  // New session and Project settings read only what setting up work needs:
+  // no conversations or goals, so the read does not grow with them (W4-6).
+  const setupView = await f.service.command({
+    type: "orchestration-query",
+    projectId: "p",
+    setup: true,
+  });
+  expect(setupView.goals).toEqual([]);
+  expect(setupView.conversations).toEqual([]);
+  expect(setupView.routes.length).toBeGreaterThan(0);
+  expect(setupView.roles.length).toBeGreaterThan(0);
+  // An unsaved default policy is stamped when read.
+  const { updatedAt: _a, ...setupPolicy } = setupView.policy;
+  const { updatedAt: _b, ...fullPolicy } = (
+    await f.service.command({ type: "orchestration-query", projectId: "p" })
+  ).policy;
+  expect(setupPolicy).toEqual(fullPolicy);
   const acceptance = f.service.review("goal-acceptance", goal.id) as {
     digest: string;
     files: unknown;
