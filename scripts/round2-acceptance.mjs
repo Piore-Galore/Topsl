@@ -224,12 +224,18 @@ const finalNames = await command(git, [
 for (const name of new Set(finalNames.stdout.split("\0").filter(Boolean)))
   if (
     !name.startsWith("docs/round-2-evidence/") &&
-    !sourceHashes.some((file) => file.path === name)
+    !sourceHashes.some((file) => file.path === name) &&
+    // A path that could not be read at the start, such as a worktree's
+    // node_modules symlink to a directory, stays an omission.
+    !omissions.some((file) => file.path === name)
   )
     sourceChangesDuringRun.push({
       path: name,
       beforeSha256: null,
-      afterSha256: sha256(await readFile(path.join(root, name))),
+      afterSha256: await readFile(path.join(root, name)).then(
+        sha256,
+        (error) => `unreadable: ${error.code ?? error}`,
+      ),
     });
 await writeFile(
   path.join(output, "source-consistency.json"),
