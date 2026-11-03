@@ -136,7 +136,7 @@ Defects found and fixed during validation: a start and a removal of the same loo
 
 Selected captures: [ui-evidence/2026-10-30-session-first](ui-evidence/2026-10-30-session-first/).
 
-**Not established.** Live Codex and Claude Code routes, packaged builds, remote CI and other operating systems did not run this change. Screen-reader and IME acceptance remain open. The auxiliary harnesses `scripts/campaign-ui-test.mjs` and `scripts/campaign-packaged-test.mjs` still target retired screens and were not updated or run; `scripts/round2-ui-test.mjs` and `scripts/desktop-usage-test.mjs` were updated but not run.
+**Not established.** Live Codex and Claude Code routes, packaged builds, remote CI and other operating systems did not run this change. Screen-reader and IME acceptance remain open. The auxiliary harnesses `scripts/campaign-ui-test.mjs` and `scripts/campaign-packaged-test.mjs` still target retired screens and were not updated or run; `scripts/round2-ui-test.mjs` and `scripts/desktop-usage-test.mjs` were updated but not run. *Follow-up, 4 November 2026:* all four now target the session-first screens and were run, including the packaged 0.1.3 build and upgrades from v0.1.2 and v0.1.3 profiles ([implementation status follow-up](Implementation_Status.md#session-first-cleanup-and-cli-only-integration--30-october-2026)).
 
 ### CI follow-up (30 October 2026)
 
