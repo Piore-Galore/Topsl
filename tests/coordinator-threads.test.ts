@@ -184,6 +184,10 @@ describe("thread summaries", () => {
   test("titles and thread IDs", () => {
     expect(threadTitle("  Fix it\nwith detail")).toBe("Fix it");
     expect(threadTitle("x".repeat(100))).toHaveLength(80);
+    // An emoji at the cut is kept whole, never half a surrogate pair (W3-14).
+    const cut = threadTitle(`${"x".repeat(78)}🧭🧭🧭`);
+    expect(cut).toBe(`${"x".repeat(78)}🧭…`);
+    expect(cut).not.toMatch(/[\uD800-\uDFFF](?![\uDC00-\uDFFF])/u);
     // A goal thread ID saved before sessions opens its conversation's session.
     expect(parseThreadId("goal:abc")).toEqual({ kind: "session", id: "abc" });
     expect(parseThreadId("session:abc")).toEqual({

@@ -1,18 +1,23 @@
-// Campaign 2026-10-19 packet p4b-desktop-ui: focused Electron journeys for
-// desktop interaction contracts the existing desktop harnesses do not assert.
-// Every launch uses its own isolated TOPSL_TEST_PROFILE; no provider, account,
-// network or installer is contacted. Responses are delayed or turned into
-// errors only at the main-process IPC boundary (a test wrapper around the
-// registered `topsl:command` handler), so the renderer and service are the
-// real ones.
+// Campaign 2026-10-19 packet p4b-desktop-ui, updated 4 November 2026 for the
+// session-first navigation (docs/UX_Cleanup_Plan.md §1–2): focused Electron
+// journeys for desktop interaction contracts the existing desktop harnesses do
+// not assert. Every launch uses its own isolated TOPSL_TEST_PROFILE; no
+// provider, account, network or installer is contacted. Responses are delayed
+// or turned into errors only at the main-process IPC boundary (a test wrapper
+// around the registered `topsl:command` handler), so the renderer and service
+// are the real ones. Fixture records are created through service commands;
+// the behaviour under test is driven through the interface.
 //
-// Run: test-results/agent-testing/2026-10-19-comprehensive/cleanenv.sh \
-//        npm run test:desktop -- scripts/campaign-ui-test.mjs
+// Run: <cleanenv.sh> npm run test:desktop -- scripts/campaign-ui-test.mjs
+// TOPSL_CAMPAIGN_UI_EVIDENCE names the evidence folder (default
+// test-results/campaign-ui), so the dated October packet is never overwritten.
 //
 // A step whose assertion fails is recorded and the remaining steps still run;
 // the process exits non-zero when any step failed. A confirmed product defect
 // is wrapped in knownDefect(), which logs `CAMPAIGN DEFECT <id>` and does not
-// fail the run, and fails the run if the defect stops reproducing.
+// fail the run, and fails the run if the defect stops reproducing. A step
+// whose feature the cleanup removed stays as a `retired` record with the
+// reason and, where there is one, the replacement this harness checks instead.
 import { _electron as electron, expect } from "@playwright/test";
 import {
   mkdtemp,
@@ -29,13 +34,10 @@ import os from "node:os";
 import path from "node:path";
 import { navigate, selectProject as selectProjectIn } from "./desktop-navigation.mjs";
 
-const packet = path.resolve(
-  "test-results/agent-testing/2026-10-19-comprehensive/p4b-desktop-ui",
+// TOPSL_CAMPAIGN_UI_EVIDENCE writes a run elsewhere, so earlier evidence is kept.
+const evidence = path.resolve(
+  process.env.TOPSL_CAMPAIGN_UI_EVIDENCE ?? "test-results/campaign-ui",
 );
-// TOPSL_CAMPAIGN_UI_EVIDENCE writes a later run elsewhere, so earlier evidence is kept.
-const evidence = process.env.TOPSL_CAMPAIGN_UI_EVIDENCE
-  ? path.resolve(process.env.TOPSL_CAMPAIGN_UI_EVIDENCE)
-  : path.join(packet, "evidence");
 await mkdir(evidence, { recursive: true });
 const TEST_PASSPHRASE = "Topsl isolated test passphrase"; // apps/desktop/main.ts unlock()
 const steps = [];
@@ -73,6 +75,14 @@ async function knownDefect(id, description, fn) {
     return;
   }
   throw new Defect(`CAMPAIGN DEFECT ${id} no longer reproduces: ${description}`);
+}
+/**
+ * A step whose feature the session-first cleanup removed. It is kept as a
+ * record, with the reason and the replacement checked instead, if any.
+ */
+function retired(name, cases, reason, replacement = null) {
+  steps.push({ name, cases, status: "retired", reason, replacement });
+  console.log(`STEP RETIRED ${name} [${cases.join(", ")}]: ${reason}`);
 }
 
 function launch(profile, extra = {}) {
@@ -291,6 +301,10 @@ await step("UI-01 first launch creates a passphrase vault and opens", ["UI-01", 
   expect((await readdir(profile)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   expect(output.join("").includes(TEST_PASSPHRASE)).toBe(false);
   expect(await filesContaining(profile, TEST_PASSPHRASE)).toEqual([]);
+  const backups = (await readdir(profile)).filter((f) => /\.backup-/.test(f));
+  // A database created at this launch held nothing a migration could lose
+  // (W1-3, fixed 4 November 2026).
+  expect(backups).toEqual([]);
   return { vaultMethod: vault.method, files: (await readdir(profile)).sort() };
 });
 await step("UI-02 wrong passphrase vault stays locked and preserved", ["UI-02"], async () => {
@@ -366,6 +380,9 @@ releaseAllHook = async () => {
   await releaseAll(app);
   await page.keyboard.press("Escape").catch(() => {});
   await page.setViewportSize({ width: 1280, height: 880 }).catch(() => {});
+  await app
+    .evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1))
+    .catch(() => {});
 };
 await app.evaluate(({ dialog }) => {
   globalThis.campaignPick = null;
@@ -388,16 +405,33 @@ await app.evaluate(({ dialog }) => {
 });
 await page.setViewportSize({ width: 1280, height: 880 });
 const mod = process.platform === "darwin" ? "Meta" : "Control";
-// "New session" is the coordinator destination: the project's home.
-const projectNames = ["Overview", "Provider tools", "New session", "Tasks", "Changes", "Context", "History", "Synchronization"];
-const toolNames = projectNames.filter((name) => name !== "New session");
-const savedView = (nav) =>
-  nav === "New session" ? "coordinator" : nav === "Provider tools" ? "sessions" : nav.toLowerCase();
+// Today's project destinations (docs/UX_Cleanup_Plan.md §1): New session in
+// the sidebar, the rest in the selected project's menu. `view` is the value
+// navigation-save records.
+const projectDestinations = [
+  { nav: "New session", view: "coordinator" },
+  { nav: "All sessions", view: "all-sessions" },
+  { nav: "Project settings", view: "project-settings" },
+  { nav: "Provider tools", view: "sessions" },
+  { nav: "Advanced workflows", view: "advanced" },
+];
+const projectNames = projectDestinations.map((d) => d.nav);
 const globalPages = [
   { nav: "Projects", h1: "Projects", crumb: "Topsl / Projects" },
-  { nav: "Applications", h1: "Applications", crumb: "Topsl / Applications" },
+  { nav: "Providers", h1: "Providers", crumb: "Topsl / Providers" },
   { nav: "Settings", h1: "Settings", crumb: "Topsl / Settings" },
 ];
+const allDestinations = [...projectNames, ...globalPages.map((g) => g.nav)];
+const advancedSections = ["Builder–reviewer", "Candidate review", "Activity", "Context", "Workspaces"];
+const crumb = page.locator("header.topbar > span").first();
+const sectionTab = (name) =>
+  page.getByRole("tablist", { name: "Section" }).getByRole("tab", { name, exact: true });
+/** Advanced workflows at one of its sections, through the project menu and the Section tabs. */
+async function openSection(name) {
+  await navigate(page, "Advanced workflows");
+  await sectionTab(name).click();
+  await expect(sectionTab(name)).toHaveAttribute("aria-selected", "true");
+}
 const paletteDialog = page.getByRole("dialog", { name: "Command palette" });
 const focusInfo = () =>
   page.evaluate(() => {
@@ -411,8 +445,7 @@ const focusInfo = () =>
       openDialogs: document.querySelectorAll("dialog[open]").length,
     };
   });
-async function checkDestination({ nav, h1, crumb }, projectView, projectId) {
-  const before = await callCount(app);
+async function checkDestination({ nav, h1, crumb: expectedCrumb }, projectView, projectId) {
   await navigate(page, nav);
   const headings = page.getByRole("heading", { level: 1 });
   await expect(headings).toHaveCount(1);
@@ -421,7 +454,7 @@ async function checkDestination({ nav, h1, crumb }, projectView, projectId) {
   const current = page.locator('[aria-current="page"]');
   await expect(current).toHaveCount(1);
   await expect(current).toHaveText(nav);
-  await expect(page.locator("header.topbar > span").first()).toHaveText(crumb);
+  await expect(crumb).toHaveText(expectedCrumb);
   if (projectView) {
     // The durable navigation record names this destination and project (the
     // newest save; an unchanged view issues no new save).
@@ -434,13 +467,21 @@ async function checkDestination({ nav, h1, crumb }, projectView, projectId) {
       .toBe(`${projectView}:${projectId}`);
   }
 }
+const projectMenuButtons = page.locator("aside.sidebar .project-menu-button");
 
-await step("UI-03 empty profile: global destinations; no project tools and no new conversation", ["UI-03"], async () => {
+await step("UI-03 empty profile: global destinations; no project menu and no new session", ["UI-03"], async () => {
   for (const destination of globalPages) await checkDestination(destination);
-  await expect(page.getByRole("navigation", { name: "Project navigation" })).toHaveCount(0);
+  await expect(projectMenuButtons).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New session", exact: true })).toBeDisabled();
   await expect(page.getByRole("list", { name: "Projects and sessions" }).getByRole("listitem")).toHaveCount(0);
+  await expect(page.locator("aside.sidebar")).toContainText("Add a folder to begin.");
 }, page);
+retired(
+  "UI-03 Project navigation list",
+  ["UI-03"],
+  "The expanded Project tools list (navigation \"Project navigation\") was replaced by a per-project menu (docs/UX_Cleanup_Plan.md §1).",
+  "The empty-profile step asserts no project menu exists; the populated step opens every menu destination.",
+);
 
 await step("UI-05 command palette: unavailable actions stay unavailable (empty profile)", ["UI-05"], async () => {
   await navigate(page, "Projects");
@@ -448,8 +489,10 @@ await step("UI-05 command palette: unavailable actions stay unavailable (empty p
   await expect(paletteDialog).toBeVisible();
   for (const name of projectNames)
     await expect(paletteDialog.getByRole("button", { name: `${name} →`, exact: true })).toBeDisabled();
-  const discover = paletteDialog.getByRole("button", { name: "Discover applications →", exact: true });
+  // Discovery never runs in a test profile.
+  const discover = paletteDialog.getByRole("button", { name: "Discover providers →", exact: true });
   await expect(discover).toBeDisabled();
+  await expect(paletteDialog.getByRole("button", { name: "Discover applications →" })).toHaveCount(0);
   const before = await callCount(app);
   // A synthetic click on a disabled control must not navigate or dispatch.
   await paletteDialog.evaluate((dialog) => {
@@ -461,6 +504,12 @@ await step("UI-05 command palette: unavailable actions stay unavailable (empty p
   await page.keyboard.press("Escape");
   await expect(paletteDialog).toHaveCount(0);
 }, page);
+retired(
+  "UI-05 Discover applications palette action",
+  ["UI-05"],
+  "Applications became Providers and desktop-application discovery was removed (docs/UX_Cleanup_Plan.md §2).",
+  "The palette's Discover providers action, disabled in a test profile, is asserted instead.",
+);
 
 // Projects A (Unicode, emoji, long path) and B, added through the screen.
 let idA, idB;
@@ -468,8 +517,10 @@ await step("setup: add two projects and Beta-only records", ["UI-03", "UI-09"], 
   for (const folder of [folderA, folderB]) {
     await app.evaluate((_, folder) => (globalThis.campaignPick = folder), folder);
     await navigate(page, "Projects");
-    await page.getByRole("button", { name: "+ Add project", exact: true }).click();
-    await expect(page.getByRole("heading", { level: 1, name: path.basename(folder) })).toBeVisible();
+    await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+    // A new project opens at its New session page.
+    await expect(crumb).toHaveText(`${path.basename(folder)} / New session`);
+    await expect(page.getByRole("heading", { level: 1, name: "New session" })).toBeVisible();
   }
   const state = await command(page, { type: "state" });
   idA = state.projects.find((p) => p.name === nameA)?.id;
@@ -496,29 +547,88 @@ await step("setup: add two projects and Beta-only records", ["UI-03", "UI-09"], 
   });
   await command(page, { type: "conversation-add", projectId: idB, title: "Beta-only conversation" });
   await selectProjectIn(page, nameA);
-  await expect(page.getByRole("heading", { level: 1, name: nameA })).toBeVisible();
+  await expect(crumb).toHaveText(`${nameA} / New session`);
   return { idA, idB };
 }, page);
 
-await step("UI-03 populated: all 11 destinations, one h1, marker, scope and saved view", ["UI-03"], async () => {
-  for (const nav of projectNames)
-    await checkDestination(
-      {
-        nav,
-        h1: ["Overview", "New session"].includes(nav) ? nameA : nav,
-        crumb: `${nameA} / ${nav}`,
-      },
-      savedView(nav),
-      idA,
-    );
+await step("UI-03 populated: every destination, one h1, marker, scope and saved view", ["UI-03"], async () => {
+  for (const { nav, view } of projectDestinations)
+    await checkDestination({ nav, h1: nav, crumb: `${nameA} / ${nav}` }, view, idA);
   for (const destination of globalPages) await checkDestination(destination);
   expect((await command(page, { type: "navigation-query" })).projectId).toBe(idA);
-  const projectNav = page.getByRole("navigation", { name: "Project navigation" });
-  for (const name of toolNames) await expect(projectNav.getByRole("button", { name, exact: true })).toBeEnabled();
+  // Every Advanced workflows section, under one page heading.
+  for (const name of advancedSections) {
+    await openSection(name);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Advanced workflows");
+    await expect(crumb).toHaveText(`${nameA} / Advanced workflows`);
+  }
+  // The project menu lists exactly its four destinations and closes on Escape.
+  const trigger = page.getByRole("button", { name: `Project menu for ${nameA}`, exact: true });
+  await trigger.click();
+  const menu = page.getByRole("menu", { name: `${nameA} menu` });
+  await expect(menu.getByRole("menuitem")).toHaveText(["All sessions", "Project settings", "Provider tools", "Advanced workflows"]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 }, page);
 
+await step("UI-03 retired destination names reach their replacements", ["UI-03"], async () => {
+  // desktop-navigation.mjs maps names the October campaign used to where the
+  // cleanup moved them; each must open a real destination and section.
+  const expected = {
+    Overview: { h1: "Advanced workflows", tab: "Activity" },
+    Tasks: { h1: "Advanced workflows", tab: "Builder–reviewer" },
+    Changes: { h1: "Advanced workflows", tab: "Candidate review" },
+    Context: { h1: "Advanced workflows", tab: "Context" },
+    Workspaces: { h1: "Advanced workflows", tab: "Workspaces" },
+    History: { h1: "Provider tools" },
+    Applications: { h1: "Providers" },
+  };
+  for (const [name, target] of Object.entries(expected)) {
+    await navigate(page, name);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(target.h1);
+    if (target.tab) await expect(sectionTab(target.tab)).toHaveAttribute("aria-selected", "true");
+  }
+  await navigate(page, "History");
+  await expect(page.getByRole("heading", { level: 2, name: "Provider history" })).toBeVisible();
+}, page);
+
+await step("UI-03 saved legacy destinations restore to their replacements after a reload", ["UI-03"], async () => {
+  // Saved navigation from before the cleanup (written through the service, as
+  // an upgraded profile holds it) opens where the cleanup moved it.
+  const cases = [
+    ["overview", "Advanced workflows", "Activity"],
+    ["tasks", "Advanced workflows", "Builder–reviewer"],
+    ["changes", "Advanced workflows", "Candidate review"],
+    ["context", "Advanced workflows", "Context"],
+    ["history", "Provider tools", null],
+    ["synchronization", "Project settings", null],
+  ];
+  const restored = {};
+  for (const [legacy, h1, tab] of cases) {
+    await command(page, { type: "navigation-save", projectId: idA, workflowId: null, projectView: legacy, threadId: null });
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(h1, { timeout: 30000 });
+    await expect(crumb).toHaveText(`${nameA} / ${h1}`);
+    if (tab) await expect(sectionTab(tab)).toHaveAttribute("aria-selected", "true");
+    if (legacy === "synchronization")
+      await expect(
+        page.getByRole("note").filter({ hasText: "Native project synchronization is retired." }),
+      ).toHaveCount(1);
+    restored[legacy] = tab ? `${h1} / ${tab}` : h1;
+  }
+  await page.screenshot({ path: path.join(evidence, "legacy-synchronization-restored.png") });
+  return restored;
+}, page);
+retired(
+  "UI-03 Overview and Synchronization destinations",
+  ["UI-03"],
+  "Overview became Advanced workflows → Activity; native project synchronization was removed (docs/UX_Cleanup_Plan.md §1–2, §4).",
+  "The two steps above check that their names and saved values open the replacements, and Synchronization shows its retirement notice.",
+);
+
 await step("UI-05 command palette by mouse: focus enters, stays, returns", ["UI-05"], async () => {
-  await navigate(page, "Applications");
+  await navigate(page, "Providers");
   const opener = page.getByRole("button", { name: /^Command palette/ });
   await opener.click();
   await expect(paletteDialog).toBeVisible();
@@ -538,9 +648,9 @@ await step("UI-05 command palette by mouse: focus enters, stays, returns", ["UI-
   expect(visited.every((f) => f.openDialogs === 1)).toBe(true);
   // The page behind is inert: a click on the sidebar does not navigate.
   const box = await page.getByRole("navigation", { name: "Application navigation" }).boundingBox();
-  if (box) await page.mouse.click(box.x + box.width / 2, box.y + 8);
+  if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height - 8);
   await settle(page, 200);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Applications");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Providers");
   await page.keyboard.press("Escape");
   await expect(paletteDialog).toHaveCount(0);
   await expect(opener).toBeFocused();
@@ -567,10 +677,12 @@ await step("UI-05 command palette by keyboard: Cmd/Ctrl+K toggles, repeated open
   }
   // With a project selected, project destinations are available and work.
   await page.keyboard.press(`${mod}+k`);
-  await paletteDialog.getByRole("button", { name: "History →", exact: true }).click();
+  for (const name of projectNames)
+    await expect(paletteDialog.getByRole("button", { name: `${name} →`, exact: true })).toBeEnabled();
+  await paletteDialog.getByRole("button", { name: "Provider tools →", exact: true }).click();
   await expect(paletteDialog).toHaveCount(0);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("History");
-  await expect(paletteDialog.getByRole("button", { name: "Discover applications →" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Provider tools");
+  await expect(crumb).toHaveText(`${nameA} / Provider tools`);
 }, page);
 
 await step("UI-04 899/900 px boundary: drawer vs sidebar, all destinations without overflow", ["UI-04"], async () => {
@@ -587,9 +699,10 @@ await step("UI-04 899/900 px boundary: drawer vs sidebar, all destinations witho
       await expect(page.locator("dialog.sidebar")).not.toHaveAttribute("open", "");
       await expect(page.getByRole("button", { name: "Navigation", exact: true })).toBeVisible();
     }
-    for (const nav of [...projectNames, ...globalPages.map((g) => g.nav)]) {
+    for (const nav of allDestinations) {
       await navigate(page, nav);
       await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(nav);
       if (width < 900) await expect(page.locator("dialog.sidebar[open]")).toHaveCount(0);
       const excess = await overflow(page);
       report[`${width}:${nav}`] = excess;
@@ -619,6 +732,7 @@ await step("UI-04 899/900 px boundary: drawer vs sidebar, all destinations witho
   await expect(last).toBeInViewport();
   report["560x720 drawer overflow"] = await overflow(page);
   expect(report["560x720 drawer overflow"]).toBeLessThanOrEqual(0);
+  await page.screenshot({ path: path.join(evidence, "drawer-560x720.png") });
   await page.keyboard.press("Escape");
   await expect(drawer).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 880 });
@@ -630,9 +744,10 @@ await step("UI-04 150% and 200% zoom: every destination without horizontal overf
   for (const factor of [1.5, 2]) {
     await app.evaluate(({ BrowserWindow }, factor) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(factor), factor);
     await settle(page, 200);
-    for (const nav of [...projectNames, ...globalPages.map((g) => g.nav)]) {
+    for (const nav of allDestinations) {
       await navigate(page, nav);
       await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(nav);
       const excess = await overflow(page);
       report[`${factor}:${nav}`] = { excess, innerWidth: await page.evaluate(() => innerWidth) };
       expect(excess, `${factor * 100}% ${nav} horizontal overflow`).toBeLessThanOrEqual(0);
@@ -654,12 +769,13 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
   );
   await chmod(runtime, 0o700);
   await app.evaluate((_, runtime) => (globalThis.campaignPick = runtime), runtime);
+  // Fixture setup: register and trust the shell stand-in as Codex CLI.
   const installed = await command(page, { type: "select-runtime" });
   await expect
     .poll(async () => (await command(page, { type: "state" })).installations.some((i) => i.id === installed.id))
     .toBe(true);
   await command(page, { type: "trust-installation", id: installed.id });
-  await navigate(page, "Tasks");
+  await openSection("Builder–reviewer");
   const setup = page.locator(".guided-workflow");
   await setup.locator("summary").first().click();
   const objective = setup.getByRole("textbox", { name: "Objective", exact: true });
@@ -669,6 +785,7 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
   await page.getByRole("button", { name: "Native terminal", exact: true }).click();
   const terminal = page.locator(".terminal-panel");
   await expect(terminal).toBeVisible();
+  await expect(terminal).toContainText("Campaign terminal ready");
   const id = await terminal.getAttribute("data-session-id");
   const xterm = await terminal.locator(".xterm").elementHandle();
   for (const [width, height] of [[899, 800], [560, 720]]) {
@@ -677,7 +794,7 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
     await page.getByRole("button", { name: "Navigation", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Workbench navigation" })).toBeVisible();
     await page.keyboard.press("Escape");
-    await navigate(page, "Overview");
+    await navigate(page, "Advanced workflows");
     await navigate(page, "Provider tools");
     expect(await terminal.getAttribute("data-session-id")).toBe(id);
     expect(await xterm.evaluate((node) => node.isConnected)).toBe(true);
@@ -687,12 +804,17 @@ await step("UI-04 terminal and unsaved workflow draft stay mounted across resize
   await settle(page, 150);
   expect(await terminal.getAttribute("data-session-id")).toBe(id);
   expect(await xterm.evaluate((node) => node.isConnected)).toBe(true);
-  await navigate(page, "Tasks");
+  await openSection("Builder–reviewer");
   await expect(objective).toHaveValue("Unsaved draft 草稿 survives resizing");
   await objective.fill("");
   await navigate(page, "Provider tools");
   await terminal.getByRole("button", { name: "Close session", exact: true }).click();
   await expect(terminal).toHaveCount(0);
+  // The closed terminal is no longer offered as an active one.
+  await expect
+    .poll(async () => (await command(page, { type: "state" })).terminals.filter((t) => t.id === id).length, { timeout: 10000 })
+    .toBe(0);
+  await expect(page.getByRole("button", { name: /^Show active native terminal/ })).toHaveCount(0, { timeout: 10000 });
   return { terminal: id };
 }, page);
 
@@ -700,19 +822,21 @@ await step("UI-08 Unicode/emoji long path is shown, legible and copied exactly",
   const state = await command(page, { type: "state" });
   const project = state.projects.find((p) => p.id === idA);
   expect(await realpath(project.path)).toBe(await realpath(folderA));
-  await navigate(page, "Overview");
-  await expect(page.locator(".coordination-view .page-heading .path")).toHaveText(project.path);
+  // The project's folder is in Project settings (Overview's heading is retired).
+  await navigate(page, "Project settings");
+  const folderPath = page.getByRole("region", { name: "Folder", exact: true }).locator("code.path");
+  await expect(folderPath).toHaveText(project.path);
   await expect(page.locator(".project-node.selected .project-name")).toHaveText(nameA);
   await navigate(page, "Projects");
   const card = page.getByRole("article", { name: nameA, exact: true });
   await expect(card.locator("code.path")).toHaveText(project.path);
   await app.evaluate(({ clipboard }) => clipboard.writeText("sentinel"));
-  await card.getByRole("button", { name: "Copy folder path", exact: true }).click();
+  await card.getByRole("button", { name: "Copy path", exact: true }).click();
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(project.path);
   await page.setViewportSize({ width: 560, height: 720 });
-  await navigate(page, "Overview");
+  await navigate(page, "Project settings");
   expect(await overflow(page)).toBeLessThanOrEqual(0);
-  const pathBox = await page.locator(".coordination-view .page-heading .path").evaluate((e) => ({
+  const pathBox = await folderPath.evaluate((e) => ({
     scrollWidth: e.scrollWidth,
     clientWidth: e.clientWidth,
   }));
@@ -721,6 +845,12 @@ await step("UI-08 Unicode/emoji long path is shown, legible and copied exactly",
   await page.setViewportSize({ width: 1280, height: 880 });
   return { path: project.path, length: project.path.length };
 }, page);
+retired(
+  "UI-08 project path in the Overview heading",
+  ["UI-08"],
+  "Overview and its path heading were retired; the folder path is shown in Project settings → Folder and on the Projects card (docs/UX_Cleanup_Plan.md §1).",
+  "The step above checks both, and the Projects card's Copy path.",
+);
 
 /** Compose with the platform IME event stream, with Enter delivered as an IME key (229). */
 async function imeCompose(cdp, partial, committed) {
@@ -744,8 +874,8 @@ async function imeCompose(cdp, partial, committed) {
 await step("UI-08 IME composition Enter does not submit search or publish context", ["UI-08"], async () => {
   const cdp = await page.context().newCDPSession(page);
   const events = [];
-  // History search (a read) ---------------------------------------------
-  await navigate(page, "History");
+  // Provider history search (a read), now in Provider tools -----------------
+  await navigate(page, "Provider tools");
   const search = page.getByRole("textbox", { name: "Search project history" });
   await search.fill("");
   await search.focus();
@@ -766,8 +896,8 @@ await step("UI-08 IME composition Enter does not submit search or publish contex
   await expect
     .poll(async () => (await calls(app, before)).filter((c) => c.type === "history-page" && c.query === "中文").length)
     .toBe(1);
-  // Shared context Title (an immutable publication) ------------------------
-  await navigate(page, "Context");
+  // Shared context Title (an immutable publication), now Advanced workflows → Context
+  await openSection("Context");
   const form = page
     .locator("form.workflow-form")
     .filter({ has: page.getByRole("button", { name: "Publish captured context" }) });
@@ -805,28 +935,33 @@ await step("UI-08 multiline paste and shortcuts preserve the composer text", ["U
   await expect(paletteDialog).toHaveCount(0);
   await expect(message).toBeFocused();
   await expect(message).toHaveValue(text);
-  await navigate(page, "Context");
+  await openSection("Context");
   await navigate(page, "Provider tools");
   await expect(message).toHaveValue(text);
   await message.fill("");
 }, page);
 
-const tasksLine = page.locator(".project-overview article").filter({ hasText: "Responsibility" });
-/** The Responsibility line the service's own snapshot implies for a project. */
+// The task and workflow counts Overview's Responsibility line showed are now
+// the summary line of Advanced workflows → Activity.
+const tasksLine = page.locator(".advanced-workflows p.muted").filter({ hasText: /\d+ tasks · \d+ workflows/ });
+/** The Activity summary the service's own snapshot implies for a project. */
 async function responsibility(id) {
   const snapshot = await command(page, { type: "scope-snapshot", projectId: id });
   return `${snapshot.coordination.tasks.length} tasks · ${snapshot.coordination.workflows.length} workflows`;
 }
 async function showsProject(name, line) {
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(name);
-  await expect(page.locator("header.topbar > span").first()).toHaveText(`${name} / Overview`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Advanced workflows");
+  await expect(crumb).toHaveText(`${name} / Advanced workflows`);
+  await expect(page.locator(".project-node.selected .project-name")).toHaveText(name);
   await expect(tasksLine).toContainText(line);
 }
-/** Selects a project in the sidebar, then its Overview. */
+/** Selects a project in the sidebar, then its Advanced workflows → Activity. */
 const selectProject = async (id) => {
   await selectProjectIn(page, id === idA ? nameA : nameB);
-  await navigate(page, "Overview");
+  await openSection("Activity");
 };
+// Permanent "Ready" was removed: an idle workbench shows no status bar.
+const idleStatus = async () => expect(page.locator("footer.statusbar")).toHaveCount(0);
 
 await step("UI-09 late Beta replies after A->B->A cannot replace Alpha", ["UI-09"], async () => {
   const lineA = await responsibility(idA),
@@ -846,7 +981,7 @@ await step("UI-09 late Beta replies after A->B->A cannot replace Alpha", ["UI-09
   expect((await command(page, { type: "navigation-query" })).projectId).toBe(idA);
   await navigate(page, "Provider tools");
   await expect(page.getByRole("combobox", { name: "Conversation" }).locator("option", { hasText: "Beta-only conversation" })).toHaveCount(0);
-  await expect(page.locator("footer.statusbar")).toContainText("Ready");
+  await idleStatus();
   return { releasedBetaReplies: released, lineA, lineB };
 }, page);
 
@@ -921,37 +1056,46 @@ await step("UI-09 an older Alpha reply cannot replace the newer Alpha view", ["U
   await release(app, "alpha-old");
   await settle(page, 800);
   await showsProject(nameA, newA);
-  await expect(page.locator(".scope-freshness:visible strong")).toHaveText("current");
+  // Current data shows no freshness banner (a "current" label is retired).
+  await expect(page.locator(".scope-freshness:visible")).toHaveCount(0);
   return { oldA, newA };
 }, page);
 
 await step("UI-09 guided workflow drafts stay per project", ["UI-09"], async () => {
-  await selectProject(idA);
-  await navigate(page, "Tasks");
+  await selectProjectIn(page, nameA);
+  await openSection("Builder–reviewer");
   let setup = page.locator(".guided-workflow");
   await setup.locator("summary").first().click();
   await setup.getByRole("textbox", { name: "Objective", exact: true }).fill("Alpha draft 甲 only");
   await setup.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(setup.getByText(/Protected draft revision 1 saved/)).toBeVisible();
-  await selectProject(idB);
-  await navigate(page, "Tasks");
+  await selectProjectIn(page, nameB);
+  await openSection("Builder–reviewer");
   setup = page.locator(".guided-workflow");
   await expect(setup).toHaveAttribute("data-project-id", idB);
   await setup.locator("summary").first().click();
   await expect(setup.getByRole("textbox", { name: "Objective", exact: true })).toHaveValue("");
-  await selectProject(idA);
-  await navigate(page, "Tasks");
+  await selectProjectIn(page, nameA);
+  await openSection("Builder–reviewer");
   setup = page.locator(".guided-workflow");
   await expect(setup).toHaveAttribute("data-project-id", idA);
   await setup.locator("summary").first().click();
   await expect(setup.getByRole("textbox", { name: "Objective", exact: true })).toHaveValue("Alpha draft 甲 only");
 }, page);
+retired(
+  "UI-09/UI-11 permanent Ready status",
+  ["UI-09", "UI-11"],
+  "The permanent \"Ready\" status bar was removed (docs/UX_Cleanup_Plan.md §1).",
+  "Steps assert that an idle workbench shows no status bar and that pending work shows \"Operations pending\".",
+);
 
 await step("UI-10 disconnect keeps last-known data; reconnect reads only and replays no mutation", ["UI-10"], async () => {
   const lineA = await responsibility(idA);
   await selectProject(idA);
   await showsProject(nameA, lineA);
-  const freshness = page.locator(".scope-freshness:visible");
+  // The page's own banner; Parallel integration no longer repeats it (W1-1).
+  const freshness = page.locator(".advanced-workflows > .scope-freshness:visible");
+  const banners = page.locator(".scope-freshness:visible");
   // A mutation whose reply is still outstanding when the connection drops.
   await navigate(page, "Provider tools");
   // The service's own project snapshot, not the main process's cached state.
@@ -962,11 +1106,12 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
   await hold(app, { name: "add-chat", types: ["conversation-add"], projectId: idA, remaining: 1 });
   await page.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect.poll(() => heldCount(app, "add-chat")).toBe(1);
-  await navigate(page, "Overview");
-  // Let the mutation's own change events settle before the connection drops.
-  await expect(freshness.locator("strong")).toHaveText("current", { timeout: 15000 });
+  await openSection("Activity");
+  // Let the mutation's own change events settle before the connection drops;
+  // current data shows no freshness banner.
+  await expect(freshness).toHaveCount(0, { timeout: 15000 });
   await settle(page, 1000);
-  await expect(freshness.locator("strong")).toHaveText("current");
+  await expect(freshness).toHaveCount(0);
   const before = await callCount(app);
   // The transport is gone: every project read now fails without reaching the service.
   await hold(app, {
@@ -981,22 +1126,26 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
   await expect(freshness).toContainText("showing last-known state");
   await expect(freshness).toContainText("Connection unavailable");
   await showsProject(nameA, lineA);
+  const repeated = await banners.count();
+  // W1-1, fixed 4 November 2026: one banner for one project snapshot.
+  await expect(banners, "one freshness banner for one project snapshot").toHaveCount(1);
   // A reconnect attempt that fails keeps the last-known data, labelled stale.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(freshness.locator("strong")).toHaveText("stale");
   await expect(freshness).toContainText("showing last-known state");
   await expect(freshness.getByRole("alert")).toContainText("Fixture transport unavailable");
   await showsProject(nameA, lineA);
+  await page.screenshot({ path: path.join(evidence, "disconnect-stale.png") });
   await settle(page, 1500);
   await clearRule(app, "transport-down");
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect(freshness.locator("strong")).toHaveText("current", { timeout: 15000 });
-  await expect(freshness.getByRole("alert")).toHaveCount(0);
+  await expect(freshness).toHaveCount(0, { timeout: 15000 });
+  await expect(banners).toHaveCount(0);
   await release(app, "add-chat");
   await settle(page, 1000);
   const after = await calls(app, before);
   const types = after.map((c) => c.type);
-  const reads = new Set(["state", "scope-snapshot", "scope-events", "navigation-query", "navigation-save", "builder-reviewer-query", "coordination-query", "synchronization-query", "history-page", "history-conversations", "task-inspect", "coordinator-query", "loop-query", "orchestration-query"]);
+  const reads = new Set(["state", "scope-snapshot", "scope-events", "navigation-query", "navigation-save", "builder-reviewer-query", "coordination-query", "synchronization-query", "history-page", "history-conversations", "task-inspect", "coordinator-query", "coordinator-threads", "loop-query", "orchestration-query"]);
   const isRead = (t) => reads.has(t) || t.endsWith("-query") || t.endsWith("-inspect");
   expect(types.filter((t) => !isRead(t)), "commands other than reads after the disconnect").toEqual([]);
   const snapshots = types.filter((t) => t === "scope-snapshot").length;
@@ -1008,8 +1157,15 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
     callsDuringDisconnectAndRecovery: types,
     failedReads: after.filter((c) => c.failedBy).length,
     scopeSnapshots: snapshots,
+    freshnessBannersWhileDisconnected: repeated,
   };
 }, page);
+retired(
+  "UI-10 freshness \"current\" label",
+  ["UI-10"],
+  "Successful freshness banners were removed; Freshness shows only stale, failed or disconnected reads (docs/UX_Cleanup_Plan.md §1).",
+  "The step above asserts the banner's absence when current and its disconnected/stale states.",
+);
 
 await step("UI-11 one pending mutation per target; unrelated controls stay usable; recovers after reply and error", ["UI-11"], async () => {
   await navigate(page, "Provider tools");
@@ -1041,9 +1197,14 @@ await step("UI-11 one pending mutation per target; unrelated controls stay usabl
   await expect(page.getByRole("button", { name: "Projects", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Add project", exact: true })).toBeEnabled();
   await expect(page.locator("footer.statusbar")).toContainText("Operations pending");
+  await page.screenshot({ path: path.join(evidence, "pending-new-chat.png") });
+  // W1-2, fixed 4 November 2026: the pending line says what is happening in
+  // plain words, not the internal command name.
+  await expect(page.locator('main.content > p[role="status"]', { hasText: "Creating the chat…" })).toHaveCount(1);
+  await expect(page.locator('main.content > p[role="status"]', { hasText: "conversation add" })).toHaveCount(0);
   await release(app, "add-twice");
   await expect(newChat).toBeEnabled();
-  await expect(page.locator("footer.statusbar")).toContainText("Ready");
+  await idleStatus();
   expect(await countAdds()).toBe(beforeClicks + 1);
   // A rejected mutation re-enables its control and names the error.
   await hold(app, { name: "add-fails", types: ["conversation-add"], projectId: idA, remaining: 1 });
@@ -1071,15 +1232,15 @@ await step("UI-12 add cancel and duplicate add keep one stable project identity"
   await navigate(page, "Projects");
   const before = await storedProjects();
   await app.evaluate(() => (globalThis.campaignCancelNextOpen = true));
-  await page.getByRole("button", { name: "+ Add project", exact: true }).click();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
   await settle(page, 500);
   expect((await storedProjects()).map((p) => p.id).sort()).toEqual(before.map((p) => p.id).sort());
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Projects");
   // The same folder again: no second project, same identity.
   await app.evaluate((_, folder) => (globalThis.campaignPick = folder), folderB);
   await navigate(page, "Projects");
-  await page.getByRole("button", { name: "+ Add project", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: nameB })).toBeVisible();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  await expect(crumb).toHaveText(`${nameB} / New session`);
   const after = await storedProjects();
   expect(after.length).toBe(before.length);
   expect(after.filter((p) => p.name === nameB).map((p) => p.id)).toEqual([idB]);
@@ -1093,21 +1254,23 @@ await step("UI-12 missing folder is labelled; relink keeps identity and history 
   await mkdir(original);
   await app.evaluate((_, folder) => (globalThis.campaignPick = folder), original);
   await navigate(page, "Projects");
-  await page.getByRole("button", { name: "+ Add project", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Relink 项目 source" })).toBeVisible();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
+  await expect(crumb).toHaveText("Relink 项目 source / New session");
   const project = (await storedProjects()).find((p) => p.name === "Relink 项目 source");
   await command(page, { type: "conversation-add", projectId: project.id, title: "History that must follow the relink" });
   const countBefore = (await storedProjects()).length;
   const { rename } = await import("node:fs/promises");
   await rename(original, moved);
+  const movedAt = Date.now();
   await navigate(page, "Projects");
-  const discovery = page.getByRole("button", { name: "Enable project discovery…", exact: true });
-  if (await discovery.count()) await discovery.click();
-  else await page.getByRole("button", { name: "Refresh projects", exact: true }).click();
   const card = page.getByRole("article", { name: "Relink 项目 source", exact: true });
-  await expect(card).toContainText("Folder unavailable", { timeout: 15000 });
-  await expect(card).toContainText("Locate this project’s folder");
-  await expect(card.getByRole("button", { name: "Open folder" })).toBeDisabled();
+  // Topsl re-checks folders at startup and every minute (no manual refresh
+  // remains once discovery was retired), so allow for one check.
+  await expect(card).toContainText("Folder unavailable", { timeout: 75000 });
+  const labelledAfterMs = Date.now() - movedAt;
+  await expect(card).toContainText("Relink this project’s folder to keep using its history.");
+  await expect(card.getByRole("button", { name: "Open terminal", exact: true })).toBeDisabled();
+  await page.screenshot({ path: path.join(evidence, "relink-missing-folder.png") });
   // Relinking to a folder that already belongs to Beta is refused, not merged.
   await app.evaluate((_, folder) => (globalThis.campaignPick = folder), folderB);
   await card.getByRole("button", { name: "Relink folder…", exact: true }).click();
@@ -1122,17 +1285,24 @@ await step("UI-12 missing folder is labelled; relink keeps identity and history 
   const conversations = (await command(page, { type: "scope-snapshot", projectId: project.id })).conversations;
   expect(conversations.map((c) => c.title)).toContain("History that must follow the relink");
   await expect(card.locator("code.path")).toHaveText(relinked.path);
-  return { id: project.id, path: relinked.path };
+  return { id: project.id, path: relinked.path, labelledAfterMs };
 }, page);
+retired(
+  "UI-12 project discovery and Open folder controls",
+  ["UI-12"],
+  "Automatic project discovery (Enable project discovery…, Refresh projects) and folder deep links (Open folder) were removed (docs/UX_Cleanup_Plan.md §2); availability is a stat-only check at startup and every minute.",
+  "The step above waits for that periodic check and asserts Open terminal is disabled for the missing folder.",
+);
 
 await step("UI-16 instruction file: exact scope shown; native cancel and external drift leave the file untouched", ["UI-16"], async () => {
-  await selectProject(idA);
+  await selectProjectIn(page, nameA);
   await navigate(page, "Settings");
-  await page.getByRole("button", { name: "Project instructions", exact: true }).click();
+  const card = page.locator(".settings-card").filter({ has: page.getByRole("heading", { name: "Configuration & instructions" }) });
+  await card.getByRole("button", { name: "Project instructions", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Native configuration text" });
   await expect(editor).toBeVisible();
   const target = path.join(await realpath(folderA), "AGENTS.md");
-  const shown = await page.locator(".settings-card p.path").first().textContent();
+  const shown = await card.locator("p.path").first().textContent();
   // The canonical project folder, exactly.
   expect(path.dirname(shown)).toBe(await realpath(folderA));
   expect(path.basename(shown)).toBe("AGENTS.md");
@@ -1201,10 +1371,17 @@ await step("UI-26 bounded navigation soak (measured only)", ["UI-26"], async () 
   const defaultCycles = cycles;
   for (let cycle = 1; soakUntil ? Date.now() < soakUntil : cycle <= defaultCycles; cycle++) {
     cycles = cycle;
-    for (const nav of [...projectNames, ...globalPages.map((g) => g.nav)]) {
+    for (const nav of allDestinations) {
       const begin = Date.now();
       await navigate(page, nav);
       await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+      navigationMs.push(Date.now() - begin);
+    }
+    await navigate(page, "Advanced workflows");
+    for (const name of advancedSections) {
+      const begin = Date.now();
+      await sectionTab(name).click();
+      await expect(sectionTab(name)).toHaveAttribute("aria-selected", "true");
       navigationMs.push(Date.now() - begin);
     }
     await selectProject(cycle % 2 ? idB : idA);

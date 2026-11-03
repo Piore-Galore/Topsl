@@ -949,7 +949,7 @@ const byName = (report: { observations: any[] }) =>
   Object.fromEntries(report.observations.map((o) => [o.capability, o]));
 
 describe.skipIf(!posix)("CL-02/CL-06/CL-07 Claude qualification through the runtime manager (POSIX shell stand-in)", () => {
-  test("CL-02: the account read runs only `auth status --json` (no model turn); every purpose stays blocked until qualified", async () => {
+  test("CL-02: connecting runs only `auth status --json` and `--help` (no model turn); every purpose stays blocked until qualified", async () => {
     const log = path.join(await scratch("campaign-cl02-"), "argv.jsonl");
     const f = await launched(`FIXTURE_LOG=${JSON.stringify(log)} `);
     await expect(f.runtime.inspect(f.installation)).rejects.toThrow("structured route is off");
@@ -961,9 +961,13 @@ describe.skipIf(!posix)("CL-02/CL-06/CL-07 Claude qualification through the runt
     expect(inspected.account).toEqual({ type: "claude.ai", email: null, planType: "max" });
     const runs = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     // inspectClaude reads the account through adapter.inspect and again
-    // through adapter.account: two account reads, never a print turn.
+    // through adapter.account, and the effort levels through `--help`: never
+    // a print turn.
     expect(runs.length).toBeGreaterThan(0);
-    for (const run of runs) expect(run).toEqual(["auth", "status", "--json"]);
+    for (const run of runs)
+      expect([["auth", "status", "--json"], ["--help"]]).toContainEqual(run);
+    expect(runs).toContainEqual(["--help"]);
+    expect(inspected.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(runs.flat()).not.toContain("--print");
     for (const purpose of purposes) {
       const codes = f.codes(purpose);

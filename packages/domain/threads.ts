@@ -91,7 +91,14 @@ export function parseThreadId(
 /** A sidebar title from the first line of a message. */
 export function threadTitle(text: string, max = 80): string {
   const line = text.trim().split(/\r?\n/)[0].replace(/\s+/g, " ");
-  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+  // By code point, so an emoji's surrogate pair is never split (W3-14).
+  const points = Array.from(line);
+  return points.length > max
+    ? `${points
+        .slice(0, max - 1)
+        .join("")
+        .trimEnd()}…`
+    : line;
 }
 
 /** What a goal needs from the owner, if anything. */

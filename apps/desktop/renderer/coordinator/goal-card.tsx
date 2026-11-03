@@ -137,6 +137,30 @@ export function GoalCard({
           </button>
         </p>
       )}
+      {view.rounds
+        .filter((r: any) => r.active)
+        .flatMap((r: any) => r.members)
+        .filter((m: any) => m.uncertainRunId)
+        .map((m: any) => (
+          <p key={m.memberId} className="session-attention">
+            <span>
+              {m.memberId}: its turn's outcome is unknown (Topsl may have
+              restarted while it ran). The goal waits until you inspect and
+              reconcile it.
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                void run(`reconcile-${m.uncertainRunId}`, {
+                  type: "run-reconcile",
+                  id: m.uncertainRunId,
+                })
+              }
+            >
+              Inspect & reconcile
+            </button>
+          </p>
+        ))}
       {g.synthesis && <div className="synthesis">{g.synthesis}</div>}
 
       {awaiting.map((r: any) => (
@@ -283,8 +307,13 @@ export function GoalCard({
 
       {g.state === "checking" && (
         <section className="decision" aria-label="Run required checks">
-          <h3>Needs you: run the required checks</h3>
+          <h3>
+            {failedChecks(view).length
+              ? "Needs you: a required check failed"
+              : "Needs you: run the required checks"}
+          </h3>
           <p>{view.checks.detail}</p>
+          {failedChecks(view).length > 0 && <p>{checkFailureAdvice}</p>}
           <div className="actions wrap">
             <button
               type="button"
@@ -604,6 +633,9 @@ export function ChecksPane({ view, run }: { view: any; run: Run }) {
               </li>
             ))}
           </ul>
+          {failedChecks(view).length > 0 && (
+            <p role="note">{checkFailureAdvice}</p>
+          )}
         </>
       ) : (
         <p className="muted">
@@ -637,6 +669,19 @@ export function ChecksPane({ view, run }: { view: any; run: Run }) {
   );
 }
 
+/** Required checks that ran on the current candidate and did not pass. */
+const failedChecks = (view: any): any[] =>
+  (view.checks?.results ?? []).filter(
+    (c: any) => c.result && c.result !== "passed",
+  );
+/**
+ * What the owner can do about a failed required check (W3-10). A session
+ * goal is not repaired from a failing check yet (docs/Topsl_Design.md §18),
+ * so this says how to move on rather than leave the goal waiting.
+ */
+const checkFailureAdvice =
+  "This candidate cannot be accepted while a required check fails. Running the check again re-runs the same candidate. To change the code, stop this goal and send a Work message that says what to fix; a new goal starts from the latest accepted result.";
+
 /** What the goal changed: its candidate, choices made, and the folder outcome. */
 export function ChangesPane({ view }: { view: any }) {
   const g = view.goal;
@@ -647,13 +692,36 @@ export function ChangesPane({ view }: { view: any }) {
           Information goals produce the coordinators' answer, not file changes.
         </p>
       ) : g.candidateId ? (
-        <p>
-          Integrated candidate <code>{g.candidateId}</code>
-          {g.acceptance
-            ? `, accepted ${new Date(g.acceptance.at).toLocaleString()}`
-            : ""}
-          .
-        </p>
+        <>
+          <p>
+            Integrated candidate <code>{g.candidateId}</code>
+            {g.acceptance
+              ? `, accepted ${new Date(g.acceptance.at).toLocaleString()}`
+              : ""}
+            .
+          </p>
+          {view.candidateChanges && (
+            <section aria-label="Changed files">
+              <h3>
+                {view.candidateChanges.length
+                  ? `Changed files (${view.candidateChanges.length})`
+                  : "No files changed"}
+              </h3>
+              {view.candidateChanges.length > 0 && (
+                <ul className="changed-files">
+                  {view.candidateChanges.map(
+                    (f: { path: string; change: string }) => (
+                      <li key={f.path}>
+                        <code>{f.path}</code>{" "}
+                        <span className="muted tiny">{f.change}</span>
+                      </li>
+                    ),
+                  )}
+                </ul>
+              )}
+            </section>
+          )}
+        </>
       ) : (
         <p className="muted">No integrated candidate yet.</p>
       )}

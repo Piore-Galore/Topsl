@@ -1,0 +1,136 @@
+[
+ {
+  "journey": "Mixed session (second attempt)",
+  "folder": "l1-session",
+  "result": "completed",
+  "failure": null,
+  "coordinators": [
+   "coordinator-codex=codex/gpt-6.1-sol",
+   "coordinator-claude=claude/claude-opus-5-5@high"
+  ],
+  "intakes": [
+   [
+    "discuss",
+    "decided",
+    "reply"
+   ],
+   [
+    "work",
+    "decided",
+    "act"
+   ]
+  ],
+  "finalQueue": [
+   "goal:accepted",
+   "loop:completed"
+  ],
+  "loop": {
+   "finalState": "completed",
+   "detail": "Completed: every required goal has valid evidence on checkpoint 1.",
+   "published": "// Edited by a Topsl loop.\nexport const value = 2;",
+   "folderStatus": "M value.ts"
+  },
+  "qualification": {
+   "codex": "gpt-6.1-sol",
+   "claude": "claude-opus-5-5",
+   "claudeObservations": [
+    [
+     "structured-turn",
+     true
+    ],
+    [
+     "read-only",
+     true
+    ],
+    [
+     "workspace-write",
+     true
+    ],
+    [
+     "candidate-reader",
+     true
+    ],
+    [
+     "fresh-session",
+     true
+    ],
+    [
+     "native-subscription",
+     true
+    ],
+    [
+     "process-lifecycle",
+     true
+    ]
+   ]
+  }
+ },
+ {
+  "journey": "Codex/Codex build and review",
+  "folder": "l2-codex-codex",
+  "result": "stopped before a report (owner answer awaited)"
+ },
+ {
+  "journey": "Claude/Codex, attempt 1",
+  "folder": "l3-claude-codex-attempt1",
+  "result": "failed",
+  "failure": "Not passed: candidate-reader."
+ },
+ {
+  "journey": "Claude/Codex, attempt 2",
+  "folder": "l3-claude-codex-attempt2",
+  "result": "failed",
+  "failure": "Not passed: candidate-reader."
+ },
+ {
+  "journey": "Claude/Claude build and review",
+  "folder": "l4-claude-claude",
+  "result": "stopped before a report (owner answer awaited)"
+ },
+ {
+  "journey": "Claude terminal to Codex chat handoff",
+  "folder": "l5-handoff",
+  "result": "passed",
+  "failure": null
+ },
+ {
+  "journey": "Diagnostic Codex qualification",
+  "folder": "diag",
+  "result": "recorded",
+  "failure": null,
+  "observations": [
+   [
+    "native-subscription",
+    true
+   ],
+   [
+    "structured-turn",
+    true
+   ],
+   [
+    "candidate-reader",
+    false
+   ],
+   [
+    "fresh-session",
+    true
+   ],
+   [
+    "read-only",
+    true
+   ],
+   [
+    "workspace-write",
+    true
+   ],
+   [
+    "interrupt",
+    true
+   ],
+   [
+    "process-lifecycle",
+    true
+   ]
+  ]
+ }
+]

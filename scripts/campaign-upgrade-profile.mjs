@@ -1,14 +1,22 @@
-// Campaign 2026-10-19 packet p8-packaged-upgrade: profile inspection helper.
+// Campaign packet p8-packaged-upgrade: profile inspection helper (19 October
+// 2026, updated 4 November 2026 for the native-integration retirement).
 //
-// Run under the clean checkout's Electron in Node mode, so the encrypted
-// SQLite module matches its ABI:
-//   ELECTRON_RUN_AS_NODE=1 <clean>/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron \
+// Run under the checkout's Electron in Node mode, so the encrypted SQLite
+// module matches its ABI:
+//   ELECTRON_RUN_AS_NODE=1 <checkout>/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron \
 //     scripts/campaign-upgrade-profile.mjs inspect <profile> <passphrase>
 //   ... set-user-version <profile> <passphrase> <version>
+//   ... seed-legacy <profile> <passphrase> <records.json>
 //
 // `inspect` copies the profile to a temporary folder first and reads only the
 // copy, so the profile under test is never opened by this helper. It reads
 // passphrase vaults only (an `os` vault needs Electron's safeStorage).
+// `seed-legacy` adds the given documents (an array of {kind, id, body}) to a
+// closed profile, for records an older release cannot create in an isolated
+// test profile (desktop installations and their pending operations). It
+// never replaces a document that already exists.
+// TOPSL_CAMPAIGN_CLEAN names the checkout whose node_modules to load; it
+// defaults to this script's own checkout.
 import { createRequire } from "node:module";
 import { createDecipheriv, createHash, scryptSync } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -17,10 +25,7 @@ import path from "node:path";
 
 const CLEAN =
   process.env.TOPSL_CAMPAIGN_CLEAN ??
-  path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
-    "../.claude/worktrees/campaign-clean",
-  );
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const require = createRequire(path.join(CLEAN, "package.json"));
 const Database = require("better-sqlite3-multiple-ciphers");
 
@@ -106,11 +111,18 @@ function inspect(profile, passphrase) {
         tables,
         kinds,
         digests,
-        projects: pick("project", ["name", "path", "realPath", "trusted"]),
+        projects: pick("project", ["name", "path", "realPath", "trusted", "sources", "nameSource"]),
         conversations: pick("conversation", ["projectId", "title"]),
         messages: pick("message", ["conversationId", "projectId", "role", "provider", "text"]),
-        installations: pick("installation", ["appId", "path", "trusted"]),
+        installations: pick("installation", ["appId", "path", "trusted", "owner", "managementUnitId"]),
         runs: pick("run", ["status", "installationId", "conversationId", "nativePid", "error"]),
+        jobs: pick("job", ["planId", "state", "detail"]),
+        plans: pick("plan", ["appId", "managementUnitId", "nativeApplicationPath"]),
+        consumedApprovals: pick("consumed-approval", ["digest", "jobId", "retiredAt"]),
+        installationLocks: pick("installation-lock", ["owner"]),
+        historySources: pick("native-history-source", ["projectId", "enabled", "state", "revision"]),
+        syncFields: pick("sync-field", ["projectId", "state"]),
+        migrations: pick("migration", ["at", "counts"]),
         preferences,
         events: { count: events.length, kinds: [...new Set(events.map((e) => e.kind))].sort() },
         searchRows,
@@ -137,6 +149,28 @@ function setUserVersion(profile, passphrase, version) {
   }
 }
 
+function seedLegacy(profile, passphrase, recordsFile) {
+  const records = JSON.parse(readFileSync(recordsFile, "utf8"));
+  const key = databaseKey(profile, passphrase);
+  const db = open(path.join(profile, "history.sqlite"), key);
+  try {
+    const exists = db.prepare("SELECT 1 FROM documents WHERE kind=? AND id=?");
+    const insert = db.prepare("INSERT INTO documents(kind,id,body) VALUES(?,?,?)");
+    const added = [];
+    db.transaction(() => {
+      for (const { kind, id, body } of records) {
+        if (exists.get(kind, id)) throw new Error(`${kind}:${id} already exists.`);
+        insert.run(kind, id, JSON.stringify({ id, ...body }));
+        added.push(`${kind}:${id}`);
+      }
+    })();
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    return { added };
+  } finally {
+    db.close();
+  }
+}
+
 const [mode, profile, passphrase, extra] = process.argv.slice(2);
 try {
   const result =
@@ -144,9 +178,13 @@ try {
       ? inspect(profile, passphrase)
       : mode === "set-user-version"
         ? setUserVersion(profile, passphrase, extra)
-        : (() => {
-            throw new Error("Usage: inspect|set-user-version <profile> <passphrase> [version]");
-          })();
+        : mode === "seed-legacy"
+          ? seedLegacy(profile, passphrase, extra)
+          : (() => {
+              throw new Error(
+                "Usage: inspect|set-user-version|seed-legacy <profile> <passphrase> [version|records.json]",
+              );
+            })();
   process.stdout.write(JSON.stringify(result) + "\n");
 } catch (error) {
   process.stderr.write(String(error?.stack ?? error) + "\n");

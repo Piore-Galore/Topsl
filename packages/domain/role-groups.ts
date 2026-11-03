@@ -316,6 +316,9 @@ export interface RoundMember {
   retries: number;
   wave: number;
   detail: string;
+  /** The run whose outcome is unknown, while the owner must reconcile it;
+   * absent in records written before 4 November 2026 (W4-4). */
+  uncertainRunId?: string | null;
 }
 
 export type RoundKind = "coordination" | "review" | "work" | "information";
@@ -760,6 +763,9 @@ export interface CoordinatorMessage {
       /** A native session message and the coordinators' shared response. */
       | "session";
     goalId: string | null;
+    /** The loop run a loop-steer message belongs to; absent before
+     * 4 November 2026, when a session's loops shared one list (W3-17). */
+    runId?: string | null;
   } | null;
   /** The session intake this message started or answers. */
   intakeId?: string | null;

@@ -2124,12 +2124,15 @@ export class Orchestrator {
           obs.state === "uncertain"
             ? "Execution is uncertain; its lease and capacity stay held until reconciliation."
             : "Waiting for the member's processes to stop before using its result.";
-        if (m.detail !== detail) {
+        const runId = obs.state === "uncertain" ? (obs.runId ?? null) : null;
+        if (m.detail !== detail || (m.uncertainRunId ?? null) !== runId) {
           m.detail = detail;
+          m.uncertainRunId = runId;
           changed = true;
         }
         continue;
       }
+      if (m.uncertainRunId) m.uncertainRunId = null;
       const attemptId = m.activeAttemptId;
       m.activeAttemptId = null;
       m.launchId = null;
@@ -4606,21 +4609,31 @@ export class Orchestrator {
    * The project's coordinator records. With `conversationId`, only that
    * conversation and its goals.
    */
-  view(projectId: string, conversationId?: string | null) {
-    const conversations = this.repo
-      .all<CoordinatorConversation>(kinds.conversation, projectId)
-      .filter((c) => !conversationId || c.id === conversationId);
+  view(
+    projectId: string,
+    conversationId?: string | null,
+    options: { setup?: boolean } = {},
+  ) {
+    const setup = !!options.setup;
+    const conversations = setup
+      ? []
+      : this.repo
+          .all<CoordinatorConversation>(kinds.conversation, projectId)
+          .filter((c) => !conversationId || c.id === conversationId);
     // Roles a session owns are listed in that session's view only.
     const roles = this.repo.visibleRoles(projectId, conversationId ?? null);
     // Loop child goals belong to their run's view (packages/orchestration/
     // loop-engine.ts), not the ordinary goal list.
-    const goals = this.repo
-      .all<Goal>(kinds.goal, projectId)
-      .filter(
-        (g) =>
-          !g.loop && (!conversationId || g.conversationId === conversationId),
-      )
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const goals = setup
+      ? []
+      : this.repo
+          .all<Goal>(kinds.goal, projectId)
+          .filter(
+            (g) =>
+              !g.loop &&
+              (!conversationId || g.conversationId === conversationId),
+          )
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const routes = this.driver.routes(projectId);
     return {
       policy: this.repo.policy(projectId),
@@ -4646,32 +4659,34 @@ export class Orchestrator {
       }),
       // Compatibility readers: one-member records written before role groups,
       // shown as singleton groups without rewriting the records themselves.
-      legacy: {
-        drafts: this.repo
-          .all<WorkflowDraft>("workflow-draft", projectId)
-          .map((d) => ({
-            id: d.id,
-            workflowId: d.workflowId,
-            groups: legacyDraftGroups(d.draft, d.id),
-          })),
-        presets: this.repo
-          .all<{
-            id: string;
-            name: string;
-            assignments: Array<{
-              role: string;
-              memberId?: string;
-              provider: "codex" | "claude";
-              installationId: string;
-              model: string;
-            }>;
-          }>("routing-preset", projectId)
-          .map((p) => ({
-            id: p.id,
-            name: p.name,
-            groups: presetGroups(p),
-          })),
-      },
+      legacy: setup
+        ? { drafts: [], presets: [] }
+        : {
+            drafts: this.repo
+              .all<WorkflowDraft>("workflow-draft", projectId)
+              .map((d) => ({
+                id: d.id,
+                workflowId: d.workflowId,
+                groups: legacyDraftGroups(d.draft, d.id),
+              })),
+            presets: this.repo
+              .all<{
+                id: string;
+                name: string;
+                assignments: Array<{
+                  role: string;
+                  memberId?: string;
+                  provider: "codex" | "claude";
+                  installationId: string;
+                  model: string;
+                }>;
+              }>("routing-preset", projectId)
+              .map((p) => ({
+                id: p.id,
+                name: p.name,
+                groups: presetGroups(p),
+              })),
+          },
       conversations: conversations.map((c) => ({
         ...c,
         messages: this.repo

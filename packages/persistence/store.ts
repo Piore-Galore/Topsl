@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { hash, now, uid, stable } from "../domain/invariants";
 import type { Message } from "../domain/types";
-import { migrateWithBackup } from "./migrations/backup";
+import { markCreated, migrateWithBackup } from "./migrations/backup";
 import { EVENT_SCHEMA_VERSION, migrateEvents } from "./migrations/events";
 import { migrateExecutions } from "./migrations/executions";
 import { BLOB_SCHEMA_VERSION, migrateBlobs } from "./migrations/blobs";
@@ -82,6 +82,9 @@ export class Store {
       this.db.pragma("journal_mode=WAL");
       this.db.pragma("synchronous=FULL");
       this.db.pragma("secure_delete=ON");
+      // A database this open creates holds no data yet, so none of its
+      // migrations needs a backup.
+      if (schemaVersion === 0) markCreated(this.db);
       if (schemaVersion < 2)
         migrateWithBackup(this.db, file, key, schemaVersion, 2, () => {
           if (schemaVersion === 0)

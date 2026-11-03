@@ -332,10 +332,15 @@ export function WorkbenchSidebar({
                             <span className="thread-mark" aria-hidden="true">
                               {kindMark[t.kind]}
                             </span>
-                            <span className="thread-title">{t.title}</span>
+                            <span className="thread-title" title={t.title}>
+                              {t.title}
+                            </span>
                           </ActionButton>
                           {t.needsYou && (
-                            <span className="thread-attention">
+                            <span
+                              className="thread-attention"
+                              title={t.needsYou}
+                            >
                               {t.needsYou}
                             </span>
                           )}

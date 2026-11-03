@@ -664,9 +664,12 @@ export function WorkflowSetup({
         <strong>Coordinated workflow readiness</strong>
         <p>{blockers.join(" ")}</p>
         <p>
-          Observed {readiness?.observedAt ?? "not yet"}. A trusted binary does
-          not establish route qualification. Save a protected draft while
-          requirements or runtime support are incomplete.
+          Observed{" "}
+          {readiness?.observedAt
+            ? new Date(readiness.observedAt).toLocaleString()
+            : "not yet"}
+          . A trusted binary does not establish route qualification. Save a
+          protected draft while requirements or runtime support are incomplete.
         </p>
       </div>
       <nav className="workflow-step-nav" aria-label="Workflow setup steps">

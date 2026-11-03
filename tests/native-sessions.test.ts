@@ -308,6 +308,87 @@ describe("native sessions", () => {
     ]);
   });
 
+  test("a coordinator whose turn has an unknown outcome is shown with its run until reconciled, then answers", async () => {
+    const f = await setup();
+    let hold = true;
+    const reply = f.driver.reply;
+    f.driver.reply = (turn: MemberTurn) => (hold ? "hang" : reply(turn));
+    const created = await f.sessions.create({
+      projectId: "p",
+      text: "What does the parser do?",
+      mode: "discuss",
+      commandId: cmd(),
+    });
+    await run(f, () => f.driver.launches.length === 1);
+    const [attemptId, attempt] = [...f.driver.attempts].at(-1)!;
+    // The runtime lost the process after dispatch: outcome unknown.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "uncertain",
+      quiescent: false,
+      runId: "run-unknown",
+      error: "Runtime connection closed (1).",
+    };
+    await run(
+      f,
+      () => !!intake(f, created.intakeId!).members[0].uncertainRunId,
+      5,
+    );
+    const waiting = intake(f, created.intakeId!);
+    expect(waiting.stage).toBe("collecting");
+    expect(waiting.members[0]).toMatchObject({
+      state: "running",
+      activeAttemptId: attemptId,
+      uncertainRunId: "run-unknown",
+      detail:
+        "Runtime connection closed (1). Inspect and reconcile it to let this coordinator answer again.",
+    });
+    // Nothing is retried while the outcome is unknown.
+    await run(f, () => false, 5);
+    expect(f.driver.launches).toHaveLength(1);
+    // Reconciliation settles the attempt as failed; the member retries once
+    // and the message is answered.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "failed",
+      quiescent: true,
+      error: "Reconciled.",
+    };
+    hold = false;
+    expect(await run(f, decided(f, created.intakeId!))).toBe(true);
+    const done = intake(f, created.intakeId!);
+    expect(done.outcome).toMatchObject({ kind: "reply", intent: "discuss" });
+    expect(done.members[0].uncertainRunId).toBeNull();
+    expect(f.driver.launches.length).toBeGreaterThan(1);
+  });
+
+  test("Stop session stops an answering intake even when its interrupt cannot be delivered", async () => {
+    // After a restart the runtime no longer holds the run (W4-1).
+    const f = await setup();
+    f.driver.reply = () => "hang";
+    f.driver.interrupt = async () => {
+      throw new Error(
+        "This run is not active in Topsl. Inspect the native session.",
+      );
+    };
+    const created = await f.sessions.create({
+      projectId: "p",
+      text: "What does the parser do?",
+      mode: "discuss",
+      commandId: cmd(),
+    });
+    await run(f, () => f.driver.launches.length === 1);
+    await expect(
+      f.sessions.control({
+        sessionId: created.sessionId,
+        action: "stop",
+        commandId: cmd(),
+      }),
+    ).resolves.toBeDefined();
+    await run(f, () => intake(f, created.intakeId!).stage === "stopped", 5);
+    expect(intake(f, created.intakeId!).stage).toBe("stopped");
+  });
+
   test("an ambiguous message gets a clarifying question and starts nothing", async () => {
     const f = await setup();
     f.driver.reply = (turn: MemberTurn) =>
@@ -397,6 +478,60 @@ describe("native sessions", () => {
     await run(f, () => f.driver.launches.some((t) => t.goalId === second.id));
     const coordination = f.driver.launches.find((t) => t.goalId === second.id)!;
     expect(coordination.contextCandidateId).toBe(second.baselineCandidateId);
+  });
+
+  test("a goal member whose turn has an unknown outcome names its run until reconciled (W4-4)", async () => {
+    const f = await setup();
+    const { sessionId } = await f.sessions.create({
+      projectId: "p",
+      text: "Build A",
+      commandId: cmd(),
+    });
+    await run(f, () => !!session(f, sessionId).activeWorkId);
+    const s = session(f, sessionId);
+    const goalId = s.queue.find((w) => w.id === s.activeWorkId)!.goalId!;
+    // The goal's first round launches, and its turn is lost (as by a restart).
+    const reply = f.driver.reply;
+    let hold = true;
+    f.driver.reply = (turn: MemberTurn) =>
+      hold && turn.goalId === goalId ? "hang" : reply(turn);
+    await run(f, () => f.driver.launches.some((t) => t.goalId === goalId));
+    const [, attempt] = [...f.driver.attempts].find(
+      ([, a]) => a.turn.goalId === goalId,
+    )!;
+    attempt.obs = {
+      ...attempt.obs,
+      state: "uncertain",
+      quiescent: false,
+      runId: "run-lost",
+      error: "Topsl closed while the native run was active.",
+    };
+    const member = () =>
+      f.orchestrator
+        .rounds(goalId)
+        .flatMap((r) => r.members)
+        .find(
+          (m) => m.uncertainRunId !== undefined && m.uncertainRunId !== null,
+        );
+    await run(f, () => !!member(), 5);
+    expect(member()).toMatchObject({
+      uncertainRunId: "run-lost",
+      detail:
+        "Execution is uncertain; its lease and capacity stay held until reconciliation.",
+    });
+    const launches = f.driver.launches.length;
+    await run(f, () => false, 5);
+    expect(f.driver.launches).toHaveLength(launches);
+    // Reconciled: the member is no longer marked and the goal moves on.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "failed",
+      quiescent: true,
+      error: "Reconciled.",
+    };
+    hold = false;
+    await run(f, () => !member(), 10);
+    expect(member()).toBeUndefined();
   });
 
   test("a stopped goal contributes nothing to the accepted result", async () => {
@@ -749,6 +884,51 @@ describe("native sessions", () => {
     expect(
       goal(f, session(f, sessionId).queue[0].goalId!).functions,
     ).toMatchObject({ implementation: "implementer", review: "reviewer" });
+  });
+
+  test("a custom team created with the owner's own role owns it; another session cannot reuse its ID", async () => {
+    const f = await setup();
+    // What New session sends for "Add your own role".
+    const own = {
+      settings: {},
+      title: "API writer",
+      instructions:
+        "Writes the HTTP handlers.\nKeeps the OpenAPI file in step.",
+      purpose: "candidate-review" as const,
+    };
+    const a = await f.sessions.create({
+      projectId: "p",
+      configuration: {
+        team: "custom",
+        roles: { implementer: { settings: {} }, "api-writer-ab12": own },
+      },
+      commandId: cmd(),
+    });
+    const role = f.orchestrator.repo.role("p", "api-writer-ab12");
+    expect(role).toMatchObject({
+      title: "API writer",
+      instructions: own.instructions,
+      purpose: "candidate-review",
+      ownerConversationId: a.sessionId,
+    });
+    expect(
+      f.sessions
+        .query(a.sessionId)
+        .roles.find((r) => r.role.id === "api-writer-ab12"),
+    ).toMatchObject({ owned: true, pinned: true });
+    const b = await f.sessions.create({ projectId: "p", commandId: cmd() });
+    expect(
+      f.orchestrator.repo
+        .visibleRoles("p", b.sessionId)
+        .some((r) => r.id === "api-writer-ab12"),
+    ).toBe(false);
+    await expect(
+      f.sessions.create({
+        projectId: "p",
+        configuration: { team: "custom", roles: { "api-writer-ab12": own } },
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/belongs to another session/);
   });
 
   test("a command that changes one field keeps the others", async () => {

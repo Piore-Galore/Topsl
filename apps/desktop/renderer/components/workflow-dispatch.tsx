@@ -60,7 +60,8 @@ export function WorkflowDispatch({
         {readiness?.runnable && !gated
           ? "Selected coordinated roles currently satisfy recorded readiness."
           : "Coordinated dispatch is blocked; a protected draft or assisted handoff remains separate."}
-        {readiness && ` Observed ${readiness.observedAt}.`}
+        {readiness &&
+          ` Observed ${new Date(readiness.observedAt).toLocaleString()}.`}
       </p>
       {(["builder", "reviewer"] as const).map((role) =>
         readiness?.roles?.[role]?.blockers.map((blocker: any) => (

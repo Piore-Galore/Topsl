@@ -16,6 +16,7 @@ import {
   ClaudeAdapter,
   claudeArguments,
   claudeEditTools,
+  claudeEffortLevels,
   claudeToolMethod,
 } from "../packages/providers/claude";
 import { ClaudeToolServer } from "../packages/providers/claude-tools";
@@ -298,6 +299,111 @@ describe("Claude Code's live route", () => {
       ...claudeArguments("claude-fixture-5", session.nativeSessionId, "review"),
     ]);
     await connection.close();
+  });
+
+  test("a member's effort reaches Claude Code as --effort; no effort passes no flag", async () => {
+    const spawned: string[][] = [];
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (executable, args, cwd) => {
+        spawned.push(args);
+        return spawn(process.execPath, [standIn, ...args], {
+          cwd,
+          env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+        });
+      },
+    });
+    for (const effort of ["high", undefined]) {
+      const connection = adapter.connect("/opt/claude", process.cwd());
+      const prepared = {
+        ...turn("review", "Reply with nothing else: OK-1"),
+        ...(effort ? { requestedEffort: effort } : {}),
+      };
+      const session = await adapter.startSession(connection, prepared, null);
+      const done = completion(connection);
+      await adapter.startTurn(connection, prepared, session.nativeSessionId);
+      expect(await done).toMatchObject({ type: "completed", failed: false });
+      await connection.close();
+    }
+    const [withEffort, without] = spawned;
+    const at = withEffort.indexOf("--model");
+    expect(withEffort.slice(at, at + 4)).toEqual(["--model", "claude-fixture-5", "--effort", "high"]);
+    expect(without).not.toContain("--effort");
+    // The permission profile a qualification fingerprints has no effort, so
+    // choosing one keeps the qualification.
+    const profile = (args: string[]) =>
+      args
+        .filter((_, i) => i !== at + 2 && i !== at + 3)
+        .filter((_, i, all) => all[i - 1] !== "--session-id");
+    expect(profile(withEffort)).toEqual(without.filter((_, i, all) => all[i - 1] !== "--session-id"));
+  });
+
+  test("a Claude Code run that fails before it reports a session is a known failure, not an unknown outcome", async () => {
+    // As a budget refusal, a bad flag or a launch error do: exit 1, no output.
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (_executable, _args, cwd) =>
+        spawn(process.execPath, ["-e", "process.stderr.write('refused'); process.exit(1)"], {
+          cwd,
+          env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+        }),
+    });
+    const connection = adapter.connect("/opt/claude", process.cwd());
+    const prepared = turn("review", "Reply with nothing else: OK-1");
+    const session = await adapter.startSession(connection, prepared, null);
+    const done = completion(connection);
+    let exited: string | null = null;
+    connection.onExit = (detail: string) => (exited = detail);
+    await adapter.startTurn(connection, prepared, session.nativeSessionId);
+    expect(await done).toMatchObject({
+      type: "completed",
+      failed: true,
+      detail: "Claude Code exited with code 1 before it started a session, so no model was called.",
+    });
+    await connection.close();
+    expect(exited).toBeNull();
+  });
+
+  test("a Claude Code run that exits with an error after reporting its session stays an unknown outcome", async () => {
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (_executable, args, cwd) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `process.stdout.write(JSON.stringify({type:"system",subtype:"init",session_id:${JSON.stringify(args[args.indexOf("--session-id") + 1])},uuid:"u1",model:"claude-fixture-5",tools:[],apiKeySource:"none",mcp_servers:[]})+"\\n"); process.exit(1)`,
+          ],
+          { cwd, env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }) },
+        ),
+    });
+    const connection = adapter.connect("/opt/claude", process.cwd());
+    const prepared = turn("review", "Reply with nothing else: OK-1");
+    const session = await adapter.startSession(connection, prepared, null);
+    const exited = new Promise<string>((resolve) => (connection.onExit = resolve));
+    await adapter.startTurn(connection, prepared, session.nativeSessionId);
+    // The init record parsed (a parse error would say so instead), so the
+    // session was reported and the outcome stays unknown.
+    expect(await exited).toMatch(/without a validated final result; dispatch outcome is unknown/);
+    await connection.close();
+  });
+
+  test("effort levels come from the --effort block of Claude Code's --help, and only from there", () => {
+    const help = [
+      "Options:",
+      "  --disable-slash-commands              Disable all skills",
+      "  --effort <level>                      Effort level for the current session",
+      "                                        (low, medium, high, xhigh, max)",
+      "  --fallback-model <model>              Enable automatic fallback (sonnet)",
+    ].join("\n");
+    const levels = ["low", "medium", "high", "xhigh", "max"];
+    expect(claudeEffortLevels(help)).toEqual(levels);
+    expect(claudeEffortLevels(help.replace(/\n/g, "\r\n"))).toEqual(levels);
+    // No --effort option (an older Claude Code): no levels, and never another
+    // option's parentheses.
+    expect(claudeEffortLevels("  --fallback-model <model>   Enable automatic fallback (sonnet, opus)\n")).toEqual([]);
+    expect(claudeEffortLevels("  --effort <level>   Effort level\n  --model <m>   The model (opus, sonnet)\n")).toEqual([]);
+    expect(claudeEffortLevels("  --effort <level>   Effort level (low; rm -rf /, high)\n")).toEqual([]);
   });
 
   test("arguments: a plain review has no tools and safe mode; a reader session names only Topsl's tools; an edit gets file tools only", () => {
@@ -975,6 +1081,22 @@ describe("Claude runtime qualification through the runtime manager", () => {
       expect(codes(f, "implementation", "claude-other-5")).toEqual([
         "unsupported-model-setting",
       ]);
+      // The qualified model offers the effort levels the stand-in's --help
+      // lists; a listed level is ready and an unlisted one is refused.
+      const catalog = f.store.get<any>("runtime-model-catalog", f.installation.id);
+      expect(catalog.models.map((m: any) => [m.model, m.supportedReasoningEfforts])).toEqual([
+        ["claude-fixture-5", ["low", "medium", "high", "xhigh", "max"]],
+      ]);
+      const withEffort = (effort: string) =>
+        f.runtime
+          .purposeReadiness(
+            f.installation,
+            { ...selection(f.installation.id), effort },
+            "coordinator-contribution",
+          )
+          .blockers.map((b) => b.code);
+      expect(withEffort("xhigh")).toEqual([]);
+      expect(withEffort("turbo")).toEqual(["unsupported-model-setting"]);
       // Turning the route off blocks every purpose again.
       f.route(false);
       expect(codes(f, "implementation")).toEqual([

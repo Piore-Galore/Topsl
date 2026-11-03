@@ -11,6 +11,8 @@ export function recordTerminalOutput(id: string, data: string): void {
   outputs.set(id, ((outputs.get(id) ?? "") + data).slice(-262144));
 }
 const terminalOutput = (id: string): string => outputs.get(id) ?? "";
+/** How long after Escape a Tab leaves the terminal instead of reaching it. */
+const leaveWindowMs = 1500;
 
 function terminalTheme() {
   const style = getComputedStyle(document.documentElement);
@@ -76,6 +78,31 @@ export function TerminalPanel({
     // arrived after the panel rendered is not lost.
     terminal.write(terminalOutput(id));
     terminal.parser.registerOscHandler(52, () => true); // Native output cannot write the system clipboard.
+    // Tab belongs to the program in the terminal, so focus would never leave
+    // it. Escape (still sent to the program) then Tab or Shift+Tab within
+    // 1.5 s is left to the browser, which moves focus out (W3-1).
+    let escapedAt = 0;
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      // Pressing Shift for Shift+Tab is a keydown of its own.
+      if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) return true;
+      if (event.key === "Escape") {
+        escapedAt = Date.now();
+        return true;
+      }
+      if (
+        event.key === "Tab" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        Date.now() - escapedAt < leaveWindowMs
+      ) {
+        escapedAt = 0;
+        return false;
+      }
+      escapedAt = 0;
+      return true;
+    });
     const input = terminal.onData((data) => {
       void window.topsl
         .command({ type: "terminal-input", id, data })
@@ -121,7 +148,11 @@ export function TerminalPanel({
         ref={ref}
         role="region"
         aria-label="Native terminal"
+        aria-describedby={`${id}-leave`}
       />
+      <p className="muted tiny terminal-leave" id={`${id}-leave`}>
+        To move focus out of the terminal, press Escape, then Tab or Shift+Tab.
+      </p>
     </section>
   );
 }

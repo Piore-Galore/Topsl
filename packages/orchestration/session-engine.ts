@@ -931,9 +931,17 @@ export class SessionSupervisor {
       ...blocked.map((a) => `${a.memberId}: ${a.reason}`),
     ];
     if (problems.length || !members.length) {
-      const detail =
-        problems.join(" ") ||
-        "No coordinator can answer: no qualified route is available.";
+      // No qualified provider at all is the owner's to fix under Providers;
+      // say that plainly rather than name the internal route purpose (W3-9).
+      const noProvider =
+        !resolved.conflicts.length &&
+        (!members.length ||
+          blocked.every((a) =>
+            a.reason.startsWith("No authorized route is qualified"),
+          ));
+      const detail = noProvider
+        ? "No provider can coordinate yet. Qualify Codex or Claude Code under Providers, then send the message again."
+        : problems.join(" ");
       intake.stage = "failed";
       intake.outcome = { kind: "failed", reason: detail };
       intake.detail = detail;
@@ -942,7 +950,9 @@ export class SessionSupervisor {
       void this.orchestrator.note({
         conversationId: session.conversationId,
         role: "service",
-        text: `The coordinators cannot answer yet. ${detail} Change the session's coordinators or add an explicit fallback; nothing was started.`,
+        text: noProvider
+          ? `The coordinators cannot answer yet. ${detail} Nothing was started.`
+          : `The coordinators cannot answer yet. ${detail} Change the session's coordinators or add an explicit fallback; nothing was started.`,
         routing: { kind: "session", goalId: null },
         intakeId: intake.id,
         commandId: `${intake.id}:blocked`,
@@ -1206,8 +1216,19 @@ export class SessionSupervisor {
     const members = intake.members.map((m) => {
       if (m.state !== "running" || !m.activeAttemptId) return m;
       const obs = this.driver.observe(m.activeAttemptId);
+      // An unknown outcome holds the member until the owner reconciles its
+      // run; the session says so instead of still "answering".
+      if (obs.state === "uncertain") {
+        const detail = `${obs.error ?? "The turn's outcome is unknown."} Inspect and reconcile it to let this coordinator answer again.`;
+        if (m.detail === detail && m.uncertainRunId === (obs.runId ?? null))
+          return m;
+        changed = true;
+        return { ...m, detail, uncertainRunId: obs.runId ?? null };
+      }
       if (obs.state === "running" || !obs.quiescent) return m;
       changed = true;
+      const attemptId = m.activeAttemptId;
+      m = { ...m, uncertainRunId: null };
       if (obs.state !== "completed") {
         return m.retries < MEMBER_RETRIES
           ? {
@@ -1225,7 +1246,7 @@ export class SessionSupervisor {
               detail: obs.error ?? `The attempt ended ${obs.state}.`,
             };
       }
-      const contribution = this.contribution(intake, m, m.activeAttemptId, obs);
+      const contribution = this.contribution(intake, m, attemptId, obs);
       const valid = contribution.valid;
       return {
         ...m,
@@ -1339,7 +1360,15 @@ export class SessionSupervisor {
     stage: SessionIntake["stage"] = "stopped",
   ) {
     for (const m of intake.members)
-      if (m.activeAttemptId) await this.driver.interrupt(m.activeAttemptId);
+      if (m.activeAttemptId)
+        try {
+          await this.driver.interrupt(m.activeAttemptId);
+        } catch {
+          // As for a goal: an interrupt that cannot be delivered, such as
+          // for a run a restart left behind, leaves the attempt uncertain with
+          // its lease held until reconciliation. The intake still stops, so
+          // Stop session is never refused for it (W4-1).
+        }
     this.saveIntake(intake, {
       stage,
       detail,

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "W3-2",
+    "name": "Cmd+Enter during an IME composition starts nothing",
+    "passed": true
+  },
+  {
+    "id": "W3-9",
+    "name": "a session with no qualified provider says so and offers Providers; a double-click starts one",
+    "passed": true
+  },
+  {
+    "id": "W3-18",
+    "name": "an idle session offers no Pause or Stop",
+    "passed": true
+  },
+  {
+    "id": "W3-8",
+    "name": "sidebar titles end with an ellipsis, not a cut letter",
+    "passed": true
+  },
+  {
+    "id": "W3-6",
+    "name": "a session pane takes focus, closes on Escape and returns focus",
+    "passed": true
+  },
+  {
+    "id": "W3-13",
+    "name": "the breadcrumb shows between 900 and 1100 px",
+    "passed": true
+  },
+  {
+    "id": "W3-7",
+    "name": "theme choices expose which is selected",
+    "passed": true
+  },
+  {
+    "id": "W3-5",
+    "name": "a dialog opened by a slow command returns focus to its opener",
+    "passed": true
+  },
+  {
+    "id": "W3-4",
+    "name": "a failed qualification read says so and can be retried",
+    "passed": true
+  },
+  {
+    "id": "W3-22",
+    "name": "a failed All sessions read says so and can be retried",
+    "passed": true
+  },
+  {
+    "id": "W1-2",
+    "name": "a pending operation is named in plain words",
+    "passed": true
+  },
+  {
+    "id": "W3-1",
+    "name": "Escape then Tab moves focus out of the native terminal",
+    "passed": true
+  }
+]

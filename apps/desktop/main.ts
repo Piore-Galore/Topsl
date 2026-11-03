@@ -230,6 +230,15 @@ async function unlock(passphrase?: string): Promise<AppState> {
     unlocking = false;
   }
 }
+/** The files an accepted candidate changes, as the acceptance dialog lists them. */
+function changedFilesText(
+  files: Array<{ path: string; change: string }> | null | undefined,
+): string {
+  if (!files) return "Changed files: not known.";
+  if (!files.length) return "Changed files: none.";
+  const shown = files.slice(0, 25).map((f) => `• ${f.path} (${f.change})`);
+  return `Changed files (${files.length}):\n${shown.join("\n")}${files.length > shown.length ? `\n…and ${files.length - shown.length} more; see Results → Changes.` : ""}`;
+}
 async function confirm(
   title: string,
   detail: string,
@@ -575,7 +584,7 @@ async function dispatch(command: Command): Promise<any> {
     if (
       !(await confirm(
         "Accept this reviewed candidate?",
-        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\nReview group: ${JSON.stringify(review.review)}\n${review.checks?.length ? `Required checks on this exact candidate: ${JSON.stringify(review.checks.map((check: any) => ({ definition: check.definition, label: check.label, result: check.result, targetRevision: check.targetRevision })))}` : "This goal has no required checks; acceptance rests on the review group's evidence only."}\n\nAcceptance records your decision for this exact candidate. It does not write the project folder, deploy or commit; applying the candidate to the folder is a separate step with its own confirmation. Any change to the goal, review, checks or candidate invalidates this confirmation.`,
+        `${review.objective}\n\nCandidate: ${review.targetRevision}\n${review.detail}\n\n${changedFilesText(review.files)}\n\nReview group: ${JSON.stringify(review.review)}\n${review.checks?.length ? `Required checks on this exact candidate: ${JSON.stringify(review.checks.map((check: any) => ({ definition: check.definition, label: check.label, result: check.result, targetRevision: check.targetRevision })))}` : "This goal has no required checks; acceptance rests on the review group's evidence only."}\n\nAcceptance records your decision for this exact candidate. It does not write the project folder, deploy or commit; applying the candidate to the folder is a separate step with its own confirmation. Any change to the goal, review, checks or candidate invalidates this confirmation.`,
         "Accept candidate",
       ))
     )

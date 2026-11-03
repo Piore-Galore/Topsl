@@ -10,7 +10,9 @@ import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
 
 // Native Topsl sessions (docs/Native_Sessions_Plan.md), driven through
 // Topsl's own screens in Electron against a synthetic profile: session setup
-// with two peer coordinators, discussion that starts no goal, automatic
+// with two peer coordinators (after the picker shows the unqualified Codex
+// as not ready and Providers qualifies it), a custom team with a role the
+// owner writes, discussion that starts no goal, automatic
 // delegation of new work, a manual team override, a second goal continuing
 // from the accepted result, both themes, a compact window, and restart. The
 // Codex runtime is the scripted stand-in the coordinator journey uses
@@ -205,12 +207,62 @@ try {
     await window.topsl.command({ type: "trust-installation", id });
     await window.topsl.command({ type: "runtime-connect", id });
     await window.topsl.command({ type: "runtime-models", id });
-    await window.topsl.command({
-      type: "runtime-qualify",
-      id,
-      model: "fixture-model",
-    });
   }, runtime.id);
+
+  // Before qualifying, the coordinator list says in one line why Codex
+  // cannot coordinate and offers no Add; the page leads to Providers, where
+  // the owner qualifies the runtime with its own controls.
+  const unready = page.getByRole("region", {
+    name: "New session",
+    exact: true,
+  });
+  const summary = unready.getByRole("button", { name: /^Coordinator:/ });
+  await summary.click();
+  const codexModels = unready.getByRole("region", {
+    name: "Codex coordinator models",
+  });
+  await expect(codexModels).toContainText("Not ready", { timeout: 30000 });
+  await expect(codexModels).toContainText(
+    "Not qualified yet. Qualify it under Providers.",
+  );
+  // One visible line; the runtime's own blocker text stays folded away.
+  await expect(codexModels.locator(".model-group-reason")).toHaveText([
+    "Not qualified yet. Qualify it under Providers.",
+  ]);
+  expect(
+    await codexModels
+      .locator("details.model-group-details")
+      .getAttribute("open"),
+  ).toBeNull();
+  await expect(
+    codexModels.getByRole("button", {
+      name: "Add Opus (Codex) as a coordinator",
+    }),
+  ).toBeDisabled();
+  await summary.click();
+  await unready
+    .getByRole("status")
+    .filter({ hasText: "No provider can coordinate yet" })
+    .getByRole("button", { name: "Open Providers" })
+    .click();
+  const qualification = page.getByRole("region", {
+    name: "Codex qualification",
+  });
+  await expect(qualification.locator(".badge")).toHaveText("Not qualified");
+  await qualification
+    .getByRole("combobox", { name: "Codex model to qualify" })
+    .selectOption("fixture-model");
+  await qualification
+    .getByRole("button", { name: "Qualify Codex runtime" })
+    .click();
+  // The result reaches Providers although Provider tools selects no runtime.
+  await expect(qualification.getByRole("status")).toContainText(
+    "Recorded until",
+    { timeout: 60000 },
+  );
+  await expect(qualification.locator(".badge")).toHaveText("Qualified", {
+    timeout: 10000,
+  });
   const sessionQuery = () =>
     page.evaluate(
       (id) => window.topsl.command({ type: "session-query", sessionId: id }),
@@ -277,6 +329,32 @@ try {
   await expect(
     home.getByRole("radio", { name: "Automatic", exact: true }),
   ).toBeChecked();
+  // A custom team takes project roles and roles the owner writes here.
+  await home.getByRole("radio", { name: "Custom", exact: true }).check();
+  await home.getByRole("checkbox", { name: "Implementation" }).check();
+  const ownRole = home.locator("details.own-role-create");
+  if ((await ownRole.getAttribute("open")) === null)
+    await ownRole.locator("summary").click();
+  await home.getByRole("textbox", { name: "Role title" }).fill("API writer");
+  await home
+    .getByRole("textbox", { name: "What this role does" })
+    .fill("Writes the HTTP handlers.");
+  await home
+    .getByRole("combobox", { name: "Kind of work" })
+    .selectOption("candidate-review");
+  await home.getByRole("button", { name: "Add role", exact: true }).click();
+  await expect(home.getByRole("list", { name: "Your roles" })).toContainText(
+    "API writer",
+  );
+  await expect(
+    home.getByRole("button", { name: /^Coordinator:/ }),
+  ).toContainText("Team: Custom (2)");
+  expect(await noOverflow(page)).toBe(true);
+  await shot(page, "paper-new-session-custom");
+  // Back to the automatic team the rest of the journey uses.
+  await home.getByRole("button", { name: "Remove role API writer" }).click();
+  await home.getByRole("checkbox", { name: "Implementation" }).uncheck();
+  await home.getByRole("radio", { name: "Automatic", exact: true }).check();
   await home.getByRole("radio", { name: "Discuss", exact: true }).check();
   await shot(page, "paper-new-session");
   await home
@@ -529,5 +607,5 @@ try {
 }
 console.log(
   (packaged ? `Packaged (${packaged}) ` : "") +
-    "Desktop session journey passed: New session showed the message box first with Auto coordinator and Automatic team summarized, and its setup opened on request; a session with two pinned Codex stand-in coordinators answered a Discuss message with one shared response and two attributed contributions and no goal; a Work message became the session's goal, shown running in Work with its goal controls there rather than on its card; a pinned Reviewers role reached the session at a round boundary; the goal was accepted natively and Results showed its integrated candidate; a second goal continued from the accepted result without changing the project folder; night and paper themes and a 560 x 720 window had one heading and no horizontal overflow; stopping the session stopped its goal; a restart restored the session, its transcript, queue and accepted result; and All sessions listed and opened it. Against a qualified Codex stand-in only.",
+    "Desktop session journey passed: New session showed the message box first with Auto coordinator and Automatic team summarized, and its setup opened on request; before qualification the coordinator list marked Codex Not ready in one line with no Add, and Providers' Qualification qualified it; a custom team took a role the owner wrote; a session with two pinned Codex stand-in coordinators answered a Discuss message with one shared response and two attributed contributions and no goal; a Work message became the session's goal, shown running in Work with its goal controls there rather than on its card; a pinned Reviewers role reached the session at a round boundary; the goal was accepted natively and Results showed its integrated candidate; a second goal continued from the accepted result without changing the project folder; night and paper themes and a 560 x 720 window had one heading and no horizontal overflow; stopping the session stopped its goal; a restart restored the session, its transcript, queue and accepted result; and All sessions listed and opened it. Against a qualified Codex stand-in only.",
 );

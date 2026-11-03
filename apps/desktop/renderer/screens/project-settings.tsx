@@ -34,7 +34,11 @@ export function ProjectSettings({
   async function refresh(accepted?: any) {
     const ticket = reads.current.begin();
     const [value, scoped] = await Promise.all([
-      window.topsl.command({ type: "orchestration-query", projectId }),
+      window.topsl.command({
+        type: "orchestration-query",
+        projectId,
+        setup: true,
+      }),
       accepted ?? window.topsl.command({ type: "scope-snapshot", projectId }),
     ]);
     if (!reads.current.accept(ticket, value)) return;

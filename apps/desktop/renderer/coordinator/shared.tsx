@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useEffect, useRef, useState } from "react";
 import type { Command } from "../../../../packages/domain/commands";
 import type { GoalCheckDefinition } from "../../../../packages/domain/role-groups";
 
@@ -32,6 +32,10 @@ export const stateTone: Record<string, string> = {
 };
 
 export type Run = (key: string, command: Command) => Promise<any>;
+
+/** Opens Providers, where runtimes are connected and qualified; null where
+ * the screen has no way there. */
+export const OpenProviders = createContext<(() => void) | null>(null);
 
 /**
  * Re-reads a screen when the application state changes, at most every two
@@ -85,6 +89,29 @@ export function useCommandRunner(refresh: () => Promise<void>, scope: string) {
     }
   };
   return { run, errors };
+}
+
+/**
+ * One submission at a time. A double-click's second event arrives before
+ * React re-renders the button disabled, so the ref, not the state, refuses
+ * it; each extra session or message would otherwise start paid coordinator
+ * turns (W4-2).
+ */
+export function useSubmission() {
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  async function submit<T>(work: () => Promise<T>): Promise<T | undefined> {
+    if (inFlight.current) return undefined;
+    inFlight.current = true;
+    setBusy(true);
+    try {
+      return await work();
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  }
+  return { submit, busy };
 }
 
 export function Errors({ errors }: { errors: Record<string, string> }) {

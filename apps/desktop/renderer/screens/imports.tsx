@@ -59,6 +59,8 @@ export function ImportsSection({
   const [deleted, setDeleted] = useState("");
   const listTicket = useRef(0);
   const [error, setError] = useState("");
+  /** Whether the latest read of the import list failed, so it can be retried. */
+  const [listFailed, setListFailed] = useState(false);
   /**
    * Imports name their own project, which need not be the one selected in
    * the sidebar, so their replies are not fenced to that project. A
@@ -85,7 +87,9 @@ export function ImportsSection({
       cursor: more ? cursor : null,
       limit: 25,
     });
-    if (!page || ticket !== listTicket.current) return;
+    if (ticket !== listTicket.current) return;
+    setListFailed(!page);
+    if (!page) return;
     setItems((current) => (more ? [...current, ...page.items] : page.items));
     setTotal(page.total);
     setCursor(page.nextCursor);
@@ -156,7 +160,19 @@ export function ImportsSection({
       <p className="tiny muted">
         One .md, .txt, .json, .jsonl or .ndjson file, up to 30 MB.
       </p>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert">
+          {error}
+          {listFailed && (
+            <>
+              {" "}
+              <button type="button" onClick={() => void load()}>
+                Read imports again
+              </button>
+            </>
+          )}
+        </p>
+      )}
       {preview && (
         <article className="import-preview" aria-label="Import preview">
           <h3>{preview.fileName}</h3>

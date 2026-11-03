@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 /**
  * The thread composer. Command/Ctrl+Enter sends and Enter makes a newline
@@ -11,6 +11,7 @@ export function Composer({
   onSend,
   sendLabel = "Send",
   disabled = false,
+  sending = false,
   placeholder,
   note,
   children,
@@ -20,11 +21,13 @@ export function Composer({
   onSend: () => void;
   sendLabel?: string;
   disabled?: boolean;
+  /** A submission is in flight: Send waits for it. */
+  sending?: boolean;
   placeholder?: string;
   note?: ReactNode;
   children?: ReactNode;
 }) {
-  const ready = !disabled && !!value.trim();
+  const ready = !disabled && !sending && !!value.trim();
   return (
     <div className="thread-composer">
       <label className="composer-field">
@@ -37,6 +40,9 @@ export function Composer({
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
+            // An input method's Enter commits its composition; it never sends
+            // the uncommitted text (campaign 2026-11-04, W3-2).
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && ready) {
               e.preventDefault();
               onSend();
@@ -63,7 +69,9 @@ export function Composer({
 
 /**
  * The thread's detail pane. The thread header's toggles choose what it
- * shows; at narrower widths it overlays the transcript (atlas.css).
+ * shows; at narrower widths it overlays the transcript (atlas.css). Opening
+ * it moves focus to its heading, Escape closes it, and closing returns focus
+ * to whatever opened it (W3-6).
  */
 export function SidePane({
   title,
@@ -74,10 +82,39 @@ export function SidePane({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement;
+    heading.current?.focus();
+    return () => {
+      if (
+        opener instanceof HTMLElement &&
+        opener.isConnected &&
+        // Only when focus would otherwise be lost, not after the owner moved on.
+        (document.activeElement === document.body ||
+          !document.activeElement?.isConnected)
+      )
+        opener.focus();
+    };
+  }, []);
+  useEffect(() => {
+    heading.current?.focus();
+  }, [title]);
   return (
-    <aside className="thread-pane" aria-label={`${title} details`}>
+    <aside
+      className="thread-pane"
+      aria-label={`${title} details`}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !e.defaultPrevented) {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+    >
       <header className="thread-pane-header">
-        <h2>{title}</h2>
+        <h2 ref={heading} tabIndex={-1}>
+          {title}
+        </h2>
         <button
           type="button"
           aria-label={`Close ${title.toLowerCase()} details`}

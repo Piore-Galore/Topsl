@@ -136,7 +136,7 @@ Defects found and fixed during validation: a start and a removal of the same loo
 
 Selected captures: [ui-evidence/2026-10-30-session-first](ui-evidence/2026-10-30-session-first/).
 
-**Not established.** Live Codex and Claude Code routes, packaged builds, remote CI and other operating systems did not run this change. Screen-reader and IME acceptance remain open. The auxiliary harnesses `scripts/campaign-ui-test.mjs` and `scripts/campaign-packaged-test.mjs` still target retired screens and were not updated or run; `scripts/round2-ui-test.mjs` and `scripts/desktop-usage-test.mjs` were updated but not run.
+**Not established.** Live Codex and Claude Code routes, packaged builds, remote CI and other operating systems did not run this change. Screen-reader and IME acceptance remain open. The auxiliary harnesses `scripts/campaign-ui-test.mjs` and `scripts/campaign-packaged-test.mjs` still target retired screens and were not updated or run; `scripts/round2-ui-test.mjs` and `scripts/desktop-usage-test.mjs` were updated but not run. *Follow-up, 4 November 2026:* all four now target the session-first screens and were run, including the packaged 0.1.3 build and upgrades from v0.1.2 and v0.1.3 profiles ([implementation status follow-up](Implementation_Status.md#session-first-cleanup-and-cli-only-integration--30-october-2026)).
 
 ### CI follow-up (30 October 2026)
 
@@ -177,3 +177,83 @@ The working tree above was committed as `bb98fa5` and opened as [pull request 43
 | `env -u ANTHROPIC_BASE_URL npm run check`, then `env -u ANTHROPIC_BASE_URL npm run test:desktop`, with all three fixes | Passed: TypeScript; 1203 tests and 5 skipped in 88 files (2 skipped); 18 release checks; the build. Then all five desktop journeys, the session journey included. |
 
 The GitHub run on the fix commit is not recorded here; pull request 43 shows it.
+
+## Follow-up: provider qualification and New session (3 November 2026)
+
+**Reported by the owner.** With Codex and Claude Code connected, nothing on Providers could qualify either runtime. On New session, the coordinator list showed only Codex models, none could be added, rows ran past their box and needed sideways scrolling, and the **Add** buttons were squeezed. A **Custom** team offered only a fixed list of roles, and its checkboxes were misaligned.
+
+**Causes and fixes.** Each cause below was reproduced against stand-in Codex and Claude Code runtimes that were connected but not qualified, the owner's state, before it was fixed.
+
+| Defect | Cause | Fix |
+| --- | --- | --- |
+| No way to qualify from Providers | Codex's qualification control existed only in the guided workflow setup (**Advanced workflows → Builder–reviewer → Create a workflow → Team**). Claude Code's appeared only once **Settings → Claude Code structured route** was on and the runtime connected, and Providers said nothing about either. | Each trusted CLI on Providers has a **Qualification** block: its state (**Qualified**, **Not qualified**, **Needs qualifying again**), the model and expiry of the last recorded qualification, why the last attempt recorded nothing, and the controls. Codex picks one of its reported models and an effort; Claude Code takes a model id; while Claude's route is off the block offers **Turn on structured route…**, which asks for the same confirmation as Settings. `runtime-qualification-query` also returns the binding's state, whether a qualification is running and the current catalog ([providers.tsx](../apps/desktop/renderer/screens/providers.tsx), `qualificationStatus` in [manager.ts](../packages/runtime/manager.ts), [service.ts](../apps/service/service.ts)). |
+| Results and errors of runtime commands lost on Providers | The shell kept a `runtime-*` command's result or error only when its runtime was the one selected in **Provider tools**, which is usually none. **Connect / test** therefore showed nothing, and **Qualify Claude runtime** showed neither its summary nor its error. | A runtime command is dropped only when it was issued for Provider tools' selected runtime and another runtime has been selected since ([main.tsx](../apps/desktop/renderer/main.tsx)). |
+| Unreadable coordinator list, squeezed **Add** | Every model row repeated each of its runtime's blockers ("structured-turn is not qualified …" five times). The text and the button shared one flex row in which the button could shrink, and the list's vertical scrolling made it scroll sideways too. The setup also split the 860 px page into two columns. | Models are grouped by runtime. A runtime that cannot coordinate is marked **Not ready** with one line per cause and an **Open Providers** link; its own blocker text is behind **What … reported**. When Claude's route is off or an executable is untrusted, that cause stands alone. Buttons keep their size, text wraps, the list never scrolls sideways, and the setup is one column ([session-panes.tsx](../apps/desktop/renderer/coordinator/session-panes.tsx), `routeBlockers` in [role-editor.tsx](../apps/desktop/renderer/coordinator/role-editor.tsx), [atlas.css](../apps/desktop/renderer/atlas.css)). |
+| Claude Code missing from the list | Claude Code has no model list, so its catalog holds only models a qualification saw it run, and the list showed nothing for an empty catalog. | The Claude Code group is always shown with its state and says how a model enters it. After a qualification, the model appears and can be added. |
+| Picker stale after qualifying | The page re-reads after a runtime change at most every two seconds. | Opening the coordinator list reads the routes again ([project-home.tsx](../apps/desktop/renderer/coordinator/project-home.tsx)). |
+| Only fixed roles in a **Custom** team | The New session page listed the project's roles only, although the [session plan](Native_Sessions_Plan.md) has owners define custom roles; a role could be defined only in a running session's Team pane. | **Add your own role** takes a title, what the role does and its kind of work (implementation, research or review). The role's ID comes from its title plus four random characters, because roles other sessions own are not visible to this page and a reused ID is refused. The session owns the role ([project-home.tsx](../apps/desktop/renderer/coordinator/project-home.tsx)). |
+| Checkboxes and radios above their text | The base `label` style stacks its contents in a column, so every checkbox and radio sat above its label (composer mode, team mode, roster, Team pane). | A label whose direct child is a checkbox or radio lays it out in a row, with no added specificity, so existing component rules still apply ([atlas.css](../apps/desktop/renderer/atlas.css)). |
+| **Connect / test** showed raw JSON | The dialog printed the runtime's answer only. Before the scope fix above it seldom appeared from Providers. | The dialog says what was connected and which models were reported, then the full answer under **Full response:**, which [live-session.mjs](../scripts/live-session.mjs) now parses. |
+| Cramped Team pane roles | Each role's buttons wrapped into the next role with no separation. | One row per role with its controls wrapping beneath ([atlas.css](../apps/desktop/renderer/atlas.css)). |
+
+**Bug sweep.** With both runtimes qualified through Providers, a session started with a Claude Code coordinator (`claude-opus-5-5`), a Codex coordinator, the Implementation role and an owner-defined review role. Both coordinators answered, and the session recorded both pins and the owned role. Settings, Project settings, Provider tools, All sessions, each Advanced workflows section and Providers were opened at 1100 and 820 px, and New session at 920 px: none scrolled sideways. The Team pane, its role editor and its New role form were inspected at 1100 px. Besides the defects above, the sweep found the stale picker, the raw JSON dialog and the cramped Team pane.
+
+### Validation (3 November 2026)
+
+Host: macOS 27.0.1 arm64, Node 26.0.0, Electron 44.4.5. Revision: `1f6ac80` on branch `claude/windows-qualification` plus the uncommitted working tree of this change. The runs finished just after midnight, on 4 November local time. Everything ran against fixtures and local stand-in providers; no live provider route, account or model turn was used.
+
+| Command | Result |
+| --- | --- |
+| Reproduction before any fix: a scratch Playwright script (not kept) launched the built app on a test profile with the Codex stand-in `tests/fixtures/codex-desktop-coordinator.cjs` connected and the Claude stand-in trusted, neither qualified | Reproduced each defect in the table above: no qualification control on Providers, five blocker sentences per Codex model, **Add** cut to "Ad", a coordinator list wider than its box, no Claude Code entry, and checkboxes and radios above their text ([before](ui-evidence/2026-11-03-provider-qualification/before-new-session-coordinators.png), [custom team](ui-evidence/2026-11-03-provider-qualification/before-new-session-custom.png), [Providers](ui-evidence/2026-11-03-provider-qualification/before-providers.png)) |
+| The same script after the fixes, also walking every screen named in the bug sweep | No sideways scrolling anywhere; both runtimes qualified through Providers; the session's configuration held both pins and the owned role |
+| `env -u ANTHROPIC_BASE_URL npm run check` | Passed: TypeScript; 1208 tests and 5 skipped in 90 files (2 skipped); 18 release checks; the build (with the existing renderer chunk-size warning) |
+| `npm test -- tests/claude-route.test.ts tests/campaign-claude-codex.test.ts tests/role-model-search.test.ts tests/native-sessions.test.ts tests/campaign-claude-codex-qualification.test.ts`, after the Claude stand-in learned `--version` | Passed: 107 tests in 5 files |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop` | The main journey with its encrypted restart, and the coordinator, Atlas and loop journeys passed. The session journey failed on a new assertion of its own: the runtime's blocker text is in the page inside the folded **What Codex reported**, which `toContainText` reads. The assertion now checks the visible lines and that the disclosure is closed. |
+| `env -u ANTHROPIC_BASE_URL node scripts/desktop-session-test.mjs` with that assertion | Passed |
+| `env -u ANTHROPIC_BASE_URL node scripts/desktop-providers-test.mjs` (new) | Passed ([unqualified](ui-evidence/2026-11-03-provider-qualification/after-new-session-unqualified.png), [Providers](ui-evidence/2026-11-03-provider-qualification/after-providers-qualified.png), [custom team](ui-evidence/2026-11-03-provider-qualification/after-new-session-custom.png), [Team pane](ui-evidence/2026-11-03-provider-qualification/after-session-team.png)) |
+| `git diff --check`, relative links and anchors of the changed documents | Clean |
+
+New and changed tests:
+
+| Test | What it establishes |
+| --- | --- |
+| `tests/role-model-search.test.ts` (4 new) | Five "not qualified" blockers become one line and every model carries it; a qualification that missed a capability names it; Claude's route being off, or an untrusted executable, stands alone; a stale Codex catalog is reported and an empty Claude catalog is not |
+| `tests/native-sessions.test.ts` (1 new) | A session created with an owner-defined role in a custom team owns it, another session cannot see it, and reusing its ID in another session is refused |
+| `tests/campaign-claude-codex-qualification.test.ts` | `runtime-qualification-query` reports `missing` and the current catalog before a qualification and `current` after |
+| `scripts/desktop-session-test.mjs` | Before qualification the coordinator list marks Codex **Not ready** in one line with **Add** disabled; the banner's **Open Providers** leads to Providers, whose **Qualify Codex runtime** records the qualification although Provider tools selects no runtime; **Add your own role** adds a role to a custom team |
+| `scripts/desktop-providers-test.mjs` (new) | Both runtimes unqualified: Claude Code's group says its route is off, Codex's that it is not qualified, with nothing clipped or wider than its box at 1100 and 820 px. Providers qualifies Codex with a reported model; **Turn on structured route…**, **Connect / test** (its summary) and **Qualify Claude runtime** with `claude-opus-5-5` qualify Claude Code. New session then adds the Claude model and a Codex model as coordinators and a custom team with Implementation and an owner-defined review role; both coordinators answer, and the session records both pins and the role it owns |
+
+**Not established.** No live Codex or Claude Code runtime was qualified or used; a live qualification still counts only in the profile that ran it. `scripts/desktop-providers-test.mjs` is not in `npm run test:desktop`'s default list or in CI, and does not run on Windows, because the Claude stand-in's qualification needs a POSIX shell. Packaged builds, remote CI, Linux and Windows did not run this change. Screen-reader and IME acceptance remain open.
+
+### Follow-up: effort levels (4 November 2026)
+
+**Reported by the owner.** There was no way to choose a model's effort level.
+
+**Causes.** Topsl's selection and runtime already carried a member's effort to the provider, but no screen offered it in most cases. The coordinator list showed an effort picker only after a model was added, only when the runtime's catalog listed levels for it, and the reported state rarely allowed adding (above). The role editor had no effort control at all. For Claude Code there was nothing to choose: Topsl passed it no effort, its catalog listed no levels, and its adapter ignored a requested one. Claude Code 2.1.305, installed on the owner's Mac, does accept `--effort` with low, medium, high, xhigh and max (`claude --help`, read 4 November 2026).
+
+**Fixes.**
+
+- One effort picker, **Default effort** or a listed level, beside each added coordinator and each pinned role member; a saved level the catalog no longer lists stays shown and marked. New session's summary and the Team pane name a chosen level ([role-editor.tsx](../apps/desktop/renderer/coordinator/role-editor.tsx), [session-panes.tsx](../apps/desktop/renderer/coordinator/session-panes.tsx), [project-home.tsx](../apps/desktop/renderer/coordinator/project-home.tsx)).
+- Claude Code: **Connect / test** reads `claude --help` and keeps the levels of its `--effort` option for every qualified model of that executable; a turn with a level passes `--effort <level>`. Effort stays out of the qualified argument profile ([design §8.2](Topsl_Design.md), `claudeEffortLevels`, `readClaudeEfforts` and `claudeArguments` in [claude.ts](../packages/providers/claude.ts), `inspectClaude` and `recordClaudeModel` in [manager.ts](../packages/runtime/manager.ts)).
+
+### Validation (4 November 2026)
+
+Same host and revision as the [validation of 3 November](#validation-3-november-2026), with this follow-up added to the working tree; fixtures and stand-ins only.
+
+| Command | Result |
+| --- | --- |
+| `claude --help` of Claude Code 2.1.305 (`/opt/homebrew/bin/claude`) and of the 2.1.309 bundled with the Claude desktop app; no session or model turn | Both list `--effort <level>` with low, medium, high, xhigh and max; `claudeEffortLevels` reads exactly those from 2.1.305's text |
+| `npm test -- tests/claude-route.test.ts tests/campaign-claude-codex.test.ts tests/claude-provider.test.ts tests/role-model-search.test.ts` | Passed: 66 tests in 4 files |
+| `env -u ANTHROPIC_BASE_URL npm run check` | Passed: TypeScript; 1210 tests and 5 skipped in 90 files (2 skipped); 18 release checks; the build |
+| `env -u ANTHROPIC_BASE_URL npm run test:desktop -- scripts/desktop-test.mjs scripts/desktop-coordinator-test.mjs scripts/desktop-atlas-test.mjs scripts/desktop-loop-test.mjs scripts/desktop-session-test.mjs scripts/desktop-providers-test.mjs` | Passed: the main journey with its encrypted restart, and the coordinator, Atlas, loop, session and Providers journeys ([effort picker](ui-evidence/2026-11-03-provider-qualification/after-effort-new-session.png)) |
+| `git diff --check`, relative links and anchors of the changed documents | Clean |
+
+New and changed tests:
+
+| Test | What it establishes |
+| --- | --- |
+| `tests/claude-route.test.ts` (2 new, 1 extended) | A turn with an effort passes `--effort <level>` right after `--model`, a turn without one passes no flag, and the arguments are otherwise identical; levels come only from the `--effort` option's own block of `--help` (not another option's parentheses, nothing malformed); a qualified model carries the levels, a listed level is ready and an unlisted one is refused |
+| `tests/campaign-claude-codex.test.ts` (CL-02) | Connecting runs only `auth status --json` and `--help`, never a print turn, and returns the five levels |
+| `scripts/desktop-providers-test.mjs` (extended) | The Claude coordinator's picker lists Default and the five levels; with **High effort** the summary reads "claude-opus-5-5 (high)", the session records the level, every Claude coordinator turn ran with `--effort high` while the four qualification turns ran with none, and the Team pane names it. In the Team pane's role editor a Claude member saved **Max effort** |
+
+**Not established.** No live provider turn ran with an effort level. Whether Claude Code reports the effort a turn used is unknown, so Topsl cannot compare a reported level with the requested one as it does for Codex. Codex models with levels are covered by service tests (`tests/orchestration-fixture.ts`, `tests/provider-readiness.test.ts`); in the desktop journeys only the Claude picker ran, because the Codex stand-in's models list no levels, so the same picker was not seen with a Codex model.

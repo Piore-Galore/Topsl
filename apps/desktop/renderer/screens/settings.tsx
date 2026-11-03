@@ -57,6 +57,7 @@ export function SettingsScreen({
             <ActionButton
               key={theme}
               className={state.theme === theme ? "primary" : ""}
+              aria-pressed={state.theme === theme}
               onClick={() => void act({ type: "theme", theme })}
             >
               {theme[0].toUpperCase() + theme.slice(1)}

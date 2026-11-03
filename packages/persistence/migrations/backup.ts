@@ -2,6 +2,16 @@ import { chmodSync, copyFileSync, existsSync } from "node:fs";
 import Database from "better-sqlite3-multiple-ciphers";
 import { uid } from "../../domain/invariants";
 
+/**
+ * Databases created by this process's open, before any of their migrations
+ * ran: they hold nothing an upgrade could lose, so their migrations write no
+ * backup. A later open of the same file backs up as usual.
+ */
+const created = new WeakSet<Database>();
+export function markCreated(db: Database): void {
+  created.add(db);
+}
+
 /** Supported checkpoint procedure: leave WAL, hold an exclusive rollback-journal
  * lock, then copy the complete encrypted main database before any schema write. */
 export function migrateWithBackup(
@@ -28,7 +38,7 @@ export function migrateWithBackup(
   if (mode !== "delete")
     throw new Error("Close other database clients before migration.");
   const backup =
-    expectedVersion === 0
+    expectedVersion === 0 || created.has(db)
       ? null
       : `${file}.schema-${expectedVersion}.backup-${uid()}`;
   db.exec("BEGIN EXCLUSIVE");

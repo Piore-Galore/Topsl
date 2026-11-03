@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
   AppState,
@@ -15,7 +15,11 @@ import type { Command } from "../../../packages/domain/commands";
 import "./style.css";
 import { Projects } from "./projects";
 import { Coordination } from "./coordination";
-import { ActionButton, ActionContext } from "./components/action-button";
+import {
+  ActionButton,
+  ActionContext,
+  actionOpener,
+} from "./components/action-button";
 import { Transcript } from "./components/transcript";
 import { ApprovalCard } from "./components/approval-card";
 import {
@@ -74,7 +78,11 @@ function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const trigger = document.activeElement;
+    // The opener; a button disabled while its command ran has lost focus.
+    const trigger =
+      document.activeElement && document.activeElement !== document.body
+        ? document.activeElement
+        : actionOpener();
     ref.current?.showModal();
     return () => {
       if (trigger instanceof HTMLElement && trigger.isConnected)
@@ -198,6 +206,10 @@ function App() {
   async function act(command: Command): Promise<any> {
     const scopeTicket = scopeGeneration.current;
     const scoped = "projectId" in command || "conversationId" in command;
+    // A runtime command for Provider tools' selected runtime is dropped once
+    // another runtime is selected there; one from Providers for any other
+    // runtime keeps its result and error.
+    const runtimeAtStart = selectedRuntime.current;
     const inScope = () =>
       (!scoped || scopeTicket === scopeGeneration.current) &&
       (!("projectId" in command) ||
@@ -207,6 +219,7 @@ function App() {
         command.conversationId === selectedConversation.current) &&
       (!command.type.startsWith("runtime-") ||
         !("id" in command) ||
+        command.id !== runtimeAtStart ||
         command.id === selectedRuntime.current);
     const key = [
       command.type,
@@ -451,15 +464,35 @@ function App() {
     setTerminalModeChoice(null);
     if (id) setTerminalId(id);
   }
+  const openProviders = useCallback(() => {
+    setNavOpen(false);
+    setPage("providers");
+  }, []);
   async function connect(i: Installation) {
     const result = await act({ type: "runtime-connect", id: i.id });
     if (result) {
       if (selectedRuntime.current === i.id) setModels(result.models);
       // Discovery preserves the requested model and selected native session.
       setModel((current) => current);
+      // What the owner acts on first; the runtime's full answer follows.
+      const names = (result.models ?? []).map(
+        (m: any) => `${m.name || m.model}${m.isDefault ? " (default)" : ""}`,
+      );
       setDetail({
         title: "Native connection",
-        text: JSON.stringify(result, null, 2),
+        text: [
+          "Connected. No model request was sent.",
+          i.appId === "anthropic.claude-code-cli"
+            ? names.length
+              ? `Qualified Claude models: ${names.join(", ")}.`
+              : "Claude Code has no model list. Qualify a model under Qualification to add it."
+            : names.length
+              ? `Codex reported ${names.length} ${names.length === 1 ? "model" : "models"}: ${names.join(", ")}.`
+              : "Codex reported no models.",
+          "",
+          "Full response:",
+          JSON.stringify(result, null, 2),
+        ].join("\n"),
       });
     }
   }
@@ -609,7 +642,7 @@ function App() {
               .filter(([, active]) => active)
               .map(([key]) => (
                 <p key={key} role="status">
-                  {key.split(":")[0].replaceAll("-", " ")}…
+                  {pendingLabel(key.split(":")[0])}…
                 </p>
               ))}
             {page === "providers" && (
@@ -638,6 +671,7 @@ function App() {
             <div hidden={page !== "project"}>
               <Coordination
                 key={projectId}
+                onProviders={openProviders}
                 project={project}
                 view={projectView}
                 section={section}
@@ -1086,9 +1120,7 @@ function App() {
             </ul>
             {plan.release && (
               <pre className="technical">
-                {plan.release.url}\nSHA-256:{" "}
-                {plan.release.sha256 ?? "Unavailable"}\nArtifact:{" "}
-                {plan.release.artifactName}
+                {`${plan.release.url}\nSHA-256: ${plan.release.sha256 ?? "Unavailable"}\nArtifact: ${plan.release.artifactName}`}
               </pre>
             )}
             {plan.command && (
@@ -1259,4 +1291,40 @@ function App() {
     </ActionContext.Provider>
   );
 }
+/** What an operation still waiting for its reply is doing, in plain words. */
+const pendingLabels: Record<string, string> = {
+  "approval-decide": "Sending your answer",
+  "auto-accept-set": "Changing auto-accept",
+  "check-updates": "Checking for updates",
+  "claude-structured-route-set": "Changing Claude Code's structured route",
+  "claude-transcript-read-set": "Changing Claude Code transcript reading",
+  "configuration-apply": "Writing the configuration",
+  "configuration-preview": "Preparing the configuration preview",
+  "configuration-read": "Reading the configuration",
+  "conversation-add": "Creating the chat",
+  discover: "Looking for providers",
+  "handoff-export": "Exporting the handoff",
+  "handoff-preview": "Preparing the handoff",
+  "lifecycle-apply": "Starting the operation",
+  "lifecycle-cancel": "Cancelling the operation",
+  "lifecycle-preview": "Preparing the plan",
+  "lifecycle-reconcile": "Reconciling the operation",
+  "lifecycle-retry-preview": "Preparing the retry",
+  "project-add": "Adding the folder",
+  "project-move": "Moving the project",
+  "project-relink": "Relinking the folder",
+  "project-rename": "Renaming the project",
+  "project-trust": "Trusting the folder",
+  "run-interrupt": "Interrupting the turn",
+  "run-reconcile": "Reconciling the run",
+  "run-start": "Sending",
+  "runtime-connect": "Connecting the runtime",
+  "runtime-qualify": "Qualifying the runtime",
+  "select-runtime": "Adding the runtime",
+  "terminal-close": "Closing the terminal",
+  "terminal-open": "Opening the terminal",
+  "trust-installation": "Trusting the executable",
+};
+const pendingLabel = (type: string) => pendingLabels[type] ?? "Working";
+
 createRoot(document.getElementById("root")!).render(<App />);

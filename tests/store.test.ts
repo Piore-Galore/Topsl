@@ -47,6 +47,22 @@ describe("protected durable history", () => {
       () => new Store(path.join(f.directory, "history.sqlite"), "0".repeat(64)),
     ).toThrow();
   });
+  test("a brand-new history database writes no migration backups", async () => {
+    // Campaign 2026-11-04 W1-3: each schema step backed up an empty
+    // database. Upgrades of existing files still back up
+    // (tests/campaign-storage-authority.test.ts).
+    const f = await setup();
+    const { readdir } = await import("node:fs/promises");
+    expect(
+      (await readdir(f.directory)).filter((n) => n.includes(".backup-")),
+    ).toEqual([]);
+    const steps = f.store.list<{ from: number; backup: string | null }>(
+      "migration",
+    );
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.every((m) => !m.backup)).toBe(true);
+  });
+
   test("transaction rollback prevents partially committed commands", async () => {
     const { store } = await setup();
     expect(() =>

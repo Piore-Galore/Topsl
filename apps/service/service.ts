@@ -118,6 +118,7 @@ import {
 import {
   ParallelSpecialists,
   type IntegrationPlan,
+  candidateChanges,
 } from "../../packages/workflows/parallel-specialists";
 import { AdvancedCollaboration } from "../../packages/workflows/advanced";
 import { LocalReplication } from "../../packages/replication/local";
@@ -193,6 +194,12 @@ export class Service {
   private operations = new Set<Promise<unknown>>();
   private lastDiscoveryAt = 0;
   private publishedSequence = 0;
+  /** Each goal candidate's changed files; snapshots never change, so the
+   * list is kept by baseline and candidate. */
+  private goalChangeCache = new Map<
+    string,
+    Array<{ path: string; change: "added" | "modified" | "deleted" }>
+  >();
   private publishedActivity: boolean | undefined;
   private catalogDirty = true;
   /** Reader tools installed for review attempts that have not dispatched yet. */
@@ -643,6 +650,38 @@ export class Service {
         : this.store.get<{ projectId: string }>("orch-conversation", parsed.id);
     if (owner?.projectId !== projectId) return null;
     return this.sessions.resolveThread(threadId as string)?.threadId ?? null;
+  }
+  /** A goal candidate's changed files against its baseline; null before
+   * there is a candidate to compare. */
+  private goalChanges(goal: {
+    candidateId?: string | null;
+    baselineCandidateId?: string | null;
+  }) {
+    if (!goal.candidateId || !goal.baselineCandidateId) return null;
+    const key = `${goal.baselineCandidateId}:${goal.candidateId}`;
+    const cached = this.goalChangeCache.get(key);
+    if (cached) return cached;
+    const baseline = this.store.get<CandidateSnapshot>(
+        "candidate",
+        goal.baselineCandidateId,
+      ),
+      candidate = this.store.get<CandidateSnapshot>(
+        "candidate",
+        goal.candidateId,
+      );
+    if (!baseline || !candidate) return null;
+    const before = new Set(baseline.files.map((f) => f.path));
+    const changes = candidateChanges(baseline, candidate).map((f) => ({
+      path: f.path,
+      change:
+        f.hash === null
+          ? ("deleted" as const)
+          : before.has(f.path)
+            ? ("modified" as const)
+            : ("added" as const),
+    }));
+    this.goalChangeCache.set(key, changes);
+    return changes;
   }
   state(includeMessages = true): AppState {
     return {
@@ -1329,6 +1368,8 @@ export class Service {
         id,
         objective: view.goal.objective,
         targetRevision: candidate?.revision ?? null,
+        // Shown in the confirmation, so the owner sees what is accepted.
+        files: this.goalChanges(view.goal),
         digest: this.orchestration.acceptanceDigest(id),
         detail: view.goal.detail,
         review: view.review
@@ -2123,12 +2164,22 @@ export class Service {
             "Workspace creation/cleanup requires native approval of this exact input snapshot and filesystem operation.",
           );
         return this.managedWorkspaces.apply(command.id, trusted.digest);
-      case "orchestration-query":
+      case "orchestration-query": {
         this.require<Project>("project", command.projectId);
-        return this.orchestration.view(
+        const view = this.orchestration.view(
           command.projectId,
           command.conversationId,
+          { setup: command.setup },
         );
+        // What each goal's candidate changes, for Results → Changes (W3-3).
+        return {
+          ...view,
+          goals: view.goals.map((g: any) => ({
+            ...g,
+            candidateChanges: this.goalChanges(g.goal),
+          })),
+        };
+      }
       case "coordinator-threads":
         return command.projectIds
           .filter((projectId) => this.store.get<Project>("project", projectId))
@@ -3354,8 +3405,8 @@ export class Service {
         return result;
       }
       case "runtime-qualification-query":
-        this.installation(command.id);
         return {
+          ...this.runtime.qualificationStatus(this.installation(command.id)),
           reports: this.runtime.qualificationReports(command.id).slice(0, 5),
         };
       case "run-start": {
