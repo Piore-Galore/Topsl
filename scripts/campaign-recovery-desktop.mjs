@@ -1319,7 +1319,71 @@ async function double() {
   return finish(r, c);
 }
 
+// ---------------------------------------------------------------------------
+/**
+ * Not a fault: how soon a goal accepted on its card settles the session's
+ * work item. The soak read work items as "running" right after the card
+ * said Accepted; this measures the delay.
+ */
+async function acceptSettles() {
+  const r = recorder("accept-settles");
+  const c = await baseSetup("rec-accept");
+  try {
+    const delays = [];
+    for (let n = 1; n <= 3; n++) {
+      const text = `Accept ${n}: change the value to two in file.ts.`;
+      const sessionId = await startWork(c.page, c.projectId, text);
+      const goal = c.page
+        .getByRole("region", { name: "Session", exact: true })
+        .getByRole("article", { name: `Goal ${text}` });
+      await expect(
+        goal.getByText("Awaiting acceptance", { exact: true }),
+      ).toBeVisible({ timeout: 180000 });
+      await goal
+        .getByRole("button", { name: "Accept candidate…", exact: true })
+        .click();
+      await expect(goal.getByText("Accepted", { exact: true })).toBeVisible({
+        timeout: 60000,
+      });
+      const shown = Date.now();
+      const states = [];
+      let settledAfter = null;
+      while (Date.now() - shown < 60000) {
+        const state = (await sessionView(c.page, sessionId)).session.queue[0]
+          ?.state;
+        states.push(state);
+        if (state === "accepted") {
+          settledAfter = Date.now() - shown;
+          break;
+        }
+        await c.page.waitForTimeout(250);
+      }
+      delays.push({
+        n,
+        settledAfter,
+        firstState: states[0],
+        polls: states.length,
+      });
+    }
+    r.observe("acceptToWorkItemAccepted", delays);
+    r.check(
+      "an accepted goal's work item becomes accepted within 60 s",
+      delays.every((d) => d.settledAfter !== null),
+      delays,
+    );
+  } catch (error) {
+    r.check(
+      "journey completed without an unexpected error",
+      false,
+      String(error.message).slice(0, 1500),
+    );
+    await shot(c.page, "accept-settles-error");
+  }
+  return finish(r, c);
+}
+
 const cases = {
+  "accept-settles": acceptSettles,
   disconnect,
   malformed,
   stall,
