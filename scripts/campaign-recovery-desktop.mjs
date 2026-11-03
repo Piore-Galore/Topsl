@@ -828,9 +828,13 @@ async function interrupted(kind, phase, { reconcileFirst = false } = {}) {
     });
     if (kind === "service-kill") {
       process.kill(await servicePid(c.app), "SIGKILL");
+      // The page's freshness note can repeat the words once its next read
+      // fails, so the first match is the banner (a strict locator would fail
+      // on two).
       const banner = c.page
         .getByRole("alert")
-        .filter({ hasText: "The control service stopped." });
+        .filter({ hasText: "The control service stopped." })
+        .first();
       r.check(
         "the window says the control service stopped",
         await banner.waitFor({ timeout: 15000 }).then(

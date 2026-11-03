@@ -1,0 +1,106 @@
+{
+  "checks": [
+    {
+      "name": "no turn before qualification",
+      "passed": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "Codex qualification: ledger equals the report's turns",
+      "passed": true,
+      "actual": 3,
+      "expected": 3
+    },
+    {
+      "name": "Claude qualification: ledger equals the report's turns and the stand-in's runs",
+      "passed": true,
+      "actual": [
+        4,
+        4
+      ],
+      "expected": [
+        4,
+        4
+      ]
+    },
+    {
+      "name": "account, --version and --help reads are not counted",
+      "passed": true,
+      "actual": 7,
+      "expected": 7
+    },
+    {
+      "name": "session intake: ledger delta equals the coordinators' contributions",
+      "passed": true,
+      "actual": 3,
+      "expected": 3
+    },
+    {
+      "name": "the Claude coordinator's effort is in the ledger",
+      "passed": true,
+      "actual": [
+        "high"
+      ],
+      "expected": [
+        "high"
+      ]
+    },
+    {
+      "name": "intake history after the cap",
+      "history": [
+        {
+          "at": "2026-11-03T19:43:37.533Z",
+          "line": "collecting | 2 coordinators answering. | coordinator-1:queued,coordinator-2:queued | refused 0"
+        },
+        {
+          "at": "2026-11-03T19:43:40.549Z",
+          "line": "collecting | 2 coordinators answering. | coordinator-1:running,coordinator-2:queued | refused 0"
+        },
+        {
+          "at": "2026-11-03T19:43:43.565Z",
+          "line": "collecting | 2 coordinators answering. | coordinator-1:returned,coordinator-2:running | refused 1"
+        },
+        {
+          "at": "2026-11-03T19:43:46.579Z",
+          "line": "decided | Answered without starting work. | coordinator-1:returned,coordinator-2:failed | refused 2"
+        }
+      ]
+    },
+    {
+      "name": "an intake whose turns are refused settles within 10 minutes",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the ledger never exceeds the cap",
+      "passed": true,
+      "actual": 11,
+      "expected": 11
+    },
+    {
+      "name": "turns past the cap were refused",
+      "passed": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "intake after the cap",
+      "stage": "decided",
+      "detail": "Answered without starting work."
+    }
+  ],
+  "ledger": {
+    "counted": 11,
+    "refused": 2,
+    "cap": 11,
+    "byKind": {
+      "codex/structured-turn": 5,
+      "claude/structured-turn": 6
+    },
+    "refusedByKind": {
+      "claude/structured-turn": 2
+    }
+  }
+}

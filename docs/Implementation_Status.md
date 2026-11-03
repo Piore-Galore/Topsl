@@ -655,8 +655,15 @@ The package was built offline with `npm run package -- --mac --arm64 -c.electron
 
 **Not established.** No live Claude Code or Codex turn ran with an effort level. Whether Claude Code reports the effort a turn used, and which levels other Claude Code versions list, were not checked beyond `--help` of 2.1.305 and 2.1.309 on the owner's Mac.
 
-## Comprehensive audit and UX repairs — agreed plan, 4 November 2026
+## Comprehensive audit and UX repairs — 4 November 2026
 
 The [comprehensive audit, repairs, and UX improvement plan](testing/2026-11-04-comprehensive/PLAN.md) covers the current working tree, including uncommitted changes, on the owner's Apple silicon Mac. The agreed scope includes fixing and retesting confirmed defects, broader UX improvements supported by findings, actual Electron inspection, simulated and live providers with a campaign-wide budget of 80 structured-turn starts and prompted terminal rounds combined, reliability testing, and the macOS package.
 
-**Status.** The plan is saved; the campaign has not started. Planning established a passing `npm run typecheck`, a static test/command inventory, and the installed CLI versions, as recorded in the plan. It does not establish live-provider, UI, packaged-app or comprehensive acceptance. Earlier campaign results retain their original dated scope.
+**Result.** Executed on 4 November 2026; see the [campaign report](testing/2026-11-04-comprehensive/REPORT.md), the [coverage register](testing/2026-11-04-comprehensive/COVERAGE.md) and the [evidence index](testing/2026-11-04-comprehensive/EVIDENCE.md). It is **not** comprehensive acceptance or release qualification.
+
+- **Repaired:** 3 P1 and 12 P2 findings, among them a keyboard trap in the native terminal, sessions stuck after a restart or a failed Claude launch, duplicate sessions from a double-click, an interrupt that never ended, accepting a candidate without seeing its changed files, and IME submission; plus P3 polish. No P0 was found. Each repair has a reproduction that now passes.
+- **Final gate on `e12a6d3`:** `npm run check` (1,218 tests passed, 5 skipped; 18 release checks; the build), the 7 default desktop journeys, and the campaign's isolation, repairs, UI, round-2 UI, recovery and turn-budget journeys passed, the last recovery case after a harness fix. The 0.1.3 macOS arm64 package verified, and its identity, native, upgrade, vault-fault and session checks passed.
+- **Live (50 of 80 turns):** Codex 0.163.0 and Claude Code 2.1.305 qualified; a mixed Codex and Claude session ran from discussion through an accepted goal and a published loop, with Claude at high effort; a Claude Code terminal → Codex chat handoff passed. Build-and-review pairings are blocked on owner answers or failed at Codex's reader probe.
+- **Open:** Codex reviewers rarely qualify live (C-4), Codex memories read during Topsl builds (C-5), deferred P2/P3 findings, VoiceOver, real input methods, host-changing CLI operations and other platforms.
+
+Earlier campaign results retain their original dated scope.

@@ -1,0 +1,79 @@
+[
+  {
+    "name": "no Node globals in the renderer",
+    "passed": true,
+    "actual": [
+      "undefined",
+      "undefined",
+      "undefined",
+      "undefined"
+    ]
+  },
+  {
+    "name": "the preload exposes only Topsl's API",
+    "passed": true,
+    "actual": [
+      "command",
+      "subscribe"
+    ]
+  },
+  {
+    "name": "web preferences: sandbox, context isolation, no Node integration",
+    "passed": true,
+    "actual": [
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "name": "window.open is refused and opens no window",
+    "passed": true,
+    "actual": [
+      true,
+      1
+    ]
+  },
+  {
+    "name": "string code is blocked by the content security policy",
+    "passed": true,
+    "actual": false
+  },
+  {
+    "name": "network requests are blocked by the content security policy",
+    "passed": true,
+    "actual": "TypeError"
+  },
+  {
+    "name": "permission requests are refused",
+    "passed": true,
+    "actual": [
+      "denied",
+      "NotAllowedError"
+    ]
+  },
+  {
+    "name": "a command the schema does not know is rejected",
+    "passed": true,
+    "actual": "rejected"
+  },
+  {
+    "name": "hostile text: no element, script or link is created from it",
+    "passed": true,
+    "actual": [
+      0,
+      null
+    ]
+  },
+  {
+    "name": "hostile text is shown exactly, escapes and controls included",
+    "passed": true,
+    "actual": true
+  },
+  {
+    "name": "navigation away is prevented",
+    "passed": true,
+    "actual": "file://<checkout>/dist/renderer/index.html"
+  }
+]
