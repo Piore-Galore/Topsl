@@ -10,6 +10,7 @@ import {
   utilityProcess,
   type UtilityProcess,
 } from "electron";
+import { watchFile } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openVault } from "./vault";
@@ -1006,6 +1007,16 @@ app.whenReady().then(async () => {
     }
   });
   window.once("ready-to-show", () => window?.show());
+  // Development only (`npm run dev`): reload the window after scripts/dev.mjs
+  // rebuilds the renderer. A packaged app ignores the variable. Reloading keeps
+  // the same file URL, so the sender check above still applies.
+  const devReloadFile = app.isPackaged
+    ? undefined
+    : process.env.TOPSL_DEV_RELOAD_FILE;
+  if (devReloadFile)
+    watchFile(devReloadFile, { interval: 300 }, () =>
+      window?.webContents.reloadIgnoringCache(),
+    );
   await window.loadFile(rendererFile);
   void unlock().catch(() => {});
 });
