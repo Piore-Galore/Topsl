@@ -1,3 +1,6 @@
+import { sessionReference } from "../workspace/imports";
+import { referencePromptBlock } from "../domain/history-imports";
+import type { SessionReferenceSummary } from "../domain/history-imports";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type {
   CoordinatorConversation,
@@ -60,6 +63,8 @@ export interface SessionLoopFact {
   conversationId: string;
   title: string;
   state: string;
+  /** What the owner last asked of the run: running, paused or stopped. */
+  desiredState?: string;
   started: boolean;
   /** The run's accepted result, once an iteration was promoted. */
   acceptedCandidateId: string | null;
@@ -68,6 +73,23 @@ export interface SessionLoopFact {
 export interface SessionLoopPort {
   runs(projectId: string): SessionLoopFact[];
   stop(runId: string, commandId: string): Promise<void>;
+  /** Pauses or resumes a started run; resume never starts a draft. */
+  control?(
+    runId: string,
+    action: "pause" | "resume",
+    commandId: string,
+  ): Promise<void>;
+}
+
+/** Imports a new session can attach (docs/UX_Cleanup_Plan.md §3). */
+export interface SessionReferencePort {
+  /** Throws unless the import exists in this project. */
+  check(projectId: string, referenceId: string): void;
+  freeze(input: {
+    projectId: string;
+    referenceId: string;
+    sessionId: string;
+  }): SessionReferenceSummary;
 }
 
 const openIntakeStages: SessionIntake["stage"][] = [
@@ -95,12 +117,15 @@ const MEMBER_RETRIES = 1;
  */
 export class SessionSupervisor {
   private ticking = false;
+  /** Each session's admission and control operations, one after another. */
+  private serials = new Map<string, Promise<unknown>>();
   constructor(
     readonly store: Store,
     readonly orchestrator: Orchestrator,
     private driver: OrchestrationDriver,
     private changed: () => void = () => {},
     private loops: SessionLoopPort | null = null,
+    private references: SessionReferencePort | null = null,
   ) {}
 
   private get repo() {
@@ -295,6 +320,73 @@ export class SessionSupervisor {
     throw new Error("The selected session does not exist.");
   }
 
+  /**
+   * Runs one admission or control operation of a session after the ones
+   * already waiting, so a loop start, a queue change, a session control and
+   * the scheduler never interleave (docs/UX_Cleanup_Plan.md §4).
+   */
+  serial<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.serials.get(sessionId) ?? Promise.resolve();
+    const next = previous.then(operation, operation);
+    const settled = next.catch(() => {});
+    this.serials.set(sessionId, settled);
+    void settled.then(() => {
+      if (this.serials.get(sessionId) === settled)
+        this.serials.delete(sessionId);
+    });
+    return next;
+  }
+
+  /** The native session a loop run belongs to, if any. */
+  private loopSession(run: { conversationId: string }) {
+    const session = this.repo.get<TopslSession>(
+      kinds.session,
+      run.conversationId,
+    );
+    return session?.origin === "native" ? session : null;
+  }
+
+  /**
+   * Why a loop of a native session cannot start now: the session must be
+   * running, the loop must still be in its queue, and it must be the next
+   * work, with nothing running.
+   */
+  loopAdmission(run: { id: string; conversationId: string }): string | null {
+    const session = this.loopSession(run);
+    if (!session) return null;
+    if (session.control !== "running")
+      return "This session is paused. Resume the session, then start the loop.";
+    const latest = this.sync(this.require(session.id));
+    const item = latest.queue.find((w) => w.runId === run.id);
+    if (!item || item.state !== "queued")
+      return "This loop is no longer in the session's queue.";
+    if (latest.queue.some((w) => w.state === "running" && w.runId !== run.id))
+      return "This session is already running a goal or loop. Start this run when it finishes, or stop the current work first.";
+    const ahead = latest.queue
+      .slice(0, latest.queue.indexOf(item))
+      .find((w) => ["queued", "waiting-configuration"].includes(w.state));
+    if (ahead)
+      return `Earlier work in this session runs first ("${threadTitle(ahead.objective, 60)}"). Move the loop up in Work, or remove the earlier work.`;
+    return null;
+  }
+
+  /** Why a paused loop of a native session cannot resume now. */
+  loopResumeRefusal(run: {
+    id: string;
+    conversationId: string;
+  }): string | null {
+    const session = this.loopSession(run);
+    if (!session) return null;
+    if (session.control !== "running")
+      return "This session is paused. Resume the session; its running loop resumes with it.";
+    return null;
+  }
+
+  /** Brings a session's queue up to date with its goals and loop runs now. */
+  refresh(sessionId: string): TopslSession {
+    return this.sync(this.require(sessionId));
+  }
+
   private save(session: TopslSession, next: Partial<TopslSession> = {}) {
     const value = { ...session, ...next, updatedAt: now() };
     this.store.save(kinds.session, value);
@@ -313,6 +405,7 @@ export class SessionSupervisor {
     mode?: ComposerMode;
     kind?: "code" | "information";
     checks?: GoalCheckDefinition[];
+    referenceId?: string;
     commandId: string;
   }) {
     return this.repo.receipt(
@@ -324,6 +417,11 @@ export class SessionSupervisor {
           input.configuration ?? {},
         );
         this.validateConfiguration(input.projectId, null, configuration);
+        if (input.referenceId) {
+          if (!this.references)
+            throw new Error("Imports cannot be attached here.");
+          this.references.check(input.projectId, input.referenceId);
+        }
         const text = input.text?.trim() ?? "";
         const conversation = await this.orchestrator.createConversation({
           projectId: input.projectId,
@@ -335,6 +433,14 @@ export class SessionSupervisor {
           ...configuration,
           coordinators: numbered(configuration.coordinators),
         });
+        // The import is frozen before the first message, so every intake
+        // of the session reads the same copy.
+        if (input.referenceId)
+          session.reference = this.references!.freeze({
+            projectId: input.projectId,
+            referenceId: input.referenceId,
+            sessionId: session.id,
+          });
         session = this.save(session);
         this.defineRoles(session, session.configuration);
         this.changed();
@@ -729,6 +835,9 @@ export class SessionSupervisor {
       status: active ? this.orchestrator.statusText(active) : null,
       team,
       omitted,
+      reference: session.reference
+        ? { id: session.reference.id, digest: session.reference.digest }
+        : null,
     });
   }
 
@@ -954,7 +1063,11 @@ export class SessionSupervisor {
         prior.purposes.push(purpose);
         models.set(key, prior);
       }
-    return sessionIntakePrompt({
+    const reference = sessionReference(
+      this.store,
+      intake.context.reference?.id,
+    );
+    const prompt = sessionIntakePrompt({
       memberId: member.memberId,
       instructions: role.instructions,
       context: intake.context,
@@ -981,6 +1094,9 @@ export class SessionSupervisor {
               }))
           : undefined,
     });
+    return reference
+      ? `${prompt}\n\n${referencePromptBlock(reference)}`
+      : prompt;
   }
 
   private async launch(intake: SessionIntake): Promise<SessionIntake> {
@@ -1814,18 +1930,34 @@ export class SessionSupervisor {
       }
       return w;
     });
-    // A loop the owner started counts as the session's running work.
+    // A loop the owner started counts as the session's running work; a
+    // draft stopped before it started leaves the queue.
     for (const [i, w] of queue.entries())
       if (w.kind === "loop" && w.state === "queued") {
         const run = runs.find((r) => r.id === w.runId);
         if (run?.started) {
           queue[i] = { ...w, state: "running", updatedAt: now() };
           dirty = true;
+        } else if (
+          run &&
+          (run.state === "stopped" || run.desiredState === "stopped")
+        ) {
+          queue[i] = {
+            ...w,
+            state: "cancelled",
+            detail: "The loop was stopped before it started.",
+            updatedAt: now(),
+          };
+          dirty = true;
         }
       }
-    const active = queue.find((w) => w.id === session.activeWorkId);
-    const activeWorkId =
-      active && active.state === "running" ? active.id : null;
+    // The running goal stays active; otherwise a started loop is the
+    // session's running work, which Work shows under Now.
+    const active =
+      queue.find(
+        (w) => w.id === session.activeWorkId && w.state === "running",
+      ) ?? queue.find((w) => w.kind === "loop" && w.state === "running");
+    const activeWorkId = active?.id ?? null;
     if (activeWorkId !== session.activeWorkId) dirty = true;
     if (!dirty) return session;
     return this.save(session, { queue, activeWorkId });
@@ -1894,6 +2026,14 @@ export class SessionSupervisor {
         ...(baseline ? { baselineCandidateId: baseline } : {}),
         message: false,
         session: { workItemId: next.id, continued: !!baseline },
+        ...(session.reference
+          ? {
+              reference: {
+                id: session.reference.id,
+                digest: session.reference.digest,
+              },
+            }
+          : {}),
       });
       if (next.messageId)
         this.membership(
@@ -1944,36 +2084,49 @@ export class SessionSupervisor {
     commandId: string;
   }) {
     const session = this.require(input.sessionId);
-    return this.repo.receipt(
-      input.commandId,
-      session.projectId,
-      "session-queue",
-      () => {
-        const latest = this.require(input.sessionId);
-        const index = latest.queue.findIndex((w) => w.id === input.workItemId);
-        const item = latest.queue[index];
-        if (!item || !["queued", "waiting-configuration"].includes(item.state))
-          throw new Error("Only queued work can be reordered or removed.");
-        const queue = [...latest.queue];
-        if (input.action === "remove")
-          queue[index] = { ...item, state: "cancelled", updatedAt: now() };
-        else {
-          const open = queue
-            .map((w, i) => ({ w, i }))
-            .filter(({ w }) =>
-              ["queued", "waiting-configuration"].includes(w.state),
-            );
-          const at = open.findIndex(({ i }) => i === index);
-          const swap = open[at + (input.action === "up" ? -1 : 1)];
-          if (swap) {
-            queue[index] = swap.w;
-            queue[swap.i] = item;
+    return this.serial(session.id, () =>
+      this.repo.receipt(
+        input.commandId,
+        session.projectId,
+        "session-queue",
+        async () => {
+          // A loop that started meanwhile is running work, not queued.
+          const latest = this.sync(this.require(input.sessionId));
+          const index = latest.queue.findIndex(
+            (w) => w.id === input.workItemId,
+          );
+          const item = latest.queue[index];
+          if (
+            !item ||
+            !["queued", "waiting-configuration"].includes(item.state)
+          )
+            throw new Error("Only queued work can be reordered or removed.");
+          const queue = [...latest.queue];
+          if (input.action === "remove")
+            queue[index] = { ...item, state: "cancelled", updatedAt: now() };
+          else {
+            const open = queue
+              .map((w, i) => ({ w, i }))
+              .filter(({ w }) =>
+                ["queued", "waiting-configuration"].includes(w.state),
+              );
+            const at = open.findIndex(({ i }) => i === index);
+            const swap = open[at + (input.action === "up" ? -1 : 1)];
+            if (swap) {
+              queue[index] = swap.w;
+              queue[swap.i] = item;
+            }
           }
-        }
-        const next = this.save(latest, { queue });
-        this.changed();
-        return next;
-      },
+          let next = this.save(latest, { queue });
+          // A removed loop's draft is stopped, so it cannot start later.
+          if (input.action === "remove" && item.kind === "loop" && item.runId) {
+            await this.loops?.stop(item.runId, `${input.commandId}:loop`);
+            next = this.require(input.sessionId);
+          }
+          this.changed();
+          return next;
+        },
+      ),
     );
   }
 
@@ -1991,90 +2144,118 @@ export class SessionSupervisor {
     commandId: string;
   }) {
     const session = this.require(input.sessionId);
-    return this.repo.receipt(
-      input.commandId,
-      session.projectId,
-      `session-${input.action}`,
-      async () => {
-        let latest = this.save(this.require(input.sessionId), {
-          control: input.action === "pause" ? "paused" : "running",
-          controlGeneration:
-            this.require(input.sessionId).controlGeneration + 1,
-        });
-        const goalId = this.activeGoalId(latest);
-        const goal = goalId ? this.repo.get<Goal>(kinds.goal, goalId) : null;
-        if (goal && !endedGoalStates.includes(goal.state)) {
-          const action =
-            input.action === "resume"
-              ? goal.state === "paused"
-                ? "resume"
-                : null
-              : input.action;
-          if (action)
-            await this.orchestrator.controlCommand({
-              projectId: latest.projectId,
-              goalId: goal.id,
-              action,
-              commandId: `${input.commandId}:goal`,
-            });
-        }
-        for (const intake of this.intakes(latest.id).filter((i) =>
-          openIntakeStages.includes(i.stage),
-        ))
-          await this.interruptIntake(
-            intake,
-            `The session was ${input.action === "stop" ? "stopped" : "paused"}.`,
-          );
-        if (input.action === "stop") {
-          latest = this.require(latest.id);
-          for (const w of latest.queue)
-            if (
-              w.kind === "loop" &&
-              w.runId &&
-              w.state === "running" &&
-              this.loops
-            )
-              await this.loops.stop(
-                w.runId,
-                `${input.commandId}:loop:${w.runId}`,
-              );
-          latest = this.require(latest.id);
-          latest = this.save(latest, {
-            queue: latest.queue.map((w) =>
-              ["queued", "waiting-configuration"].includes(w.state)
-                ? {
-                    ...w,
-                    state: "cancelled",
-                    detail: "Cancelled when the session stopped.",
-                    updatedAt: now(),
-                  }
-                : w,
-            ),
-            attention: null,
+    return this.serial(session.id, () =>
+      this.repo.receipt(
+        input.commandId,
+        session.projectId,
+        `session-${input.action}`,
+        async () => {
+          let latest = this.save(this.sync(this.require(input.sessionId)), {
+            control: input.action === "pause" ? "paused" : "running",
+            controlGeneration:
+              this.require(input.sessionId).controlGeneration + 1,
           });
-          for (const intake of this.intakes(latest.id).filter(
-            (i) => i.stage === "awaiting-user",
+          const goalId = this.activeGoalId(latest);
+          const goal = goalId ? this.repo.get<Goal>(kinds.goal, goalId) : null;
+          if (goal && !endedGoalStates.includes(goal.state)) {
+            const action =
+              input.action === "resume"
+                ? goal.state === "paused"
+                  ? "resume"
+                  : null
+                : input.action;
+            if (action)
+              await this.orchestrator.controlCommand({
+                projectId: latest.projectId,
+                goalId: goal.id,
+                action,
+                commandId: `${input.commandId}:goal`,
+              });
+          }
+          // A running loop of the session pauses and resumes with it; a draft
+          // is never started by Resume.
+          const loopItem = latest.queue.find(
+            (w) => w.kind === "loop" && w.runId && w.state === "running",
+          );
+          const loopRun = loopItem
+            ? this.runs(latest.projectId).find((r) => r.id === loopItem.runId)
+            : undefined;
+          // A run already stopping or finished takes no pause or resume.
+          if (
+            loopItem?.runId &&
+            loopRun &&
+            !["stopped", "completed"].includes(loopRun.state) &&
+            loopRun.desiredState !== "stopped" &&
+            input.action !== "stop" &&
+            this.loops?.control
+          )
+            await this.loops.control(
+              loopItem.runId,
+              input.action,
+              `${input.commandId}:loop:${loopItem.runId}`,
+            );
+          for (const intake of this.intakes(latest.id).filter((i) =>
+            openIntakeStages.includes(i.stage),
           ))
-            this.saveIntake(intake, {
-              stage: "stopped",
-              detail: "The session was stopped.",
+            if (input.action !== "resume")
+              await this.interruptIntake(
+                intake,
+                `The session was ${input.action === "stop" ? "stopped" : "paused"}.`,
+              );
+          if (input.action === "stop") {
+            latest = this.require(latest.id);
+            // Running loops stop, and queued loop drafts are stopped too.
+            for (const w of latest.queue)
+              if (
+                w.kind === "loop" &&
+                w.runId &&
+                ["running", "queued", "waiting-configuration"].includes(
+                  w.state,
+                ) &&
+                this.loops
+              )
+                await this.loops.stop(
+                  w.runId,
+                  `${input.commandId}:loop:${w.runId}`,
+                );
+            latest = this.require(latest.id);
+            latest = this.save(latest, {
+              queue: latest.queue.map((w) =>
+                ["queued", "waiting-configuration"].includes(w.state)
+                  ? {
+                      ...w,
+                      state: "cancelled",
+                      detail: "Cancelled when the session stopped.",
+                      updatedAt: now(),
+                    }
+                  : w,
+              ),
+              attention: null,
             });
-        }
-        await this.orchestrator.note({
-          conversationId: latest.conversationId,
-          role: "service",
-          text:
-            input.action === "pause"
-              ? "Paused this session: its running goal is paused and queued work waits."
-              : input.action === "resume"
-                ? "Resumed this session."
-                : "Stopped this session's work. Queued work was cancelled; accepted results and evidence are kept.",
-          routing: { kind: "control", goalId: goal?.id ?? null },
-          commandId: `${input.commandId}:note`,
-        });
-        this.changed();
-        return this.require(latest.id);
-      },
+            for (const intake of this.intakes(latest.id).filter(
+              (i) => i.stage === "awaiting-user",
+            ))
+              this.saveIntake(intake, {
+                stage: "stopped",
+                detail: "The session was stopped.",
+              });
+          }
+          await this.orchestrator.note({
+            conversationId: latest.conversationId,
+            role: "service",
+            text:
+              input.action === "pause"
+                ? "Paused this session: its running goal or loop is paused and queued work waits."
+                : input.action === "resume"
+                  ? "Resumed this session."
+                  : "Stopped this session's work. Queued work and loop drafts were cancelled; accepted results and evidence are kept.",
+            routing: { kind: "control", goalId: goal?.id ?? null },
+            commandId: `${input.commandId}:note`,
+          });
+          this.changed();
+          return this.require(latest.id);
+        },
+      ),
     );
   }
 
@@ -2121,11 +2302,45 @@ export class SessionSupervisor {
             });
           this.changed();
         }
-        await this.schedule(session);
+        await this.serial(id, async () => {
+          const current = this.require(id);
+          await this.reconcileLoops(current);
+          await this.schedule(this.require(id));
+        });
       }
     } finally {
       this.runCache = null;
       this.ticking = false;
+    }
+  }
+
+  /**
+   * Finishes loop controls a restart cut off: a loop whose work item was
+   * removed or cancelled is stopped, and a paused session's running loop is
+   * paused. Each repeat uses the same command ID, so it acts once.
+   */
+  private async reconcileLoops(session: TopslSession) {
+    if (session.origin !== "native" || !this.loops) return;
+    const runs = this.runs(session.projectId);
+    for (const w of session.queue) {
+      if (w.kind !== "loop" || !w.runId) continue;
+      const run = runs.find((r) => r.id === w.runId);
+      if (!run || ["stopped", "completed"].includes(run.state)) continue;
+      if (w.state === "cancelled" && run.desiredState !== "stopped")
+        await this.loops.stop(run.id, `${w.id}:reconcile-stop`).catch(() => {});
+      else if (
+        w.state === "running" &&
+        session.control === "paused" &&
+        run.desiredState === "running" &&
+        this.loops.control
+      )
+        await this.loops
+          .control(
+            run.id,
+            "pause",
+            `${w.id}:reconcile-pause:${session.controlGeneration}`,
+          )
+          .catch(() => {});
     }
   }
 

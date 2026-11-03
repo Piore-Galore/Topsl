@@ -129,3 +129,20 @@ export function loopTimeline<I extends { id: string; startedAt: string }>(
     )
     .map(({ item }) => item);
 }
+
+/** Work that waits its turn in a session's queue. */
+export const openWorkStates = ["queued", "waiting-configuration"];
+
+/**
+ * Each waiting work item's place in its session's queue, from 1, counting
+ * only work that has not started: a loop draft shows where it stands.
+ */
+export function queuePositions(
+  queue: Array<{ id: string; state: string }>,
+): Record<string, number> {
+  const positions: Record<string, number> = {};
+  let n = 0;
+  for (const w of queue)
+    if (openWorkStates.includes(w.state)) positions[w.id] = ++n;
+  return positions;
+}

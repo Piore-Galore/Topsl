@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import type { PlanTask } from "../state/thread-view";
 
 /**
  * The thread composer. Command/Ctrl+Enter sends and Enter makes a newline
@@ -59,53 +58,6 @@ export function Composer({
         </button>
       </div>
     </div>
-  );
-}
-
-const marks: Record<PlanTask["state"], string> = {
-  completed: "✓",
-  admitted: "◐",
-  queued: "○",
-  blocked: "!",
-  cancelled: "–",
-  unknown: "○",
-};
-
-/** The active plan's tasks, pinned above the composer. */
-export function TaskList({
-  revision,
-  tasks,
-}: {
-  revision: number | null;
-  tasks: PlanTask[];
-}) {
-  if (!tasks.length) return null;
-  const done = tasks.filter((t) => t.state === "completed").length;
-  return (
-    <section className="task-list" aria-label="Plan tasks">
-      <details open>
-        <summary>
-          Plan{revision ? ` revision ${revision}` : ""}: {done} of{" "}
-          {tasks.length} tasks done
-        </summary>
-        <ol>
-          {tasks.map((t) => (
-            <li key={t.key} className={`task ${t.state}`}>
-              <span className="task-mark" aria-hidden="true">
-                {marks[t.state]}
-              </span>
-              <span>
-                {t.title} <span className="muted">· {t.roleId}</span>
-                <span className="visually-hidden"> · {t.state}</span>
-                {t.state === "blocked" && t.detail && (
-                  <span className="muted"> · {t.detail}</span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ol>
-      </details>
-    </section>
   );
 }
 

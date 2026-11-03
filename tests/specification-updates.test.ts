@@ -276,7 +276,7 @@ test("explicit folder relink keeps historical workspace identity and selects a n
     f.repository.require<any>("workspace", original.id).canonicalRoot,
   ).toBe(f.directory);
 });
-test("scoped service routes enforce source approval, exact revision and known configuration evidence", async () => {
+test("scoped service routes enforce exact revisions and known configuration evidence", async () => {
   const f = await fixture();
   f.store.close();
   const service = new Service(f.directory, f.key, () => {}, true);
@@ -289,51 +289,6 @@ test("scoped service routes enforce source approval, exact revision and known co
     trusted: true,
     createdAt: now(),
   });
-  const file = path.join(f.directory, "native.jsonl");
-  await writeFile(
-    file,
-    JSON.stringify({
-      type: "session_meta",
-      payload: { id: "native", cwd: f.directory },
-    }) + "\n",
-  );
-  const input = {
-    type: "native-history-approve" as const,
-    requestId: uid(),
-    projectId: "p",
-    provider: "codex" as const,
-    profileId: "profile",
-    sessionId: "native",
-  };
-  await expect(service.command(input)).rejects.toThrow(
-    "selection and approval",
-  );
-  const source = await service.command(
-    { ...input, requestId: uid() },
-    { selectedPath: file, approved: true },
-  );
-  await expect(
-    service.command({
-      type: "native-history-reconcile",
-      projectId: "other",
-      requestId: uid(),
-      id: source.id,
-      expectedRevision: source.revision,
-    }),
-  ).rejects.toThrow("scope");
-  await service.command({
-    type: "native-history-reconcile",
-    projectId: "p",
-    requestId: uid(),
-    id: source.id,
-    expectedRevision: source.revision,
-  });
-  const snapshot = await service.command({
-    type: "synchronization-query",
-    projectId: "p",
-  });
-  expect(snapshot.historySources).toHaveLength(1);
-  expect(snapshot.observations[0].state).toBe("current");
   const instructions = await service.command({
     type: "configuration-read",
     projectId: "p",
@@ -367,101 +322,18 @@ test("scoped service routes enforce source approval, exact revision and known co
   ).rejects.toThrow("project");
 });
 
-test("directional native push verifies the exact profile and readback before clearing pending state", async () => {
-  const f = await fixture();
-  f.store.close();
-  const service = new Service(f.directory, f.key, () => {}, true);
-  fixtures.push({ ...f, service });
-  service.store.put("project", {
-    id: "p",
-    name: "Local",
-    path: f.directory,
-    realPath: f.directory,
-    trusted: true,
-    createdAt: now(),
-  });
-  const evidence = {
-    level: "provider-readback" as const,
-    source: "fixture",
-    observedAt: now(),
-    detail: "Fixture registry readback",
-  };
-  const link = service.synchronization.observeNativeGroup({
-    projectId: "p",
-    provider: "codex",
-    profileId: "profile",
-    nativeGroupId: "native",
-    name: "Base",
-    position: 0,
-    roots: [f.directory],
-    sourceRevision: "native-r1",
-    evidence,
-  });
-  const field = service.synchronization.reconcileField({
-    projectId: "p",
-    targetId: link.id,
-    field: "name",
-    local: "Local",
-    remote: "Base",
-    initialBase: "Base",
-    expectedRevision: 0,
-    authority: "topsl",
-    evidence,
-  });
-  expect(field.state).toBe("push-required");
-  const rename = vi
-    .spyOn(service.codexProjects, "rename")
-    .mockImplementation(async () => {
-      service.synchronization.reconcileField({
-        ...field,
-        expectedRevision: field.revision,
-        local: "Local",
-        remote: "Local",
-        evidence,
-      });
-    });
-  await expect(
-    service.command(
-      {
-        type: "sync-field-push",
-        requestId: uid(),
-        projectId: "p",
-        id: field.id,
-        expectedRevision: field.revision,
-      },
-      { approved: true },
-    ),
-  ).rejects.toThrow("exact profile");
-  expect(rename).not.toHaveBeenCalled();
-  vi.spyOn(service.codexProjects, "boundProfileId").mockReturnValue("profile");
-  const result = await service.command(
-    {
-      type: "sync-field-push",
-      requestId: uid(),
-      projectId: "p",
-      id: field.id,
-      expectedRevision: field.revision,
-    },
-    { approved: true },
-  );
-  expect(rename).toHaveBeenCalledWith("native", "native-r1", "Local");
-  expect(result.field.state).toBe("current");
-  expect(result.detail).toContain("sidebar remains a separate");
-});
-
 test("project relink and default workspace mapping roll back together if a writer starts during folder review", async () => {
   const f = await setup("active");
   await f.advance();
-  const { ProjectSync } = await import("../packages/workspace/projects");
-  const catalog = new ProjectSync(f.store, () => {}),
+  const { ProjectCatalog } = await import("../packages/workspace/projects");
+  const catalog = new ProjectCatalog(f.store, () => {}),
     newRoot = path.join(f.directory, "relink-root");
   await mkdir(newRoot);
   await expect(
-    catalog.relink("p", newRoot, (updated) =>
+    catalog.relink("p", newRoot, (updated: any) =>
       f.repository.relinkDefaultWorkspace(updated),
     ),
   ).rejects.toThrow("prior project attempts");
   expect(f.store.get<any>("project", "p").realPath).toBe(f.directory);
   expect(f.repository.all("project-default-workspace")).toEqual([]);
-  await catalog.close();
 });

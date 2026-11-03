@@ -17,6 +17,11 @@ export const sessionCommands = [
     mode: z.enum(composerModes).optional(),
     kind: z.enum(["code", "information"]).default("code"),
     checks: z.array(requiredCheckSchema).max(20).optional(),
+    /**
+     * An import of this project to attach as reference material; the
+     * service freezes its excerpt (docs/UX_Cleanup_Plan.md §3).
+     */
+    referenceId: id.optional(),
     commandId,
   }),
   z.object({ type: z.literal("session-list"), projectId: id }),

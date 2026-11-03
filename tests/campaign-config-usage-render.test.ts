@@ -37,9 +37,8 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, default: { ...actual, useState }, useState };
 });
 
-const { UsageBudget } = await import(
-  "../apps/desktop/renderer/components/reporting"
-);
+const { UsageBudget } =
+  await import("../apps/desktop/renderer/components/reporting");
 
 const summary = (knownInput: number, knownOutput: number, complete = true) => ({
   input: complete ? knownInput : null,
@@ -90,19 +89,27 @@ describe("USAGE-15 saved project thresholds reach budgetAlerts in the renderer",
     expect(source).toMatch(
       /type: "usage-budget-query", projectId \}\)\s*\.then\(\(value\) => \{\s*if \(live\) \{\s*setBudget\(value\);/,
     );
-    expect(source).toMatch(/type: "usage-budget-save",[\s\S]*?\.then\(setBudget\)/);
+    expect(source).toMatch(
+      /type: "usage-budget-save",[\s\S]*?\.then\(setBudget\)/,
+    );
     expect(source).toContain("budgetAlerts(summary, span, budget)");
-    const coordination = readFileSync(
-      path.resolve("apps/desktop/renderer/coordination.tsx"),
+    // Since 30 October 2026 the panel is in Project settings, mounted with
+    // the project's usage and attempts; the retired Overview's call without
+    // thresholds is gone from the renderer (docs/UX_Cleanup_Plan.md).
+    const settings = readFileSync(
+      path.resolve("apps/desktop/renderer/screens/project-settings.tsx"),
       "utf8",
     );
-    // The overview's own call has no thresholds, and only its wording is used.
-    expect(coordination).toContain("budgetAlerts(usage, 0, {})");
-    expect(coordination.match(/\balert\.\w+/g)).toEqual(["alert.detail"]);
-    // The panel is mounted with the project's usage and attempts.
-    expect(coordination).toMatch(
-      /<UsageBudget\s+projectId=\{projectId\}\s+summary=\{usage\}\s+attempts=\{coordination\.attempts\}/,
+    expect(settings).toMatch(
+      /<UsageBudget\s+projectId=\{projectId\}\s+summary=\{usage\}\s+attempts=\{scope\.coordination\.attempts\}/,
     );
+    for (const file of [
+      "apps/desktop/renderer/coordination.tsx",
+      "apps/desktop/renderer/screens/advanced-workflows.tsx",
+    ])
+      expect(readFileSync(path.resolve(file), "utf8")).not.toContain(
+        "budgetAlerts(",
+      );
   });
 
   test("with saved thresholds reached, the panel shows both alerts; just below them it shows none", () => {
@@ -135,7 +142,11 @@ describe("USAGE-15 saved project thresholds reach budgetAlerts in the renderer",
     expect(first).toContain(
       "They do not grant spending authority or automatically cancel native work.",
     );
-    const incomplete = render({ tokens: 1_000, wallMs: null }, summary(5, 5, false), []);
+    const incomplete = render(
+      { tokens: 1_000, wallMs: null },
+      summary(5, 5, false),
+      [],
+    );
     expect(incomplete).toContain("Attempt wall time has not been recorded.");
     expect(incomplete).toContain(
       "Unknown usage may exceed the visible threshold",

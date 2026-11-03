@@ -293,10 +293,7 @@ small,
 .sidebar .status-dot {
   background: #b8d3be;
 }
-.vault-status {
-  padding-left: 4px;
-  font-size: 11px;
-}
+
 .sidebar kbd {
   font-size: 11px;
 }
@@ -366,7 +363,6 @@ small,
 .application-card,
 .settings-card,
 .project-card,
-.project-overview article,
 .workflow-card {
   border-radius: 7px;
   background: var(--card);
@@ -461,21 +457,7 @@ small,
 .scope-freshness.refreshing {
   border-left-color: var(--accent);
 }
-.project-overview {
-  margin: 20px 0;
-  gap: 16px;
-}
-.project-overview article {
-  padding: 20px;
-  margin-bottom: 0;
-}
-.project-overview h2 {
-  font-size: 21px;
-}
-.project-overview p {
-  font-size: 13px;
-  margin-bottom: 10px;
-}
+
 .metric-number {
   display: block;
   font-family: Georgia, serif;
@@ -659,41 +641,7 @@ small,
 .theme-choices button {
   min-width: 100px;
 }
-.history-sources {
-  margin-top: 32px;
-}
-.onboarding {
-  position: relative;
-  border: 1px solid var(--line);
-  background: var(--card);
-  border-radius: 8px;
-  padding: 40px 24px;
-}
-.onboarding h2 {
-  font-size: 29px;
-}
-.onboarding-steps {
-  font-size: 13px;
-  flex-wrap: wrap;
-}
-.large-glyph .atlas-icon {
-  height: 54px;
-  width: 54px;
-}
-.empty-compass {
-  color: var(--brass);
-  margin: 0 auto 20px;
-  width: 64px;
-  height: 64px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-}
-.empty-compass .atlas-icon {
-  height: 46px;
-  width: 46px;
-}
+
 .loading,
 .lock-screen {
   max-width: 570px;
@@ -909,23 +857,7 @@ dialog::backdrop {
   margin: 4px 0 4px 10px;
   font-size: 12px;
 }
-.project-tools {
-  margin: 4px 0 8px 22px;
-}
-.sidebar .tools-toggle {
-  border: 0;
-  background: transparent;
-  color: var(--sidebar-muted);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  min-height: 26px;
-  padding: 2px 8px;
-}
-.project-tools .project-navigation .nav {
-  min-height: 30px;
-  padding: 4px 8px;
-}
+
 /* Coordinator threads: transcript, pinned task list and composer, with an
    optional detail pane. */
 .thread-header {
@@ -1059,12 +991,12 @@ dialog::backdrop {
 .turn-header .turn-author {
   margin: 0;
 }
-.goal-card .team-summary {
-  margin: 10px 0;
-  padding-left: 18px;
+.goal-card .team-line {
+  margin: 8px 0;
   font-size: 13px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
-.goal-card .team-summary button,
 .round-progress button {
   min-height: 26px;
   padding: 2px 8px;
@@ -1105,37 +1037,7 @@ dialog::backdrop {
   background: var(--paper);
   border-top: 1px solid var(--line);
 }
-.task-list {
-  margin-bottom: 10px;
-  font-size: 13px;
-}
-.task-list summary {
-  cursor: pointer;
-  color: var(--muted);
-}
-.task-list ol {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-  max-height: 160px;
-  overflow-y: auto;
-}
-.task-list .task {
-  display: flex;
-  gap: 8px;
-  padding: 2px 0;
-}
-.task-mark {
-  flex: 0 0 16px;
-  text-align: center;
-  color: var(--accent);
-}
-.task.completed .task-mark {
-  color: var(--good-ink);
-}
-.task.blocked .task-mark {
-  color: var(--danger);
-}
+
 .thread-composer {
   border: 1px solid var(--strong-line);
   border-radius: 8px;
@@ -1204,32 +1106,7 @@ dialog::backdrop {
 .thread-pane .role-editor select {
   max-width: 100%;
 }
-.project-home .home-start {
-  max-width: 820px;
-  display: grid;
-  gap: 12px;
-}
-.project-home .readiness {
-  margin: 0;
-}
-.recent-threads,
-.home-defaults,
-.project-controls {
-  max-width: 820px;
-  margin-top: 28px;
-}
-.recent-threads ul {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-.recent-threads li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
+
 button.recent-link,
 button.link {
   border: 0;
@@ -1241,9 +1118,7 @@ button.link {
   text-underline-offset: 3px;
   text-align: left;
 }
-.project-controls h2 {
-  font-size: 18px;
-}
+
 .navigation-toggle {
   display: none;
 }
@@ -1284,12 +1159,7 @@ button.link {
   .application-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .project-overview {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .project-overview article {
-    display: block;
-  }
+
   .coordination-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1380,10 +1250,7 @@ button.link {
   .history-row > span {
     margin-left: 0;
   }
-  .native-project-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
+
   .search {
     flex-wrap: wrap;
   }
@@ -1543,6 +1410,234 @@ button.link {
 }
 @media (max-width: 1199px) {
   .session-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Session-first cleanup (docs/UX_Cleanup_Plan.md): the project menu, the
+   composer-first New session page, Work / Team / Results, All sessions,
+   Project settings and Settings → Imports. Existing tokens only. */
+.sidebar .project-menu-button {
+  width: 28px;
+  padding: 0;
+  color: var(--sidebar-muted);
+  border-radius: 4px;
+}
+.sidebar .project-menu-button:hover,
+.sidebar .project-menu-button[aria-expanded="true"],
+.sidebar .project-menu-button.selected {
+  background: var(--sidebar-selected);
+  color: var(--sidebar-ink);
+}
+.sidebar .current-destination {
+  margin: 2px 0 4px 22px;
+  width: calc(100% - 22px);
+  min-height: 30px;
+  padding: 4px 8px;
+}
+.project-menu {
+  list-style: none;
+  margin: 2px 0 6px 22px;
+  padding: 4px;
+  border: 1px solid var(--sidebar-line);
+  border-radius: 6px;
+  background: var(--sidebar-bg);
+}
+.project-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sidebar-ink);
+  font-size: 12.5px;
+  text-align: left;
+  justify-content: flex-start;
+}
+.project-menu button:hover,
+.project-menu button:focus-visible,
+.project-menu button.selected {
+  background: var(--sidebar-selected);
+  border-color: var(--sidebar-line);
+}
+.project-menu .atlas-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.project-home {
+  max-width: 860px;
+}
+.team-summary-button {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 12.5px;
+}
+.reference-card {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brass);
+  border-radius: 6px;
+  background: var(--card);
+  overflow-wrap: anywhere;
+}
+.reference-card p,
+.reference-card ul {
+  margin: 0;
+}
+.reference-card details > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.reference-card > button {
+  justify-self: start;
+}
+.plan-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.segmented.sections {
+  margin: 0 0 14px;
+}
+.segmented.sections button {
+  min-height: 30px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 13px;
+}
+.segmented.sections button.selected {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.segmented.sections .count {
+  margin-left: 6px;
+}
+.work-pane section,
+.results-pane > label {
+  margin-bottom: 16px;
+}
+.work-pane h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.work-item .actions {
+  margin-top: 4px;
+}
+.create-loop .disclosure {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-height: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.loop-header .back-row {
+  flex-basis: 100%;
+}
+.loop-header .back-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-height: 0;
+  color: var(--accent);
+}
+.session-index {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  max-width: 900px;
+}
+.session-index li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.session-index .recent-link {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.project-settings .settings-card,
+.all-sessions .search {
+  max-width: 900px;
+}
+.retirement-notice {
+  max-width: 900px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+}
+.imports .runtime-bar {
+  flex-wrap: wrap;
+}
+.import-preview,
+.import-viewer {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  overflow-wrap: anywhere;
+}
+.import-preview dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0 0 10px;
+}
+.import-preview dt {
+  color: var(--muted);
+}
+.import-preview dd {
+  margin: 0;
+}
+.import-warnings {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--warm-ink);
+}
+.import-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.import-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.import-list li > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.import-viewer pre {
+  max-height: 420px;
+  overflow: auto;
+}
+@media (max-width: 700px) {
+  .import-preview dl {
     grid-template-columns: minmax(0, 1fr);
   }
 }

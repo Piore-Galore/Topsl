@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import { readdir } from "node:fs/promises";
 import type { AppId, Installation } from "../domain/types";
@@ -15,10 +14,13 @@ import {
 
 export const casks: Record<AppId, string> = {
   "openai.codex-cli": "codex",
-  "openai.desktop": "chatgpt",
   "anthropic.claude-code-cli": "claude-code",
-  "anthropic.claude-desktop": "claude",
 };
+/** The provider CLIs discovery looks for; desktop applications are not catalogued. */
+const cliApps = new Set<string>([
+  "openai.codex-cli",
+  "anthropic.claude-code-cli",
+]);
 function revision(
   i: Pick<
     Installation,
@@ -59,13 +61,14 @@ function inferOwner(
       channel: brew[2].includes("@") ? brew[2].split("@")[1] : "stable",
       managementUnitId: hash(`${brew[1]}/${brew[2]}`),
     };
-  const bundle = realPath.match(/^(.*\/(?:ChatGPT|Codex|Claude)\.app)\//);
-  if (bundle)
+  // A CLI inside an application bundle is updated by that application,
+  // which Topsl does not manage (docs/UX_Cleanup_Plan.md §2).
+  if (/\.app[\\/]/i.test(realPath))
     return {
-      owner: "desktop",
+      owner: "external",
       packageId: null,
       channel: "native",
-      managementUnitId: hash(bundle[1]),
+      managementUnitId: hash(realPath),
     };
   if (realPath.includes("node_modules"))
     return {
@@ -87,19 +90,6 @@ async function metadataVersion(
   file: string,
   realPath: string,
 ): Promise<string | null> {
-  if (file.endsWith(".app") && process.platform === "darwin") {
-    try {
-      return (
-        await runFile("/usr/libexec/PlistBuddy", [
-          "-c",
-          "Print :CFBundleShortVersionString",
-          path.join(file, "Contents/Info.plist"),
-        ])
-      ).trim();
-    } catch {
-      return null;
-    }
-  }
   const version = realPath.match(
     /\/(?:Caskroom|Cellar)\/[^/]+\/([^/]+)\//,
   )?.[1];
@@ -126,21 +116,9 @@ export async function describeInstallation(
   previous: Installation[] = [],
 ): Promise<Installation> {
   const fingerprint = await identity(file);
+  if (!cliApps.has(appId))
+    throw new Error("Topsl manages the Codex and Claude Code CLIs only.");
   const ownership = inferOwner(fingerprint.realPath);
-  if (file.endsWith(".app")) {
-    ownership.owner = "vendor";
-    ownership.managementUnitId = hash(fingerprint.realPath);
-    // A receipt identifies an adopted channel, without running a package manager during discovery.
-    for (const prefix of ["/opt/homebrew", "/usr/local"]) {
-      const receipt = path.join(prefix, "Caskroom", casks[appId]);
-      if (await exists(receipt)) {
-        ownership.owner = "homebrew";
-        ownership.packageId = casks[appId];
-        ownership.managementUnitId = hash(receipt);
-        break;
-      }
-    }
-  }
   const id = hash(
     `${localHost}:${appId}:${ownership.owner === "homebrew" ? ownership.managementUnitId : fingerprint.realPath}`,
   );
@@ -179,28 +157,6 @@ export async function discover(
     for (const file of await candidatePaths(name))
       candidates.push([appId, file]);
   if (process.platform === "darwin") {
-    for (const directory of [
-      "/Applications",
-      path.join(os.homedir(), "Applications"),
-    ]) {
-      for (const name of ["ChatGPT", "Codex", "Claude"]) {
-        const bundle = path.join(directory, name + ".app");
-        if (!(await exists(bundle))) continue;
-        candidates.push([
-          name === "Claude" ? "anthropic.claude-desktop" : "openai.desktop",
-          bundle,
-        ]);
-        if (name !== "Claude")
-          for (const suffix of [
-            "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-            "Contents/Resources/codex",
-          ]) {
-            const executable = path.join(bundle, suffix);
-            if (await exists(executable))
-              candidates.push(["openai.codex-cli", executable]);
-          }
-      }
-    }
     for (const prefix of ["/opt/homebrew", "/usr/local"])
       for (const token of ["codex", "claude-code", "claude-code@latest"]) {
         const directory = path.join(prefix, "Caskroom", token);
@@ -222,19 +178,12 @@ export async function discover(
             ]);
         }
       }
-  } else if (process.platform === "win32") {
-    const local = process.env.LOCALAPPDATA ?? os.homedir();
-    for (const [appId, suffix] of [
-      ["anthropic.claude-desktop", "AnthropicClaude/claude.exe"],
-      ["openai.desktop", "Programs/ChatGPT/ChatGPT.exe"],
-      ["openai.desktop", "Programs/Codex/Codex.exe"],
-    ] as const)
-      if (await exists(path.join(local, suffix)))
-        candidates.push([appId, path.join(local, suffix)]);
   }
-  // Explicitly selected paths survive later discovery; missing installations are not fabricated.
+  // Explicitly selected CLI paths survive later discovery, even inside an
+  // application bundle; missing installations are not fabricated.
   for (const i of previous)
-    if (await exists(i.path)) candidates.push([i.appId, i.path]);
+    if (cliApps.has(i.appId) && (await exists(i.path)))
+      candidates.push([i.appId, i.path]);
   const found = new Map<string, Installation>();
   for (const [appId, file] of candidates) {
     try {
@@ -244,19 +193,6 @@ export async function discover(
       /* A concurrently removed installation will be rediscovered later. */
     }
   }
-  // Bundle and bundled runtime must share the same writer lock.
-  for (const item of found.values())
-    if (item.owner === "desktop") {
-      const parent = [...found.values()].find(
-        (i) =>
-          i.path.endsWith(".app") &&
-          item.realPath.startsWith(i.realPath + path.sep),
-      );
-      if (parent) {
-        item.managementUnitId = parent.managementUnitId;
-        item.revisionId = revision(item);
-      }
-    }
   await Promise.all(
     [...found.values()].map(async (item) => {
       item.runningPids = await affectedProcesses([item.realPath]);
@@ -273,7 +209,6 @@ export async function probeVersion(
   const current = await identity(installation.path);
   if (current.identity !== installation.identity)
     throw new Error("Executable changed; discover and review it again.");
-  if (installation.appId.endsWith("desktop")) return installation;
   if (/\.cmd$/i.test(installation.path))
     return { ...installation, compatibility: "native-only" };
   const output = await runFile(installation.path, ["--version"]);

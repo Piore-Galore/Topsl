@@ -6,12 +6,11 @@ import {
   TerminalModeSelect,
 } from "./components/terminal-mode";
 import type { TerminalModeId } from "../../../packages/domain/terminal-modes";
-import React, { useState } from "react";
+import { useState } from "react";
 import type {
   AppState,
   Project,
   ProjectOpenResult,
-  NativeProject,
 } from "../../../packages/domain/types";
 import type { Command } from "../../../packages/domain/commands";
 
@@ -23,38 +22,79 @@ interface Props {
   selectProject: (id: string) => void;
   openTerminal: (projectId: string, terminalId: string) => void;
 }
-function ProjectCard({ project, ...props }: Props & { project: Project }) {
+
+/**
+ * One folder of the local catalog (docs/UX_Cleanup_Plan.md §2): open it,
+ * rename or move it in Topsl, copy its path, trust or relink it, or open a
+ * provider CLI's terminal in it.
+ */
+function ProjectCard({
+  project,
+  index,
+  count,
+  ...props
+}: Props & { project: Project; index: number; count: number }) {
   const { state, busy, act, selectProject, openTerminal } = props;
   const [installationId, setInstallationId] = useState("");
   const [opened, setOpened] = useState<ProjectOpenResult | null>(null);
+  const [name, setName] = useState<string | null>(null);
   /** A mode picked for the next terminal; otherwise auto-accept's or the project's remembered one. */
   const [modeChoice, setModeChoice] = useState<TerminalModeId | null>(null);
   const available =
     !project.availability || project.availability === "available";
-  const sources = [
-    ...new Set(
-      (project.sources ?? []).map((ref) =>
-        ref.sourceId === "codex-project-api"
-          ? "Codex project registry"
-          : (state.projectSync.sources.find(
-              (source) => source.id === ref.sourceId,
-            )?.name ?? ref.sourceId),
-      ),
-    ),
-  ];
   const selectedInstallation = state.installations.find(
     (installation) => installation.id === installationId,
   );
-  const terminal = selectedInstallation?.appId.endsWith("cli")
+  const terminal = selectedInstallation
     ? terminalProvider(selectedInstallation)
     : null;
   const mode: TerminalModeId = terminal
     ? (modeChoice ?? startingTerminalMode(state, project.id, terminal))
     : "provider-default";
+  const move = (direction: "up" | "down") =>
+    void act({
+      type: "project-move",
+      id: project.id,
+      direction,
+      expectedOrderRevision: state.projectOrderRevision,
+    });
   return (
     <article className="project-card" aria-label={project.name}>
       <div className="section-heading">
-        <h2>{project.name}</h2>
+        {name === null ? (
+          <h2>{project.name}</h2>
+        ) : (
+          <form
+            className="actions"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const renamed = await act({
+                type: "project-rename",
+                id: project.id,
+                expectedName: project.name,
+                name,
+              });
+              if (renamed) setName(null);
+            }}
+          >
+            <input
+              aria-label={`New name for ${project.name}`}
+              value={name}
+              maxLength={200}
+              autoFocus
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setName(null);
+              }}
+            />
+            <ActionButton disabled={busy || !name.trim()}>
+              Save name
+            </ActionButton>
+            <ActionButton type="button" onClick={() => setName(null)}>
+              Cancel
+            </ActionButton>
+          </form>
+        )}
         <span
           className={
             "badge " + (available && project.trusted ? "good" : "warm")
@@ -70,17 +110,31 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
         </span>
       </div>
       <code className="path">{project.path}</code>
-      <p className="tiny">
-        {sources.length
-          ? "Discovered in: " + sources.join(" · ")
-          : "Saved in Topsl"}
-      </p>
       {!available && (
-        <p>Locate this project’s folder to keep using its existing history.</p>
+        <p>Relink this project’s folder to keep using its history.</p>
       )}
       <div className="actions wrap">
         <ActionButton disabled={busy} onClick={() => selectProject(project.id)}>
-          View workspace
+          Open
+        </ActionButton>
+        {name === null && (
+          <ActionButton disabled={busy} onClick={() => setName(project.name)}>
+            Rename
+          </ActionButton>
+        )}
+        <ActionButton
+          aria-label={`Move ${project.name} up`}
+          disabled={busy || index === 0}
+          onClick={() => move("up")}
+        >
+          ↑
+        </ActionButton>
+        <ActionButton
+          aria-label={`Move ${project.name} down`}
+          disabled={busy || index === count - 1}
+          onClick={() => move("down")}
+        >
+          ↓
         </ActionButton>
         {!project.trusted && available && (
           <ActionButton
@@ -102,12 +156,12 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
             void act({ type: "project-copy-path", id: project.id })
           }
         >
-          Copy folder path
+          Copy path
         </ActionButton>
       </div>
       <div className="project-open">
         <label>
-          Open this folder in
+          Open a terminal in
           <select
             value={selectedInstallation?.id ?? ""}
             onChange={(event) => {
@@ -116,7 +170,7 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
               setOpened(null);
             }}
           >
-            <option value="">Choose an application</option>
+            <option value="">Choose a provider</option>
             {state.applications.map((app) => {
               const installations = state.installations.filter(
                 (installation) => installation.appId === app.id,
@@ -167,256 +221,23 @@ function ProjectCard({ project, ...props }: Props & { project: Project }) {
             if (result.terminalId) openTerminal(project.id, result.terminalId);
           }}
         >
-          Open folder
+          Open terminal
         </ActionButton>
       </div>
       {terminal && <TerminalModeNote provider={terminal} value={mode} />}
       {selectedInstallation && !selectedInstallation.trusted && (
         <p className="tiny">
-          Trust this executable in Applications before opening the folder.
-        </p>
-      )}
-      {selectedInstallation?.appId.endsWith("desktop") && (
-        <p className="tiny">
-          {selectedInstallation.appId === "anthropic.claude-desktop"
-            ? `Opens this folder in Claude Code${state.platform.startsWith("darwin/") ? " in the selected app" : " through the system’s registered Claude app"}. Claude will ask you to confirm folder access.`
-            : selectedInstallation.appId === "openai.desktop" &&
-                state.platform.startsWith("darwin/")
-              ? "Opens the folder in the selected desktop app. Check the native project picker after opening."
-              : "Opens the selected app; choose this folder in its native project picker."}
+          Trust this executable in Providers before opening a terminal.
         </p>
       )}
       {opened && <p role="status">{opened.detail}</p>}
     </article>
   );
 }
-function NativeProjectRow({
-  project,
-  index,
-  props,
-}: {
-  project: NativeProject;
-  index: number;
-  props: Props;
-}) {
-  const sync = props.state.codexProjectSync;
-  const disabled =
-    props.busy || sync.refreshing || !sync.enabled || sync.status !== "ready";
-  const [edit, setEdit] = useState<{ name: string; revision: string } | null>(
-    null,
-  );
-  return (
-    <div className="native-project-row">
-      <div>
-        {edit ? (
-          <form
-            className="actions"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const result = await props.act({
-                type: "codex-project-rename",
-                id: project.id,
-                expectedRevision: edit.revision,
-                name: edit.name.trim(),
-              });
-              if (result) setEdit(null);
-            }}
-          >
-            <input
-              aria-label={`Rename ${project.name}`}
-              value={edit.name}
-              maxLength={200}
-              onChange={(event) =>
-                setEdit({ ...edit, name: event.target.value })
-              }
-            />
-            <ActionButton disabled={disabled || !edit.name.trim()}>
-              Save name
-            </ActionButton>
-            <ActionButton type="button" onClick={() => setEdit(null)}>
-              Cancel
-            </ActionButton>
-          </form>
-        ) : (
-          <strong>{project.name}</strong>
-        )}
-        <details>
-          <summary>
-            {project.roots.length}{" "}
-            {project.roots.length === 1 ? "folder" : "folders"}
-          </summary>
-          {project.roots.map((root) => (
-            <code className="path" key={root}>
-              {root}
-            </code>
-          ))}
-        </details>
-      </div>
-      <div className="actions wrap">
-        {!edit && (
-          <ActionButton
-            disabled={disabled}
-            onClick={() =>
-              setEdit({ name: project.name, revision: project.revision })
-            }
-          >
-            Rename
-          </ActionButton>
-        )}
-        <ActionButton
-          aria-label={`Move ${project.name} up`}
-          disabled={disabled || index === 0}
-          onClick={() =>
-            void props.act({
-              type: "codex-project-move",
-              id: project.id,
-              beforeProjectId: sync.projects[index - 1].id,
-              expectedOrderRevision: sync.orderRevision,
-            })
-          }
-        >
-          ↑
-        </ActionButton>
-        <ActionButton
-          aria-label={`Move ${project.name} down`}
-          disabled={disabled || index === sync.projects.length - 1}
-          onClick={() =>
-            void props.act({
-              type: "codex-project-move",
-              id: project.id,
-              beforeProjectId: sync.projects[index + 2]?.id ?? null,
-              expectedOrderRevision: sync.orderRevision,
-            })
-          }
-        >
-          ↓
-        </ActionButton>
-      </div>
-    </div>
-  );
-}
-function CodexRegistry(props: Props) {
-  const { state, busy, act } = props;
-  const sync = state.codexProjectSync;
-  const [chosen, setChosen] = useState("");
-  const runtimes = state.installations.filter(
-    (i) => i.appId === "openai.codex-cli",
-  );
-  const installationId = chosen || sync.installationId || "";
-  return (
-    <section
-      className="settings-card"
-      aria-label="Codex project synchronization"
-    >
-      <div className="section-heading">
-        <h2>Codex native projects</h2>
-        <span
-          className={
-            "badge " + (sync.enabled && sync.status === "ready" ? "good" : "")
-          }
-        >
-          {sync.refreshing
-            ? "Syncing…"
-            : !sync.enabled
-              ? "Paused"
-              : sync.status === "ready"
-                ? "Registry synced"
-                : "Needs attention"}
-        </span>
-      </div>
-      <p>
-        Share trusted folders with Codex and bring its project names and order
-        here. Native multi-folder projects stay together.
-      </p>
-      <div className="project-open">
-        <label>
-          Codex runtime
-          <select
-            aria-label="Codex sync runtime"
-            value={installationId}
-            onChange={(event) => setChosen(event.target.value)}
-            disabled={busy || sync.refreshing}
-          >
-            <option value="">Choose a trusted runtime</option>
-            {runtimes.map((i) => (
-              <option key={i.id} value={i.id} disabled={!i.trusted}>
-                {i.version ?? "Unknown version"} · {i.path}
-                {i.trusted ? "" : " · Trust in Applications first"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="actions wrap">
-          {(!sync.enabled ||
-            sync.status === "error" ||
-            installationId !== sync.installationId) && (
-            <ActionButton
-              disabled={
-                busy ||
-                sync.refreshing ||
-                !runtimes.some((i) => i.id === installationId && i.trusted)
-              }
-              onClick={() =>
-                void act({ type: "codex-project-sync-enable", installationId })
-              }
-            >
-              {sync.enabled ? "Reconnect…" : "Enable Codex sync…"}
-            </ActionButton>
-          )}
-          {sync.enabled && (
-            <>
-              <ActionButton
-                disabled={busy || sync.refreshing}
-                onClick={() => void act({ type: "codex-project-sync-refresh" })}
-              >
-                Sync now
-              </ActionButton>
-              <ActionButton
-                disabled={busy}
-                onClick={() => void act({ type: "codex-project-sync-pause" })}
-              >
-                Pause Codex sync
-              </ActionButton>
-            </>
-          )}
-        </div>
-      </div>
-      <p className="tiny" role="status">
-        {sync.detail}
-      </p>
-      <details className="project-sources">
-        <summary>
-          {sync.projects.length} registered projects · Names, order, and
-          connection
-        </summary>
-        <code className="path">{sync.home}</code>
-        <p className="tiny">
-          Refreshes every minute while enabled. Renames apply to every folder in
-          a native project. Native removals retain Topsl history and are not
-          recreated automatically. Desktop pins, sections, and chats remain
-          native.
-        </p>
-        {sync.lastSuccessAt && (
-          <p className="tiny">
-            Last registry check: {new Date(sync.lastSuccessAt).toLocaleString()}
-          </p>
-        )}
-        {sync.projects.map((project, index) => (
-          <NativeProjectRow
-            key={project.id}
-            project={project}
-            index={index}
-            props={props}
-          />
-        ))}
-      </details>
-    </section>
-  );
-}
+
 export function Projects(props: Props) {
-  const { state, busy, act, addProject } = props;
+  const { state, busy, addProject } = props;
   const [query, setQuery] = useState("");
-  const sync = state.projectSync;
   const projects = state.projects.filter((project) =>
     (project.name + " " + project.path)
       .toLowerCase()
@@ -429,99 +250,33 @@ export function Projects(props: Props) {
           <h1>Projects</h1>
         </div>
         <ActionButton className="primary" disabled={busy} onClick={addProject}>
-          + Add project
+          + Add folder
         </ActionButton>
       </div>
-      <section className="settings-card" aria-label="Project synchronization">
-        <div className="section-heading">
-          <h2>Project discovery</h2>
-          <span className="badge">
-            {sync.refreshing
-              ? "Refreshing…"
-              : sync.enabled
-                ? "Every minute"
-                : "Paused"}
-          </span>
+      {state.projects.length > 6 && (
+        <div className="search">
+          <input
+            aria-label="Filter projects"
+            placeholder="Find a project or folder…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </div>
-        <p>
-          Native project folders join one shared catalog. All apps work on the
-          same files when they use the same folder.
-        </p>
-        <div className="actions wrap">
-          <ActionButton
-            disabled={busy}
-            onClick={() =>
-              void act({ type: "project-sync-enable", enabled: !sync.enabled })
-            }
-          >
-            {sync.enabled ? "Pause discovery" : "Enable project discovery…"}
-          </ActionButton>
-          <ActionButton
-            disabled={busy || !sync.enabled || sync.refreshing}
-            onClick={() => void act({ type: "project-sync-refresh" })}
-          >
-            Refresh projects
-          </ActionButton>
-        </div>
-        <details className="project-sources">
-          <summary>
-            Native source details ·{" "}
-            {sync.sources.filter((source) => source.status === "ready").length}{" "}
-            of {sync.sources.length} refreshed
-            {sync.sources.some(
-              (source) =>
-                source.status === "error" || source.status === "missing",
-            ) && " · Some sources unavailable"}
-          </summary>
-          {sync.sources.map((source) => (
-            <div className="project-source" key={source.id}>
-              <div className="section-heading">
-                <strong>{source.name}</strong>
-                <span className="badge">
-                  {source.status === "ready"
-                    ? "Metadata refreshed"
-                    : source.status}
-                </span>
-              </div>
-              <code className="path">{source.path}</code>
-              <p>{source.detail}</p>
-              {source.checkedAt && (
-                <small>
-                  Last check: {new Date(source.checkedAt).toLocaleString()} ·{" "}
-                  {source.folders} folder references
-                  {source.lastSuccessAt && source.status !== "ready"
-                    ? " · Last success: " +
-                      new Date(source.lastSuccessAt).toLocaleString()
-                    : ""}
-                </small>
-              )}
-            </div>
-          ))}
-        </details>
-      </section>
-      <CodexRegistry {...props} />
-      <div className="search">
-        <input
-          aria-label="Filter projects"
-          placeholder="Find a project or folder…"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </div>
-      <p>
-        {projects.length} {projects.length === 1 ? "folder" : "folders"} · Trust
-        discovered folders before starting a session.
-      </p>
+      )}
       <div className="project-grid">
         {projects.map((project) => (
-          <ProjectCard {...props} project={project} key={project.id} />
+          <ProjectCard
+            {...props}
+            project={project}
+            key={project.id}
+            index={state.projects.indexOf(project)}
+            count={state.projects.length}
+          />
         ))}
       </div>
       {!projects.length && (
         <div className="empty-row">
-          {query
-            ? "No matching projects."
-            : "Add a folder or enable discovery to bring in projects from your native apps."}
+          {query ? "No matching projects." : "Add a folder to begin."}
         </div>
       )}
     </>

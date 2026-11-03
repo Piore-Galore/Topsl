@@ -276,3 +276,15 @@ Supervisor-level tests called `updatePolicy` directly with hand-written partial 
 **Fix.** `loopPolicyPatchSchema` ([recursive-loops.ts](../packages/domain/recursive-loops.ts)) lists every policy field as optional with no default, and each group's fields the same way, using `optionalFields` ([patches.ts](../packages/domain/patches.ts)). `applyLoopPolicyPatch` merges a patch over the stored settings (one level deep for the groups) and validates the result with `loopPolicySchema`; `updatePolicy` and `authorityReview` both use it, so the confirmed digest and the applied policy agree. The monitoring rule (first delay not longer than the maximum) is checked in the command when both are sent and on the merged policy otherwise. `loop-create` keeps `loopPolicySchema.partial()`: a new run has no earlier settings to lose, and its defaults equal the schema's.
 
 **Evidence.** Fixture tests only: *loop-policy-update changes only the fields it sends* in [campaign-loops-state.test.ts](../tests/campaign-loops-state.test.ts) parses commands through `commandSchema` and applies them to a started run. Commands and results are recorded in [Implementation status](Implementation_Status.md#partial-updates-keep-unsent-fields--29-october-2026). Stored policy records are complete settings and are unchanged by this fix.
+
+## Follow-up: loops inside sessions (30 October 2026)
+
+Loops are created through a native session's **Work → Create loop**, with the existing `loop-create` command and the session's conversation ID ([session-first cleanup §4](UX_Cleanup_Plan.md#4-navigation-imports-and-loop-interfaces)). The New session page's Run mode is retired; standalone loops recorded before stay listed in the sidebar and All sessions and keep their controls.
+
+- A new loop is a draft at the end of the session's queue. Its page shows **Awaiting start** with its queue position and leads **Back to session**. **Review and start** still confirms the run's authority natively, once.
+- A loop of a native session starts only while the session runs, while its work item is queued and first among waiting work, and while nothing else in the session runs. It resumes only while the session runs; Resume never starts a draft.
+- Session **Pause**, **Resume** and **Stop** reach the session's running loop; Stop also stops queued drafts. Removing a queued loop from Work stops its draft.
+- `loop-create`, `loop-start` and `loop-control` for a run in a native session run in that session's serialized order, and the supervisor's tick finishes a removal or pause that a restart cut off.
+- A loop in a session that started with an import carries the session's frozen reference in its coordinator prompts and child goals.
+
+Evidence: `tests/session-loops.test.ts` and the loop journey ([validation](UX_Cleanup_Plan.md#validation-30-october-2026)).

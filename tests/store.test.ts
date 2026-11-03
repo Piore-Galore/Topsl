@@ -5,7 +5,8 @@ import { Store } from "../packages/persistence/store";
 import { hash, now } from "../packages/domain/invariants";
 import { projectPath } from "../packages/platform/system";
 import { contextRequest } from "../packages/workspace/context";
-import { importHistory, previewHandoff } from "../packages/workspace/history";
+import { previewHandoff } from "../packages/workspace/history";
+import { HistoryImports } from "../packages/workspace/imports";
 import { Configuration } from "../packages/workspace/configuration";
 import { fixture } from "./helpers";
 const fixtures: Awaited<ReturnType<typeof fixture>>[] = [];
@@ -116,7 +117,7 @@ describe("protected durable history", () => {
       "PRIVATE_TOPSL_PHRASE",
     );
   });
-  test("imports are idempotent and reject a different project", async () => {
+  test("an import of the same content is stored once", async () => {
     const f = await setup();
     const file = path.join(f.directory, "session.jsonl");
     await writeFile(
@@ -145,17 +146,31 @@ describe("protected durable history", () => {
       trusted: true,
       createdAt: now(),
     };
-    await importHistory(f.store, project, "codex", file);
-    await importHistory(f.store, project, "codex", file);
-    expect(f.store.list("message")).toHaveLength(1);
-    await expect(
-      importHistory(
-        f.store,
-        { ...project, realPath: "/elsewhere" },
-        "codex",
+    f.store.put("project", project);
+    const imports = new HistoryImports(f.store);
+    const commit = async () => {
+      const preview = await imports.preview({
+        projectId: "p",
+        provider: "codex",
         file,
-      ),
-    ).rejects.toThrow("different project");
+      });
+      return imports.commit({
+        projectId: "p",
+        previewId: preview.id,
+        contentHash: preview.contentHash,
+      });
+    };
+    expect((await commit()).duplicate).toBe(false);
+    // The same content again keeps the first import.
+    expect((await commit()).duplicate).toBe(true);
+    // One message, and the session metadata kept as reference text.
+    expect(
+      f.store
+        .list<any>("message")
+        .map((m) => m.role)
+        .sort(),
+    ).toEqual(["assistant", "reference"]);
+    expect(f.store.list("history-reference")).toHaveLength(1);
   });
 });
 describe("configuration ownership", () => {

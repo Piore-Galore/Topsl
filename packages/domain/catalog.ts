@@ -1,4 +1,5 @@
 import type { ApplicationDefinition, Capability } from "./types";
+/** The provider CLIs Topsl manages (docs/UX_Cleanup_Plan.md §2). */
 export const catalog: ApplicationDefinition[] = [
   {
     id: "openai.codex-cli",
@@ -12,17 +13,6 @@ export const catalog: ApplicationDefinition[] = [
     releaseNotes: "https://github.com/openai/codex/releases",
   },
   {
-    id: "openai.desktop",
-    name: "ChatGPT / Codex desktop",
-    kind: "desktop",
-    platforms: ["darwin", "win32", "linux"],
-    provider: "codex",
-    description: "Desktop home for Codex, Chat, and Work.",
-    website: "https://chatgpt.com/download",
-    docs: "https://learn.chatgpt.com/docs/quickstart",
-    releaseNotes: "https://learn.chatgpt.com/docs/changelog",
-  },
-  {
     id: "anthropic.claude-code-cli",
     name: "Claude Code",
     kind: "cli",
@@ -33,18 +23,6 @@ export const catalog: ApplicationDefinition[] = [
     docs: "https://code.claude.com/docs/en/cli-reference",
     releaseNotes:
       "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
-  },
-  {
-    id: "anthropic.claude-desktop",
-    name: "Claude Desktop",
-    kind: "desktop",
-    platforms: ["darwin", "win32"],
-    provider: "claude",
-    description: "The Claude app and its Code workspace.",
-    website: "https://claude.ai/download",
-    docs: "https://code.claude.com/docs/en/desktop",
-    releaseNotes:
-      "https://support.claude.com/en/articles/12138966-release-notes",
   },
 ];
 export const capabilities: Capability[] = [

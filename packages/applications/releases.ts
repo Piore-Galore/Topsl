@@ -8,8 +8,6 @@ const hosts = new Set([
   "objects.githubusercontent.com",
   "formulae.brew.sh",
   "downloads.claude.ai",
-  "persistent.oaistatic.com",
-  "persistent.oaistatic.com.cdn.cloudflare.net",
 ]);
 export function assertDownloadUrl(url: string): void {
   const u = new URL(url);
@@ -31,10 +29,7 @@ export function assertArtifactPublisher(appId: AppId, url: string): void {
     appId === "openai.codex-cli"
       ? u.hostname === "github.com" &&
         u.pathname.startsWith("/openai/codex/releases/download/")
-      : appId === "openai.desktop"
-        ? u.hostname === "persistent.oaistatic.com" &&
-          /^\/(codex-app-prod|sidekick)\//.test(u.pathname)
-        : u.hostname === "downloads.claude.ai";
+      : u.hostname === "downloads.claude.ai";
   if (!allowed)
     throw new Error(
       "Artifact publisher does not match the selected application.",
@@ -112,19 +107,14 @@ export async function resolveRelease(
   platform = process.platform as string,
   arch = process.arch as string,
 ): Promise<Release | null> {
-  // A vendor-managed desktop's private/managed channel is not the public download feed.
-  if (installation?.owner === "vendor" && appId.endsWith("desktop"))
-    return null;
+  // An executable inside an application bundle is that application's to
+  // update; other owners have no channel Topsl can resolve.
   if (
     installation &&
-    ["desktop", "npm", "system", "unknown"].includes(installation.owner)
+    ["external", "npm", "system", "unknown"].includes(installation.owner)
   )
     return null;
-  if (
-    installation &&
-    !["stable", "latest"].includes(installation.channel) &&
-    installation.owner !== "vendor"
-  )
+  if (installation && !["stable", "latest"].includes(installation.channel))
     return null;
   if (appId === "openai.codex-cli" && installation?.owner !== "homebrew") {
     if (

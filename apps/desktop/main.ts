@@ -22,7 +22,6 @@ import type {
   LifecyclePlan,
   ProjectOpenResult,
 } from "../../packages/domain/types";
-import { isClaudeFolderUrl } from "../../packages/workspace/project-opening";
 import { safeError } from "../../packages/domain/invariants";
 import { approvalConfirmation } from "../../packages/domain/approval-text";
 import {
@@ -71,18 +70,7 @@ let state: AppState = {
   checks: [],
   jobs: [],
   projects: [],
-  projectSync: { enabled: false, refreshing: false, sources: [] },
-  codexProjectSync: {
-    enabled: false,
-    refreshing: false,
-    installationId: null,
-    home: "",
-    status: "disabled",
-    detail: "Unlock to synchronize projects.",
-    lastSuccessAt: null,
-    projects: [],
-    orderRevision: "",
-  },
+  projectOrderRevision: 0,
   conversations: [],
   messages: [],
   runs: [],
@@ -181,23 +169,12 @@ async function unlock(passphrase?: string): Promise<AppState> {
           publish(message.event);
         } else if (message.event.type === "native-open") {
           const target = message.event.data?.target;
+          // Only a catalog CLI's official page opens; Topsl launches no
+          // desktop application (docs/UX_Cleanup_Plan.md §2).
           if (typeof target === "string" && officialLink(target))
             void shell
               .openExternal(target)
               .catch((e) => publish({ type: "error", data: safeError(e) }));
-          else if (
-            typeof target === "string" &&
-            (isWithin(
-              path.join(app.getPath("userData"), "downloads"),
-              target,
-            ) ||
-              state.installations.some(
-                (i) => i.appId.endsWith("desktop") && i.path === target,
-              ))
-          )
-            void shell.openPath(target).then((error) => {
-              if (error) publish({ type: "error", data: error });
-            });
         } else if (message.event.type === "activity") {
           activeControl = message.event.data?.active === true;
         } else if (
@@ -361,16 +338,8 @@ async function dispatch(command: Command): Promise<any> {
       command.type === "project-relink"
         ? "Relink and trust this project?"
         : "Trust this project?",
-      `${trusted.selectedPath}\n\nNative instructions, hooks, plugins, and MCP servers in this project may execute when you start its runtime.${command.type === "project-relink" ? " Existing Topsl history will remain attached to this project; existing native entries are retained." : ""}${state.codexProjectSync.enabled ? " Codex synchronization will share this trusted folder with the native project registry." : ""}`,
+      `${trusted.selectedPath}\n\nNative instructions, hooks, plugins, and MCP servers in this project may execute when you start its runtime.${command.type === "project-relink" ? " Existing Topsl history will remain attached to this project; existing native entries are retained." : ""}`,
       "Trust project",
-    );
-    if (!trusted.approved) return null;
-  }
-  if (command.type === "project-sync-enable" && command.enabled) {
-    trusted.approved = await confirm(
-      "Discover project folders across your applications?",
-      `Topsl will read folder names and paths from these native metadata files on startup and every minute:\n\n${state.projectSync.sources.map((source) => source.path).join("\n")}\n\nDiscovered folders appear in the shared Projects catalog. Trust each folder before running it. Discovery reads metadata only; Codex synchronization has separate controls. You can pause discovery in Projects.`,
-      "Enable discovery",
     );
     if (!trusted.approved) return null;
   }
@@ -379,24 +348,9 @@ async function dispatch(command: Command): Promise<any> {
     if (!project) throw new Error("Refresh the project list first.");
     trusted.selectedPath = project.path;
     trusted.approved = await confirm(
-      "Trust this discovered project?",
+      "Trust this project?",
       `${project.name}\n${project.path}\n\nNative instructions, hooks, plugins, and MCP servers may execute when you start a native session in this folder.`,
       "Trust project",
-    );
-    if (!trusted.approved) return null;
-  }
-  if (command.type === "codex-project-sync-enable") {
-    const installation = state.installations.find(
-      (i) =>
-        i.id === command.installationId &&
-        i.appId === "openai.codex-cli" &&
-        i.trusted,
-    );
-    if (!installation) throw new Error("Choose a trusted Codex runtime first.");
-    trusted.approved = await confirm(
-      "Synchronize the Codex project registry?",
-      `Runtime: ${installation.realPath}\nProfile: ${state.codexProjectSync.home}\n\nTopsl will read native project names, folders, and order and add trusted Topsl folders that are not already registered. It will refresh every minute while open. Renaming or reordering a native project here will update Codex. Removed native entries stay removed; files and history are retained.\n\nThis uses an experimental local API and starts no model turn. The visible desktop sidebar may keep a separate cache. You can pause in Projects.`,
-      "Enable synchronization",
     );
     if (!trusted.approved) return null;
   }
@@ -478,7 +432,7 @@ async function dispatch(command: Command): Promise<any> {
       plan.command
         ? `Command: ${plan.command.executable} ${plan.command.args.join(" ")}`
         : "",
-      plan.release?.url ?? plan.nativeApplicationPath ?? plan.nativeUrl ?? "",
+      plan.release?.url ?? plan.nativeUrl ?? "",
       plan.release?.sha256 ? `SHA-256: ${plan.release.sha256}` : "",
       `Review expires: ${plan.expiresAt}`,
     ]
@@ -870,43 +824,26 @@ async function dispatch(command: Command): Promise<any> {
       return null;
     trusted.digest = approval.digest;
   }
-  if (command.type === "sync-field-push") {
-    const sync: any = await request({
-      command: { type: "synchronization-query", projectId: command.projectId },
-    });
-    const field = sync.fields.find(
-      (item: any) =>
-        item.id === command.id && item.revision === command.expectedRevision,
-    );
-    if (!field)
-      throw new Error(
-        "This synchronization field changed. Refresh before reviewing its write.",
-      );
-    trusted.approved = await confirm(
-      "Push this reviewed native name?",
-      `Direction: Topsl → native registry\nCurrent native value: ${JSON.stringify(field.remote)}\nReviewed Topsl value: ${JSON.stringify(field.local)}\nSource revision: ${field.revision}\n\nOnly the supported native registry field is written. Visible desktop presentation has separate readback.`,
-      "Push reviewed name",
-    );
-    if (!trusted.approved) return null;
-  }
-  if (
-    command.type === "history-import" ||
-    command.type === "native-history-approve"
-  ) {
+  if (command.type === "history-import-preview") {
     const selected = await dialog.showOpenDialog(window!, {
-      title: `Import an attributed ${command.provider} transcript`,
+      title: `Import an exported ${command.provider === "claude" ? "Claude Code" : "Codex"} history`,
       properties: ["openFile"],
-      filters: [{ name: "Native transcript", extensions: ["jsonl", "ndjson"] }],
+      filters: [
+        {
+          name: "Exported history",
+          extensions: ["md", "txt", "json", "jsonl", "ndjson"],
+        },
+      ],
     });
     if (selected.canceled) return null;
     trusted.selectedPath = selected.filePaths[0];
-    trusted.approved =
-      command.type === "history-import" ||
-      (await confirm(
-        "Observe this native history source?",
-        `${command.provider}\nProfile: ${command.type === "native-history-approve" ? command.profileId : "selected"}\n${trusted.selectedPath}\n\nTopsl will incrementally read this exact source and record coverage gaps. Native files remain with their owner.`,
-        "Approve source",
-      ));
+  }
+  if (command.type === "history-import-delete") {
+    trusted.approved = await confirm(
+      "Delete this import?",
+      "Its stored text and search entries will be deleted from Topsl. Sessions that already started with it keep the copy they were given. The original exported file is not changed.",
+      "Delete import",
+    );
     if (!trusted.approved) return null;
   }
   if (command.type === "history-delete") {
@@ -963,66 +900,11 @@ async function dispatch(command: Command): Promise<any> {
   // The owner pastes the step's instructions into Claude Code.
   if (command.type === "claude-step-open" && result?.instructions)
     clipboard.writeText(result.instructions);
-  if (command.type === "project-open") {
-    const opened = result as ProjectOpenResult;
-    if (opened.applicationPath) {
-      if (
-        !state.installations.some(
-          (i) =>
-            i.id === command.installationId &&
-            i.realPath === opened.applicationPath,
-        )
-      )
-        throw new Error(
-          "The selected application changed. Rediscover it first.",
-        );
-      if (opened.route === "claude-folder-link") {
-        const installation = state.installations.find(
-          (i) => i.id === command.installationId,
-        );
-        const project = state.projects.find((p) => p.id === command.projectId);
-        if (
-          installation?.appId !== "anthropic.claude-desktop" ||
-          project?.realPath !== opened.projectPath ||
-          !opened.nativeUrl ||
-          !isClaudeFolderUrl(opened.nativeUrl, opened.projectPath)
-        )
-          throw new Error(
-            "Invalid native folder link. Refresh projects first.",
-          );
-        if (process.platform === "darwin")
-          await runFile("/usr/bin/open", [
-            "-a",
-            opened.applicationPath,
-            opened.nativeUrl,
-          ]);
-        else await shell.openExternal(opened.nativeUrl);
-      } else if (
-        opened.route === "folder-open" &&
-        process.platform === "darwin"
-      ) {
-        // Target an existing installation directly; never invoke a CLI that may install an absent app.
-        await runFile("/usr/bin/open", [
-          "-a",
-          opened.applicationPath,
-          opened.projectPath,
-        ]);
-      } else {
-        const error = await shell.openPath(opened.applicationPath);
-        if (error) throw new Error(error);
-      }
-    }
-    return opened;
-  }
+  if (command.type === "project-open") return result as ProjectOpenResult;
   if (result?.openUrl) {
     if (!officialLink(result.openUrl))
       throw new Error("Unrecognized external destination.");
     await shell.openExternal(result.openUrl);
-    return;
-  }
-  if (result?.openPath) {
-    const error = await shell.openPath(result.openPath);
-    if (error) throw new Error(error);
     return;
   }
   if (result?.reveal) {

@@ -175,12 +175,10 @@ try {
       checkboxChecked: false,
     });
   }, project);
-  await page
-    .getByRole("button", { name: "+ Add project", exact: true })
-    .click();
+  await page.getByRole("button", { name: "+ Add folder", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "session-project", exact: true }),
-  ).toBeVisible();
+    page.getByRole("region", { name: "New session", exact: true }),
+  ).toContainText("session-project");
   projectId = (
     await page.evaluate(() => window.topsl.command({ type: "state" }))
   ).projects.find((p) => p.realPath === canonicalProject).id;
@@ -256,7 +254,17 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
   await selectProject(page, "session-project");
   const home = page.getByRole("region", { name: "New session", exact: true });
-  await expect(home.getByRole("radio", { name: /^Session/ })).toBeChecked();
+  // The message box comes first, with one Auto coordinator and an automatic
+  // team summarized; choosing models is an explicit control.
+  await expect(home.getByRole("textbox", { name: "Message" })).toBeVisible();
+  await expect(home.getByRole("group", { name: "Coordinators" })).toHaveCount(
+    0,
+  );
+  const setup = home.getByRole("button", {
+    name: "Coordinator: Auto · Team: Automatic",
+  });
+  await setup.click();
+  await expect(setup).toHaveAttribute("aria-expanded", "true");
   const picker = home.getByRole("group", { name: "Coordinators" });
   await expect(picker).toContainText("Auto: one coordinator");
   for (const name of ["Opus", "Astra"])
@@ -320,9 +328,16 @@ try {
     .getByRole("button", { name: /^Work/ })
     .click();
   const work = thread.getByRole("complementary", { name: "Work details" });
+  await expect(work.getByRole("region", { name: "Running now" })).toContainText(
+    firstGoal,
+  );
+  // The goal's own controls live in Work, not on its card.
   await expect(
-    work.getByRole("listitem").filter({ hasText: firstGoal }),
+    work.getByRole("group", { name: "Goal controls" }).first(),
   ).toBeVisible();
+  await expect(first.getByRole("group", { name: "Goal controls" })).toHaveCount(
+    0,
+  );
 
   // Manual override: the owner pins Reviewers in the session's team.
   await thread
@@ -355,6 +370,16 @@ try {
     .getByRole("button", { name: "Accept candidate…", exact: true })
     .click();
   await expect(first.getByText("Accepted", { exact: true })).toBeVisible();
+  // Results holds the goal's review, checks and changes.
+  await thread
+    .getByRole("group", { name: "Thread panes" })
+    .getByRole("button", { name: /^Results/ })
+    .click();
+  const results = thread.getByRole("complementary", {
+    name: "Results details",
+  });
+  await results.getByRole("tab", { name: "Changes" }).click();
+  await expect(results).toContainText("Integrated candidate");
   await expect
     .poll(
       async () =>
@@ -489,10 +514,20 @@ try {
   ]);
   expect(view.session.acceptedCheckpoint).not.toBeNull();
   await openThread(page, "session-project", "How does file.ts hold its value?");
+  // All sessions lists and opens every session of the project.
+  await navigate(page, "All sessions");
+  const index = page.getByRole("region", { name: "All sessions" });
+  await expect(index).toContainText("1 session");
+  await index
+    .getByRole("button", { name: "How does file.ts hold its value?" })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Session", exact: true }),
+  ).toBeVisible();
 } finally {
   await reopened.close();
 }
 console.log(
   (packaged ? `Packaged (${packaged}) ` : "") +
-    "Desktop session journey passed: a session with two pinned Codex stand-in coordinators answered a Discuss message with one shared response and two attributed contributions and no goal; a Work message became the session's goal; a pinned Reviewers role reached the session at a round boundary; the goal was accepted natively; a second goal continued from the accepted result without changing the project folder; night and paper themes and a 560 x 720 window had one heading and no horizontal overflow; stopping the session stopped its goal; and a restart restored the session, its transcript, queue and accepted result. Against a qualified Codex stand-in only.",
+    "Desktop session journey passed: New session showed the message box first with Auto coordinator and Automatic team summarized, and its setup opened on request; a session with two pinned Codex stand-in coordinators answered a Discuss message with one shared response and two attributed contributions and no goal; a Work message became the session's goal, shown running in Work with its goal controls there rather than on its card; a pinned Reviewers role reached the session at a round boundary; the goal was accepted natively and Results showed its integrated candidate; a second goal continued from the accepted result without changing the project folder; night and paper themes and a 560 x 720 window had one heading and no horizontal overflow; stopping the session stopped its goal; a restart restored the session, its transcript, queue and accepted result; and All sessions listed and opened it. Against a qualified Codex stand-in only.",
 );

@@ -389,6 +389,8 @@ export interface RoundInput {
   /** The predecessor results this task consumes, and their digest. */
   dependencyBundleId?: string | null;
   dependencyDigest?: string | null;
+  /** The digest of the session's frozen import, when the goal carries one. */
+  referenceDigest?: string | null;
   digest: string;
 }
 
@@ -704,6 +706,12 @@ export interface Goal {
    * coordinators read instead of the project folder.
    */
   session?: { workItemId: string; continued: boolean } | null;
+  /**
+   * The session's frozen import (docs/UX_Cleanup_Plan.md §3), which every
+   * round of the goal carries as reference material. The text is in the
+   * immutable `session-reference` record.
+   */
+  reference?: { id: string; digest: string } | null;
   /** Set for a loop run's child execution goal (docs/Recursive_Looping.md). */
   loop?: GoalLoopBinding | null;
   /**

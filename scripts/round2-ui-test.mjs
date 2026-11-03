@@ -8,11 +8,10 @@ const directory = await mkdtemp(path.join(os.tmpdir(), "topsl-round2-ui-"));
 const output = path.resolve("test-results/round2-ui");
 await mkdir(output, { recursive: true });
 const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';
-import{Coordination}from'${path.resolve("apps/desktop/renderer/coordination.tsx")}';
+import{AdvancedWorkflows}from'${path.resolve("apps/desktop/renderer/screens/advanced-workflows.tsx")}';
 import'${path.resolve("apps/desktop/renderer/style.css")}';
 import'${path.resolve("apps/desktop/renderer/atlas.css")}';
-import{projectViews,viewLabel}from'${path.resolve("packages/domain/navigation.ts")}';
-function Fixture(){const[project,setProject]=useState('project'),[view,setView]=useState('tasks');return <main style={{maxWidth:1100,margin:'auto',padding:20}}><label>Fixture project<select value={project} onChange={e=>setProject(e.target.value)}><option value="project">项目 Alpha · /tmp/路径</option><option value="other">Project Beta</option></select></label><nav aria-label="Project navigation">{projectViews.map(v=><button key={v} onClick={()=>setView(v)}>{viewLabel(v)}</button>)}</nav><Coordination key={project} projectId={project} view={view} onView={setView}/></main>}createRoot(document.getElementById('root')).render(<Fixture/>);`;
+function Fixture(){const[project,setProject]=useState('project'),[view,setView]=useState('tasks');return <main style={{maxWidth:1100,margin:'auto',padding:20}}><label>Fixture project<select value={project} onChange={e=>setProject(e.target.value)}><option value="project">项目 Alpha · /tmp/路径</option><option value="other">Project Beta</option></select></label><nav aria-label="Project navigation">{['tasks','changes'].map(v=><button key={v} onClick={()=>setView(v)}>{v==='tasks'?'Tasks':'Changes'}</button>)}</nav><AdvancedWorkflows key={project} projectId={project} section={view==='changes'?'changes':'workflows'} onSection={(s)=>setView(s==='changes'?'changes':'tasks')}/></main>}createRoot(document.getElementById('root')).render(<Fixture/>);`;
 await build({
   stdin: { contents: entry, loader: "tsx", resolveDir: process.cwd() },
   bundle: true,

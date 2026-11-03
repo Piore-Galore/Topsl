@@ -1,3 +1,8 @@
+import { sessionReference } from "../workspace/imports";
+import {
+  referencePromptBlock,
+  type SessionReference,
+} from "../domain/history-imports";
 import {
   automaticMembers,
   eligibleModels,
@@ -805,6 +810,10 @@ export class LoopSupervisor {
    * as the latest one of the native session it runs in.
    */
   startFrom: ((run: { conversationId: string }) => string | null) | null = null;
+  /** Checks before a paused run resumes, such as its native session's state. */
+  readonly resumeGuards: Array<
+    (run: { id: string; conversationId: string }) => string | null
+  > = [];
 
   async start(input: { runId: string; digest: string; commandId: string }) {
     this.assertEnabled();
@@ -1523,6 +1532,10 @@ export class LoopSupervisor {
         // revalidated before new work starts.
         if (run.desiredState === "running" && run.state !== "suspended")
           return this.view(run.id);
+        for (const guard of this.resumeGuards) {
+          const refusal = guard(run);
+          if (refusal) throw new Error(refusal);
+        }
         let resumed!: LoopRun;
         this.store.transaction(() => {
           resumed = this.saveRun(run, {
@@ -3935,6 +3948,7 @@ export class LoopSupervisor {
       functions,
       baselineCandidateId: baseline,
       message: false,
+      reference: this.sessionReferenceOf(run),
     });
     if (kind === "code" && policy.checks.length) {
       const problems = this.loop.protocolProblems({
@@ -5512,13 +5526,16 @@ export class LoopSupervisor {
             summary: team?.reason ?? "",
             operations: team?.operations ?? [],
           })
-        : loopPrompt({
-            ...stored.context,
-            inputDigest: fresh.inputDigest,
-            memberId,
-            instructions: stored.instructions,
-            idempotencyKey: `${round.id}:${memberId}`,
-          } as LoopPromptContext);
+        : withReference(
+            loopPrompt({
+              ...stored.context,
+              inputDigest: fresh.inputDigest,
+              memberId,
+              instructions: stored.instructions,
+              idempotencyKey: `${round.id}:${memberId}`,
+            } as LoopPromptContext),
+            sessionReference(this.store, stored.context.reference?.id),
+          );
       const turn: MemberTurn = {
         launchId: member.launchId!,
         projectId: run.projectId,
@@ -6642,7 +6659,18 @@ export class LoopSupervisor {
           ? this.changedFileTexts(head.candidateId, target.candidateId)
           : [],
       handoff: this.handoff(run),
+      ...((reference) => (reference ? { reference } : {}))(
+        this.sessionReferenceOf(run),
+      ),
     };
+  }
+
+  /** The frozen import of the native session this run belongs to, if any. */
+  private sessionReferenceOf(
+    run: LoopRun,
+  ): { id: string; digest: string } | null {
+    const reference = this.orchestrator.session(run.conversationId)?.reference;
+    return reference ? { id: reference.id, digest: reference.digest } : null;
   }
 
   /** Up to ten changed files of a candidate, each bounded, for evaluation. */
@@ -6740,6 +6768,7 @@ export class LoopSupervisor {
           conversationId: r.conversationId,
           title: r.title,
           state: r.state,
+          desiredState: r.desiredState,
           started: r.started,
           acceptedCandidateId:
             head && head.kind === "promoted" ? head.candidateId : null,
@@ -7360,3 +7389,8 @@ type Assessable = Pick<
   | "blocker"
   | "satisfiedAtCheckpointId"
 >;
+
+/** A loop coordinator's prompt with its session's frozen import, if any. */
+function withReference(prompt: string, reference: SessionReference | null) {
+  return reference ? `${prompt}\n\n${referencePromptBlock(reference)}` : prompt;
+}

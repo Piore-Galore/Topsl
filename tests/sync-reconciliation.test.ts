@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import { rm } from "node:fs/promises";
 import { hash, now } from "../packages/domain/invariants";
 import { SyncRepository } from "../packages/sync/reconciler";
-import { ProjectSync } from "../packages/workspace/projects";
 import { RevisionRepository } from "../packages/context/revisions";
 import type {
   Evidence,
@@ -30,52 +29,6 @@ afterEach(async () => {
   }
 });
 describe("dimension-specific synchronization", () => {
-  test("native refresh keeps incompatible Topsl name intent instead of overwriting it", async () => {
-    const f = await setup(),
-      sync = new SyncRepository(f.store);
-    f.store.put("project", {
-      id: "p",
-      name: "Base",
-      realPath: f.directory,
-      path: f.directory,
-      trusted: true,
-      createdAt: now(),
-    });
-    const group = {
-      id: "native",
-      name: "Base",
-      roots: [f.directory],
-      position: 0,
-      revision: "r1",
-    };
-    sync.projectNativeCatalog({
-      provider: "codex",
-      profileId: "profile",
-      groups: [group],
-      evidence,
-    });
-    const initial = sync.fields("p")[0];
-    sync.reconcileField({
-      ...initial,
-      local: "Local",
-      remote: "Base",
-      expectedRevision: initial.revision,
-      evidence,
-    });
-    f.store.put("project", {
-      ...f.store.get<any>("project", "p"),
-      name: "Local",
-    });
-    const catalog = new ProjectSync(f.store, () => {});
-    await catalog.observeNative(
-      [{ ...group, name: "Remote", revision: "r2" }],
-      () => true,
-      "profile",
-    );
-    expect(f.store.get<any>("project", "p").name).toBe("Local");
-    expect(sync.fields("p")[0].state).toBe("conflict");
-    await catalog.close();
-  });
   test("state and evidence stay separate; unsuccessful observations preserve freshness history", async () => {
     const { store } = await setup(),
       sync = new SyncRepository(store);
@@ -115,141 +68,6 @@ describe("dimension-specific synchronization", () => {
       ["sidebar", "unverified"],
     ]);
     expect(sync.observations("other")).toEqual([]);
-  });
-  test("three-way conflict requires explicit directional resolution and stale decisions fail", async () => {
-    const { store } = await setup(),
-      sync = new SyncRepository(store);
-    let field = sync.reconcileField({
-      projectId: "p",
-      targetId: "native",
-      field: "name",
-      local: "Base",
-      remote: "Base",
-      expectedRevision: 0,
-      evidence,
-    });
-    field = sync.reconcileField({
-      projectId: "p",
-      targetId: "native",
-      field: "name",
-      local: "Local",
-      remote: "Remote",
-      expectedRevision: field.revision,
-      evidence,
-    });
-    expect(field.state).toBe("conflict");
-    const resolved = sync.resolveField(field.id, field.revision, "keep-topsl");
-    expect(resolved.state).toBe("push-required");
-    expect(resolved.remote).toBe("Remote");
-    expect(() =>
-      sync.resolveField(field.id, field.revision, "follow-native"),
-    ).toThrow("stale");
-    const verified = sync.reconcileField({
-      projectId: "p",
-      targetId: "native",
-      field: "name",
-      local: "Local",
-      remote: "Local",
-      expectedRevision: resolved.revision,
-      evidence,
-    });
-    expect(verified.state).toBe("current");
-    expect(verified.base).toBe("Local");
-  });
-  test("provider facts cannot be overwritten and follow-native policy remains explicit", async () => {
-    const { store } = await setup(),
-      sync = new SyncRepository(store);
-    const provider = sync.reconcileField({
-      projectId: "p",
-      targetId: "account",
-      field: "model",
-      authority: "provider",
-      local: "wanted",
-      remote: "actual",
-      expectedRevision: 0,
-      evidence,
-    });
-    expect(provider.state).toBe("pull-required");
-    expect(() =>
-      sync.resolveField(provider.id, provider.revision, "keep-topsl"),
-    ).toThrow("Provider-owned");
-    expect(
-      sync.resolveField(provider.id, provider.revision, "follow-native").local,
-    ).toBe("actual");
-  });
-  test("multi-root native groups retain separate trust and native removal never deletes history", async () => {
-    const f = await setup(),
-      sync = new SyncRepository(f.store);
-    f.store.put("project", {
-      id: "p",
-      realPath: f.directory,
-      name: "Topsl",
-      path: f.directory,
-      trusted: true,
-      createdAt: now(),
-    });
-    const workspace: Workspace = {
-      id: "w",
-      projectId: "p",
-      root: f.directory,
-      canonicalRoot: f.directory,
-      hostId: "local",
-      filesystemIdentity: "fixture",
-      checkoutType: "directory",
-      branch: null,
-      trustRevision: "approved",
-      availability: "available",
-      provenance: "approved",
-      revision: 1,
-      createdAt: now(),
-      updatedAt: now(),
-    };
-    f.store.put("workspace", workspace);
-    f.store.put("conversation", { id: "c", projectId: "p" });
-    const group = {
-      id: "native",
-      name: "Native group",
-      roots: [f.directory, "/unapproved-root"],
-      position: 0,
-      revision: "r1",
-    };
-    sync.projectNativeCatalog({
-      provider: "codex",
-      profileId: "profile",
-      groups: [group],
-      evidence,
-    });
-    let link = sync.links("p")[0];
-    expect(link.roots.every((root) => !root.trustRevision)).toBe(true);
-    link = sync.mapNativeRoot(link.id, link.revision, f.directory, "w");
-    expect(link.roots[0].trustRevision).toBe("approved");
-    expect(link.roots[1].trustRevision).toBeNull();
-    expect(() =>
-      sync.mapNativeRoot(link.id, link.revision, "/unapproved-root", "w"),
-    ).toThrow("canonical");
-    expect(
-      sync
-        .observations("p")
-        .filter((record) => !record.targetId.startsWith("field:"))
-        .map((record) => record.state),
-    ).toEqual(["current", "unverified"]);
-    sync.projectNativeCatalog({
-      provider: "codex",
-      profileId: "profile",
-      groups: [],
-      evidence,
-    });
-    expect(sync.links("p")[0].state).toBe("removed");
-    expect(f.store.get("conversation", "c")).toBeDefined();
-    const removed = sync.links("p")[0];
-    sync.setLinkState(removed.id, removed.revision, "unlinked");
-    sync.projectNativeCatalog({
-      provider: "codex",
-      profileId: "profile",
-      groups: [group],
-      evidence,
-    });
-    expect(sync.links("p")[0].state).toBe("unlinked");
   });
   test("configured disk evidence cannot be promoted into effective settings", async () => {
     const { store } = await setup(),

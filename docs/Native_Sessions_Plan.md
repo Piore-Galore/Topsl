@@ -92,3 +92,17 @@ After [PR #38](https://github.com/Piore-Galore/Topsl/pull/38) merged, the gaps i
 | No live evidence | `live-loop.mjs --session` runs a session with real Codex and Claude Code coordinators: discussion, a goal on the automatic team, acceptance, and a loop in the session from that result | [live-loop.mjs](../scripts/live-loop.mjs) |
 
 Results: [Implementation status](Implementation_Status.md#native-session-follow-up--29-october-2026).
+
+## Follow-up: session-first cleanup (30 October 2026)
+
+The [session-first cleanup](UX_Cleanup_Plan.md) changes how sessions are reached and organized, not the session protocol:
+
+| Area | Change | Source |
+| --- | --- | --- |
+| New session | The message box comes first; one Auto coordinator and an Automatic team are summarized beside it and open the coordinator picker and team setup on request. Run mode is gone: loops are created in a session | [project-home.tsx](../apps/desktop/renderer/coordinator/project-home.tsx) |
+| Panes | **Work** (running work with its goal controls, plan, queue, history, Create loop), **Team** (session team, one-goal overrides) and **Results** (review, checks, changes) replace Team, Work, Plan, Review, Checks and Changes. Goal cards keep a one-line team summary and the decisions waiting on the owner | [session-thread.tsx](../apps/desktop/renderer/coordinator/session-thread.tsx), [work-pane.tsx](../apps/desktop/renderer/coordinator/work-pane.tsx) |
+| Imports | `session-create` accepts an import's `referenceId`; the session freezes an excerpt that its intakes, goals and loops carry as labelled reference | `create` in [session-engine.ts](../packages/orchestration/session-engine.ts) |
+| Loops | A loop starts only while its session runs and when it is first in the queue with nothing running; session Pause, Resume and Stop reach loops; removing a draft or stopping the session stops drafts; operations are serialized per session and reconciled after a restart. Resume no longer interrupts open intakes | `loopAdmission`, `serial`, `control`, `reconcileLoops` in [session-engine.ts](../packages/orchestration/session-engine.ts) |
+| Navigation | A project opens at its last viewed session; All sessions pages every session and standalone loop | [navigation.ts](../packages/domain/navigation.ts), [service.ts](../apps/service/service.ts) |
+
+Evidence: [validation](UX_Cleanup_Plan.md#validation-30-october-2026).

@@ -8,6 +8,7 @@ import {
   type MemberRoundState,
   type RoleGroupSettings,
 } from "./role-groups";
+import type { SessionReferenceSummary } from "./history-imports";
 
 /**
  * Native Topsl sessions (docs/Native_Sessions_Plan.md). A session is the
@@ -184,6 +185,11 @@ export interface TopslSession {
   controlGeneration: number;
   /** What the session waits on the owner for, if anything. */
   attention: { kind: SessionAttentionKind; detail: string } | null;
+  /**
+   * The import attached when the session started, frozen then
+   * (docs/UX_Cleanup_Plan.md §3). Its text is a separate immutable record.
+   */
+  reference?: SessionReferenceSummary | null;
   origin: "native" | "legacy";
   createdAt: string;
   updatedAt: string;
@@ -383,6 +389,8 @@ export interface SessionContext {
   /** The current goal's status, when one is running. */
   status: string | null;
   team: string[];
+  /** The session's frozen import, by identity; prompts read its text. */
+  reference?: { id: string; digest: string } | null;
 }
 
 export const CONTEXT_MESSAGES = 12;
@@ -410,6 +418,7 @@ export function buildSessionContext(input: {
   team: string[];
   /** Messages before those given, when only the latest were read. */
   omitted?: SessionContext["omitted"];
+  reference?: SessionContext["reference"];
 }): SessionContext {
   const sorted = [...input.messages].sort((a, b) => a.sequence - b.sequence);
   const recent = sorted.slice(-CONTEXT_MESSAGES);
@@ -434,6 +443,8 @@ export function buildSessionContext(input: {
     checkpoint: input.checkpoint,
     status: input.status ? clip(input.status, 1500) : null,
     team: input.team.slice(0, 32),
+    // Absent without an import, so earlier intakes' digests are unchanged.
+    ...(input.reference ? { reference: input.reference } : {}),
   };
 }
 

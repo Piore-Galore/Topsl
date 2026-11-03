@@ -425,7 +425,7 @@ describe("runtime allowance capture", () => {
     await expect(
       f.runtime.refreshAllowance({
         ...f.installation,
-        appId: "anthropic.claude-desktop",
+        appId: "anthropic.claude-desktop" as any,
       }),
     ).rejects.toThrow("requires a Codex CLI or Claude Code CLI");
   });

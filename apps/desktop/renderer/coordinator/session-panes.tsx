@@ -192,7 +192,7 @@ export function CoordinatorPicker({
         {!options.length && (
           <li className="muted">
             No coordinator model is observed yet. Qualify Claude Code or Codex
-            under Applications.
+            under Providers.
           </li>
         )}
       </ul>
@@ -499,89 +499,6 @@ export function SessionTeamPane({
           </button>
         </div>
       </details>
-    </div>
-  );
-}
-
-/** The session's work: the queue, the running item and the accepted result. */
-export function WorkPane({
-  session,
-  goals,
-  run,
-}: {
-  session: TopslSession;
-  goals: any[];
-  run: Run;
-}) {
-  const queue = (action: "remove" | "up" | "down", workItemId: string) =>
-    void run(`queue-${workItemId}`, {
-      type: "session-queue",
-      sessionId: session.id,
-      workItemId,
-      action,
-      commandId: newCommandId(),
-    });
-  const goalOf = (id: string | null) =>
-    goals.find((g) => g.goal.id === id)?.goal;
-  return (
-    <div className="pane-section">
-      <p className="muted">
-        One goal or loop runs at a time. New goals continue from the latest
-        accepted result
-        {session.acceptedCheckpoint
-          ? ""
-          : " (none yet: they start from the project folder)"}
-        , even before it is applied to the project folder.
-      </p>
-      <ol className="work-queue" aria-label="Session work">
-        {session.queue.map((w) => {
-          const goal = goalOf(w.goalId);
-          const open = ["queued", "waiting-configuration"].includes(w.state);
-          return (
-            <li key={w.id} className={`work-item ${w.state}`}>
-              <strong>
-                {w.kind === "loop" ? "Loop: " : ""}
-                {w.objective}
-              </strong>
-              <span className="badge">{label(goal?.state ?? w.state)}</span>
-              {session.acceptedCheckpoint?.workItemId === w.id && (
-                <span className="badge good">Latest accepted result</span>
-              )}
-              {w.detail && <div className="muted tiny">{w.detail}</div>}
-              {open && (
-                <div className="actions">
-                  <button
-                    type="button"
-                    aria-label={`Move up: ${w.objective}`}
-                    onClick={() => queue("up", w.id)}
-                  >
-                    Up
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move down: ${w.objective}`}
-                    onClick={() => queue("down", w.id)}
-                  >
-                    Down
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove from queue: ${w.objective}`}
-                    onClick={() => queue("remove", w.id)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              )}
-            </li>
-          );
-        })}
-        {!session.queue.length && (
-          <li className="muted">
-            No work yet. Discussion alone starts nothing.
-          </li>
-        )}
-      </ol>
     </div>
   );
 }

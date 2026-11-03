@@ -32,24 +32,54 @@ async function sidebar(page) {
   }
 }
 
+/** The selected project's menu (docs/UX_Cleanup_Plan.md §1). */
+const menuItems = [
+  "All sessions",
+  "Project settings",
+  "Provider tools",
+  "Advanced workflows",
+];
+/**
+ * Destinations before the cleanup, as the journeys still name some of them:
+ * each opens its replacement, and the Advanced workflows section it became.
+ */
+const replaced = {
+  Applications: { item: "Providers" },
+  Overview: { item: "Advanced workflows", section: "Activity" },
+  Tasks: { item: "Advanced workflows", section: "Builder–reviewer" },
+  Changes: { item: "Advanced workflows", section: "Candidate review" },
+  Context: { item: "Advanced workflows", section: "Context" },
+  Workspaces: { item: "Advanced workflows", section: "Workspaces" },
+  History: { item: "Provider tools" },
+};
+
 /**
  * Follow the same sidebar or native navigation dialog as the owner. A
- * project tool (Overview, Provider tools, Tasks, …) is under the selected
- * project's Project tools, which this expands when it is collapsed.
+ * project destination (All sessions, Project settings, Provider tools,
+ * Advanced workflows) is in the selected project's menu.
  */
 export async function navigate(page, name) {
+  const target = replaced[name] ?? { item: name };
   const nav = await sidebar(page);
-  const tools = nav.getByRole("button", { name: "Project tools", exact: true });
-  if (
-    (await tools.count()) &&
-    (await tools.getAttribute("aria-expanded")) === "false" &&
-    !(await nav.getByRole("button", { name, exact: true }).count())
-  )
-    await tools.click();
-  await nav.getByRole("button", { name, exact: true }).click();
+  if (menuItems.includes(target.item)) {
+    await nav
+      .locator(".project-node.selected .project-menu-button")
+      .first()
+      .click();
+    await nav.getByRole("menuitem", { name: target.item, exact: true }).click();
+  } else
+    await nav.getByRole("button", { name: target.item, exact: true }).click();
+  if (target.section)
+    await page
+      .getByRole("tablist", { name: "Section" })
+      .getByRole("tab", { name: target.section })
+      .click();
 }
 
-/** Selects a project in the sidebar, which opens its New session page. */
+/**
+ * Selects a project in the sidebar, which opens it where the owner left it:
+ * its last viewed session, else its newest one, else New session.
+ */
 export async function selectProject(page, name) {
   const nav = await sidebar(page);
   await nav

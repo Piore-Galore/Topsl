@@ -1,20 +1,19 @@
 import type { ScopedState } from "../state/scoped";
 const troubled = ["stale", "failed", "disconnected"];
 /**
- * One line on how fresh the project's stored data is. A page shows one;
- * sections inside it pass `quiet` and appear only when their own read fails.
+ * How fresh the project's stored data is, shown only when it matters: a
+ * stale, failed or disconnected read, with its retry. Current data shows
+ * nothing (docs/UX_Cleanup_Plan.md §1).
  */
 export function Freshness({
   state,
   retry,
-  quiet = false,
 }: {
   state: ScopedState;
   retry: () => unknown;
-  quiet?: boolean;
 }) {
   const trouble = troubled.includes(state.status) || !!state.error;
-  if (quiet && !trouble) return null;
+  if (!trouble) return null;
   return (
     <div
       className={`scope-freshness ${state.status}`}

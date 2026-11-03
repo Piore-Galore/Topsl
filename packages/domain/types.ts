@@ -5,15 +5,16 @@ import type { AutoAcceptLevel } from "./auto-accept";
 import type { ClaudeRouteDecision } from "./claude-route";
 export type Provider = "codex" | "claude";
 export type Theme = "paper" | "night" | "system";
-export type AppId =
-  | "openai.codex-cli"
-  | "openai.desktop"
-  | "anthropic.claude-code-cli"
-  | "anthropic.claude-desktop";
+/**
+ * The provider CLIs Topsl manages. Desktop applications are no longer
+ * catalogued (docs/UX_Cleanup_Plan.md §2); records from before keep their
+ * historical IDs as plain text.
+ */
+export type AppId = "openai.codex-cli" | "anthropic.claude-code-cli";
 export interface ApplicationDefinition {
   id: AppId;
   name: string;
-  kind: "cli" | "desktop";
+  kind: "cli";
   provider: Provider | null;
   description: string;
   website: string;
@@ -31,7 +32,11 @@ export interface Installation {
   revisionId: string;
   identity: string;
   managementUnitId: string;
-  owner: "homebrew" | "npm" | "vendor" | "desktop" | "system" | "unknown";
+  /**
+   * Who updates this executable. `external`: it lives inside an application
+   * bundle, which updates it; Topsl never updates that application.
+   */
+  owner: "homebrew" | "npm" | "external" | "system" | "unknown";
   packageId: string | null;
   channel: string;
   nativeAutoUpdates: "enabled" | "disabled" | "unknown";
@@ -70,7 +75,6 @@ export interface LifecyclePlan {
   executorIdentity: string | null;
   release: Release | null;
   nativeUrl: string | null;
-  nativeApplicationPath: string | null;
   installedVersion: string | null;
   effects: string[];
   digest: string;
@@ -109,56 +113,20 @@ export interface Project {
   trusted: boolean;
   createdAt: string;
   availability?: "available" | "missing" | "changed";
-  sources?: ProjectSourceReference[];
-  nameSource?: { sourceId: string; nativeProjectId: string | null };
 }
-export interface ProjectSourceReference {
-  sourceId: string;
-  path: string;
-  name: string | null;
-  nativeProjectId: string | null;
-  observedAt: string;
-}
-export interface ProjectSource {
-  id: string;
-  name: string;
-  appIds: AppId[];
-  path: string;
-  status: "disabled" | "ready" | "missing" | "error";
-  checkedAt: string | null;
-  lastSuccessAt: string | null;
-  folders: number;
-  detail: string;
-}
-export interface ProjectSyncState {
-  enabled: boolean;
-  refreshing: boolean;
-  sources: ProjectSource[];
-}
-export interface NativeProject {
-  id: string;
-  name: string;
-  roots: string[];
-  position: number;
-  revision: string;
-}
-export interface CodexProjectSyncState {
-  enabled: boolean;
-  refreshing: boolean;
-  installationId: string | null;
-  home: string;
-  status: "disabled" | "ready" | "error";
-  detail: string;
-  lastSuccessAt: string | null;
-  projects: NativeProject[];
-  orderRevision: string;
+/**
+ * The owner's order of the local project catalog (docs/UX_Cleanup_Plan.md
+ * §2). Projects missing from it follow, newest first.
+ */
+export interface ProjectOrder {
+  id: "project-order";
+  order: string[];
+  revision: number;
 }
 export interface ProjectOpenResult {
   terminalId?: string;
   projectPath: string;
-  applicationPath?: string;
-  nativeUrl?: string;
-  route: "terminal" | "folder-open" | "native-selection" | "claude-folder-link";
+  route: "terminal";
   detail: string;
 }
 export interface Conversation {
@@ -173,7 +141,8 @@ export interface Message {
   id: string;
   conversationId: string;
   projectId: string;
-  role: "user" | "assistant" | "tool" | "system";
+  /** `reference`: imported text with no recorded speaker (docs/UX_Cleanup_Plan.md §3). */
+  role: "user" | "assistant" | "tool" | "system" | "reference";
   provider: Provider | null;
   text: string;
   runId: string | null;
@@ -330,8 +299,8 @@ export interface AppState {
   checks: UpdateCheck[];
   jobs: LifecycleJob[];
   projects: Project[];
-  projectSync: ProjectSyncState;
-  codexProjectSync: CodexProjectSyncState;
+  /** The revision of the projects' order, for stale-state checks on moves. */
+  projectOrderRevision: number;
   conversations: Conversation[];
   messages: Message[];
   runs: Run[];
