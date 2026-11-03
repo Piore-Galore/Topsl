@@ -13,7 +13,9 @@ npm ci
 npm start
 ```
 
-`npm ci` rebuilds SQLite and the terminal module for Electron. `npm start` compiles the app and opens the desktop window. No provider app is installed, updated, trusted, or authenticated by these commands. The first launch discovers the Codex and Claude Code CLIs and checks eligible release metadata.
+`npm ci` rebuilds SQLite and the terminal module for Electron. `npm start` compiles the app and opens the desktop window. `npx electron .` opens the window from an existing `dist/` without compiling, so it shows your last build.
+
+While editing, run `npm run dev` instead. It runs the same build as `npm start`, opens Topsl, and keeps watching the source: a change to the main process, preload, service or CLI rebuilds that bundle and restarts Topsl, and a renderer change rebuilds the renderer and reloads the window. It uses your normal profile, so the restart closes Topsl's sessions as quitting would. It does not type-check, so run `npm run typecheck` before committing. Closing the window or pressing Ctrl+C stops it. [scripts/dev.mjs](scripts/dev.mjs) has the details. No provider app is installed, updated, trusted, or authenticated by these commands. The first launch discovers the Codex and Claude Code CLIs and checks eligible release metadata.
 
 History and its search index are encrypted with SQLCipher. The database key uses the OS credential store where it is secure; otherwise Topsl asks for a passphrase of at least 12 characters. Linux's insecure `basic_text` backend is rejected. Keep both the database and `vault.json` when backing up a **closed** Topsl profile; losing the vault key loses access to history. Automatic backup/restore management is a later release gate.
 
