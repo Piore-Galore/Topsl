@@ -338,6 +338,56 @@ describe("Claude Code's live route", () => {
     expect(profile(withEffort)).toEqual(without.filter((_, i, all) => all[i - 1] !== "--session-id"));
   });
 
+  test("a Claude Code run that fails before it reports a session is a known failure, not an unknown outcome", async () => {
+    // As a budget refusal, a bad flag or a launch error do: exit 1, no output.
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (_executable, _args, cwd) =>
+        spawn(process.execPath, ["-e", "process.stderr.write('refused'); process.exit(1)"], {
+          cwd,
+          env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+        }),
+    });
+    const connection = adapter.connect("/opt/claude", process.cwd());
+    const prepared = turn("review", "Reply with nothing else: OK-1");
+    const session = await adapter.startSession(connection, prepared, null);
+    const done = completion(connection);
+    let exited: string | null = null;
+    connection.onExit = (detail: string) => (exited = detail);
+    await adapter.startTurn(connection, prepared, session.nativeSessionId);
+    expect(await done).toMatchObject({
+      type: "completed",
+      failed: true,
+      detail: "Claude Code exited with code 1 before it started a session, so no model was called.",
+    });
+    await connection.close();
+    expect(exited).toBeNull();
+  });
+
+  test("a Claude Code run that exits with an error after reporting its session stays an unknown outcome", async () => {
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (_executable, args, cwd) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `process.stdout.write(JSON.stringify({type:"system",subtype:"init",session_id:${JSON.stringify(args[args.indexOf("--session-id") + 1])},uuid:"u1",model:"claude-fixture-5",tools:[],apiKeySource:"none",mcp_servers:[]})+"\\n"); process.exit(1)`,
+          ],
+          { cwd, env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }) },
+        ),
+    });
+    const connection = adapter.connect("/opt/claude", process.cwd());
+    const prepared = turn("review", "Reply with nothing else: OK-1");
+    const session = await adapter.startSession(connection, prepared, null);
+    const exited = new Promise<string>((resolve) => (connection.onExit = resolve));
+    await adapter.startTurn(connection, prepared, session.nativeSessionId);
+    // The init record parsed (a parse error would say so instead), so the
+    // session was reported and the outcome stays unknown.
+    expect(await exited).toMatch(/without a validated final result; dispatch outcome is unknown/);
+    await connection.close();
+  });
+
   test("effort levels come from the --effort block of Claude Code's --help, and only from there", () => {
     const help = [
       "Options:",

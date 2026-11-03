@@ -1206,8 +1206,19 @@ export class SessionSupervisor {
     const members = intake.members.map((m) => {
       if (m.state !== "running" || !m.activeAttemptId) return m;
       const obs = this.driver.observe(m.activeAttemptId);
+      // An unknown outcome holds the member until the owner reconciles its
+      // run; the session says so instead of still "answering".
+      if (obs.state === "uncertain") {
+        const detail = `${obs.error ?? "The turn's outcome is unknown."} Inspect and reconcile it to let this coordinator answer again.`;
+        if (m.detail === detail && m.uncertainRunId === (obs.runId ?? null))
+          return m;
+        changed = true;
+        return { ...m, detail, uncertainRunId: obs.runId ?? null };
+      }
       if (obs.state === "running" || !obs.quiescent) return m;
       changed = true;
+      const attemptId = m.activeAttemptId;
+      m = { ...m, uncertainRunId: null };
       if (obs.state !== "completed") {
         return m.retries < MEMBER_RETRIES
           ? {
@@ -1225,7 +1236,7 @@ export class SessionSupervisor {
               detail: obs.error ?? `The attempt ended ${obs.state}.`,
             };
       }
-      const contribution = this.contribution(intake, m, m.activeAttemptId, obs);
+      const contribution = this.contribution(intake, m, attemptId, obs);
       const valid = contribution.valid;
       return {
         ...m,

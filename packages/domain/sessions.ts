@@ -235,6 +235,9 @@ export interface IntakeMember {
   launchId: string | null;
   retries: number;
   detail: string;
+  /** The run whose outcome is unknown, while the owner must reconcile it
+   * before this member can retry; absent in records written before. */
+  uncertainRunId?: string | null;
   contributions: IntakeContribution[];
 }
 

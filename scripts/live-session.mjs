@@ -875,14 +875,26 @@ async function claudeTerminal(projectId, step) {
   await app.evaluate((_electron, file) => {
     globalThis.__liveSession.policy.transcript = file;
   }, transcript);
-  await navigate(page, "History");
-  await page
-    .getByRole("button", { name: "Import Claude JSONL", exact: true })
-    .click();
+  // Settings → Imports since the session-first cleanup (30 October 2026):
+  // preview the transcript, then import exactly what was previewed.
+  await navigate(page, "Settings");
+  const imports = page.getByRole("region", { name: "Imports", exact: true });
+  await imports
+    .getByRole("combobox", { name: "Project", exact: true })
+    .selectOption(projectId);
+  await imports
+    .getByRole("combobox", { name: "Provider", exact: true })
+    .selectOption("claude");
+  await imports.getByRole("button", { name: "Choose file…" }).click();
+  const preview = imports.getByRole("article", { name: "Import preview" });
+  await appear("the import preview", preview);
+  await expect(preview).toContainText("Claude Code session (JSON Lines)");
+  await preview.getByRole("button", { name: "Import", exact: true }).click();
   await appear(
     "the imported transcript",
-    page.getByRole("button", { name: /Imported claude/i }),
+    imports.getByText(`Imported ${path.basename(transcript)}.`),
   );
+  await navigate(page, "Provider tools");
   const found = await command({
     type: "history-page",
     projectId,
@@ -1065,7 +1077,7 @@ async function codexChat(projectId, step, handoff = null) {
       "Claude Code's imported conversation",
       page
         .locator(".conversation-heading")
-        .filter({ hasText: "Imported claude" }),
+        .filter({ hasText: "Imported Claude Code" }),
     );
   } else {
     await page.getByRole("button", { name: "+ New chat", exact: true }).click();
@@ -2738,7 +2750,7 @@ try {
             ? policy.project
             : title === "Choose the native executable"
               ? policy.executable
-              : title === "Import an attributed claude transcript"
+              : title === "Import an exported Claude Code history"
                 ? policy.transcript
                 : null;
         dialogs.push({
@@ -2848,11 +2860,13 @@ try {
   const addProject = async () => {
     await navigate(page, "Projects");
     await page
-      .getByRole("button", { name: "+ Add project", exact: true })
+      .getByRole("button", { name: "+ Add folder", exact: true })
       .click();
     await appear(
       "the disposable project",
-      page.getByRole("heading", { name: "live-project", exact: true }),
+      page
+        .getByRole("region", { name: "New session", exact: true })
+        .filter({ hasText: "live-project" }),
     );
     const id = (await command({ type: "state" })).projects.find(
       (p) => p.realPath === canonicalProject,

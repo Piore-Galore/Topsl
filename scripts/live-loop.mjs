@@ -43,8 +43,10 @@ import path from "node:path";
 // answered without starting work; a Work message becomes the session's goal,
 // which runs on the automatic team and is accepted; and a Goal loop in the
 // session starts from that accepted result, completes and is published.
+// --codex-effort and --claude-effort pin the session coordinators' effort
+// levels, which Topsl checks against each runtime's catalog.
 const usage =
-  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--mixed-only | --session] [--keep-profile] [--output directory]";
+  "Usage: node scripts/live-loop.mjs --codex /absolute/path/to/codex [--claude /absolute/path/to/claude [--claude-model claude-model-id]] [--max-turns 30] [--no-pin-run] [--mixed-only | --session [--codex-effort level] [--claude-effort level]] [--keep-profile] [--output directory]";
 const options = {
   codex: null,
   claude: null,
@@ -69,6 +71,8 @@ for (let i = 2; i < process.argv.length; i++) {
   // Skips Run A, the Codex-only loop, so the turns go to Run C.
   else if (a === "--mixed-only") options.mixedOnly = true;
   else if (a === "--session") options.session = true;
+  else if (a === "--codex-effort") options.codexEffort = value();
+  else if (a === "--claude-effort") options.claudeEffort = value();
   else if (a === "--output") options.output = value();
   else throw new Error(usage);
 }
@@ -79,6 +83,8 @@ if (
   (options.claudeModel && !options.claude) ||
   (options.mixedOnly && !options.claudeModel) ||
   (options.mixedOnly && options.session) ||
+  ((options.codexEffort || options.claudeEffort) && !options.session) ||
+  (options.claudeEffort && !options.claudeModel) ||
   !(options.maxTurns > 4)
 )
   throw new Error(usage);
@@ -193,9 +199,11 @@ const shot = (name) =>
     .screenshot({ path: path.join(output, `${name}.png`), fullPage: true })
     .catch(() => {});
 try {
-  await expect(page.getByRole("contentinfo")).toContainText("Ready", {
-    timeout: 60000,
-  });
+  // The window is ready once Projects shows; the status footer with "Ready"
+  // was removed by the session-first cleanup (30 October 2026).
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible({ timeout: 60000 });
   await app.evaluate(
     ({ dialog }, policy) => {
       globalThis.__live = { policy, dialogs: [] };
@@ -339,6 +347,16 @@ try {
     passed: qualification?.passed ?? null,
     summary: JSON.stringify(qualification ?? null).slice(0, 4000),
   };
+  // Logged at once, so a later failure or interruption cannot lose it.
+  const qualified = (label, q) =>
+    console.log(
+      `[qualification] ${label}: ${q?.acceptanceId ? "recorded" : "nothing recorded"}; ${(
+        q?.report?.observations ?? []
+      )
+        .map((o) => `${o.capability}=${o.passed ? "pass" : "fail"}`)
+        .join(" ")}${q?.report?.error ? `; error: ${q.report.error}` : ""}`,
+    );
+  qualified(`codex ${model}`, qualification);
   // Claude Code: located and trusted. Without --claude-model its structured
   // route stays off; with it, the route is turned on, connected and qualified.
   let claude = null;
@@ -357,6 +375,7 @@ try {
       id: claude.id,
       model: options.claudeModel,
     });
+    qualified(`claude ${options.claudeModel}`, claudeQualification);
     report.claudeQualification = {
       model: options.claudeModel,
       routeDecidedAt: route.decidedAt,
@@ -713,6 +732,7 @@ try {
         provider: "codex",
         installationId: codex.id,
         model,
+        ...(options.codexEffort ? { effort: options.codexEffort } : {}),
       }),
       ...(claude && options.claudeModel
         ? [
@@ -720,6 +740,7 @@ try {
               provider: "claude",
               installationId: claude.id,
               model: options.claudeModel,
+              ...(options.claudeEffort ? { effort: options.claudeEffort } : {}),
             }),
           ]
         : []),
@@ -727,7 +748,8 @@ try {
     const record = {
       label: "s-session",
       coordinators: coordinators.map(
-        (c) => `${c.memberId}=${c.pin.provider}/${c.pin.model}`,
+        (c) =>
+          `${c.memberId}=${c.pin.provider}/${c.pin.model}${c.pin.effort ? `@${c.pin.effort}` : ""}`,
       ),
       intakes: [],
       goal: null,

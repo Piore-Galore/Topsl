@@ -23,8 +23,8 @@ import { execFileSync } from "node:child_process";
 // model or account is contacted.
 // The Claude stand-in's qualification needs a POSIX shell, as in
 // tests/campaign-claude-codex.test.ts, so the journey does not run on Windows.
-// Not part of `npm run test:desktop`'s default list; run it with
-// `npm run test:desktop -- scripts/desktop-providers-test.mjs`.
+// Part of `npm run test:desktop`'s default list since 4 November 2026; run it
+// alone with `npm run test:desktop -- scripts/desktop-providers-test.mjs`.
 if (process.platform === "win32") {
   console.log("Skipped on Windows: the Claude stand-in needs a POSIX shell.");
   process.exit(0);

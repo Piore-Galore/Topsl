@@ -13,7 +13,7 @@ import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
 import { answering, planTasks, threadTimeline } from "../state/thread-view";
 import { Composer, PaneToggles, SidePane } from "./composer";
 import { GoalCard, TeamPane, openFindings, type GoalPane } from "./goal-card";
-import { Contributions, SessionTeamPane } from "./session-panes";
+import { Contributions, SessionTeamPane, providerName } from "./session-panes";
 import { ResultsPane, WorkPane, type ResultsTab } from "./work-pane";
 import { ReferenceCard } from "./project-home";
 import {
@@ -335,6 +335,26 @@ export function SessionThread({
               <li key={i.id} className="turn coordinator pending" role="status">
                 <span className="turn-author">Coordinators</span>
                 <div className="turn-text muted">Answering… {i.detail}</div>
+                {i.members
+                  .filter((m: any) => m.uncertainRunId)
+                  .map((m: any) => (
+                    <p key={m.memberId} className="session-attention">
+                      <span>
+                        {m.memberId} ({providerName(m.provider)}): {m.detail}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void run(`reconcile-${m.uncertainRunId}`, {
+                            type: "run-reconcile",
+                            id: m.uncertainRunId,
+                          })
+                        }
+                      >
+                        Inspect & reconcile
+                      </button>
+                    </p>
+                  ))}
               </li>
             ))}
           </ol>

@@ -13,6 +13,7 @@ const scripts = process.argv.slice(2).length
       "scripts/desktop-loop-test.mjs",
       "scripts/desktop-session-test.mjs",
       "scripts/desktop-usage-test.mjs",
+      "scripts/desktop-providers-test.mjs",
     ];
 function report(script, detail) {
   if (process.env.GITHUB_ACTIONS === "true") {

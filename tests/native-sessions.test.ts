@@ -308,6 +308,60 @@ describe("native sessions", () => {
     ]);
   });
 
+  test("a coordinator whose turn has an unknown outcome is shown with its run until reconciled, then answers", async () => {
+    const f = await setup();
+    let hold = true;
+    const reply = f.driver.reply;
+    f.driver.reply = (turn: MemberTurn) => (hold ? "hang" : reply(turn));
+    const created = await f.sessions.create({
+      projectId: "p",
+      text: "What does the parser do?",
+      mode: "discuss",
+      commandId: cmd(),
+    });
+    await run(f, () => f.driver.launches.length === 1);
+    const [attemptId, attempt] = [...f.driver.attempts].at(-1)!;
+    // The runtime lost the process after dispatch: outcome unknown.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "uncertain",
+      quiescent: false,
+      runId: "run-unknown",
+      error: "Runtime connection closed (1).",
+    };
+    await run(
+      f,
+      () => !!intake(f, created.intakeId!).members[0].uncertainRunId,
+      5,
+    );
+    const waiting = intake(f, created.intakeId!);
+    expect(waiting.stage).toBe("collecting");
+    expect(waiting.members[0]).toMatchObject({
+      state: "running",
+      activeAttemptId: attemptId,
+      uncertainRunId: "run-unknown",
+      detail:
+        "Runtime connection closed (1). Inspect and reconcile it to let this coordinator answer again.",
+    });
+    // Nothing is retried while the outcome is unknown.
+    await run(f, () => false, 5);
+    expect(f.driver.launches).toHaveLength(1);
+    // Reconciliation settles the attempt as failed; the member retries once
+    // and the message is answered.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "failed",
+      quiescent: true,
+      error: "Reconciled.",
+    };
+    hold = false;
+    expect(await run(f, decided(f, created.intakeId!))).toBe(true);
+    const done = intake(f, created.intakeId!);
+    expect(done.outcome).toMatchObject({ kind: "reply", intent: "discuss" });
+    expect(done.members[0].uncertainRunId).toBeNull();
+    expect(f.driver.launches.length).toBeGreaterThan(1);
+  });
+
   test("an ambiguous message gets a clarifying question and starts nothing", async () => {
     const f = await setup();
     f.driver.reply = (turn: MemberTurn) =>

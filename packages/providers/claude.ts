@@ -1091,6 +1091,24 @@ export class ClaudeAdapter implements ProviderAdapter {
             );
           resolve();
         } catch (e) {
+          // Claude Code reports its session before it calls a model, so a
+          // process that failed before reporting one started no model turn:
+          // a failure Topsl knows, which the coordinator can retry, not an
+          // unknown outcome left for reconciliation.
+          if (code !== 0 && !parser.session) {
+            checked({
+              type: "completed",
+              sourceId: "topsl-launch",
+              sessionId: input.sessionId,
+              text: "",
+              structuredOutput: null,
+              failed: true,
+              detail: `Claude Code exited with code ${code ?? signal} before it started a session, so no model was called.`,
+              reportedModel: null,
+              denials: [],
+            });
+            return resolve();
+          }
           reject(e);
         }
       });
