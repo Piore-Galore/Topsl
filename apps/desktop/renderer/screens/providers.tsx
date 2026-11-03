@@ -23,6 +23,14 @@ type Props = {
   setPlan: (plan: LifecyclePlan | null) => void;
 };
 
+/** What Topsl can do with an executable now, in the owner's words (W3-20). */
+const compatibilityText: Record<Installation["compatibility"], string> = {
+  compatible: "Protocol connected",
+  unverified: "Not connected yet",
+  "native-only": "Terminal only",
+  incompatible: "Cannot connect",
+};
+
 /** Who keeps an executable up to date, as the owner reads it. */
 const ownerText: Record<Installation["owner"], string> = {
   homebrew: "Homebrew",
@@ -119,9 +127,7 @@ export function ProvidersScreen({
                         >
                           {check?.status === "available"
                             ? `${check.release?.version} available`
-                            : i.compatibility === "compatible"
-                              ? "Protocol connected"
-                              : i.compatibility}
+                            : compatibilityText[i.compatibility]}
                         </Badge>
                       </div>
                       <dl>
@@ -156,16 +162,23 @@ export function ProvidersScreen({
                       </code>
                       <div className="actions wrap">
                         {!i.trusted && (
-                          <ActionButton
-                            onClick={() =>
-                              void act({
-                                type: "trust-installation",
-                                id: i.id,
-                              })
-                            }
-                          >
-                            Trust executable
-                          </ActionButton>
+                          <>
+                            <p className="muted">
+                              Next: trust this executable, after checking its
+                              path, so Topsl can connect and qualify it.
+                            </p>
+                            <ActionButton
+                              className="primary"
+                              onClick={() =>
+                                void act({
+                                  type: "trust-installation",
+                                  id: i.id,
+                                })
+                              }
+                            >
+                              Trust executable
+                            </ActionButton>
+                          </>
                         )}
                         {(app.id === "openai.codex-cli" ||
                           (app.id === "anthropic.claude-code-cli" &&
@@ -507,7 +520,7 @@ function RuntimeQualification({
               recorded
                 ? `. Last recorded with ${recorded.report.model} until ${new Date(recorded.expiresAt).toLocaleString()}`
                 : ""
-            }.`
+            }. Next: start work with + New session.`
           : status?.state === "stale"
             ? "The last qualification no longer matches this executable, account or host. Coordinators and teams can use this runtime again after a new one passes."
             : "Coordinators and teams can use this runtime only after a qualification passes: a few live turns that check its permissions, recorded for 30 days."}

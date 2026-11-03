@@ -316,6 +316,9 @@ export interface RoundMember {
   retries: number;
   wave: number;
   detail: string;
+  /** The run whose outcome is unknown, while the owner must reconcile it;
+   * absent in records written before 4 November 2026 (W4-4). */
+  uncertainRunId?: string | null;
 }
 
 export type RoundKind = "coordination" | "review" | "work" | "information";

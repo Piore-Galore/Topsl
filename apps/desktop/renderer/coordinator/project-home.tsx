@@ -25,6 +25,7 @@ import {
   Errors,
   OpenProviders,
   checksFrom,
+  useSubmission,
   emptyCheck,
   newCommandId,
   useCommandRunner,
@@ -204,34 +205,37 @@ export function ProjectHome({
         .join(", ")
     : "Auto";
   const checks = checksFrom(check);
+  const { submit, busy } = useSubmission();
   async function send() {
     const message = text.trim();
     if (!message) return;
-    const started = await run("start", {
-      type: "session-create",
-      projectId,
-      text: message,
-      mode: composerMode,
-      kind,
-      ...(kind === "code" ? { checks } : {}),
-      ...(attachment && excerpt ? { referenceId: attachment } : {}),
-      configuration: {
-        coordinators,
-        team,
-        composerMode,
-        roles:
-          team === "custom"
-            ? Object.fromEntries([
-                ...roster.map((r) => [r, { settings: {} }]),
-                ...ownRoles.map(({ roleId, ...role }) => [
-                  roleId,
-                  { settings: {}, ...role },
-                ]),
-              ])
-            : {},
-      },
-      commandId: newCommandId(),
-    });
+    const started = await submit(() =>
+      run("start", {
+        type: "session-create",
+        projectId,
+        text: message,
+        mode: composerMode,
+        kind,
+        ...(kind === "code" ? { checks } : {}),
+        ...(attachment && excerpt ? { referenceId: attachment } : {}),
+        configuration: {
+          coordinators,
+          team,
+          composerMode,
+          roles:
+            team === "custom"
+              ? Object.fromEntries([
+                  ...roster.map((r) => [r, { settings: {} }]),
+                  ...ownRoles.map(({ roleId, ...role }) => [
+                    roleId,
+                    { settings: {}, ...role },
+                  ]),
+                ])
+              : {},
+        },
+        commandId: newCommandId(),
+      }),
+    );
     if (started?.sessionId) {
       setText("");
       setOwnRoles([]);
@@ -290,6 +294,7 @@ export function ProjectHome({
         value={text}
         onChange={setText}
         onSend={() => void send()}
+        sending={busy}
         sendLabel="Start session"
         placeholder={
           excerpt

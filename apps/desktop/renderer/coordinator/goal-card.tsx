@@ -137,6 +137,30 @@ export function GoalCard({
           </button>
         </p>
       )}
+      {view.rounds
+        .filter((r: any) => r.active)
+        .flatMap((r: any) => r.members)
+        .filter((m: any) => m.uncertainRunId)
+        .map((m: any) => (
+          <p key={m.memberId} className="session-attention">
+            <span>
+              {m.memberId}: its turn's outcome is unknown (Topsl may have
+              restarted while it ran). The goal waits until you inspect and
+              reconcile it.
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                void run(`reconcile-${m.uncertainRunId}`, {
+                  type: "run-reconcile",
+                  id: m.uncertainRunId,
+                })
+              }
+            >
+              Inspect & reconcile
+            </button>
+          </p>
+        ))}
       {g.synthesis && <div className="synthesis">{g.synthesis}</div>}
 
       {awaiting.map((r: any) => (

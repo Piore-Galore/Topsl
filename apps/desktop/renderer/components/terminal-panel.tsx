@@ -84,6 +84,8 @@ export function TerminalPanel({
     let escapedAt = 0;
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
+      // Pressing Shift for Shift+Tab is a keydown of its own.
+      if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) return true;
       if (event.key === "Escape") {
         escapedAt = Date.now();
         return true;

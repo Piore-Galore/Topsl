@@ -90,7 +90,8 @@ export class ConcurrencyBudget {
             workflow.budget.concurrency)
       )
         throw new Error(
-          "Coordinator/provider concurrency budget is full. Wait for confirmed process exit; no dispatch occurred.",
+          // Shown as is in chats and workflows, so it says what to do (W4-5).
+          "Topsl is already running as many provider turns as it allows at once; sessions, loops and chats share this limit. Nothing was sent. Try again when a running turn has finished.",
         );
       this.store.put("concurrency-slot", {
         id: attempt.id,

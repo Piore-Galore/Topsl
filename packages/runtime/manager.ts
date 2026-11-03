@@ -156,6 +156,11 @@ export class RuntimeManager {
       promise: Promise<AllowanceSnapshot | null>;
     }
   >();
+  /**
+   * How long an interrupted turn may take to end before Topsl stops its
+   * process itself; a test may shorten it.
+   */
+  interruptGraceMs = 30_000;
   /** Installation id → management unit of a running qualification. */
   private qualifying = new Map<string, string>();
   readonly coordinator: Coordinator;
@@ -1947,6 +1952,20 @@ export class RuntimeManager {
       active.run.nativeSessionId,
       active.run.nativeTurnId,
     );
+    // A runtime that acknowledges the interrupt but never ends the turn would
+    // hold the run, its writer lease and capacity until Topsl quit (W4-3).
+    // After the grace period Topsl stops the process; the lease is released
+    // only once the process group is confirmed gone (settle), else the run is
+    // uncertain as for any unconfirmed exit.
+    const grace = setTimeout(() => {
+      if (this.active.get(id) !== active || active.finished) return;
+      this.finish(
+        active,
+        "interrupted",
+        `${active.run.provider === "claude" ? "Claude Code" : "Codex"} did not end the interrupted turn within ${Math.round(this.interruptGraceMs / 1000)} s, so Topsl stopped its process. The turn did not complete and was not replayed.`,
+      );
+    }, this.interruptGraceMs);
+    grace.unref?.();
   }
   /**
    * Opens a native terminal. Its permission mode comes only from the fixed

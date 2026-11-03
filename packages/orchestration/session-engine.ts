@@ -1360,7 +1360,15 @@ export class SessionSupervisor {
     stage: SessionIntake["stage"] = "stopped",
   ) {
     for (const m of intake.members)
-      if (m.activeAttemptId) await this.driver.interrupt(m.activeAttemptId);
+      if (m.activeAttemptId)
+        try {
+          await this.driver.interrupt(m.activeAttemptId);
+        } catch {
+          // As for a goal: an interrupt that cannot be delivered, such as
+          // for a run a restart left behind, leaves the attempt uncertain with
+          // its lease held until reconciliation. The intake still stops, so
+          // Stop session is never refused for it (W4-1).
+        }
     this.saveIntake(intake, {
       stage,
       detail,

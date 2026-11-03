@@ -362,6 +362,33 @@ describe("native sessions", () => {
     expect(f.driver.launches.length).toBeGreaterThan(1);
   });
 
+  test("Stop session stops an answering intake even when its interrupt cannot be delivered", async () => {
+    // After a restart the runtime no longer holds the run (W4-1).
+    const f = await setup();
+    f.driver.reply = () => "hang";
+    f.driver.interrupt = async () => {
+      throw new Error(
+        "This run is not active in Topsl. Inspect the native session.",
+      );
+    };
+    const created = await f.sessions.create({
+      projectId: "p",
+      text: "What does the parser do?",
+      mode: "discuss",
+      commandId: cmd(),
+    });
+    await run(f, () => f.driver.launches.length === 1);
+    await expect(
+      f.sessions.control({
+        sessionId: created.sessionId,
+        action: "stop",
+        commandId: cmd(),
+      }),
+    ).resolves.toBeDefined();
+    await run(f, () => intake(f, created.intakeId!).stage === "stopped", 5);
+    expect(intake(f, created.intakeId!).stage).toBe("stopped");
+  });
+
   test("an ambiguous message gets a clarifying question and starts nothing", async () => {
     const f = await setup();
     f.driver.reply = (turn: MemberTurn) =>
@@ -451,6 +478,60 @@ describe("native sessions", () => {
     await run(f, () => f.driver.launches.some((t) => t.goalId === second.id));
     const coordination = f.driver.launches.find((t) => t.goalId === second.id)!;
     expect(coordination.contextCandidateId).toBe(second.baselineCandidateId);
+  });
+
+  test("a goal member whose turn has an unknown outcome names its run until reconciled (W4-4)", async () => {
+    const f = await setup();
+    const { sessionId } = await f.sessions.create({
+      projectId: "p",
+      text: "Build A",
+      commandId: cmd(),
+    });
+    await run(f, () => !!session(f, sessionId).activeWorkId);
+    const s = session(f, sessionId);
+    const goalId = s.queue.find((w) => w.id === s.activeWorkId)!.goalId!;
+    // The goal's first round launches, and its turn is lost (as by a restart).
+    const reply = f.driver.reply;
+    let hold = true;
+    f.driver.reply = (turn: MemberTurn) =>
+      hold && turn.goalId === goalId ? "hang" : reply(turn);
+    await run(f, () => f.driver.launches.some((t) => t.goalId === goalId));
+    const [, attempt] = [...f.driver.attempts].find(
+      ([, a]) => a.turn.goalId === goalId,
+    )!;
+    attempt.obs = {
+      ...attempt.obs,
+      state: "uncertain",
+      quiescent: false,
+      runId: "run-lost",
+      error: "Topsl closed while the native run was active.",
+    };
+    const member = () =>
+      f.orchestrator
+        .rounds(goalId)
+        .flatMap((r) => r.members)
+        .find(
+          (m) => m.uncertainRunId !== undefined && m.uncertainRunId !== null,
+        );
+    await run(f, () => !!member(), 5);
+    expect(member()).toMatchObject({
+      uncertainRunId: "run-lost",
+      detail:
+        "Execution is uncertain; its lease and capacity stay held until reconciliation.",
+    });
+    const launches = f.driver.launches.length;
+    await run(f, () => false, 5);
+    expect(f.driver.launches).toHaveLength(launches);
+    // Reconciled: the member is no longer marked and the goal moves on.
+    attempt.obs = {
+      ...attempt.obs,
+      state: "failed",
+      quiescent: true,
+      error: "Reconciled.",
+    };
+    hold = false;
+    await run(f, () => !member(), 10);
+    expect(member()).toBeUndefined();
   });
 
   test("a stopped goal contributes nothing to the accepted result", async () => {

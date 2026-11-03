@@ -25,6 +25,7 @@ import {
   stateTone,
   useCommandRunner,
   useRuntimeRefresh,
+  useSubmission,
 } from "./shared";
 
 const author = { user: "You", service: "Topsl", coordinator: "Coordinators" };
@@ -118,6 +119,7 @@ export function SessionThread({
   const freshness = useScopedRefresh(projectId, refresh);
   const { run, errors } = useCommandRunner(refresh, sessionId);
   const openProviders = useContext(OpenProviders);
+  const { submit, busy } = useSubmission();
   useRuntimeRefresh(refresh);
   const conversation = snapshot?.conversations?.[0];
   const session: TopslSession | undefined = query?.session;
@@ -158,15 +160,17 @@ export function SessionThread({
   async function send() {
     const text = draft.trim();
     if (!text) return;
-    const sent = await run("message", {
-      type: "session-message",
-      sessionId,
-      text,
-      mode: composerMode,
-      target: aimed ? aimed.goal.id : null,
-      kind,
-      commandId: newCommandId(),
-    });
+    const sent = await submit(() =>
+      run("message", {
+        type: "session-message",
+        sessionId,
+        text,
+        mode: composerMode,
+        target: aimed ? aimed.goal.id : null,
+        kind,
+        commandId: newCommandId(),
+      }),
+    );
     if (sent) setDraft("");
   }
   const control = (action: "pause" | "resume" | "stop") =>
@@ -406,6 +410,7 @@ export function SessionThread({
               value={draft}
               onChange={setDraft}
               onSend={() => void send()}
+              sending={busy}
               note={composerModeHints[composerMode]}
               placeholder={
                 aimed

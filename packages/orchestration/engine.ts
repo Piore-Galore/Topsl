@@ -2124,12 +2124,15 @@ export class Orchestrator {
           obs.state === "uncertain"
             ? "Execution is uncertain; its lease and capacity stay held until reconciliation."
             : "Waiting for the member's processes to stop before using its result.";
-        if (m.detail !== detail) {
+        const runId = obs.state === "uncertain" ? (obs.runId ?? null) : null;
+        if (m.detail !== detail || (m.uncertainRunId ?? null) !== runId) {
           m.detail = detail;
+          m.uncertainRunId = runId;
           changed = true;
         }
         continue;
       }
+      if (m.uncertainRunId) m.uncertainRunId = null;
       const attemptId = m.activeAttemptId;
       m.activeAttemptId = null;
       m.launchId = null;
