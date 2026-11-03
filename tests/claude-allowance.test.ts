@@ -7,6 +7,7 @@ import {
   parseClaudeUsageDisplay,
   readClaudeAccount,
   readClaudeUsage,
+  terminalScreen,
 } from "../packages/providers/claude-allowance";
 import {
   applyAllowanceReport,
@@ -100,6 +101,41 @@ describe("Claude native usage display", () => {
     display.replace("Current week (Sonnet only)", "Current week (all models)"),
   ])("rejects incomplete, invalid or unrelated output", (value) => {
     expect(parseClaudeUsageDisplay(value)).toBeNull();
+  });
+  test("reads a Windows pseudoconsole repaint that moves the cursor into the middle of a heading", () => {
+    // The shape ConPTY sent on Windows CI (29 October 2026) for the usage
+    // stand-in: a cleared screen, then only the changed cells, positioned.
+    const rest = display.slice("Current session\r\n".length);
+    const report = parseClaudeUsageDisplay(
+      "\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[HSettings  Status   Config   Usage   Stats\r\nLoading usage data…\r\nEsc to cancel\x1b]0;Claude\x07\x1b[?25h" +
+        `\x1b[?25l\x1b[2;1HCurrent ses\x1b[K\r\n\x1b[K\x1b[2;12H\x1b[?25hsion\r\n${rest}\x1b[15C\x1b[?9001l\x1b[?1004l`,
+    )!;
+    expect(report.buckets.map((b) => b.primary?.usedPercent)).toEqual([
+      13, 51, 0,
+    ]);
+    // A cursor move is a position, not a line break: here the second half
+    // of the heading lands on another row.
+    expect(
+      parseClaudeUsageDisplay(
+        display.replace("Current session", "Current ses\x1b[2;12Hsion"),
+      ),
+    ).toBeNull();
+  });
+  test("reads what the terminal shows: overwritten text, erased lines and scrolled rows", () => {
+    expect(terminalScreen("Loading usage data…\r\x1b[KCurrent session")).toBe(
+      "Current session" + "\n".repeat(79),
+    );
+    // Text that a repaint does not erase stays on screen.
+    expect(
+      terminalScreen("Loading usage data…\x1b[GCurrent session").split("\n")[0],
+    ).toBe("Current sessionata…");
+    expect(
+      terminalScreen("a\r\nb\x1b[1;3Hc\x1b[2;1H\x1b[2Kd\x1b[5X", 10, 3),
+    ).toBe("a c\nd\n");
+    expect(terminalScreen("1\n2\n3\n4", 10, 3)).toBe("2\n3\n4");
+    expect(terminalScreen("abcdef", 4, 2)).toBe("abcd\nef");
+    expect(terminalScreen("ab\x1b[1;1H\x1b[1L", 4, 2)).toBe("\nab");
+    expect(terminalScreen("ab\x1b[", 4, 1)).toBe("ab");
   });
   test("an omitted reset stays unknown and a real 100% stays exhausted", () => {
     const report = parseClaudeUsageDisplay(
@@ -339,12 +375,15 @@ test.skipIf(process.platform === "win32")(
       await writeFile(path.join(f.directory, "silent"), "");
       const reading = runtime.refreshAllowance(f.installation);
       const outcome = expect(reading).rejects.toThrow("cancelled");
+      // The account read and terminal start take about a second on their own.
       await expect
-        .poll(async () =>
-          access(path.join(f.directory, "usage-starts")).then(
-            () => true,
-            () => false,
-          ),
+        .poll(
+          async () =>
+            access(path.join(f.directory, "usage-starts")).then(
+              () => true,
+              () => false,
+            ),
+          { timeout: 10_000 },
         )
         .toBe(true);
       await runtime.close();
