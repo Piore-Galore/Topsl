@@ -106,6 +106,21 @@ test("Work → Create loop queues drafts that start only in order, in a running 
     [b, "loop", "queued"],
   ]);
   expect(f.run(a).started).toBe(false);
+  // Each loop's request names its own run, so one loop's page never lists
+  // another's (W3-17).
+  const steer = [
+    ...f.service.store.iterate<{
+      conversationId: string;
+      text: string;
+      routing: { kind: string; runId?: string | null } | null;
+    }>("orch-message"),
+  ].filter(
+    (m) => m.conversationId === f.sessionId && m.routing?.kind === "loop-steer",
+  );
+  expect(steer.map((m) => [m.text, m.routing?.runId])).toEqual([
+    ["Change the value to two.", a],
+    ["Change the value to three.", b],
+  ]);
   expect(queuePositions(f.session().queue)).toEqual({
     [f.item(a).id]: 1,
     [f.item(b).id]: 2,

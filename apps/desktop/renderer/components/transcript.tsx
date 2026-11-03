@@ -145,7 +145,11 @@ export function Transcript({
                 style={{ top: (start + index) * ROW, height: ROW }}
               >
                 <div className="message-meta">
-                  <strong>{message.role}</strong>
+                  <strong>
+                    {message.role === "reference"
+                      ? "Imported text, not a message"
+                      : message.role}
+                  </strong>
                   <span>
                     {message.provider ?? "you"} ·{" "}
                     {new Date(message.createdAt).toLocaleString()}

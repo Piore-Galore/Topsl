@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import {
   DEFAULT_CONVERSATION_TITLE,
   threadTitle,
@@ -18,6 +18,7 @@ import { ResultsPane, WorkPane, type ResultsTab } from "./work-pane";
 import { ReferenceCard } from "./project-home";
 import {
   Errors,
+  OpenProviders,
   endedGoal,
   label,
   newCommandId,
@@ -116,15 +117,19 @@ export function SessionThread({
   }
   const freshness = useScopedRefresh(projectId, refresh);
   const { run, errors } = useCommandRunner(refresh, sessionId);
+  const openProviders = useContext(OpenProviders);
   useRuntimeRefresh(refresh);
   const conversation = snapshot?.conversations?.[0];
   const session: TopslSession | undefined = query?.session;
   const goals: any[] = snapshot?.goals ?? [];
   const intakes: any[] = query?.intakes ?? [];
   const active = session?.queue.find((w) => w.id === session.activeWorkId);
+  // An accepted or stopped goal takes no more steering, even while it is
+  // still the active work item for a moment (W3-18).
   const current =
-    goals.find((g) => g.goal.id === active?.goalId) ??
-    goals.filter((g) => !endedGoal(g.goal.state)).at(-1);
+    goals.find(
+      (g) => g.goal.id === active?.goalId && !endedGoal(g.goal.state),
+    ) ?? goals.filter((g) => !endedGoal(g.goal.state)).at(-1);
   const latest = goals.at(-1);
   const focused = goals.find((g) => g.goal.id === focus) ?? current ?? latest;
   if (snapshot && !conversation)
@@ -176,6 +181,17 @@ export function SessionThread({
     if (w.messageId && w.goalId) about[w.messageId] = w.goalId;
   const byIntake = new Map(intakes.map((i) => [i.id, i]));
   const pending = answering(intakes);
+  // Pause and Stop act on work: shown while something runs, waits in the
+  // queue or is paused, not on an idle or stopped session (W3-18).
+  const controllable =
+    !!session &&
+    session.control !== "stopped" &&
+    (session.control === "paused" ||
+      !!active ||
+      pending.length > 0 ||
+      session.queue.some((w) =>
+        ["queued", "waiting-configuration", "running"].includes(w.state),
+      ));
   const panes: Array<{ id: Pane; title: string; count?: number }> = [
     {
       id: "work",
@@ -205,7 +221,13 @@ export function SessionThread({
     >
       <header className="thread-header">
         <div className="thread-title">
-          <h1>{snapshot ? title : "Loading session…"}</h1>
+          <h1>
+            {snapshot
+              ? title
+              : freshness.error
+                ? "Session could not be read"
+                : "Loading session…"}
+          </h1>
           {state && (
             <span className={`badge ${stateTone[state] ?? ""}`}>
               {label(state)}
@@ -213,7 +235,7 @@ export function SessionThread({
           )}
         </div>
         <div className="thread-tools">
-          {session && (
+          {session && controllable && (
             <div
               className="actions session-controls"
               role="group"
@@ -248,6 +270,11 @@ export function SessionThread({
         <p role="status" className="session-attention">
           <strong>{label(session.attention.kind)}:</strong>{" "}
           {session.attention.detail}
+          {session.attention.kind === "choose-model" && openProviders && (
+            <button type="button" onClick={openProviders}>
+              Open Providers
+            </button>
+          )}
           {session.attention.kind !== "choose-alternative" && (
             <button type="button" onClick={() => openPane("team")}>
               Open Team

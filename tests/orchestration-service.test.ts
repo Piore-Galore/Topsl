@@ -304,9 +304,23 @@ test("a two-coordinator, two-reviewer goal runs through real attempts, copies, c
       commandId: `c-${uid()}`,
     }),
   ).rejects.toThrow(/native confirmation/);
-  const digest = (
-    f.service.review("goal-acceptance", goal.id) as { digest: string }
-  ).digest;
+  // What the candidate changes is shown before acceptance: in the goal's
+  // view for Results → Changes and in the acceptance confirmation (W3-3).
+  const listed = (
+    await f.service.command({ type: "orchestration-query", projectId: "p" })
+  ).goals.find((g: any) => g.goal.id === goal.id);
+  // The fixture's second implementer adds part-2.ts.
+  const changes = [
+    { path: "file.ts", change: "modified" },
+    { path: "part-2.ts", change: "added" },
+  ];
+  expect(listed.candidateChanges).toEqual(changes);
+  const acceptance = f.service.review("goal-acceptance", goal.id) as {
+    digest: string;
+    files: unknown;
+  };
+  expect(acceptance.files).toEqual(changes);
+  const digest = acceptance.digest;
   const accepted = await f.service.command(
     { type: "orchestration-accept", goalId: goal.id, commandId: `c-${uid()}` },
     { digest },

@@ -302,12 +302,9 @@ await step("UI-01 first launch creates a passphrase vault and opens", ["UI-01", 
   expect(output.join("").includes(TEST_PASSPHRASE)).toBe(false);
   expect(await filesContaining(profile, TEST_PASSPHRASE)).toEqual([]);
   const backups = (await readdir(profile)).filter((f) => /\.backup-/.test(f));
-  // A database created at this launch held nothing a migration could lose.
-  await knownDefect(
-    "W1-3",
-    "a first launch writes schema migration backups of the brand-new, empty history database",
-    async () => expect(backups).toEqual([]),
-  );
+  // A database created at this launch held nothing a migration could lose
+  // (W1-3, fixed 4 November 2026).
+  expect(backups).toEqual([]);
   return { vaultMethod: vault.method, files: (await readdir(profile)).sort() };
 });
 await step("UI-02 wrong passphrase vault stays locked and preserved", ["UI-02"], async () => {
@@ -1096,7 +1093,7 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
   const lineA = await responsibility(idA);
   await selectProject(idA);
   await showsProject(nameA, lineA);
-  // The page's own banner; Parallel integration repeats it (defect W1-1 below).
+  // The page's own banner; Parallel integration no longer repeats it (W1-1).
   const freshness = page.locator(".advanced-workflows > .scope-freshness:visible");
   const banners = page.locator(".scope-freshness:visible");
   // A mutation whose reply is still outstanding when the connection drops.
@@ -1130,11 +1127,8 @@ await step("UI-10 disconnect keeps last-known data; reconnect reads only and rep
   await expect(freshness).toContainText("Connection unavailable");
   await showsProject(nameA, lineA);
   const repeated = await banners.count();
-  await knownDefect(
-    "W1-1",
-    "Advanced workflows → Activity shows the same project-snapshot freshness banner twice (page and Parallel integration)",
-    async () => expect(banners, "one freshness banner for one project snapshot").toHaveCount(1, { timeout: 1000 }),
-  );
+  // W1-1, fixed 4 November 2026: one banner for one project snapshot.
+  await expect(banners, "one freshness banner for one project snapshot").toHaveCount(1);
   // A reconnect attempt that fails keeps the last-known data, labelled stale.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(freshness.locator("strong")).toHaveText("stale");
@@ -1204,13 +1198,10 @@ await step("UI-11 one pending mutation per target; unrelated controls stay usabl
   await expect(page.getByRole("button", { name: "Add project", exact: true })).toBeEnabled();
   await expect(page.locator("footer.statusbar")).toContainText("Operations pending");
   await page.screenshot({ path: path.join(evidence, "pending-new-chat.png") });
-  // The pending line above the page heading is built from the command type.
-  await knownDefect(
-    "W1-2",
-    "a pending operation is announced with its internal command name (\"conversation add…\") above the page heading",
-    async () =>
-      expect(page.locator('main.content > p[role="status"]', { hasText: "conversation add…" })).toHaveCount(0, { timeout: 1000 }),
-  );
+  // W1-2, fixed 4 November 2026: the pending line says what is happening in
+  // plain words, not the internal command name.
+  await expect(page.locator('main.content > p[role="status"]', { hasText: "Creating the chat…" })).toHaveCount(1);
+  await expect(page.locator('main.content > p[role="status"]', { hasText: "conversation add" })).toHaveCount(0);
   await release(app, "add-twice");
   await expect(newChat).toBeEnabled();
   await idleStatus();

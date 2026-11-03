@@ -2,7 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import type { Command } from "../../../../packages/domain/commands";
 import { ScopedReadFence, useScopedRefresh } from "../state/scoped";
 import { Freshness } from "./freshness";
-export function ParallelActivity({ projectId }: { projectId: string }) {
+export function ParallelActivity({
+  projectId,
+  embedded = false,
+}: {
+  projectId: string;
+  /**
+   * Inside a page that already shows the project's freshness, only this
+   * panel's own read failures are shown, so one banner is not repeated.
+   */
+  embedded?: boolean;
+}) {
   const [snapshot, setSnapshot] = useState<any>(null),
     [inspection, setInspection] = useState<any>(null),
     [pending, setPending] = useState<Record<string, boolean>>({}),
@@ -51,7 +61,9 @@ export function ParallelActivity({ projectId }: { projectId: string }) {
   return (
     <section aria-label="Parallel integration queue">
       <h2>Parallel integration</h2>
-      <Freshness state={freshness} retry={freshness.retry} />
+      {(!embedded || freshness.source === "Project view") && (
+        <Freshness state={freshness} retry={freshness.retry} />
+      )}
       <p>
         Specialists keep separate approved workspaces. Combined checks and
         acceptance apply to the combined candidate; individual successes do not

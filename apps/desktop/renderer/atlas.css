@@ -844,7 +844,10 @@ dialog::backdrop {
   color: var(--sidebar-ink);
   box-shadow: inset 3px 0 #dfbf7c;
 }
+/* Block, not the header's flex title, so the ellipsis applies (W3-8). */
 .thread-link .thread-title {
+  display: block;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -855,7 +858,11 @@ dialog::backdrop {
   font-size: 11px;
 }
 .thread-attention {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 10.5px;
   color: #dfbf7c;
   padding-right: 4px;
@@ -1723,6 +1730,7 @@ button.link {
 .session-index .recent-link {
   flex: 1 1 260px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .project-settings .settings-card,
 .all-sessions .search {
@@ -1822,4 +1830,12 @@ button.link {
 .qualification-form input,
 .qualification-form select {
   width: 100%;
+}
+.terminal-leave {
+  margin: 4px 2px 0;
+}
+.changed-files {
+  margin: 4px 0 10px;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
 }

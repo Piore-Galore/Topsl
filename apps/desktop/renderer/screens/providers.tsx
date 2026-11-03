@@ -415,6 +415,8 @@ function RuntimeQualification({
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [summary, setSummary] = useState("");
+  // A failed read keeps the last status it had and says so (W3-4).
+  const [readError, setReadError] = useState("");
   async function load() {
     try {
       setStatus(
@@ -423,8 +425,9 @@ function RuntimeQualification({
           id: installation.id,
         }),
       );
-    } catch {
-      setStatus(null);
+      setReadError("");
+    } catch (error: any) {
+      setReadError(error?.message ?? String(error));
     }
   }
   useEffect(() => {
@@ -452,9 +455,11 @@ function RuntimeQualification({
       ? "route"
       : installation.compatibility !== "compatible"
         ? "connect"
-        : !claude && !models.length
-          ? "models"
-          : null;
+        : !status
+          ? "unread"
+          : !claude && !models.length
+            ? "models"
+            : null;
   async function qualify() {
     const chosen = claude ? model : (codexModel?.model ?? "");
     if (!chosen) return;
@@ -484,7 +489,9 @@ function RuntimeQualification({
           }
         >
           {!status
-            ? "Not read"
+            ? readError
+              ? "Not read"
+              : "Reading…"
             : status.running
               ? "Running…"
               : status.state === "current"
@@ -508,6 +515,17 @@ function RuntimeQualification({
           ? ` Qualified Claude models: ${models.map((m) => m.model).join(", ")}.`
           : ""}
       </p>
+      {readError && (
+        <div className="actions wrap" role="alert">
+          <p>
+            Topsl could not read this runtime's qualification: {readError}
+            {status ? " The state shown is the last one read." : ""}
+          </p>
+          <ActionButton onClick={() => void load()}>
+            Read qualification again
+          </ActionButton>
+        </div>
+      )}
       {last && !last.acceptanceId && !summary && (
         <p className="muted">
           The last attempt ({new Date(last.createdAt).toLocaleString()})
@@ -534,7 +552,7 @@ function RuntimeQualification({
         <p>
           Choose Connect / test first; qualifying needs a connected runtime.
         </p>
-      ) : blocked === "models" ? (
+      ) : blocked === "unread" ? null : blocked === "models" ? (
         <p>
           Codex reported no models. Choose Connect / test to read them again.
         </p>

@@ -931,9 +931,17 @@ export class SessionSupervisor {
       ...blocked.map((a) => `${a.memberId}: ${a.reason}`),
     ];
     if (problems.length || !members.length) {
-      const detail =
-        problems.join(" ") ||
-        "No coordinator can answer: no qualified route is available.";
+      // No qualified provider at all is the owner's to fix under Providers;
+      // say that plainly rather than name the internal route purpose (W3-9).
+      const noProvider =
+        !resolved.conflicts.length &&
+        (!members.length ||
+          blocked.every((a) =>
+            a.reason.startsWith("No authorized route is qualified"),
+          ));
+      const detail = noProvider
+        ? "No provider can coordinate yet. Qualify Codex or Claude Code under Providers, then send the message again."
+        : problems.join(" ");
       intake.stage = "failed";
       intake.outcome = { kind: "failed", reason: detail };
       intake.detail = detail;
@@ -942,7 +950,9 @@ export class SessionSupervisor {
       void this.orchestrator.note({
         conversationId: session.conversationId,
         role: "service",
-        text: `The coordinators cannot answer yet. ${detail} Change the session's coordinators or add an explicit fallback; nothing was started.`,
+        text: noProvider
+          ? `The coordinators cannot answer yet. ${detail} Nothing was started.`
+          : `The coordinators cannot answer yet. ${detail} Change the session's coordinators or add an explicit fallback; nothing was started.`,
         routing: { kind: "session", goalId: null },
         intakeId: intake.id,
         commandId: `${intake.id}:blocked`,

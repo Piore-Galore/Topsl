@@ -136,7 +136,10 @@ export function LoopThread({
     setSession(owner?.session?.origin === "native" ? owner.session : null);
     setMessages(
       (thread.conversations?.[0]?.messages ?? []).filter(
-        (m: any) => m.routing?.kind === "loop-steer",
+        (m: any) =>
+          m.routing?.kind === "loop-steer" &&
+          // This run's messages; older ones name no run (W3-17).
+          (!m.routing.runId || m.routing.runId === runId),
       ),
     );
   }
@@ -153,7 +156,11 @@ export function LoopThread({
       <section aria-label="Recursive loop" className="thread">
         <Freshness state={freshness} retry={freshness.retry} />
         <Errors errors={errors} />
-        <p>Loading loop run…</p>
+        <p role={freshness.error ? "alert" : "status"}>
+          {freshness.error
+            ? "Topsl could not read this loop run. Retry above."
+            : "Loading loop run…"}
+        </p>
       </section>
     );
   const r = view.run;

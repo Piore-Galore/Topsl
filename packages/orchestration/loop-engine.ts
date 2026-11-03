@@ -628,7 +628,7 @@ export class LoopSupervisor {
             conversationId,
             role: "user",
             text: asked,
-            routing: { kind: "loop-steer", goalId: null },
+            routing: { kind: "loop-steer", goalId: null, runId },
             commandId: `${input.commandId}:transcript`,
           });
         this.changed();
@@ -1678,7 +1678,7 @@ export class LoopSupervisor {
   }
 
   private transcript(
-    run: Pick<LoopRun, "conversationId">,
+    run: Pick<LoopRun, "conversationId" | "id">,
     role: "user" | "service",
     text: string,
     commandId: string,
@@ -1687,7 +1687,7 @@ export class LoopSupervisor {
       conversationId: run.conversationId,
       role,
       text,
-      routing: { kind: "loop-steer", goalId: null },
+      routing: { kind: "loop-steer", goalId: null, runId: run.id },
       commandId,
     });
   }

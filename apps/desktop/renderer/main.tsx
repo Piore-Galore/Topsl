@@ -15,7 +15,11 @@ import type { Command } from "../../../packages/domain/commands";
 import "./style.css";
 import { Projects } from "./projects";
 import { Coordination } from "./coordination";
-import { ActionButton, ActionContext } from "./components/action-button";
+import {
+  ActionButton,
+  ActionContext,
+  actionOpener,
+} from "./components/action-button";
 import { Transcript } from "./components/transcript";
 import { ApprovalCard } from "./components/approval-card";
 import {
@@ -74,7 +78,11 @@ function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const trigger = document.activeElement;
+    // The opener; a button disabled while its command ran has lost focus.
+    const trigger =
+      document.activeElement && document.activeElement !== document.body
+        ? document.activeElement
+        : actionOpener();
     ref.current?.showModal();
     return () => {
       if (trigger instanceof HTMLElement && trigger.isConnected)
@@ -634,7 +642,7 @@ function App() {
               .filter(([, active]) => active)
               .map(([key]) => (
                 <p key={key} role="status">
-                  {key.split(":")[0].replaceAll("-", " ")}…
+                  {pendingLabel(key.split(":")[0])}…
                 </p>
               ))}
             {page === "providers" && (
@@ -1112,9 +1120,7 @@ function App() {
             </ul>
             {plan.release && (
               <pre className="technical">
-                {plan.release.url}\nSHA-256:{" "}
-                {plan.release.sha256 ?? "Unavailable"}\nArtifact:{" "}
-                {plan.release.artifactName}
+                {`${plan.release.url}\nSHA-256: ${plan.release.sha256 ?? "Unavailable"}\nArtifact: ${plan.release.artifactName}`}
               </pre>
             )}
             {plan.command && (
@@ -1285,4 +1291,40 @@ function App() {
     </ActionContext.Provider>
   );
 }
+/** What an operation still waiting for its reply is doing, in plain words. */
+const pendingLabels: Record<string, string> = {
+  "approval-decide": "Sending your answer",
+  "auto-accept-set": "Changing auto-accept",
+  "check-updates": "Checking for updates",
+  "claude-structured-route-set": "Changing Claude Code's structured route",
+  "claude-transcript-read-set": "Changing Claude Code transcript reading",
+  "configuration-apply": "Writing the configuration",
+  "configuration-preview": "Preparing the configuration preview",
+  "configuration-read": "Reading the configuration",
+  "conversation-add": "Creating the chat",
+  discover: "Looking for providers",
+  "handoff-export": "Exporting the handoff",
+  "handoff-preview": "Preparing the handoff",
+  "lifecycle-apply": "Starting the operation",
+  "lifecycle-cancel": "Cancelling the operation",
+  "lifecycle-preview": "Preparing the plan",
+  "lifecycle-reconcile": "Reconciling the operation",
+  "lifecycle-retry-preview": "Preparing the retry",
+  "project-add": "Adding the folder",
+  "project-move": "Moving the project",
+  "project-relink": "Relinking the folder",
+  "project-rename": "Renaming the project",
+  "project-trust": "Trusting the folder",
+  "run-interrupt": "Interrupting the turn",
+  "run-reconcile": "Reconciling the run",
+  "run-start": "Sending",
+  "runtime-connect": "Connecting the runtime",
+  "runtime-qualify": "Qualifying the runtime",
+  "select-runtime": "Adding the runtime",
+  "terminal-close": "Closing the terminal",
+  "terminal-open": "Opening the terminal",
+  "trust-installation": "Trusting the executable",
+};
+const pendingLabel = (type: string) => pendingLabels[type] ?? "Working";
+
 createRoot(document.getElementById("root")!).render(<App />);

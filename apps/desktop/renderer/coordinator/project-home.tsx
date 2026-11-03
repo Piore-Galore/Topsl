@@ -253,7 +253,7 @@ export function ProjectHome({
         <p role="status" className="session-attention">
           <span>
             No provider can coordinate yet. Qualify Codex or Claude Code under
-            Providers; the session waits until one can answer.
+            Providers first; a message sent before then is not answered.
           </span>
           {openProviders && (
             <button type="button" onClick={openProviders}>

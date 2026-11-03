@@ -103,9 +103,17 @@ export function AllSessions({
         />
         <button type="submit">Search</button>
       </form>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert">
+          Topsl could not read the sessions: {error}{" "}
+          <button type="button" onClick={() => void load(applied, null)}>
+            Try again
+          </button>
+        </p>
+      )}
       {!threads ? (
-        <p role="status">Loading sessions…</p>
+        // A failed first read says so above instead of loading for ever (W3-22).
+        !error && <p role="status">Loading sessions…</p>
       ) : !threads.length ? (
         <p className="muted">
           {applied ? "No matching sessions." : "No sessions yet."}

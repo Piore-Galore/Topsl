@@ -995,9 +995,6 @@ dialog::backdrop {
   .page-heading {
     flex-wrap: wrap;
   }
-  .topbar > span:last-child {
-    display: none;
-  }
   .runtime-bar {
     flex-wrap: wrap;
   }

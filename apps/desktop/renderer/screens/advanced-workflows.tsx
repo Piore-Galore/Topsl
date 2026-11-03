@@ -406,8 +406,9 @@ export function AdvancedWorkflows({
                   {metadata?.instructionSources?.length ? (
                     metadata.instructionSources.map((source: any) => (
                       <p className="path" key={source.path}>
-                        {source.path} · {source.source} · {source.observedAt} ·
-                        content hash {source.contentHash ?? "not reported"}
+                        {source.path} · {source.source} ·{" "}
+                        {new Date(source.observedAt).toLocaleString()} · content
+                        hash {source.contentHash ?? "not reported"}
                       </p>
                     ))
                   ) : (
@@ -525,7 +526,7 @@ export function AdvancedWorkflows({
                 {coordination.concurrency.visibleAttempts} running ·{" "}
                 {usageReadout(usage)}
               </p>
-              <ParallelActivity projectId={projectId} />
+              <ParallelActivity projectId={projectId} embedded />
               <div className="coordination-layout">
                 <section aria-label="Task list">
                   <h2>Tasks</h2>
