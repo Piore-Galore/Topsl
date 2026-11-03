@@ -1,29 +1,13 @@
 import { build } from "esbuild";
 import { build as buildVite } from "vite";
-import { mkdir, copyFile } from "node:fs/promises";
-await mkdir("dist", { recursive: true });
-await copyFile("assets/brand/icons/png/512x512.png", "dist/icon.png");
-for (const [entry, outfile] of [
-  ["apps/desktop/main.ts", "main.cjs"],
-  ["apps/desktop/preload.ts", "preload.cjs"],
-  ["apps/service/worker.ts", "service.cjs"],
-  ["apps/cli/main.ts", "cli.cjs"],
-]) {
-  await build({
-    entryPoints: [entry],
-    outfile: `dist/${outfile}`,
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    target: "node22",
-    sourcemap: false,
-    external: ["electron", "better-sqlite3-multiple-ciphers", "node-pty"],
-  });
-}
-await buildVite({
-  root: "apps/desktop/renderer",
-  base: "./",
-  build: { outDir: "../../../dist/renderer", emptyOutDir: true },
-  logLevel: "warn",
-});
+import {
+  nodeEntries,
+  nodeBuildOptions,
+  rendererConfig,
+  prepareDist,
+} from "./build-config.mjs";
+await prepareDist();
+for (const [entry, outfile] of nodeEntries)
+  await build(nodeBuildOptions(entry, outfile));
+await buildVite(rendererConfig);
 console.log("Built desktop, isolated service, companion CLI, and renderer.");

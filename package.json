@@ -14,7 +14,7 @@
     "icons:build": "node scripts/build-icons.mjs",
     "build": "node scripts/build.mjs",
     "start": "npm run build && electron .",
-    "dev": "npm run start",
+    "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "test:release": "node --test tests/release.test.mjs tests/release-packaging.test.mjs tests/mac-package.test.mjs",
