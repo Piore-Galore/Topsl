@@ -4,7 +4,7 @@ Report of the campaign the [plan](PLAN.md) describes: an audit of Topsl's curren
 
 ## Verdict
 
-**Not comprehensive acceptance, and no release qualification.** Every P0 and P1 finding was fixed and its reproduction passes; the automated gate, the Electron journeys, the campaign journeys and the packaged checks pass on the final source. But core live journeys are blocked or failed, two P2 findings need the owner's decision, and several cells were not run.
+**Not comprehensive acceptance, and no release qualification.** Every P0 and P1 finding was fixed and its reproduction passes; the automated gate, the Electron journeys, the campaign journeys, the packaged checks and a repeated 60-minute soak pass on the final source. But core live journeys are blocked or failed, two P2 findings need the owner's decision, and several cells were not run.
 
 - **Repaired and verified:** 3 P1 and 12 P2 findings, among them a keyboard trap in the native terminal, sessions stuck after a restart or a failed Claude launch, duplicate sessions from a double-click, an interrupt that never ended, accepting a candidate unseen, and IME submission (see [Findings](#findings)). No P0 was found.
 - **Passed live** (50 of 80 turns): both CLIs qualified; a mixed Codex and Claude session from discussion through accepted work and a published loop, with Claude at high effort; a Claude Code terminal → Codex chat handoff.
@@ -91,7 +91,26 @@ W4 ran these on `5d39db1`, with other agents loading the machine (load average a
 | `node scripts/campaign-soak.mjs --minutes 60` | 60.1 minutes, 180 cycles (60 Discuss sessions, 60 Work sessions accepted, 60 streamed chats), 0 failed steps. Main process RSS 200 → 205 MB with a flat heap; renderer heap 7.2 → 43.5 MB, 13.8 MB after a forced collection; control service 113 → 201 MB, flat after minute 12; 5 Electron processes throughout; at most 2 stand-ins at once; quit in 247 ms with no process left. Navigation p95 stayed 50–137 ms, but the project-wide `orchestration-query` grew from 5 ms to 1.2 s and New chat, first streamed text and reopening from All sessions slowed 2 to 5 times (W4-6). |
 | `node scripts/campaign-recovery-desktop.mjs --case all` with 7 cited test files (119 tests) | Disconnect mid-turn, malformed and wrong-shape output passed. Stall, service termination, restart and double submission failed in part (W4-1 to W4-4). |
 
-After the repairs, `campaign-recovery-desktop.mjs --case all` was rerun on the final source: see [Automated gate](#automated-gate). The soak was not repeated on the final source.
+After the repairs, `campaign-recovery-desktop.mjs --case all` was rerun on the final source: see [Automated gate](#automated-gate).
+
+**Soak repeated on the final source.** After the gate, from 03:49 to 04:50 local time, the soak ran again on `c4d7325`, the product source of `e12a6d3` (only documentation and the recovery harness fix followed), in the clean environment with no other agent or Electron instance running (load average about 6): `cleanenv.sh node scripts/campaign-soak.mjs --minutes 60 --out test-results/agent-testing/2026-11-04-comprehensive/final/soak-60min`, exit 0. Summary: [evidence/final-soak-summary.json](evidence/final-soak-summary.json).
+
+| Measure | W4, `5d39db1`, load about 11 | Final, `c4d7325`, load about 6 |
+| --- | --- | --- |
+| Duration, cycles, failed steps | 60.1 min, 180, 0 | 60.1 min, 180, 0 |
+| Main process | RSS 200 → 205 MB, heap flat | RSS 200 → 244 MB; heap 8–21 MB throughout and 10 MB at the end, so the rise is outside the JavaScript heap (not investigated further) |
+| Renderer JS heap | 7.2 → 43.5 MB; 13.8 MB after a forced collection | 7.2 → 28.9 MB (peak 45.5); 11.5 MB after a forced collection |
+| Control service working set | 113 → 201 MB | 113 → 214 MB, flat after minute 18 |
+| Processes | 5 Electron throughout; at most 2 stand-ins; quit in 247 ms, nothing left | 5 Electron throughout; at most 1 stand-in; quit in 220 ms, nothing left |
+| Navigation p95 | 50–137 ms | 36–113 ms |
+| `orchestration-query`, full project view (store) | 5 ms → 1.2 s | 5 ms → 0.94 s (p95 0.84 s) |
+| `history-page` / `session-list` p95 (store) | 1.8 s / 757 ms | 87 ms / 26 ms |
+| New chat p50, first / second half | 70 / 837 ms | 59 / 74 ms |
+| First streamed text p50, first / second half | 378 / 828 ms | 322 / 815 ms |
+| Reopen from All sessions p95 | 1,062 ms | 239 ms |
+| Click to reply (Discuss) and to goal card (Work), p50 / p95 | 2.2 / 4.7 s and 2.2 / 3.7 s | 1.9 / 2.0 s and 1.9 / 2.0 s |
+
+New chat, reopening from All sessions and the store's history and session-list reads no longer slowed over the run. The lower load may account for part of that; the two causes were not separated. The full project view still grows, and first streamed text still more than doubles in the second half, so W4-6 remains partly fixed. The summary's `session:*` p50, measured from the session heading rather than the click, rose from 1.3 to 1.8 s. Comparing medians suggests the heading now appears sooner after the click, since the click-relative times fell.
 
 ### Package
 
@@ -147,7 +166,7 @@ Severity: **P0** data loss or unintended execution; **P1** broken core workflow 
 | W4-3 | P2 | Runtime | A turn that acknowledged an interrupt but never ended stayed "running" with the writer lease until Topsl quit. | **Fixed** (`6bcee55`) | Topsl stops the process 30 s after its interrupt ([design §18.6](../../Topsl_Design.md)). `campaign-recovery-desktop.mjs` stall (stand-in; real Codex behaviour not established). |
 | W4-4 | P3 | Goals, recovery | After a restart mid-goal the goal said "1 coordinators preparing" with no sign of the uncertain run. | **Fixed** (`6bcee55`) | The goal card names the member and offers **Inspect & reconcile**. `tests/native-sessions.test.ts`; `campaign-recovery-desktop.mjs` restart-goal. |
 | W4-5 | P3 | Provider tools | While any member turn ran, chats were refused with "Coordinator/provider concurrency budget is full…". | **Fixed** (wording) | The refusal says what to do; nothing is queued, by design. |
-| W4-6 | P3 | Performance | Store and UI slowdown as a project grows: `orchestration-query` 5 ms → 1.2 s over 120 sessions and 60 goals. | **Partly fixed** (`e12a6d3`) | New session and Project settings, which re-read after every change, now request only what they use (`setup: true`). The full view's growth (per-conversation message and per-goal assignment scans) and `history-page` and `session-list` spikes remain; not profiled or re-measured. |
+| W4-6 | P3 | Performance | Store and UI slowdown as a project grows: `orchestration-query` 5 ms → 1.2 s over 120 sessions and 60 goals. | **Partly fixed** (`e12a6d3`) | New session and Project settings, which re-read after every change, now request only what they use (`setup: true`). The full view's growth (per-conversation message and per-goal assignment scans) remains, not profiled. Re-measured in the [final soak](#recovery-load-and-soak): `orchestration-query` 5 ms → 0.94 s and first streamed text still slows; New chat, reopening and the `history-page` and `session-list` spikes did not recur, at a lower machine load. |
 
 ## Coverage
 
@@ -170,7 +189,7 @@ The [coverage register](COVERAGE.md) maps 200 scenarios across the plan's eight 
 - **Real input methods and assistive technology.** IME composition was simulated through Chrome DevTools Protocol, not a macOS input method. VoiceOver could not be driven from Playwright and was not attempted by hand; accessible names were checked only in Chromium's accessibility tree.
 - **Host-changing provider operations.** CLI download, install and update from Providers (register PRV-20) were not exercised, even through disposable targets.
 - **Packaged cells.** `osvault` needs the real login keychain, the disk-full fault mounts a disk image, and the schema-1 restore needs a v0.1.1 fixture: blocked, as recorded by the harness. Packaged launches in `campaign-packaged-test.mjs` run offline under `sandbox-exec` with Chromium's own sandbox off; the packaged session journey ran with the network and the sandbox on.
-- **Repeats after the repairs.** The 60-minute soak and the full 404-view inspection were not repeated on the final source; W4-6 was not re-measured. `campaign-repairs-test.mjs` re-checks 12 inspection findings, and the recovery cases were rerun.
+- **Repeats after the repairs.** The full 404-view inspection was not repeated on the final source; `campaign-repairs-test.mjs` re-checks 12 inspection findings. The recovery cases and the 60-minute soak were rerun on it. The soak's comparison with W4's run is confounded by the different machine load, and the main process's 44 MB native-memory rise in the final soak was not investigated.
 - **Deferred findings.** W3-10 (check output), W3-11 (row height), W3-12, W3-16, W3-19, W3-20, W3-23, W3-24 and W4-6 (full-view growth) remain, as listed above.
 - **Outside the plan.** Windows, Linux and Intel Mac; release publication. Remote CI ran only on the pull request after this report.
 

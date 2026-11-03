@@ -1,0 +1,817 @@
+{
+  "recordedAt": "2026-11-03T20:49:53.572Z",
+  "revision": "c4d7325b5fd759c106f9984df4cb99a4d24d2b83",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0",
+    "cpu": "Apple M5",
+    "cores": 10,
+    "totalMemGb": 32,
+    "node": "26.0.0"
+  },
+  "requestedMinutes": 60,
+  "actualMinutes": 60.07,
+  "aborted": false,
+  "cycles": 180,
+  "work": {
+    "discussions": 60,
+    "works": 60,
+    "chats": 60,
+    "chatRefusals": 0,
+    "sessions": 120,
+    "goalOutcomes": [
+      {
+        "session": "Soak work 1: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 2: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 3: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 4: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 5: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 6: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 7: change the value to two in file.ts.",
+        "states": [
+          "accepted"
+        ]
+      },
+      {
+        "session": "Soak work 8: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 9: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 10: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 11: change the value to two in file.ts.",
+        "states": [
+          "accepted"
+        ]
+      },
+      {
+        "session": "Soak work 12: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 13: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 14: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 15: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 16: change the value to two in file.ts.",
+        "states": [
+          "accepted"
+        ]
+      },
+      {
+        "session": "Soak work 17: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 18: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 19: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 20: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 21: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 22: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 23: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 24: change the value to two in file.ts.",
+        "states": [
+          "accepted"
+        ]
+      },
+      {
+        "session": "Soak work 25: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 26: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 27: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 28: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 29: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 30: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 31: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 32: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 33: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 34: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 35: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 36: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 37: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 38: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 39: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 40: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 41: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 42: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 43: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 44: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 45: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 46: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 47: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 48: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 49: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 50: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 51: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 52: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 53: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 54: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 55: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 56: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 57: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 58: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 59: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      },
+      {
+        "session": "Soak work 60: change the value to two in file.ts.",
+        "states": [
+          "running"
+        ]
+      }
+    ]
+  },
+  "failures": [],
+  "trends": {
+    "mainRssMb": {
+      "start": 200.16,
+      "end": 243.22,
+      "min": 198.91,
+      "max": 243.22,
+      "slopePerHour": 32.51,
+      "samples": 61
+    },
+    "mainHeapUsedMb": {
+      "start": 11.06,
+      "end": 20.52,
+      "min": 7.91,
+      "max": 20.52,
+      "slopePerHour": 0.42,
+      "samples": 61
+    },
+    "rendererJsHeapUsedMb": {
+      "start": 7.21,
+      "end": 28.93,
+      "min": 7.21,
+      "max": 45.45,
+      "slopePerHour": 10.3,
+      "samples": 61
+    },
+    "rendererDomNodes": {
+      "start": 174,
+      "end": 1329,
+      "min": 174,
+      "max": 1558,
+      "slopePerHour": 1104.69,
+      "samples": 61
+    },
+    "rendererCdpNodes": {
+      "start": 546,
+      "end": 4732,
+      "min": 546,
+      "max": 5387,
+      "slopePerHour": 3396.44,
+      "samples": 61
+    },
+    "rendererJsEventListeners": {
+      "start": 567,
+      "end": 4065,
+      "min": 306,
+      "max": 7808,
+      "slopePerHour": 2926.56,
+      "samples": 61
+    },
+    "electronProcesses": {
+      "start": 5,
+      "end": 5,
+      "min": 5,
+      "max": 5,
+      "slopePerHour": 0,
+      "samples": 61
+    },
+    "electronWorkingSetMb": {
+      "start": 591.38,
+      "end": 954,
+      "min": 591.38,
+      "max": 994.34,
+      "slopePerHour": 239.64,
+      "samples": 61
+    },
+    "serviceWorkingSetKb": {
+      "start": 115632,
+      "end": 219632,
+      "min": 115600,
+      "max": 221616,
+      "slopePerHour": 89056.24,
+      "samples": 61
+    },
+    "treeProcesses": {
+      "start": 5,
+      "end": 5,
+      "min": 5,
+      "max": 6,
+      "slopePerHour": -0.04,
+      "samples": 61
+    },
+    "treeRssMb": {
+      "start": 596.77,
+      "end": 954.14,
+      "min": 596.77,
+      "max": 987.58,
+      "slopePerHour": 221.04,
+      "samples": 61
+    },
+    "standIns": {
+      "start": 0,
+      "end": 0,
+      "min": 0,
+      "max": 0,
+      "slopePerHour": 0,
+      "samples": 61
+    },
+    "standInsMaxPerMinute": {
+      "start": 0,
+      "end": 1,
+      "min": 0,
+      "max": 1,
+      "slopePerHour": 0.1,
+      "samples": 61
+    },
+    "loadavg1": {
+      "start": 6.5,
+      "end": 5.98,
+      "min": 5.25,
+      "max": 6.57,
+      "slopePerHour": 0.05,
+      "samples": 61
+    },
+    "otherElectronProcesses": {
+      "start": 0,
+      "end": 0,
+      "min": 0,
+      "max": 0,
+      "slopePerHour": 0,
+      "samples": 61
+    }
+  },
+  "store": {
+    "sessionListMs": {
+      "p50": 2.1,
+      "p95": 26.1,
+      "max": 91.2,
+      "first": 0.9,
+      "last": 91.2
+    },
+    "sessionQueryMs": {
+      "p50": 4.1,
+      "p95": 6.7,
+      "max": 34.9,
+      "first": 5,
+      "last": 3.8
+    },
+    "orchestrationQueryMs": {
+      "p50": 237.4,
+      "p95": 838.9,
+      "max": 943.5,
+      "first": 5,
+      "last": 943.5
+    },
+    "historyPageMs": {
+      "p50": 10.7,
+      "p95": 86.9,
+      "max": 109.3,
+      "first": 1.1,
+      "last": 46.6
+    }
+  },
+  "ui": {
+    "navigate:Providers": {
+      "count": 180,
+      "failed": 0,
+      "p50": 25.4,
+      "p95": 36.5,
+      "max": 83.9,
+      "firstHalfP50": 30.3,
+      "secondHalfP50": 25.3
+    },
+    "navigate:Settings": {
+      "count": 180,
+      "failed": 0,
+      "p50": 36.4,
+      "p95": 61.8,
+      "max": 85.6,
+      "firstHalfP50": 35.9,
+      "secondHalfP50": 36.8
+    },
+    "navigate:Projects": {
+      "count": 180,
+      "failed": 0,
+      "p50": 32,
+      "p95": 44.3,
+      "max": 83,
+      "firstHalfP50": 32.1,
+      "secondHalfP50": 31.9
+    },
+    "navigate:All sessions": {
+      "count": 180,
+      "failed": 0,
+      "p50": 66.1,
+      "p95": 100,
+      "max": 116.9,
+      "firstHalfP50": 66.2,
+      "secondHalfP50": 66.1
+    },
+    "navigate:Project settings": {
+      "count": 180,
+      "failed": 0,
+      "p50": 66.1,
+      "p95": 99.9,
+      "max": 149.4,
+      "firstHalfP50": 66.2,
+      "secondHalfP50": 66.1
+    },
+    "navigate:Provider tools": {
+      "count": 240,
+      "failed": 0,
+      "p50": 75.8,
+      "p95": 113.2,
+      "max": 157.6,
+      "firstHalfP50": 73.2,
+      "secondHalfP50": 77.9
+    },
+    "navigate:Advanced workflows": {
+      "count": 180,
+      "failed": 0,
+      "p50": 65.6,
+      "p95": 108.2,
+      "max": 164.9,
+      "firstHalfP50": 65.2,
+      "secondHalfP50": 66.4
+    },
+    "palette:open": {
+      "count": 480,
+      "failed": 0,
+      "p50": 5.4,
+      "p95": 11.3,
+      "max": 66.5,
+      "firstHalfP50": 4.8,
+      "secondHalfP50": 5.8
+    },
+    "palette:close": {
+      "count": 180,
+      "failed": 0,
+      "p50": 3.9,
+      "p95": 7,
+      "max": 47.9,
+      "firstHalfP50": 3.3,
+      "secondHalfP50": 4.3
+    },
+    "palette:New session": {
+      "count": 120,
+      "failed": 0,
+      "p50": 35.1,
+      "p95": 58.9,
+      "max": 131.9,
+      "firstHalfP50": 36.8,
+      "secondHalfP50": 34.3
+    },
+    "session:discuss-start-to-reply": {
+      "count": 60,
+      "failed": 0,
+      "p50": 1816.8,
+      "p95": 1859.4,
+      "max": 1866.5,
+      "fromClickP50": 1928.4,
+      "fromClickP95": 2046.6,
+      "firstHalfP50": 1810.9,
+      "secondHalfP50": 1820.3
+    },
+    "pane:open:Work details": {
+      "count": 60,
+      "failed": 0,
+      "p50": 32.4,
+      "p95": 69,
+      "max": 78.1,
+      "firstHalfP50": 35.4,
+      "secondHalfP50": 31.4
+    },
+    "pane:close:Work details": {
+      "count": 60,
+      "failed": 0,
+      "p50": 32.5,
+      "p95": 37.3,
+      "max": 67.2,
+      "firstHalfP50": 32.5,
+      "secondHalfP50": 32.6
+    },
+    "pane:open:Team details": {
+      "count": 60,
+      "failed": 0,
+      "p50": 34.9,
+      "p95": 35.8,
+      "max": 80.3,
+      "firstHalfP50": 34.8,
+      "secondHalfP50": 35
+    },
+    "pane:close:Team details": {
+      "count": 60,
+      "failed": 0,
+      "p50": 31.3,
+      "p95": 32.2,
+      "max": 79.4,
+      "firstHalfP50": 31.4,
+      "secondHalfP50": 31.2
+    },
+    "pane:open:Results details": {
+      "count": 60,
+      "failed": 0,
+      "p50": 33,
+      "p95": 34.9,
+      "max": 63.2,
+      "firstHalfP50": 33,
+      "secondHalfP50": 33
+    },
+    "pane:close:Results details": {
+      "count": 60,
+      "failed": 0,
+      "p50": 32.9,
+      "p95": 34.7,
+      "max": 84.9,
+      "firstHalfP50": 32.9,
+      "secondHalfP50": 32.8
+    },
+    "palette:Providers": {
+      "count": 180,
+      "failed": 0,
+      "p50": 34.4,
+      "p95": 48.6,
+      "max": 72.1,
+      "firstHalfP50": 34,
+      "secondHalfP50": 34.7
+    },
+    "session:work-start-to-goal-card": {
+      "count": 60,
+      "failed": 0,
+      "p50": 1812.7,
+      "p95": 1860.5,
+      "max": 1873.8,
+      "fromClickP50": 1888.5,
+      "fromClickP95": 1994.7,
+      "firstHalfP50": 1807,
+      "secondHalfP50": 1817.7
+    },
+    "chat:new": {
+      "count": 60,
+      "failed": 0,
+      "p50": 73.7,
+      "p95": 129.4,
+      "max": 212.4,
+      "firstHalfP50": 59.3,
+      "secondHalfP50": 74.4
+    },
+    "chat:send-to-first-streamed-text": {
+      "count": 60,
+      "failed": 0,
+      "p50": 326.7,
+      "p95": 838.6,
+      "max": 868.4,
+      "firstHalfP50": 321.7,
+      "secondHalfP50": 814.9
+    },
+    "chat:send-to-complete": {
+      "count": 60,
+      "failed": 0,
+      "p50": 3635.3,
+      "p95": 3687.2,
+      "max": 3697.6,
+      "firstHalfP50": 3629.7,
+      "secondHalfP50": 3653.1
+    },
+    "session:open-from-sidebar": {
+      "count": 89,
+      "failed": 0,
+      "p50": 62.1,
+      "p95": 119.7,
+      "max": 168.3,
+      "firstHalfP50": 58.6,
+      "secondHalfP50": 64.4
+    },
+    "session:reopen-from-all-sessions": {
+      "count": 60,
+      "failed": 0,
+      "p50": 170.6,
+      "p95": 239.2,
+      "max": 269.8,
+      "firstHalfP50": 156.6,
+      "secondHalfP50": 217.9
+    },
+    "goal:accept": {
+      "count": 60,
+      "failed": 0,
+      "p50": 73,
+      "p95": 126.1,
+      "max": 134.7,
+      "firstHalfP50": 66.7,
+      "secondHalfP50": 79
+    },
+    "session:all-sessions-search": {
+      "count": 88,
+      "failed": 0,
+      "p50": 47,
+      "p95": 84.8,
+      "max": 143.1,
+      "firstHalfP50": 33,
+      "secondHalfP50": 65.9
+    },
+    "session:open-from-all-sessions": {
+      "count": 88,
+      "failed": 0,
+      "p50": 96,
+      "p95": 149.6,
+      "max": 163.2,
+      "firstHalfP50": 96.4,
+      "secondHalfP50": 95.4
+    }
+  },
+  "afterRendererGc": {
+    "rendererJsHeapUsedMb": 11.4765625,
+    "domNodes": 1326,
+    "cdpNodes": 3568
+  },
+  "startSample": {
+    "label": "start",
+    "rendererJsHeapUsedMb": 7.206699371337891
+  },
+  "endSample": {
+    "label": "end"
+  },
+  "profileKb": "77764",
+  "leftovers": {
+    "treeBeforeQuit": 5,
+    "standInsBeforeQuit": 0,
+    "standInsSeenDuringRun": 184,
+    "standInsMaxConcurrent": 1,
+    "remainingSeenStandInPids": [],
+    "remainingTreePids": [],
+    "remainingStandIns": [],
+    "quitMs": 220.43616700032726
+  },
+  "limits": [
+    "UI timings are wall-clock in the Playwright driver from the action to the visible result; they include locator polling and IPC to the driver.",
+    "Store timings are window.topsl.command round trips measured inside the renderer (IPC + service), not UI rendering.",
+    "Stand-in Codex only (tests/fixtures/codex-soak.cjs); no model or account was contacted.",
+    "Other agents ran Electron concurrently on this machine; see machine.loadavg and otherElectronProcesses per sample."
+  ]
+}
