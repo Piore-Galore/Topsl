@@ -229,16 +229,18 @@ describe("CQ-01 qualification parent folder and refusal before any process", () 
 });
 
 /** A trusted "Codex" executable that runs the stand-in, under a production
- * runtime manager. Every frame goes to `log`. */
+ * runtime manager. Every frame goes to `log`, and the arguments each launch
+ * received to `argv`, one per line. */
 async function launched(
   env = "",
   adapters?: (executable: string) => Partial<Record<"codex", ProviderAdapter>>,
 ) {
   const f = await fixture();
-  const log = path.join(f.directory, "frames.jsonl");
+  const log = path.join(f.directory, "frames.jsonl"),
+    argv = path.join(f.directory, "argv.txt");
   await writeFile(
     f.installation.path,
-    `#!/bin/sh\nFIXTURE_LOG=${JSON.stringify(log)} ${env}ELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(standIn)}\n`,
+    `#!/bin/sh\nprintf '%s\\n' "$@" >> ${JSON.stringify(argv)}\nFIXTURE_LOG=${JSON.stringify(log)} ${env}ELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(standIn)}\n`,
   );
   await chmod(f.installation.path, 0o700);
   const installation = { ...f.installation, ...(await identity(f.installation.path)) };
@@ -287,7 +289,9 @@ async function launched(
       { installationId: installation.id, provider: "codex", model },
       "implementer",
     );
-  return { ...f, installation, runtime, frames, sent, readiness, catalog, log };
+  const launchArguments = () =>
+    existsSync(argv) ? readFileSync(argv, "utf8").trim().split("\n") : [];
+  return { ...f, installation, runtime, frames, sent, readiness, catalog, log, launchArguments };
 }
 
 describe.skipIf(!posix)("CQ-01 runtime manager refusals and one qualification per installation (POSIX shell stand-in)", () => {
@@ -334,6 +338,20 @@ describe.skipIf(!posix)("CQ-01 runtime manager refusals and one qualification pe
     expect(f.readiness().ready).toBe(true);
     await f.runtime.qualify(f.installation, { model: "fixture-model" }, await qualificationParent());
     expect(f.runtime.qualificationReports(f.installation.id)).toHaveLength(2);
+  });
+
+  test("C-5: Topsl starts Codex's app-server with Codex memories off, for reading and for writing", async () => {
+    const f = await launched();
+    await f.runtime.qualify(f.installation, { model: "fixture-model" }, await qualificationParent());
+    expect(f.launchArguments()).toEqual([
+      "app-server",
+      "-c",
+      "features.memories=false",
+      "-c",
+      "memories.use_memories=false",
+      "-c",
+      "memories.generate_memories=false",
+    ]);
   });
 });
 

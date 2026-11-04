@@ -35,7 +35,7 @@ import { Coordinator, type RuntimeExecution } from "./coordinator";
 import type { ExecutionPurpose } from "../domain/role-groups";
 import { purposeRequirements } from "../orchestration/roles";
 import { purposeOutputSchema } from "../orchestration/contracts";
-import { CodexAdapter } from "../providers/codex";
+import { CodexAdapter, codexAppServerArguments } from "../providers/codex";
 import {
   claudeAllowanceInterface,
   readClaudeAccount,
@@ -105,7 +105,7 @@ import {
 } from "../platform/system";
 
 const nativePeer = (executable: string, cwd: string) =>
-  new RpcPeer(executable, ["app-server"], cwd);
+  new RpcPeer(executable, codexAppServerArguments, cwd);
 /** The most text one stored message keeps. */
 const messageTextLimit = 2_000_000;
 /** How long streamed text waits in memory before it is written. A longer

@@ -199,11 +199,26 @@ export function permissionDifferences(
     );
   return differences;
 }
+/**
+ * How Topsl starts Codex for its own turns: with Codex memories off, so a
+ * Topsl turn neither reads the owner's `~/.codex/memories` nor adds Topsl's
+ * work to them (C-5). `-c` overrides only this process; the owner's own
+ * Codex sessions keep their configuration.
+ */
+export const codexAppServerArguments = [
+  "app-server",
+  "-c",
+  "features.memories=false",
+  "-c",
+  "memories.use_memories=false",
+  "-c",
+  "memories.generate_memories=false",
+];
 export class CodexAdapter implements ProviderAdapter {
   readonly provider = "codex" as const;
   constructor(
     private peer = (executable: string, cwd: string) =>
-      new RpcPeer(executable, ["app-server"], cwd),
+      new RpcPeer(executable, codexAppServerArguments, cwd),
   ) {}
   connect(executable: string, cwd: string): ProviderConnection {
     return this.peer(executable, cwd);
