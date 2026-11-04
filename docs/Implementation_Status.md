@@ -667,3 +667,11 @@ The [comprehensive audit, repairs, and UX improvement plan](testing/2026-11-04-c
 - **Open:** Codex reviewers rarely qualify live (C-4), Codex memories read during Topsl builds (C-5), deferred P2/P3 findings, VoiceOver, real input methods, host-changing CLI operations and other platforms.
 
 Earlier campaign results retain their original dated scope.
+
+## Session Send waits for the session's first read — 4 November 2026
+
+**Change.** A session's **Send** (and Command/Ctrl+Enter) now waits until the session view's first read has landed; typing does not wait. Before that read the view did not know the current goal or the session's composer mode, so a message sent immediately after opening a session went out aimed at no goal, in Auto mode. The coordinators then queued it as new work instead of steering the goal on screen. This was the cause of the intermittent Windows x64 failure of the desktop coordinator journey at "Return one member to Auto" (runs 41658812475 and 41716602100). The cause, the reproduction and what was ruled out are in the [test decision record](testing/TEST-DECISIONS.md#session-message-sent-before-the-session-was-read--4-november-2026).
+
+**Verification.** Two new unit tests in [thread-view.test.ts](../tests/thread-view.test.ts) failed before the change and pass after it. With the session view's read delayed by 1.5 s, the coordinator journey failed 2 of 2 times before the change and passed after it. CI on [PR #46](https://github.com/Piore-Galore/Topsl/pull/46) at `01ccdf9` passed every job on all four platforms on the first attempt, including the coordinator journey on Windows x64. The routine gate results and the per-platform CI results are in the record.
+
+**Not established.** The CI runs kept no stored state, so their cause is inferred from the identical symptom. One passing Windows run does not by itself show that the intermittent failure is gone. The New session page and the loop thread were not changed: New session starts a new session, so it has no goal to aim at, and the loop thread shows no composer until its run is read.

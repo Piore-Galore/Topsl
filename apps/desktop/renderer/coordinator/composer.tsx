@@ -12,6 +12,7 @@ export function Composer({
   sendLabel = "Send",
   disabled = false,
   sending = false,
+  loading = false,
   placeholder,
   note,
   children,
@@ -23,11 +24,13 @@ export function Composer({
   disabled?: boolean;
   /** A submission is in flight: Send waits for it. */
   sending?: boolean;
+  /** What the message would act on is not read yet: Send waits for it, typing does not. */
+  loading?: boolean;
   placeholder?: string;
   note?: ReactNode;
   children?: ReactNode;
 }) {
-  const ready = !disabled && !sending && !!value.trim();
+  const ready = !disabled && !sending && !loading && !!value.trim();
   return (
     <div className="thread-composer">
       <label className="composer-field">

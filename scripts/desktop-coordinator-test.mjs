@@ -346,8 +346,8 @@ try {
     await expect(section).toBeVisible();
   };
   const message = section.getByRole("textbox", { name: "Message" });
-  /** Every message of the session has been answered by its coordinators. */
-  const answered = async () => {
+  /** The coordinators' round for each message of the project's sessions. */
+  const intakes = async () => {
     const sessions = await page.evaluate(
       (projectId) => window.topsl.command({ type: "session-list", projectId }),
       projectId,
@@ -361,12 +361,14 @@ try {
         ),
       ),
     );
-    return views.every((v) =>
-      v.intakes.every(
-        (i) => !["collecting", "reconciling", "endorsing"].includes(i.stage),
-      ),
-    );
+    return views.flatMap((v) => v.intakes);
   };
+  /** Every message of the session has been answered by its coordinators. */
+  const answered = async () =>
+    (await intakes()).every(
+      (i) => !["collecting", "reconciling", "endorsing"].includes(i.stage),
+    );
+  /** A follow-up that steers the goal on screen. */
   const send = async (text) => {
     await openGoal();
     await message.fill(text);
@@ -379,6 +381,13 @@ try {
     ).toBeVisible();
     // The coordinators decide what the message does before it takes effect.
     await expect.poll(answered, { timeout: 60000 }).toBe(true);
+    // Sent before the session had been read, it was aimed at no goal and
+    // queued as new work, leaving the goal's team unchanged.
+    const intake = (await intakes()).findLast((i) => i.text === text);
+    expect([intake.targetGoalId, intake.outcome?.intent]).toEqual([
+      goalId,
+      "steer",
+    ]);
   };
   await expect(
     section
@@ -759,11 +768,50 @@ try {
                 progress: r.progress,
                 members: r.members.map((m) => [m.memberId, m.state, m.detail]),
               })),
+              // The stored team, to tell a stale screen from an unchanged one.
+              groups: g.groups.map((x) => [
+                x.roleId,
+                x.group.form,
+                x.group.count ?? null,
+                x.group.members.map((m) => m.pin?.label ?? "Auto"),
+              ]),
             }));
           }, projectId)
           .catch((e) => e.message),
         null,
         1,
+      ),
+    );
+  // Each message's target and decision: a message sent before the session
+  // had loaded is aimed at no goal and is queued as new work.
+  if (page && projectId)
+    console.error(
+      "Session intakes:",
+      JSON.stringify(
+        await page
+          .evaluate(async (projectId) => {
+            const sessions = await window.topsl.command({
+              type: "session-list",
+              projectId,
+            });
+            const views = await Promise.all(
+              sessions.map((s) =>
+                window.topsl.command({
+                  type: "session-query",
+                  sessionId: s.id,
+                }),
+              ),
+            );
+            return views.flatMap((v) =>
+              v.intakes.map((i) => [
+                i.text.slice(0, 40),
+                i.stage,
+                i.targetGoalId,
+                i.outcome?.intent ?? i.outcome?.kind ?? null,
+              ]),
+            );
+          }, projectId)
+          .catch((e) => e.message),
       ),
     );
   throw error;

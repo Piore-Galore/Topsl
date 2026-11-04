@@ -15,7 +15,8 @@ export class DraftStore {
   }
 }
 
-const drafts = new DraftStore();
+/** This window's drafts, which every composer reads and writes. */
+export const drafts = new DraftStore();
 
 export function useDraft(key: string): [string, (value: string) => void] {
   const [value, setValue] = useState(() => drafts.get(key));

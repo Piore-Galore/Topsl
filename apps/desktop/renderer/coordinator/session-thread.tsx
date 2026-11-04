@@ -148,6 +148,10 @@ export function SessionThread({
         : (conversation?.title ?? "Session");
   const composerMode = mode ?? session?.configuration.composerMode ?? "auto";
   const aimed = current && target === "current" ? current : null;
+  // Until the first read lands, the current goal and the session's composer
+  // mode are unknown, so Send waits: a message sent then would be aimed at no
+  // goal and queued as new work instead of steering the goal on screen.
+  const read = !!snapshot && !!query;
   /** Opens a pane at a goal: plan in Work, findings, checks or changes in Results. */
   const openPane = (next: GoalPane | Pane | null, goalId?: string) => {
     if (goalId) setFocus(goalId);
@@ -415,6 +419,7 @@ export function SessionThread({
               onChange={setDraft}
               onSend={() => void send()}
               sending={busy}
+              loading={!read}
               note={composerModeHints[composerMode]}
               placeholder={
                 aimed
