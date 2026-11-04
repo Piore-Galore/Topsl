@@ -1,0 +1,630 @@
+[
+  {
+    "run": "q1",
+    "name": "Codex qualification only (--qualify)",
+    "kind": "live",
+    "result": "passed",
+    "failure": null,
+    "modelTurns": 3,
+    "stages": null,
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [],
+    "codexRequests": []
+  },
+  {
+    "run": "p1-codex-codex",
+    "name": "Codex builds, Codex reviews",
+    "kind": "live",
+    "result": "passed",
+    "failure": null,
+    "modelTurns": 5,
+    "stages": [
+      "ready-build",
+      "building",
+      "reviewing",
+      "checking",
+      "awaiting-acceptance"
+    ],
+    "stoppedAt": "acceptance",
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": {
+      "findings": 0,
+      "summary": "No substantiated findings in the supplied candidate. The discount produces 900 cents, preserves the 1000-cent cart total, and changes only src/order.mjs. npm run check remains unverified because command execution was rejected."
+    },
+    "checks": [
+      "passed"
+    ],
+    "claudeSteps": [],
+    "codexRequests": [
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "denied",
+        "delegated": "deny"
+      },
+      {
+        "title": "Change files",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "denied",
+        "delegated": "deny"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      }
+    ]
+  },
+  {
+    "run": "p2-claude-codex",
+    "name": "Claude builds, Codex reviews (first try)",
+    "kind": "live",
+    "result": "failed",
+    "failure": "Timed out waiting for Claude Code to accept the build's instructions.",
+    "modelTurns": 3,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": null,
+        "pasted": false,
+        "replySeconds": null,
+        "permissions": [],
+        "followUps": [],
+        "handBack": null
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "p3-claude-claude",
+    "name": "Claude builds, Claude reviews (first try, no follow-up)",
+    "kind": "live",
+    "result": "failed",
+    "failure": "Topsl took no reply from the session's transcript: Claude's last turn in this session ended in a tool call, so Claude Code may have exited before Claude finished. Paste Claude's final reply instead, or open Claude Code again.",
+    "modelTurns": 0,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": null,
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": "accept edits on",
+        "pasted": true,
+        "replySeconds": 37.6,
+        "permissions": [
+          {
+            "answer": "Yes",
+            "delegated": "allow"
+          },
+          {
+            "answer": "No",
+            "delegated": "deny"
+          }
+        ],
+        "followUps": [],
+        "handBack": "unread"
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "p2b-claude-codex",
+    "name": "Claude builds, Codex reviews (second try)",
+    "kind": "live",
+    "result": "failed",
+    "failure": "Timed out waiting for Claude Code to accept the build's instructions.",
+    "modelTurns": 3,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": null,
+        "pasted": false,
+        "replySeconds": null,
+        "permissions": [],
+        "followUps": [],
+        "handBack": null
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "diag-claude-after-codex",
+    "name": "Diagnostic: Codex stand-in, real Claude Code, terminal size logged",
+    "kind": "diagnostic",
+    "result": "failed",
+    "failure": "Timed out waiting for Claude Code to accept the build's instructions.",
+    "modelTurns": 3,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": null,
+        "pasted": false,
+        "replySeconds": null,
+        "permissions": [],
+        "followUps": [],
+        "handBack": null
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "diag2",
+    "name": "Diagnostic: Claude Code's output recorded with script(1)",
+    "kind": "diagnostic",
+    "result": "failed",
+    "failure": "Timed out waiting for Claude Code to accept the build's instructions.",
+    "modelTurns": 3,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": null,
+        "pasted": false,
+        "replySeconds": null,
+        "permissions": [],
+        "followUps": [],
+        "handBack": null
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "diag3",
+    "name": "Diagnostic: terminal events heard by the window",
+    "kind": "diagnostic",
+    "result": "failed",
+    "failure": "Timed out waiting for Claude Code to accept the build's instructions.",
+    "modelTurns": 3,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": null,
+        "pasted": false,
+        "replySeconds": null,
+        "permissions": [],
+        "followUps": [],
+        "handBack": null
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "diag4",
+    "name": "Diagnostic: terminal pane state in the page",
+    "kind": "diagnostic",
+    "result": "failed",
+    "failure": "Timed out waiting for Claude Code to accept the build's instructions.",
+    "modelTurns": 3,
+    "stages": [
+      "ready-build",
+      "building"
+    ],
+    "stoppedAt": null,
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": null,
+    "checks": [],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": null,
+        "pasted": false,
+        "replySeconds": null,
+        "permissions": [],
+        "followUps": [],
+        "handBack": null
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "p3b-claude-claude",
+    "name": "Claude builds, Claude reviews (with follow-up)",
+    "kind": "live",
+    "result": "passed",
+    "failure": null,
+    "modelTurns": 0,
+    "stages": [
+      "ready-build",
+      "building",
+      "reviewing",
+      "checking",
+      "awaiting-acceptance"
+    ],
+    "stoppedAt": "acceptance",
+    "qualification": null,
+    "review": {
+      "findings": 0,
+      "summary": "Only src/order.mjs changed. Its sha256 is 70ad8bc4… against the base fixture's 04512d5c…, and the other 12 manifest source files match fixture-manifest.json hashes exactly. The 14 manifest paths are the 13 source files plus fixture-manifest.json, so no file was added. orderTotal now returns Math.round(totalCents(items) * 0.9): 900 cents for the catalog (2×250 + 500 = 1000) and 0 for an empty order. totalCents is unchanged and returns 1000. build/receipt.mjs would print totalCents 900 with logoBytes 68. I did not run npm run check because it is a write-free review and node_modules is not installed, so the check result is still to come from Topsl's separate run. Reading the code, all the check's assertions should pass."
+    },
+    "checks": [
+      "passed"
+    ],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": "accept edits on",
+        "pasted": true,
+        "replySeconds": 49.2,
+        "permissions": [
+          {
+            "answer": "Yes",
+            "delegated": "allow"
+          },
+          {
+            "answer": "No",
+            "delegated": "deny"
+          }
+        ],
+        "followUps": [
+          {
+            "ledgerNumber": 15,
+            "typed": true
+          }
+        ],
+        "handBack": "taken"
+      },
+      {
+        "role": "reviewer",
+        "version": "2.1.305",
+        "mode": "plan",
+        "shown": "plan mode on",
+        "pasted": true,
+        "replySeconds": 27.1,
+        "permissions": [],
+        "followUps": [],
+        "handBack": "taken"
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "p2c-claude-codex",
+    "name": "Claude builds, Codex reviews (after the screen fix)",
+    "kind": "live",
+    "result": "passed",
+    "failure": null,
+    "modelTurns": 4,
+    "stages": [
+      "ready-build",
+      "building",
+      "reviewing",
+      "checking",
+      "awaiting-acceptance"
+    ],
+    "stoppedAt": "acceptance",
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": {
+      "findings": 0,
+      "summary": "No substantiated defects in the supplied candidate. The sole change applies the discount in src/order.mjs and preserves cart totals. npm run check remains unverified because command execution was denied."
+    },
+    "checks": [
+      "passed"
+    ],
+    "claudeSteps": [
+      {
+        "role": "builder",
+        "version": "2.1.305",
+        "mode": "accept-edits",
+        "shown": "accept edits on",
+        "pasted": true,
+        "replySeconds": 94.4,
+        "permissions": [
+          {
+            "answer": "Yes",
+            "delegated": "allow"
+          },
+          {
+            "answer": "Yes",
+            "delegated": "allow"
+          },
+          {
+            "answer": "No",
+            "delegated": "deny"
+          },
+          {
+            "answer": "Yes",
+            "delegated": "allow"
+          }
+        ],
+        "followUps": [
+          {
+            "ledgerNumber": 29,
+            "typed": true
+          }
+        ],
+        "handBack": "taken"
+      }
+    ],
+    "codexRequests": []
+  },
+  {
+    "run": "p4-codex-claude",
+    "name": "Codex builds, Claude reviews",
+    "kind": "live",
+    "result": "passed",
+    "failure": null,
+    "modelTurns": 4,
+    "stages": [
+      "ready-build",
+      "building",
+      "reviewing",
+      "checking",
+      "awaiting-acceptance"
+    ],
+    "stoppedAt": "acceptance",
+    "qualification": {
+      "passed": [
+        "native-subscription",
+        "structured-turn",
+        "candidate-reader",
+        "fresh-session",
+        "read-only",
+        "workspace-write",
+        "interrupt",
+        "process-lifecycle"
+      ],
+      "failed": []
+    },
+    "review": {
+      "findings": 0,
+      "summary": "The candidate meets all four acceptance criteria. src/order.mjs now exports orderTotal(items), which returns Math.round(totalCents(items) * 0.9). For the catalog that is Math.round(1000 * 0.9) = 900 cents, and an empty order gives 0. src/cart.mjs is unchanged, so totalCents(catalog) still returns 1000 (2*250 + 1*500, summed by the vendored sumCents). I computed SHA-256 for all 13 source files in fixture-manifest.json and compared them with the manifest. Only src/order.mjs differs (04512d5c... in the manifest, 70ad8bc4... in the candidate). The folder holds exactly the 14 manifest paths, so no file was added. tests/check.mjs, build/receipt.mjs, assets/logo.png, package.json, package-lock.json and the vendor tarball all match the manifest. Tracing the check by hand, its assertions should pass: totalCents 1000, orderTotal 900, empty order 0, receipt.totalCents 900, and logoBytes 68, which is above 0. I did not run npm run check, because Topsl runs it separately and running it here would need an npm install that writes files. I found no substantiated defects."
+    },
+    "checks": [
+      "passed"
+    ],
+    "claudeSteps": [
+      {
+        "role": "reviewer",
+        "version": "2.1.305",
+        "mode": "plan",
+        "shown": "plan mode on",
+        "pasted": true,
+        "replySeconds": 19.7,
+        "permissions": [],
+        "followUps": [],
+        "handBack": "taken"
+      }
+    ],
+    "codexRequests": [
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Change files",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      },
+      {
+        "title": "Run a command",
+        "answer": "denied",
+        "delegated": "deny"
+      },
+      {
+        "title": "Run a command",
+        "answer": "allowed",
+        "delegated": "allow"
+      }
+    ]
+  }
+]

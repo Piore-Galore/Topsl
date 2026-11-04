@@ -1,0 +1,352 @@
+[
+  {
+    "at": "2026-11-04T01:46:40.948Z",
+    "provider": "codex",
+    "pid": 82813,
+    "number": 1,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:46:46.767Z",
+    "provider": "codex",
+    "pid": 82813,
+    "number": 2,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:46:57.308Z",
+    "provider": "codex",
+    "pid": 82813,
+    "number": 3,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:48:03.385Z",
+    "provider": "codex",
+    "pid": 87056,
+    "number": 4,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:48:14.720Z",
+    "provider": "codex",
+    "pid": 87056,
+    "number": 5,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:48:25.995Z",
+    "provider": "codex",
+    "pid": 87056,
+    "number": 6,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:48:38.448Z",
+    "provider": "codex",
+    "pid": 87617,
+    "number": 7,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:51:39.291Z",
+    "provider": "codex",
+    "pid": 89299,
+    "number": 8,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:52:45.426Z",
+    "provider": "codex",
+    "pid": 90143,
+    "number": 9,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:52:50.494Z",
+    "provider": "codex",
+    "pid": 90143,
+    "number": 10,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:53:01.532Z",
+    "provider": "codex",
+    "pid": 90143,
+    "number": 11,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:53:13.268Z",
+    "provider": "claude",
+    "pid": 90504,
+    "number": 12,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T01:56:53.479Z",
+    "provider": "claude",
+    "pid": 91670,
+    "number": 13,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:01:10.995Z",
+    "provider": "claude",
+    "pid": 92846,
+    "number": 14,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:01:54.353Z",
+    "provider": "claude",
+    "pid": 92771,
+    "number": 15,
+    "cap": 40,
+    "kind": "terminal-follow-up",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:02:11.696Z",
+    "provider": "claude",
+    "pid": 93165,
+    "number": 16,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:03:24.956Z",
+    "provider": "codex",
+    "pid": 93800,
+    "number": 17,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:03:30.492Z",
+    "provider": "codex",
+    "pid": 93800,
+    "number": 18,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:03:39.633Z",
+    "provider": "codex",
+    "pid": 93800,
+    "number": 19,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:03:53.916Z",
+    "provider": "claude",
+    "pid": 94220,
+    "number": 20,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:06:57.294Z",
+    "provider": "claude",
+    "pid": 95163,
+    "number": 21,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:09:35.234Z",
+    "provider": "claude",
+    "pid": 96175,
+    "number": 22,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:12:54.466Z",
+    "provider": "claude",
+    "pid": 96924,
+    "number": 23,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:17:11.600Z",
+    "provider": "claude",
+    "pid": 97648,
+    "number": 24,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:20:12.154Z",
+    "provider": "codex",
+    "pid": 98033,
+    "number": 25,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:20:33.689Z",
+    "provider": "codex",
+    "pid": 98033,
+    "number": 26,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:20:44.701Z",
+    "provider": "codex",
+    "pid": 98033,
+    "number": 27,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:20:58.237Z",
+    "provider": "claude",
+    "pid": 98464,
+    "number": 28,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:22:03.456Z",
+    "provider": "claude",
+    "pid": 97961,
+    "number": 29,
+    "cap": 40,
+    "kind": "terminal-follow-up",
+    "model": null,
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:22:49.335Z",
+    "provider": "codex",
+    "pid": 99058,
+    "number": 30,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:23:56.801Z",
+    "provider": "codex",
+    "pid": 101,
+    "number": 31,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:24:04.145Z",
+    "provider": "codex",
+    "pid": 101,
+    "number": 32,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:24:15.835Z",
+    "provider": "codex",
+    "pid": 101,
+    "number": 33,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:24:30.371Z",
+    "provider": "codex",
+    "pid": 574,
+    "number": 34,
+    "cap": 40,
+    "kind": "structured-turn",
+    "model": "gpt-6.1-sol",
+    "effort": null
+  },
+  {
+    "at": "2026-11-04T02:27:30.717Z",
+    "provider": "claude",
+    "pid": 1898,
+    "number": 35,
+    "cap": 40,
+    "kind": "terminal-session",
+    "model": null,
+    "effort": null
+  }
+]

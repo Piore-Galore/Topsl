@@ -12,6 +12,7 @@ Where the [campaign report](REPORT.md)'s results are recorded. Most evidence is 
 | [evidence/isolation-results.json](evidence/isolation-results.json), [evidence/hostile-text.png](evidence/hostile-text.png) | Renderer isolation and hostile text, final gate |
 | [evidence/repairs-results.json](evidence/repairs-results.json), [evidence/terminal-leave.png](evidence/terminal-leave.png) | The 12 repaired findings checked in the app, final gate |
 | [evidence/turn-budget-self-test.json](evidence/turn-budget-self-test.json) | The turn budget's stand-in self-test, final gate |
+| [evidence/live-retry-ledger.json](evidence/live-retry-ledger.json), [evidence/live-retry-journeys.json](evidence/live-retry-journeys.json), [evidence/live-retry-answers.json](evidence/live-retry-answers.json) | The [live retry follow-up](REPORT.md#follow-up-live-retry-4-november-2026): its 35 counted turns; each run's outcome, qualification, review, check, Claude steps and Codex requests; and every delegated answer with the request and the reason, the home folder written as `~` |
 | [evidence/final-soak-summary.json](evidence/final-soak-summary.json) | The 60-minute soak on `c4d7325` after the final gate: memory, heap and process trends, store and UI timings, goal outcomes and leftovers |
 
 ## Local (not committed)
@@ -27,5 +28,7 @@ Paths are relative to `test-results/agent-testing/2026-11-04-comprehensive/` on 
 | `w1-harnesses/` | W1 | The ported auxiliary harnesses' runs (`campaign-ui-run1`–`run4`), packaging logs, the offline sandbox profiles and the packaged scenarios on W1's build |
 | `w3-inspection/` | W3 | 404 views (703 files), named destination-state-theme-size; `checks.json` and `checks-loops.json` with every automated check and interaction |
 | `w4-recovery-load/` | W4 | `evidence-index.json` (every command with its time window and files), the load runs, `soak-60min/` (samples, timings, events), and the recovery runs (`recovery-316d210/` is the final one on `5d39db1`) |
+
+The live retry follow-up's local evidence is in a sibling folder, `test-results/agent-testing/2026-11-04-live-retry/`: `live/` holds the turn ledger, the wrappers, the memory folder's file times before and after (`memories-*.txt`, sizes and times only), and per run its `run.log`, `answers/` (each request and answer) and `run/` (report and screenshots); `diag-claude-after-codex/`, `diag2/` (`typescript`, Claude Code's raw output), `diag3/` and `diag4/` hold the screen-read diagnostics; `standin*/` hold the stand-in checks of the delegated answers and the follow-up; and `check.log` the automated check.
 
 Worker branches, merged into `claude/windows-qualification`: W1 `844fe45` (merge `5bd8cb3`), W3 `9962cf2` (merge `db76f94`), W4 `316d210` and `1206868` (merge `7d2c4a5`).

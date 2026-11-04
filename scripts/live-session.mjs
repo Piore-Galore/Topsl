@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { createDemoFixture } from "./round2-demo-fixture.mjs";
 import { navigate } from "./desktop-navigation.mjs";
+import { capOf, reserve } from "./campaign-turn-ledger.mjs";
 
 // Live acceptance of provider sessions inside Topsl: Claude Code in its native
 // terminal, Codex through the structured chat or in its native terminal, or
@@ -143,6 +144,30 @@ if (
 // each permission prompt in a Claude Code step.
 const ownerStandIn = process.env.TOPSL_LIVE_OWNER_STAND_IN === "1";
 if (ownerStandIn && !options.workflow) throw new Error(usage);
+// With TOPSL_LIVE_ANSWERS=<folder>, someone the owner delegated answers a
+// live workflow's requests, one at a time: the script writes each request
+// the run waits on, with what Topsl showed, to <folder>/<id>.request.json and
+// acts only on <folder>/<id>.answer, whose first line is "allow" or "deny"
+// and whose next line may give the reason. It answers as the owner would:
+// Deny or Review & allow once on the workflow's card, then Topsl's Allow
+// once confirmation for that request's digest alone; or Yes or No in a Claude
+// Code permission prompt. A request with no answer file waits, as before.
+const answersDir = process.env.TOPSL_LIVE_ANSWERS
+  ? path.resolve(process.env.TOPSL_LIVE_ANSWERS)
+  : null;
+if (answersDir && (ownerStandIn || !options.workflow)) throw new Error(usage);
+if (answersDir) await mkdir(answersDir, { recursive: true, mode: 0o700 });
+// After a Claude Code permission prompt the delegate answered deny, Claude
+// Code ends its turn on the declined call and Topsl takes no reply, so the
+// script types one follow-up, as the owner would: the reason, and a request
+// to finish in the folder and end with a final reply. Each follow-up is a
+// prompted round, counted in TOPSL_LIVE_LEDGER (the campaign turn ledger,
+// capped by <ledger>.cap) before it is typed; without that ledger, or past
+// its cap, none is typed and the step ends as before.
+const followUpLedger = process.env.TOPSL_LIVE_LEDGER
+  ? path.resolve(process.env.TOPSL_LIVE_LEDGER)
+  : null;
+if (followUpLedger && !answersDir) throw new Error(usage);
 if (qualifies && process.platform === "win32")
   throw new Error(
     "The runtime qualification uses POSIX shell probes and runs on macOS and Linux only.",
@@ -388,11 +413,15 @@ const hasNumber = (text, number) =>
 
 const terminal = page.getByRole("region", { name: "Native terminal" });
 const terminalOutput = () => page.evaluate(() => window.__liveTerminal.output);
-/** The text Topsl's terminal shows, which can differ from the raw output. */
+/**
+ * The text Topsl's terminal shows, which can differ from the raw output.
+ * xterm.js stops drawing a terminal while it is scrolled out of view, as on a
+ * long workflow card, so the terminal is brought into view first.
+ */
 const terminalScreen = () =>
   terminal
-    .locator(".xterm-rows")
-    .innerText()
+    .scrollIntoViewIfNeeded({ timeout: 2000 })
+    .then(() => terminal.locator(".xterm-rows").innerText())
     .then((text) => text.replace(/\u00a0/g, " "))
     .catch(() => "");
 const exitPattern = /\[Native session exited: (-?\d+)\]/;
@@ -717,10 +746,11 @@ function stepTerminal(panel, id) {
     region,
     output: () =>
       page.evaluate((id) => window.__liveTerminal.byId[id] ?? "", id),
+    // In view first: xterm.js draws nothing while scrolled out of view.
     screen: () =>
       region
-        .locator(".xterm-rows")
-        .innerText()
+        .scrollIntoViewIfNeeded({ timeout: 2000 })
+        .then(() => region.locator(".xterm-rows").innerText())
         .then((text) => text.replace(/ /g, " "))
         .catch(() => ""),
     focus,
@@ -1559,6 +1589,39 @@ const asked = (approval) => ({
   answer: null,
 });
 
+/**
+ * The delegated answer to request `id`, once its answer file exists; writes
+ * the request first. Returns null while there is no answer.
+ */
+async function delegatedAnswer(id, request) {
+  const base = path.join(answersDir, id.replace(/[^\w.-]/g, "_"));
+  try {
+    await stat(`${base}.request.json`);
+  } catch {
+    await writeFile(
+      `${base}.request.json`,
+      JSON.stringify(
+        { ...request, writtenAt: new Date().toISOString() },
+        null,
+        2,
+      ),
+    );
+    console.error(
+      `Waiting for the delegated answer: ${base}.answer (allow or deny).`,
+    );
+  }
+  let text;
+  try {
+    text = await readFile(`${base}.answer`, "utf8");
+  } catch {
+    return null;
+  }
+  const [answer, ...reason] = text.trim().split("\n");
+  if (answer !== "allow" && answer !== "deny")
+    throw new Error(`${base}.answer must start with allow or deny.`);
+  return { answer, reason: reason.join(" ").trim() || null };
+}
+
 /** Records which button on a request's card is pressed, by request. */
 async function watchPresses() {
   await page.evaluate(() => {
@@ -1772,6 +1835,7 @@ async function claudeStep(projectId, card, step, workflowOf) {
     replySeconds: null,
     declined: [],
     permissions: [],
+    followUps: [],
     question: null,
     apiError: null,
     exit: null,
@@ -1965,6 +2029,7 @@ async function claudeStep(projectId, card, step, workflowOf) {
     let last = null,
       steadySince = Date.now(),
       asking = null;
+    const followUps = [];
     await until(
       `Claude's reply in the ${noun}`,
       stepWindow,
@@ -2022,7 +2087,9 @@ async function claudeStep(projectId, card, step, workflowOf) {
             console.error(
               ownerStandIn
                 ? `Claude Code asks: ${choice.question} The script answers Yes as the owner, since this is the stand-in run.`
-                : `Claude Code asks: ${choice.question} Answer it in the ${noun}'s terminal in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which the run stops.`,
+                : answersDir
+                  ? `Claude Code asks: ${choice.question} Write its answer file by ${new Date(deadline).toLocaleTimeString()}, after which the run stops.`
+                  : `Claude Code asks: ${choice.question} Answer it in the ${noun}'s terminal in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which the run stops.`,
             );
             if (ownerStandIn)
               asking.answer = (
@@ -2034,7 +2101,36 @@ async function claudeStep(projectId, card, step, workflowOf) {
                 )
               ).chosen;
           }
-          if (selected && !ownerStandIn) asking.answer = answerText(selected);
+          if (answersDir && !asking.delegated) {
+            const delegated = await delegatedAnswer(
+              `claude-${record.stepId}-${record.permissions.length}`,
+              {
+                provider: "claude",
+                role: step.role,
+                question: choice.question,
+                screen: withoutHome(screen),
+              },
+            );
+            if (delegated) {
+              asking.delegated = delegated;
+              asking.answeredBy = "delegate";
+              if (delegated.answer === "deny")
+                followUps.push({ reason: delegated.reason });
+              asking.answer = (
+                await choose(
+                  view,
+                  "permission prompt",
+                  delegated.answer === "allow"
+                    ? approvePermission
+                    : declinePermission,
+                  numberedAnswer,
+                )
+              ).chosen;
+              return false;
+            }
+          }
+          if (selected && !ownerStandIn && !asking.delegated)
+            asking.answer = answerText(selected);
           if (Date.now() > asking.deadline)
             throw new Error(
               `Claude Code's permission prompt "${choice.question}" waited 15 minutes without an answer, so the run stopped.`,
@@ -2078,12 +2174,39 @@ async function claudeStep(projectId, card, step, workflowOf) {
           throw new Error(
             `Claude Code showed no sign of working on the ${noun}'s instructions within 2 minutes.`,
           );
-        return (
+        const done =
           working &&
           steady &&
           inputReady.test(screen) &&
-          !/esc\s*to\s*interrupt/i.test(screen)
-        );
+          !/esc\s*to\s*interrupt/i.test(screen);
+        if (done && followUps.length) {
+          const { reason } = followUps.shift(),
+            followUp = { reason, ledgerNumber: null, typed: false };
+          record.followUps.push(followUp);
+          followUp.ledgerNumber = followUpLedger
+            ? reserve(followUpLedger, capOf(followUpLedger, 0), "claude", {
+                kind: "terminal-follow-up",
+                model: null,
+                effort: null,
+              })
+            : null;
+          if (followUp.ledgerNumber === null) {
+            console.error(
+              "No follow-up was typed after the declined command: there is no turn ledger, or its cap is reached.",
+            );
+            return true;
+          }
+          const text = `I declined that command${reason ? `: ${reason}` : "."} Do not run commands that reach outside this folder. Finish the task here, then end with your final reply.`;
+          await view.focus();
+          await page.keyboard.type(text.replace(/\s+/g, " "), { delay: 5 });
+          await sleep(500);
+          await page.keyboard.press("Enter");
+          followUp.typed = true;
+          last = null;
+          steadySince = Date.now();
+          return false;
+        }
+        return done;
       },
       1000,
     );
@@ -2392,7 +2515,9 @@ async function teamWorkflow(projectId, runtimes) {
                 console.error(
                   ownerStandIn
                     ? `Codex asks: ${request.title}. The script answers it as the owner, since this is the stand-in run.`
-                    : `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`,
+                    : answersDir
+                      ? `Codex asks: ${request.title}. Write its answer file by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`
+                      : `Codex asks: ${request.title}. Answer it on the workflow's card in Topsl's window by ${new Date(deadline).toLocaleTimeString()}, after which Topsl takes no answer.`,
                 );
                 // How the first request looks on the card, before its answer.
                 if (requests.size === 1) {
@@ -2403,6 +2528,34 @@ async function teamWorkflow(projectId, runtimes) {
                   await screenshot("workflow-request");
                 }
                 if (ownerStandIn) await answerAsOwner(card, approval);
+              }
+              const pending = requests.get(approval.id);
+              if (answersDir && !pending.request.delegated) {
+                const delegated = await delegatedAnswer(approval.id, {
+                  provider: "codex",
+                  ...pending.request,
+                  method: approval.method ?? null,
+                  description: withoutHome(String(approval.description)),
+                });
+                if (delegated) {
+                  pending.request.delegated = delegated;
+                  if (delegated.answer === "allow")
+                    await app.evaluate((_electron, digest) => {
+                      globalThis.__liveSession.policy.delegatedAllow.push(
+                        digest,
+                      );
+                    }, approval.digest);
+                  await card
+                    .locator(`[data-approval="${approval.id}"]`)
+                    .getByRole("button", {
+                      name:
+                        delegated.answer === "allow"
+                          ? "Review & allow once"
+                          : "Deny",
+                      exact: true,
+                    })
+                    .click();
+                }
               }
             }
             for (const [id, { approval, request }] of requests)
@@ -2772,17 +2925,24 @@ try {
         // shows them Topsl's dialog and keeps the answer with the request's
         // digest; only the stand-in owner answers it here.
         if (message === "Allow this native action once?") {
-          const answer = policy.ownerStandIn
-            ? {
-                response: buttons.indexOf("Allow once"),
-                checkboxChecked: false,
-              }
-            : await showMessageBox.apply(dialog, args);
+          const digest = /\nDigest: ([a-f0-9]{64})$/.exec(detail)?.[1] ?? null,
+            delegated = !!digest && policy.delegatedAllow.includes(digest);
+          const answer =
+            policy.ownerStandIn || delegated
+              ? {
+                  response: buttons.indexOf("Allow once"),
+                  checkboxChecked: false,
+                }
+              : await showMessageBox.apply(dialog, args);
           dialogs.push({
             dialog: message,
             answer: buttons[answer.response] ?? null,
-            by: policy.ownerStandIn ? "owner stand-in" : "owner",
-            digest: /\nDigest: ([a-f0-9]{64})$/.exec(detail)?.[1] ?? null,
+            by: policy.ownerStandIn
+              ? "owner stand-in"
+              : delegated
+                ? "delegate"
+                : "owner",
+            digest,
           });
           return answer;
         }
@@ -2853,6 +3013,7 @@ try {
       dispatch: null,
       check: null,
       ownerStandIn,
+      delegatedAllow: [],
     },
   );
 

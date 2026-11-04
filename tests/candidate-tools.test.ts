@@ -139,6 +139,38 @@ test("each declared tool reaches the reader, with the ids Topsl fills in", async
   ]);
 });
 
+test("C-4: each description names the fields its answer holds, and the answer is JSON text, not a content array", async () => {
+  const f = await setup();
+  // Codex 0.163.0 calls these tools from a script and reads only what the
+  // description promises; on 4 November it assumed `result.content[]` text
+  // blocks in 5 of 6 probe turns and printed nothing.
+  const described = (name: string) =>
+    candidateToolset.tools.find((tool) => tool.name === name)!.description;
+  expect(candidateToolset.description).toContain(
+    "a string, not an object with a content array",
+  );
+  const answers = {
+    list: await f.call("list", {}),
+    search: await f.call("search", { query: f.marker }),
+    read_range: await f.call("read_range", { path: "small.txt" }),
+  };
+  const fields = {
+    list: ["items", "nextCursor"],
+    search: ["items", "nextCursor"],
+    read_range: ["content", "encoding", "nextOffset"],
+  };
+  for (const [name, answer] of Object.entries(answers)) {
+    expect(answer.success).toBe(true);
+    const parsed = JSON.parse(answer.text);
+    expect(Array.isArray(parsed)).toBe(false);
+    for (const field of fields[name as keyof typeof fields]) {
+      expect(described(name)).toContain(`${field} field`);
+      expect(parsed).toHaveProperty(field);
+    }
+  }
+  expect(JSON.parse(answers.read_range.text).content).toBe("small file\n");
+});
+
 test("a path outside the grant is refused with a receipt, and a call after revocation is refused before the reader", async () => {
   const f = await setup();
   expect(await f.call("read_range", { path: "outside.txt" })).toEqual({
