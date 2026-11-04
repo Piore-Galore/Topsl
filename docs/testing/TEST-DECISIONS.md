@@ -593,7 +593,20 @@ In both runs the step "Return one member to Auto" sent "Change the reviewers. Us
 - `npm run check`, run through a local wrapper that removes the agent session's `ANTHROPIC_*` and `CLAUDE*` variables: typecheck passed; Vitest 88 files passed and 2 skipped, with 1,220 tests passed and 5 skipped; 18 of 18 release tests passed; the build passed.
 - `npm run test:desktop`, through the same wrapper and with the delay removed: all seven default journeys passed in 3 min 4 s.
 
-**Not established:** the stored state of the CI runs themselves, and whether the Windows runner's first read was the slow step.
+### Remote CI (4 November 2026)
+
+CI on [PR #46](https://github.com/Piore-Galore/Topsl/pull/46) at `01ccdf9` passed every job on the first attempt.
+
+| Platform | [Compile Topsl](https://github.com/Piore-Galore/Topsl/actions/runs/41756933178) | [Round 2 lifecycle stress](https://github.com/Piore-Galore/Topsl/actions/runs/41756933206) |
+| --- | --- | --- |
+| macOS Apple silicon | Vitest 1,220 passed, 5 skipped; release 18 of 18; main, encrypted restart, coordinator, loop, session, Claude usage and Providers journeys passed; packaged session journey passed | Passed |
+| macOS Intel | Vitest 1,220 passed, 5 skipped; release 18 of 18; the same seven journeys and the packaged session journey passed | Passed |
+| Linux x64 | Vitest 1,219 passed, 6 skipped; release 17 passed, 1 skipped; the same seven journeys and the packaged session journey passed | Passed |
+| Windows x64 | Vitest 1,124 passed, 101 skipped; release 17 passed, 1 skipped; main, encrypted restart, coordinator, loop, session and Claude usage journeys passed; Providers journey skipped ("the Claude stand-in needs a POSIX shell"); packaged session journey passed | Passed |
+
+`tests/thread-view.test.ts` passed 8 of 8 on all four platforms. On Windows x64 the coordinator journey, now including the intake check in `send()`, passed in about 46 s (job 126335129111).
+
+**Not established:** the stored state of the CI runs themselves, and whether the Windows runner's first read was the slow step. One passing Windows run does not by itself show that the intermittent failure is gone, because run 41716602100 also passed on its second attempt before the fix. The evidence for the cause and the fix is the local reproduction above.
 
 ## Open product questions
 
