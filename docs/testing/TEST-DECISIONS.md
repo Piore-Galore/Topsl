@@ -558,6 +558,43 @@ The reader now parses the screen a terminal shows, not the raw stream ([status](
 | — | *reads a Windows pseudoconsole repaint that moves the cursor into the middle of a heading* uses the shape ConPTY sent in the probe; *reads what the terminal shows…* covers overwrites, erases, wrapping, scrolling, line insertion and an incomplete sequence | Unit coverage of `terminalScreen` on every platform; the Claude usage integration tests still launch a `#!/bin/sh` stand-in and skip on Windows |
 | *shutdown cancels a native usage read…* polled for the stand-in's start with Vitest's 1-second default | It waits up to 10 seconds | Its account read and terminal start take 960–1015 ms on this Mac (8 runs, with and without this change), and it failed 3 of 4 runs here while a stray test process loaded the host. The [orchestration defect repairs](#orchestration-defect-repairs--20-october-2026) had recorded the same flake and left it unfixed |
 
+## Session message sent before the session was read — 4 November 2026
+
+**Diagnosed and fixed on 4 November 2026: a product defect.** A session's **Send** was enabled before the session's first read had landed. Until that read, the session view does not know the current goal or the session's composer mode. A message sent in that window therefore went out aimed at no goal (`target: null`), in Auto mode. The coordinators queued it as new work instead of steering the goal on screen, so the goal's team never changed. A person who opens a session and sends at once would get the same result. The screen was not stale: the stored team had not changed.
+
+### What CI recorded
+
+| CI run | Platform | Commit | Observed |
+| --- | --- | --- | --- |
+| 41658812475 (job 125996261679) | Windows x64 | `66345fd` | `desktop-coordinator-test.mjs:457` timed out |
+| 41716602100, first attempt (job 126198124224) | Windows x64 | `bfa559c` | the same; the second attempt passed |
+
+In both runs the step "Return one member to Auto" sent "Change the reviewers. Use two reviewers; include Astra.", and `answered()` reported every intake settled. Then `expect(teamLine).toContainText(/Reviewers: Astra \+ 1 Auto(?! \+)/)` timed out after 5 s. The goal card's team line still read "Coordinators: Auto (1) · Implementation: Auto · Reviewers: Astra + Sol Team", the previous step's roster. The failure output listed one goal, paused with "Steering received; replanning before further actions are admitted." The other three platforms passed in both runs.
+
+### Cause, with evidence
+
+- **The window.** Opening Project settings unmounts the session view ([session-thread.tsx](../../apps/desktop/renderer/coordinator/session-thread.tsx)). Coming back mounts it with no orchestration view and no session query. The composer rendered at once. `send()` took its target from `current`, which stays undefined until `refresh()` lands, and its mode from `session?.configuration.composerMode ?? "auto"`. The journey edits a role default in Project settings after each of its first three follow-ups. The next `send()` therefore returns through the sidebar, fills the message and clicks **Send** without waiting, so a slow runner could click before the first read.
+- **What a message aimed at no goal does.** The stand-in (`sessionAnswer` in [orchestration-answers.cjs](../../tests/fixtures/orchestration-answers.cjs)) answers `steer` only when the prompt says the composer targets the current goal, and `new-work` otherwise. `finish()` in [session-engine.ts](../../packages/orchestration/session-engine.ts) applies a message's team instructions only to a goal the message steers. A `new-work` message is queued behind the paused goal, so `answered()` turns true while the goal's team is unchanged.
+- **Reproduction.** A temporary, uncommitted 1.5 s delay before the service read `orchestration-query` for one conversation slowed the session view's read only; the journey's own `query()` names no conversation. The unchanged journey then failed in 2 of 2 runs on darwin-arm64. Both failed at the first follow-up after a Project settings visit (`:444`, "Remove"). The line read "…Reviewers: Astra + Sol + Fable Team" against the expected `/Reviewers: Astra \+ Sol(?! \+)/`. The new failure output showed that message's intake `decided` with `targetGoalId` null and outcome `new-work`, and the goal's stored reviewer group still `exact` with Astra, Sol and Fable.
+- **The questions asked.** (1) In the reproduction, the stored goal group had not changed when the assertion failed. The CI runs kept no stored state; their cause is inferred from the identical symptom. (2) No read was dropped. With the fix and the same 1.5 s delay on every session-view read, the whole journey passed, every team-line assertion included.
+- **Ruled out.** `answered()` passing before the new intake existed: `session-message` writes the user message and freezes its intake in one command, with no input or output between the two (`SessionSupervisor.message`), so the message is never shown without its intake. A fence dropping the newer read: `orchestration-query` carries no observation, so the session view's `ScopedReadFence` orders its reads by request, and a later read always wins.
+
+### Fix
+
+- [Composer](../../apps/desktop/renderer/coordinator/composer.tsx) takes `loading`. While it is set, **Send** and Command/Ctrl+Enter wait, but typing does not. The session view sets it until its first orchestration view and session query have both landed. It stays clear through later refreshes, so it cannot disable **Send** for a routine refresh and drop a click as [F-01](#recurring-desktop-confirmation-loss-f-01) did.
+- Unit tests in [thread-view.test.ts](../../tests/thread-view.test.ts): *Send waits while the message's target is not read yet; typing does not*, and *a session does not send a typed draft before it has read what the message would steer*. The second renders the session view before its first read lands, with a draft, and requires **Send** disabled. To seed that draft, [drafts.ts](../../apps/desktop/renderer/state/drafts.ts) now exports the window's draft store.
+- The journey's `send()` also requires each follow-up's intake to target the goal and to be decided `steer`, so a misrouted message fails at its cause. Its failure output adds each goal's stored role groups and every intake's target and decision.
+- No timeout was raised.
+
+### Verification (darwin-arm64, working tree on `1b190d4` with these changes)
+
+- `npx vitest run tests/thread-view.test.ts` before the product change: both new tests failed. The session view rendered "Loading session…" with the draft and **Send** enabled, and the composer ignored `loading`. After it: 8 of 8 passed.
+- The journey with the 1.5 s delay and the fix: passed in 41 s. Without the delay and before the change it had passed once locally in 29 s.
+- `npm run check`, run through a local wrapper that removes the agent session's `ANTHROPIC_*` and `CLAUDE*` variables: typecheck passed; Vitest 88 files passed and 2 skipped, with 1,220 tests passed and 5 skipped; 18 of 18 release tests passed; the build passed.
+- `npm run test:desktop`, through the same wrapper and with the delay removed: all seven default journeys passed in 3 min 4 s.
+
+**Not established:** the stored state of the CI runs themselves, and whether the Windows runner's first read was the slow step.
+
 ## Open product questions
 
 1. **LOOP-13 disable policy:** should turning Recursive Looping off stop and settle active and monitoring runs, or leave them controllable? The plan requires that Stop never disappears behind an off flag. The current code satisfies neither option. *Decided in the [follow-up](#follow-up-fixes-d-01-to-d-05):* turning it off pauses runs and leaves them controllable (Stop and Pause), without resuming anything when it is turned back on.

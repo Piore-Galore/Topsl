@@ -5,7 +5,11 @@ import {
   threadTimeline,
   type ThreadMessage,
 } from "../apps/desktop/renderer/state/thread-view";
-import { DraftStore } from "../apps/desktop/renderer/state/drafts";
+import { DraftStore, drafts } from "../apps/desktop/renderer/state/drafts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Composer } from "../apps/desktop/renderer/coordinator/composer";
+import { SessionThread } from "../apps/desktop/renderer/coordinator/session-thread";
 import {
   breadcrumb,
   changedThreadProjects,
@@ -96,6 +100,47 @@ test("a loop thread interleaves the owner's notes and iterations by time", () =>
     ],
   );
   expect(items.map((i) => i.key)).toEqual(["asked", "i1", "steered", "i2"]);
+});
+
+const send = /<button[^>]*>Send<\/button>/;
+const disabled = (markup: string, pattern: RegExp) =>
+  / disabled=""/.test(markup.match(pattern)![0]);
+
+test("Send waits while the message's target is not read yet; typing does not", () => {
+  const composer = (loading: boolean) =>
+    renderToStaticMarkup(
+      createElement(Composer, {
+        value: "Use two reviewers.",
+        onChange: () => {},
+        onSend: () => {},
+        loading,
+      }),
+    );
+  expect(disabled(composer(false), send)).toBe(false);
+  expect(disabled(composer(true), send)).toBe(true);
+  expect(disabled(composer(true), /<textarea[^>]*>/)).toBe(false);
+});
+
+// A session's first render, before its first read lands, does not know its
+// current goal or composer mode. A message sent then was aimed at no goal and
+// queued as new work instead of steering the goal on screen (the Windows x64
+// desktop coordinator journey, 3 and 4 November 2026).
+test("a session does not send a typed draft before it has read what the message would steer", () => {
+  drafts.set("p:session:s", "Change the reviewers. Use two reviewers.");
+  try {
+    const markup = renderToStaticMarkup(
+      createElement(SessionThread, {
+        projectId: "p",
+        sessionId: "s",
+        onThread: () => {},
+      }),
+    );
+    expect(markup).toContain("Loading session…");
+    expect(markup).toContain("Change the reviewers. Use two reviewers.");
+    expect(disabled(markup, send)).toBe(true);
+  } finally {
+    drafts.set("p:session:s", "");
+  }
 });
 
 test("drafts are kept per thread and cleared when emptied", () => {
