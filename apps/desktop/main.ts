@@ -45,6 +45,8 @@ import { claudeRouteConfirmation } from "../../packages/domain/claude-route";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
+import { ProxyHost, proxyBundle } from "./proxy-host";
+import { connectionCommandTypes } from "../../packages/domain/native-commands";
 
 const testProfile = testProfileSettings(process.env, app.isPackaged),
   isolatedTest = !!testProfile;
@@ -52,6 +54,8 @@ if (testProfile) app.setPath("userData", testProfile.profile);
 if (!app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | null = null;
 let worker: UtilityProcess | null = null;
+/** The local model proxy (docs/Native_Harness_Plan.md §2), started after the vault opens. */
+let proxyHost: ProxyHost | null = null;
 let sequence = 0;
 let unlocking = false;
 let quitting = false;
@@ -165,9 +169,10 @@ async function unlock(passphrase?: string): Promise<AppState> {
     worker.on("message", (message: any) => {
       if (message.event) {
         if (message.event.type === "state") {
-          state = message.event.data;
+          state = { ...message.event.data, proxy: proxyHost?.view ?? null };
           updateWindowBackground();
-          publish(message.event);
+          // The window gets the merged state, so the proxy view never drops out.
+          publish({ type: "state", data: state });
         } else if (message.event.type === "native-open") {
           const target = message.event.data?.target;
           // Only a catalog CLI's official page opens; Topsl launches no
@@ -179,7 +184,13 @@ async function unlock(passphrase?: string): Promise<AppState> {
         } else if (message.event.type === "activity") {
           activeControl = message.event.data?.active === true;
         } else if (
-          ["terminal", "changes", "auth-url"].includes(message.event.type)
+          [
+            "terminal",
+            "changes",
+            "auth-url",
+            "native",
+            "native-provisional",
+          ].includes(message.event.type)
         )
           publish(message.event);
       } else {
@@ -221,6 +232,43 @@ async function unlock(passphrase?: string): Promise<AppState> {
     });
     updateWindowBackground();
     publish({ type: "state", data: state });
+    // The proxy is separate from the control service; a failure to start it
+    // leaves the rest of Topsl usable and is reported.
+    proxyHost = new ProxyHost({
+      directory,
+      vaultKey: key,
+      bundle: proxyBundle(__dirname),
+      onState: (view) => {
+        state = { ...state, proxy: view };
+        // A separate event: a full state event here could arrive between a
+        // command's result and the service's own state update, and the
+        // window would act on state that lacks the command's effect.
+        publish({ type: "proxy-state", data: view });
+        if (worker && view)
+          void request({ kind: "proxy-state", state: view }).catch(() => {});
+      },
+      onEndpoint: async (endpoint, view) => {
+        if (worker)
+          await request({ kind: "proxy", endpoint, state: view }).catch(
+            () => {},
+          );
+      },
+      confirm: (title, detail, affirmative, type) =>
+        confirm(title, detail, affirmative, type),
+      openExternal: (url) => shell.openExternal(url),
+      readClipboard: () => clipboard.readText(),
+      clearClipboard: async (expected) => {
+        if ((await clipboard.readText()).trim() === expected) clipboard.clear();
+      },
+      report: (message) => publish({ type: "error", data: message }),
+      quitting: () => quitting,
+    });
+    void proxyHost.start().catch((error) =>
+      publish({
+        type: "error",
+        data: `The Topsl proxy did not start: ${safeError(error)}`,
+      }),
+    );
     return state;
   } catch (e) {
     state = { ...state, locked: true, lockReason: safeError(e) };
@@ -271,6 +319,84 @@ async function dispatch(command: Command): Promise<any> {
       state.lockReason ?? state.serviceError ?? "The vault is locked.",
     );
   const trusted: TrustedInput = {};
+  if (connectionCommandTypes.has(command.type)) {
+    if (!proxyHost) throw new Error("The Topsl proxy is not running.");
+    return proxyHost.command(command as Parameters<ProxyHost["command"]>[0]);
+  }
+  if (command.type === "native-start") {
+    const route = proxyHost?.view?.routes.find(
+      (r) => r.alias === command.routeAlias,
+    );
+    const connection = proxyHost?.view?.connections.find(
+      (c) => c.id === route?.connectionId,
+    );
+    if (!route || !connection)
+      throw new Error(`No connection route is named ${command.routeAlias}.`);
+    const funding =
+      connection.funding === "subscription"
+        ? "your ChatGPT plan's usage"
+        : connection.funding === "api-billing"
+          ? "the API key's account (billed per token)"
+          : connection.funding === "local"
+            ? "this computer (local model)"
+            : "the gateway's own billing";
+    if (
+      !(await confirm(
+        "Start a native task?",
+        `Route: ${route.alias} → ${route.upstreamModel} on ${connection.label}. Requests count against ${funding}; Topsl never switches to another account or billing route.\n\nMode: ${command.mode === "edit" ? "edit a private copy of the project (you review the changes before anything reaches your folder)" : "read-only investigation"}.\nCommands: ${command.processes ? `allowed in Topsl's sandbox, network ${command.networkDomains.length ? `to ${command.networkDomains.join(", ")}` : "off"}` : "not allowed"}.\nChecks: ${command.checks.map((c) => c.name).join(", ") || "none"}.\nChild agents: ${command.delegation ? "allowed (at most 2 levels, 4 active)" : "not allowed"}.\nMCP servers: ${command.mcpServerIds.length || "none"}.\nAt most ${command.maxRequests ?? 50} model requests, including retries and compaction.`,
+        "Start task",
+      ))
+    )
+      return null;
+  }
+  if (command.type === "native-apply") {
+    const preview: any = await request({
+      kind: "command",
+      command: { type: "native-apply-preview", attemptId: command.attemptId },
+      trusted: {},
+    });
+    if (preview.problems?.length) throw new Error(preview.problems.join(" "));
+    if (
+      !(await confirm(
+        "Apply this native task's changes to your project folder?",
+        `${preview.root}\n\n${changedFilesText(preview.files)}\n\nTopsl writes exactly the reviewed candidate, checks that the folder still matches the task's starting point, and reads every file back.`,
+        "Apply changes",
+      ))
+    )
+      return null;
+    trusted.digest = preview.digest;
+  }
+  if (
+    command.type === "native-mcp-inspect" ||
+    command.type === "native-mcp-admit" ||
+    command.type === "native-hook-admit"
+  ) {
+    const what =
+      command.type === "native-hook-admit"
+        ? `a ${command.event} hook: ${command.argv.join(" ")}`
+        : `the MCP server ${command.name}: ${command.argv.join(" ")}`;
+    if (
+      !(await confirm(
+        command.type === "native-mcp-inspect"
+          ? "Start this MCP server to list its tools?"
+          : `Admit ${what}?`,
+        `${what}\n\nIt runs in Topsl's sandbox with ${command.type === "native-hook-admit" ? "no network and a read-only workspace" : `network ${"networkDomains" in command && command.networkDomains.length ? `to ${command.networkDomains.join(", ")}` : "off"}`}. ${command.type === "native-mcp-inspect" ? "Nothing is admitted yet." : "Native tasks you start may use it; a server whose tools change must be admitted again."}`,
+        command.type === "native-mcp-inspect" ? "Start and list" : "Admit",
+      ))
+    )
+      return null;
+  }
+  if (command.type === "native-discard") {
+    if (
+      !(await confirm(
+        "Remove this task's private workspace copy?",
+        "The journal, candidate and evidence stay. The copy cannot be resumed afterwards.",
+        "Remove copy",
+        "warning",
+      ))
+    )
+      return null;
+  }
   if (command.type === "builder-reviewer-advance") {
     const review: any = await request({
       kind: "review",
@@ -1043,6 +1169,7 @@ app.on("before-quit", (event) => {
       try {
         await request({ kind: "close" }, 45_000);
         await exited;
+        await proxyHost?.close().catch(() => {});
         app.quit();
       } catch (error) {
         quitting = false;

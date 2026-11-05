@@ -36,7 +36,14 @@ port.on("message", async ({ data }: any) => {
       return;
     } else if (closing) throw new Error("Control service is shutting down.");
     else if (!service) throw new Error("Control service is locked.");
-    else if (data.kind === "review")
+    else if (data.kind === "proxy") {
+      // From Electron main only: the proxy's loopback endpoint and sanitized state.
+      service.native.setProxy(data.endpoint ?? null, data.state ?? null);
+      value = null;
+    } else if (data.kind === "proxy-state") {
+      service.native.setProxyState(data.state);
+      value = null;
+    } else if (data.kind === "review")
       value = await service.review(data.recordKind, data.recordId);
     else
       value = await service.command(

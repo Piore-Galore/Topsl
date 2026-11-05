@@ -6,7 +6,8 @@ import type { Message } from "../domain/types";
 import { markCreated, migrateWithBackup } from "./migrations/backup";
 import { EVENT_SCHEMA_VERSION, migrateEvents } from "./migrations/events";
 import { migrateExecutions } from "./migrations/executions";
-import { BLOB_SCHEMA_VERSION, migrateBlobs } from "./migrations/blobs";
+import { migrateBlobs } from "./migrations/blobs";
+import { CURRENT_SCHEMA_VERSION, migrateNative } from "./migrations/native";
 import { bindCandidateStore } from "./candidate-binding";
 import { ProtectedBlobs, recoverAbandonedCaptures } from "./blobs";
 import type { ChangePage } from "../domain/events";
@@ -75,7 +76,7 @@ export class Store {
       const schemaVersion = this.db
         .prepare("PRAGMA user_version")
         .get()?.user_version;
-      if (schemaVersion > BLOB_SCHEMA_VERSION)
+      if (schemaVersion > CURRENT_SCHEMA_VERSION)
         throw new Error(
           "This history database was created by a newer Topsl version.",
         );
@@ -123,6 +124,7 @@ export class Store {
       migrateEvents(this.db, file, key);
       migrateExecutions(this.db, file, key);
       migrateBlobs(this.db, file, key);
+      migrateNative(this.db, file, key);
       recoverAbandonedCaptures(this);
       new ProtectedBlobs(this).collectUnreferenced(100);
       chmodSync(file, 0o600);

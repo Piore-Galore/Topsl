@@ -7,6 +7,7 @@ export const nodeEntries = [
   ["apps/desktop/main.ts", "main.cjs"],
   ["apps/desktop/preload.ts", "preload.cjs"],
   ["apps/service/worker.ts", "service.cjs"],
+  ["apps/proxy/worker.ts", "proxy.cjs"],
   ["apps/cli/main.ts", "cli.cjs"],
 ];
 
@@ -20,7 +21,13 @@ export function nodeBuildOptions(entry, outfile) {
     format: "cjs",
     target: "node22",
     sourcemap: false,
-    external: ["electron", "better-sqlite3-multiple-ciphers", "node-pty"],
+    external: [
+      "electron",
+      "better-sqlite3-multiple-ciphers",
+      "node-pty",
+      // Run as its own CLI process per contained command, never bundled.
+      "@anthropic-ai/sandbox-runtime",
+    ],
   };
 }
 

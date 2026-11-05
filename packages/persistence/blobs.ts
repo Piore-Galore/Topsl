@@ -5,6 +5,18 @@ import os from "node:os";
 import { randomBytes } from "node:crypto";
 
 export const BLOB_CHUNK_BYTES = 64 * 1024;
+/** Native execution records that may own protected blobs besides candidates. */
+export type BlobOwnerKind =
+  | "native-request-manifest"
+  | "native-tool-output"
+  | "native-capsule"
+  | "native-evidence";
+export interface BlobOwner {
+  kind: BlobOwnerKind;
+  id: string;
+  projectId: string;
+  name: string;
+}
 export const captureOwner = {
   pid: process.pid,
   host: os.hostname(),
@@ -130,6 +142,99 @@ export class ProtectedBlobs {
       throw new Error("Protected candidate content integrity failed.");
     return result;
   }
+  /**
+   * Stores bytes as a protected blob owned by a native execution record
+   * (docs/Native_Harness_Plan.md §3): a request manifest, tool output,
+   * compaction capsule or evidence. Content and ownership are written in one
+   * transaction, and only the owner can read the blob back.
+   */
+  storeOwned(owner: BlobOwner, bytes: Buffer): { hash: string; bytes: number } {
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    this.store.transaction(() => {
+      const old = this.store.db
+        .prepare("SELECT bytes FROM protected_blobs WHERE hash=?")
+        .get(digest);
+      if (old && old.bytes !== bytes.length)
+        throw new Error("Protected blob hash collision.");
+      if (!old) {
+        this.store.db
+          .prepare("INSERT INTO protected_blobs VALUES(?,?,?)")
+          .run(digest, bytes.length, now());
+        const insert = this.store.db.prepare(
+          "INSERT INTO protected_blob_chunks VALUES(?,?,?,?)",
+        );
+        const count = Math.max(1, Math.ceil(bytes.length / BLOB_CHUNK_BYTES));
+        for (let ordinal = 0; ordinal < count; ordinal++) {
+          const chunk = bytes.subarray(
+            ordinal * BLOB_CHUNK_BYTES,
+            (ordinal + 1) * BLOB_CHUNK_BYTES,
+          );
+          insert.run(
+            digest,
+            ordinal,
+            chunk,
+            createHash("sha256").update(chunk).digest("hex"),
+          );
+        }
+      }
+      const existing = this.store.db
+        .prepare(
+          "SELECT hash FROM protected_blob_owners WHERE owner_kind=? AND owner_id=? AND name=?",
+        )
+        .get(owner.kind, owner.id, owner.name);
+      if (existing && existing.hash !== digest)
+        throw new Error(
+          "Protected blob owner already holds different content.",
+        );
+      if (!existing)
+        this.store.db
+          .prepare("INSERT INTO protected_blob_owners VALUES(?,?,?,?,?,?)")
+          .run(
+            owner.kind,
+            owner.id,
+            owner.projectId,
+            owner.name,
+            digest,
+            bytes.length,
+          );
+    });
+    return { hash: digest, bytes: bytes.length };
+  }
+  /** Reads an owned blob; the owner reference, not the hash, authorizes it. */
+  readOwned(owner: BlobOwner, hash: string): Buffer {
+    const ref = this.store.db
+      .prepare(
+        "SELECT hash,bytes FROM protected_blob_owners WHERE owner_kind=? AND owner_id=? AND project_id=? AND name=?",
+      )
+      .get(owner.kind, owner.id, owner.projectId, owner.name);
+    if (!ref || ref.hash !== hash)
+      throw new Error("No protected blob is owned by this record.");
+    const chunks = this.store.db
+      .prepare(
+        "SELECT bytes,chunk_hash FROM protected_blob_chunks WHERE hash=? ORDER BY ordinal",
+      )
+      .all(hash);
+    for (const row of chunks)
+      if (
+        createHash("sha256").update(row.bytes).digest("hex") !== row.chunk_hash
+      )
+        throw new Error("Protected blob chunk integrity failed.");
+    const result = Buffer.concat(chunks.map((row) => Buffer.from(row.bytes)));
+    if (
+      result.length !== ref.bytes ||
+      createHash("sha256").update(result).digest("hex") !== hash
+    )
+      throw new Error("Protected blob content integrity failed.");
+    return result;
+  }
+  /** Releases every blob an owner holds; unreferenced content is reclaimed later. */
+  releaseOwner(kind: BlobOwnerKind, id: string): number {
+    return this.store.db
+      .prepare(
+        "DELETE FROM protected_blob_owners WHERE owner_kind=? AND owner_id=?",
+      )
+      .run(kind, id).changes;
+  }
   /** Explicit bounded maintenance. Independently retained candidates stay
    * referenced after conversation deletion. Active/evidence references are
    * never guessed obsolete, so this only reclaims interrupted, unreferenced
@@ -140,7 +245,7 @@ export class ProtectedBlobs {
     return this.store.transaction(() => {
       const rows = this.store.db
         .prepare(
-          "SELECT hash FROM protected_blobs WHERE hash NOT IN (SELECT hash FROM protected_blob_refs) LIMIT ?",
+          "SELECT hash FROM protected_blobs WHERE hash NOT IN (SELECT hash FROM protected_blob_refs) AND hash NOT IN (SELECT hash FROM protected_blob_owners) LIMIT ?",
         )
         .all(limit);
       for (const row of rows) {

@@ -34,6 +34,7 @@ import type {
   UsageFact,
 } from "../../packages/domain/types";
 import type { Command } from "../../packages/domain/commands";
+import { NativeService } from "./native";
 import {
   providerBudgetId,
   providerBudgetStatus,
@@ -184,6 +185,8 @@ export class Service {
   readonly sessions: SessionSupervisor;
   /** Explicit export imports (docs/UX_Cleanup_Plan.md §3). */
   readonly imports: HistoryImports;
+  /** The native harness (docs/Native_Harness_Plan.md). */
+  readonly native: NativeService;
   private timer?: ReturnType<typeof setInterval>;
   private ownershipTimer?: ReturnType<typeof setInterval>;
   private workflowTimer?: ReturnType<typeof setInterval>;
@@ -220,6 +223,9 @@ export class Service {
     // Before any recovery or background service can resume retired work.
     retireNativeIntegration(this.store);
     this.assisted = new AssistedWorkflows(this.store);
+    this.native = new NativeService(this.store, directory, (event) =>
+      this.emit(event),
+    );
     this.synchronization = new SyncRepository(this.store);
     this.revisions = new RevisionRepository(this.store);
     try {
@@ -519,6 +525,8 @@ export class Service {
     });
   }
   async start(): Promise<void> {
+    // Unfinished native attempts are reconciled from their journals and left paused.
+    await this.native.recover();
     await this.orchestration.recover();
     await this.loops.recover();
     await this.sessions.recover();
@@ -1631,6 +1639,11 @@ export class Service {
   ): Promise<any> {
     this.coordinator.ownership.assertOwner();
     this.assertCommandOwner(command);
+    if (command.type.startsWith("native-"))
+      return this.native.command(
+        command as Parameters<NativeService["command"]>[0],
+        trusted,
+      );
     switch (command.type) {
       case "environment-selection-create": {
         const project = this.require<Project>("project", command.projectId);
@@ -3635,6 +3648,9 @@ export class Service {
     // Orderly suspension: runs reconcile and resume (or wait) on next start.
     try {
       this.loops.suspend();
+    } catch {}
+    try {
+      this.native.close();
     } catch {}
     this.workflows.close();
     clearInterval(this.workflowTimer);

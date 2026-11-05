@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node
 import Database from "better-sqlite3-multiple-ciphers";
 import { Store } from "../packages/persistence/store";
 import { ProtectedBlobs } from "../packages/persistence/blobs";
-import { BLOB_SCHEMA_VERSION } from "../packages/persistence/migrations/blobs";
+import { CURRENT_SCHEMA_VERSION } from "../packages/persistence/migrations/native";
 import { CoordinationRepository } from "../packages/persistence/repositories/coordination";
 import { Configuration } from "../packages/workspace/configuration";
 import { commandSchema } from "../packages/domain/commands";
@@ -225,7 +225,7 @@ describe("DATA-07 faults during commit and migration", () => {
     f.store.close();
     const legacy = rawOpen(file, f.key);
     legacy.exec(
-      "DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DROP TABLE coordinator_owners;DROP TABLE workspace_leases;DROP INDEX coordination_task_project;DROP INDEX coordination_session_project;DROP INDEX coordination_workflow_project;DROP INDEX coordination_attempt_state;DROP INDEX protected_execution_state;DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind IN ('migration','workspace','workspace-revision');PRAGMA user_version=2;",
+      "DROP TABLE native_journal;DROP TABLE native_projections;DROP TABLE protected_blob_owners;DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DROP TABLE coordinator_owners;DROP TABLE workspace_leases;DROP INDEX coordination_task_project;DROP INDEX coordination_session_project;DROP INDEX coordination_workflow_project;DROP INDEX coordination_attempt_state;DROP INDEX protected_execution_state;DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind IN ('migration','workspace','workspace-revision');PRAGMA user_version=2;",
     );
     // A run whose body parses to null: the migration reaches it only after it
     // has already written workspaces for every project.
@@ -250,20 +250,21 @@ describe("DATA-07 faults during commit and migration", () => {
       expect(bytes.includes(Buffer.from("SQLite format 3"))).toBe(false);
     }
     f.store = new Store(file, f.key);
-    expect(f.store.db.prepare("PRAGMA user_version").get().user_version).toBe(BLOB_SCHEMA_VERSION);
+    expect(f.store.db.prepare("PRAGMA user_version").get().user_version).toBe(CURRENT_SCHEMA_VERSION);
     expect(f.store.get("workspace", "legacy-workspace:p")).toBeTruthy();
   });
 });
 
 describe("DATA-06 and DATA-08 schema migration and newer-schema refusal", () => {
   // Objects each later migration adds, so a current profile can be rolled back
-  // to the exact layout of schema 5, 4 or 3 (synthetic fixtures, not a pilot profile).
+  // to the exact layout of schema 6, 5, 4 or 3 (synthetic fixtures, not a pilot profile).
   const downgrade: Record<number, string> = {
+    6: "DROP TABLE native_journal;DROP TABLE native_projections;DROP TABLE protected_blob_owners;DELETE FROM documents WHERE kind='migration' AND id='native-harness-v7';",
     5: "DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration' AND id='protected-blobs-v6';",
     4: "DROP INDEX protected_execution_state;DELETE FROM documents WHERE kind='migration' AND id='durable-executions-v5';",
     3: "DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DELETE FROM documents WHERE kind='migration' AND id='ordered-events-v4';",
   };
-  async function historicalProfile(version: 3 | 4 | 5) {
+  async function historicalProfile(version: 3 | 4 | 5 | 6) {
     const f = await storeFixture();
     const file = path.join(f.directory, "history.sqlite");
     const repo = new CoordinationRepository(f.store);
@@ -300,18 +301,18 @@ describe("DATA-06 and DATA-08 schema migration and newer-schema refusal", () => 
     const before = snapshot(f.store);
     f.store.close();
     const db = rawOpen(file, f.key);
-    for (let v = 5; v >= version; v--) db.exec(downgrade[v]);
+    for (let v = 6; v >= version; v--) db.exec(downgrade[v]);
     db.exec(`PRAGMA user_version=${version}`);
     db.close();
     return { ...f, file, before, snapshot };
   }
-  test.each([5, 4, 3] as const)(
+  test.each([6, 5, 4, 3] as const)(
     "schema %i migrates to the current schema with identical records, search, events and an encrypted restorable backup",
     async (version) => {
       const f = await historicalProfile(version);
       f.store = new Store(f.file, f.key);
       cleanups.push(() => f.store.close());
-      expect(f.store.db.prepare("PRAGMA user_version").get().user_version).toBe(BLOB_SCHEMA_VERSION);
+      expect(f.store.db.prepare("PRAGMA user_version").get().user_version).toBe(CURRENT_SCHEMA_VERSION);
       expect(f.store.db.prepare("PRAGMA integrity_check").get().integrity_check).toBe("ok");
       const after = f.snapshot(f.store);
       expect(after.rows).toEqual(f.before.rows);
@@ -349,7 +350,7 @@ describe("DATA-06 and DATA-08 schema migration and newer-schema refusal", () => 
     f.store.put("project", { ...project("p", f.directory), name: "DATA08CANARY" });
     f.store.close();
     const db = rawOpen(file, f.key);
-    db.exec(`PRAGMA user_version=${BLOB_SCHEMA_VERSION + 1}`);
+    db.exec(`PRAGMA user_version=${CURRENT_SCHEMA_VERSION + 1}`);
     db.close();
     const before = await readFile(file);
     const names = (await readdir(f.directory)).sort();

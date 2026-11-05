@@ -28,6 +28,7 @@ export function Coordination({
   onThread,
   sessionsContent,
   historyContent,
+  nativeContent,
   attachment,
   onAttachment,
   onProviders,
@@ -42,6 +43,8 @@ export function Coordination({
   onThread: (threadId: string | null) => void;
   sessionsContent?: ReactNode;
   historyContent?: ReactNode;
+  /** Native tasks (docs/Native_Harness_Plan.md), rendered by the window that holds state. */
+  nativeContent?: ReactNode;
   /** An import the New session page attaches, from Settings → Imports. */
   attachment: string | null;
   onAttachment: (referenceId: string | null) => void;
@@ -100,6 +103,7 @@ export function Coordination({
         {sessionsContent}
         {historyContent}
       </div>
+      {view === "native" && nativeContent}
       {advancedShown && (
         <div hidden={view !== "advanced"}>
           <AdvancedWorkflows

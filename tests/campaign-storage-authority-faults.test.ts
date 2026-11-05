@@ -28,7 +28,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import { Store } from "../packages/persistence/store";
-import { BLOB_SCHEMA_VERSION } from "../packages/persistence/migrations/blobs";
+import { CURRENT_SCHEMA_VERSION } from "../packages/persistence/migrations/native";
 import { fixture } from "./helpers";
 
 const cleanup: string[] = [];
@@ -47,7 +47,7 @@ function raw(file: string, key: string) {
 }
 // Same downgrade the existing coordination migration test uses (schema 2).
 const LEGACY_SCHEMA_2 =
-  "DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DROP TABLE coordinator_owners;DROP TABLE workspace_leases;DROP INDEX coordination_task_project;DROP INDEX coordination_session_project;DROP INDEX coordination_workflow_project;DROP INDEX coordination_attempt_state;DROP INDEX protected_execution_state;DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration';PRAGMA user_version=2;";
+  "DROP TABLE native_journal;DROP TABLE native_projections;DROP TABLE protected_blob_owners;DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DROP TABLE coordinator_owners;DROP TABLE workspace_leases;DROP INDEX coordination_task_project;DROP INDEX coordination_session_project;DROP INDEX coordination_workflow_project;DROP INDEX coordination_attempt_state;DROP INDEX protected_execution_state;DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration';PRAGMA user_version=2;";
 async function legacyProfile() {
   const f = await fixture();
   cleanup.push(f.directory);
@@ -108,7 +108,7 @@ test("a full disk while copying the first migration backup leaves schema 2 intac
   await noPlaintext(f.directory);
   // Disk space returns: the real constructor completes every step.
   const reopened = new Store(f.file, f.key);
-  expect(reopened.db.prepare("PRAGMA user_version").get().user_version).toBe(BLOB_SCHEMA_VERSION);
+  expect(reopened.db.prepare("PRAGMA user_version").get().user_version).toBe(CURRENT_SCHEMA_VERSION);
   expect(reopened.searchPage("p", "DATA07_FAULT_CANARY").items.map((m) => m.id)).toEqual(["m"]);
   expect(reopened.get("workspace", "legacy-workspace:p")).toBeTruthy();
   reopened.close();
@@ -128,7 +128,7 @@ test("a full disk at the second migration step keeps the completed first step an
   after.close();
   await noPlaintext(f.directory);
   const reopened = new Store(f.file, f.key);
-  expect(reopened.db.prepare("PRAGMA user_version").get().user_version).toBe(BLOB_SCHEMA_VERSION);
+  expect(reopened.db.prepare("PRAGMA user_version").get().user_version).toBe(CURRENT_SCHEMA_VERSION);
   expect(reopened.searchPage("p", "DATA07_FAULT_CANARY").items).toHaveLength(1);
   reopened.close();
 });

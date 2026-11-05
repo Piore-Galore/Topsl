@@ -547,7 +547,7 @@ test("R2-AT-24 legacy candidate IDs/hash/bytes retain their original semantics a
   );
   f.store.immutable("candidate", legacy);
   f.store.db.exec(
-    "DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration' AND id='protected-blobs-v6';DELETE FROM documents WHERE kind='candidate' AND id!='legacy-original-id';PRAGMA user_version=5;",
+    "DROP TABLE native_journal;DROP TABLE native_projections;DROP TABLE protected_blob_owners;DELETE FROM documents WHERE kind='migration' AND id='native-harness-v7';DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration' AND id='protected-blobs-v6';DELETE FROM documents WHERE kind='candidate' AND id!='legacy-original-id';PRAGMA user_version=5;",
   );
   f.store.close();
   f.store = new Store(path.join(f.directory, "history.sqlite"), f.key);

@@ -4,7 +4,7 @@ import { readFile, rm, symlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import Database from "better-sqlite3-multiple-ciphers";
 import { Store } from "../packages/persistence/store";
-import { BLOB_SCHEMA_VERSION } from "../packages/persistence/migrations/blobs";
+import { CURRENT_SCHEMA_VERSION } from "../packages/persistence/migrations/native";
 import {
   migrateWithBackup,
   restoreMigrationBackup,
@@ -83,7 +83,7 @@ function run(projectId = "p", conversationId = "c"): Run {
 }
 function legacySchema2(db: Database) {
   db.exec(
-    "DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DROP TABLE coordinator_owners;DROP TABLE workspace_leases;DROP INDEX coordination_task_project;DROP INDEX coordination_session_project;DROP INDEX coordination_workflow_project;DROP INDEX coordination_attempt_state;DROP INDEX protected_execution_state;DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration';PRAGMA user_version=2;",
+    "DROP TABLE native_journal;DROP TABLE native_projections;DROP TABLE protected_blob_owners;DROP TRIGGER control_document_insert;DROP TRIGGER control_document_update;DROP TRIGGER control_document_delete;DROP TABLE control_changes;DROP TABLE coordinator_owners;DROP TABLE workspace_leases;DROP INDEX coordination_task_project;DROP INDEX coordination_session_project;DROP INDEX coordination_workflow_project;DROP INDEX coordination_attempt_state;DROP INDEX protected_execution_state;DROP TABLE protected_blob_refs;DROP TABLE protected_blob_chunks;DROP TABLE protected_blob_staging;DROP TABLE protected_blobs;DELETE FROM documents WHERE kind='migration';PRAGMA user_version=2;",
   );
 }
 describe("coordination migration and recovery", () => {
@@ -195,8 +195,8 @@ describe("coordination migration and recovery", () => {
         f.store.db,
         file,
         f.key,
-        BLOB_SCHEMA_VERSION,
-        BLOB_SCHEMA_VERSION + 1,
+        CURRENT_SCHEMA_VERSION,
+        CURRENT_SCHEMA_VERSION + 1,
         () => {
           f.store.db.exec("CREATE TABLE interrupted_migration(id TEXT)");
           throw new Error("fault");
@@ -204,7 +204,7 @@ describe("coordination migration and recovery", () => {
       ),
     ).toThrow("fault");
     expect(f.store.db.prepare("PRAGMA user_version").get().user_version).toBe(
-      BLOB_SCHEMA_VERSION,
+      CURRENT_SCHEMA_VERSION,
     );
     expect(
       f.store.db
@@ -213,7 +213,7 @@ describe("coordination migration and recovery", () => {
         )
         .get(),
     ).toBeUndefined();
-    f.store.db.exec(`PRAGMA user_version=${BLOB_SCHEMA_VERSION + 1}`);
+    f.store.db.exec(`PRAGMA user_version=${CURRENT_SCHEMA_VERSION + 1}`);
     f.store.close();
     expect(() => new Store(file, f.key)).toThrow("newer Topsl");
   });

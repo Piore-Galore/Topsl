@@ -14,6 +14,10 @@ A working personal-pilot implementation now accompanies this blueprint. See [imp
 
 **Follow-up — 30 October 2026:** The [session-first UX cleanup and CLI-only integration plan](UX_Cleanup_Plan.md) supersedes the affected navigation, desktop-app management, native project discovery/synchronization, and import targets below, and is implemented with stand-in evidence ([status](Implementation_Status.md#session-first-cleanup-and-cli-only-integration--30-october-2026)). It retains Atlas, moves specialized workflows under secondary navigation, makes projects a local catalog, and adds explicit export imports with session continuation. Sections that it changes carry a dated note: §5.8, §14, §20.4 and §20.11.
 
+**Agreed plan — 5 November 2026:** The [native harness and subscription proxy plan](Native_Harness_Plan.md) adds a Topsl-owned agent loop and local model proxy, with ChatGPT-plan and direct experimental Claude-subscription adapters as core requirements. It extends the vendor-runtime-only architecture and credential-ownership targets below for these planned routes, while retaining the existing supervisors and vendor executors. The target is MIT-licensed open-source distribution with macOS native execution qualified first. Implementation, the license change, and route qualification have not started; see [implementation status](Implementation_Status.md).
+
+**Follow-up — 5 November 2026 (implementation):** The plan was reviewed again and revised ([§1.1](Native_Harness_Plan.md#11-review--5-november-2026)). The direct Claude-subscription adapter is **retired**: Anthropic's published conditions do not permit it, so §3's boundary below continues to apply to Claude subscriptions. The proxy, the ChatGPT-plan, API, gateway and Ollama connections, the native kernel, journal, tools, macOS containment and the Connections and Native tasks views are implemented with synthetic evidence; the package declares MIT. Native members in teams and loops, live route acceptance and release qualification remain. See the [execution record](Native_Harness_Execution.md) and [implementation status](Implementation_Status.md#native-harness-and-local-proxy--5-november-2026).
+
 This is a complete revision of the supplied v2.0 design. It retains the native-runtime architecture, shared history, explicit provider handoffs, and configuration ownership model. It adds application downloads, installation, and updates, corrects event scoping and release sequencing, and distinguishes a personal pilot from a production-supported distributed product. The accompanying [design review](Topsl_Design_Review.md) records findings, resolutions, and verification gates.
 
 | Area | Version 2.1 decision |
@@ -200,6 +204,10 @@ Topsl itself is the authoritative **combined history viewer**. The native applic
 
 ## 3. Subscription and authentication boundaries
 
+**Planned extension — 5 November 2026:** The [native harness plan](Native_Harness_Plan.md#2-architecture-and-connection-contracts) supersedes this section's exclusion of a Topsl-owned subscription proxy for the expressly selected native routes. Its credential ownership, experimental Claude adapter, funding boundaries, and separate distribution qualification govern that planned work. The vendor-integration boundaries below remain applicable to the existing executors.
+
+*Revised the same day:* the supersession applies to the **ChatGPT plan** route only, which OpenAI documents for open-source and locally hosted applications. The experimental Claude adapter is retired ([R1](Native_Harness_Plan.md#11-review--5-november-2026)); Topsl does not collect, store or intermediate Claude.ai credentials, and Claude-plan work stays with the unmodified Claude Code binary as described below.
+
 Anthropic distinguishes running the unmodified Claude Code binary from offering a separate product's Claude subscription login. Its current guidance allows end users to authenticate the unmodified binary with their own credentials under the stated conditions; it prohibits collecting or intermediating Claude account credentials and separately restricts subscription login in third-party Agent SDK products. [S4][S5]
 
 Accordingly, implement these boundaries:
@@ -220,6 +228,8 @@ Do not implement a generic HTTP proxy that extracts native credentials, imperson
 ## 4. Architecture and technology choices
 
 ### 4.1 System structure
+
+The [native harness and proxy architecture](Native_Harness_Plan.md#ownership) extends the vendor-oriented structure below with a Topsl-owned tool loop and a separately packaged local model gateway. *5 November 2026:* implemented as `apps/proxy` (a third utility process beside the control service), `packages/proxy` and `packages/harness`, verified with synthetic models only; it is not yet a member engine for the coordinator or loop supervisors.
 
 ```mermaid
 flowchart TB

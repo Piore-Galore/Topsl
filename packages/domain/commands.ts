@@ -9,6 +9,7 @@ import {
 import { loopCommands } from "./loop-commands";
 import { sessionCommands } from "./session-commands";
 import { importCommands } from "./import-commands";
+import { connectionCommands, nativeCommands } from "./native-commands";
 import {
   advancedCreateSchema,
   advancedMeasurementsSchema,
@@ -53,6 +54,8 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...loopCommands,
   ...importCommands,
   ...sessionCommands,
+  ...connectionCommands,
+  ...nativeCommands,
   z.object({ type: z.literal("environment-detect"), projectId: id }),
   z.object({
     type: z.literal("environment-selection-create"),

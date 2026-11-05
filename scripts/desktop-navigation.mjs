@@ -37,6 +37,7 @@ const menuItems = [
   "All sessions",
   "Project settings",
   "Provider tools",
+  "Native tasks",
   "Advanced workflows",
 ];
 /**

@@ -4,7 +4,7 @@
   "private": true,
   "description": "A local coding workbench and application control center",
   "author": "Piore-Galore",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "dist/main.cjs",
   "type": "module",
   "engines": {
@@ -26,6 +26,7 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.81",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "better-sqlite3-multiple-ciphers": "13.0.3",
@@ -56,11 +57,17 @@
     },
     "files": [
       "dist/**",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "asarUnpack": [
       "**/*.node",
       "**/node-pty/**",
+      "**/@anthropic-ai/sandbox-runtime/**",
+      "**/node_modules/@pondwader/socks5-server/**",
+      "**/node_modules/node-forge/**",
+      "**/node_modules/commander/**",
       "dist/cli.cjs"
     ],
     "afterSign": "./scripts/verify-mac-package.mjs",

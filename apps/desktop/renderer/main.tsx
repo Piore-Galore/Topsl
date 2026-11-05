@@ -53,6 +53,8 @@ import { summarizeUsage } from "../../../packages/domain/usage";
 import { SettingsScreen } from "./screens/settings";
 import { HistoryScreen } from "./screens/history";
 import { ProvidersScreen } from "./screens/providers";
+import { ConnectionsScreen } from "./screens/connections";
+import { NativeTasks } from "./screens/native-tasks";
 import {
   WorkbenchSidebar,
   type GlobalPage,
@@ -146,6 +148,8 @@ function App() {
   /** Fences a project's last-viewed lookup against a later project choice. */
   const projectTicket = useRef(0);
   const [navigationReady, setNavigationReady] = useState(false);
+  /** The proxy's sanitized connections and routes (docs/Native_Harness_Plan.md). */
+  const [proxyView, setProxyView] = useState<AppState["proxy"]>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   /** The open coordinator thread (`session:<id>` or `loop:<id>`), if any. */
@@ -278,10 +282,19 @@ function App() {
   useEffect(() => {
     void window.topsl
       .command({ type: "state" })
-      .then(setState)
+      .then((value) => {
+        setState(value);
+        setProxyView(value?.proxy ?? null);
+      })
       .catch((e) => setNotice(e.message));
     return window.topsl.subscribe((event) => {
-      if (event.type === "state") setState(event.data);
+      if (event.type === "state") {
+        setState(event.data);
+        if (event.data && "proxy" in event.data)
+          setProxyView(event.data.proxy ?? null);
+      }
+      // Connections change on their own schedule, apart from the app state.
+      if (event.type === "proxy-state") setProxyView(event.data);
       if (event.type === "error") setNotice(event.data);
       if (event.type === "terminal")
         recordTerminalOutput(event.data.id, event.data.data);
@@ -645,6 +658,12 @@ function App() {
                   {pendingLabel(key.split(":")[0])}…
                 </p>
               ))}
+            {page === "connections" && (
+              <ConnectionsScreen
+                state={{ ...state, proxy: proxyView }}
+                act={act}
+              />
+            )}
             {page === "providers" && (
               <ProvidersScreen
                 state={state}
@@ -686,6 +705,15 @@ function App() {
                     else delete next[projectId];
                     return next;
                   })
+                }
+                nativeContent={
+                  project ? (
+                    <NativeTasks
+                      projectId={project.id}
+                      state={{ ...state, proxy: proxyView }}
+                      act={act}
+                    />
+                  ) : null
                 }
                 sessionsContent={
                   <>
@@ -1240,19 +1268,24 @@ function App() {
         {palette && (
           <Modal title="Command palette" close={() => setPalette(false)}>
             <div className="palette">
-              {(["projects", "providers", "settings"] as GlobalPage[]).map(
-                (target) => (
-                  <ActionButton
-                    key={target}
-                    onClick={() => {
-                      setPage(target);
-                      setPalette(false);
-                    }}
-                  >
-                    {viewLabel(target)} →
-                  </ActionButton>
-                ),
-              )}
+              {(
+                [
+                  "projects",
+                  "providers",
+                  "connections",
+                  "settings",
+                ] as GlobalPage[]
+              ).map((target) => (
+                <ActionButton
+                  key={target}
+                  onClick={() => {
+                    setPage(target);
+                    setPalette(false);
+                  }}
+                >
+                  {viewLabel(target)} →
+                </ActionButton>
+              ))}
               {projectDestinations.map((view) => (
                 <ActionButton
                   key={view}

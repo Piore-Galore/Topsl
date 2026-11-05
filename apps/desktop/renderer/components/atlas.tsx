@@ -99,6 +99,8 @@ const aliases: Record<string, string> = {
   "all-sessions": "history",
   "project-settings": "settings",
   advanced: "tasks",
+  native: "arrow",
+  connections: "context",
   imports: "history",
 };
 

@@ -9,6 +9,7 @@ export const projectDestinations = [
   "all-sessions",
   "project-settings",
   "sessions",
+  "native",
   "advanced",
 ] as const;
 
@@ -84,6 +85,8 @@ const viewLabels: Record<string, string> = {
   "all-sessions": "All sessions",
   "project-settings": "Project settings",
   advanced: "Advanced workflows",
+  native: "Native tasks",
+  connections: "Connections",
 };
 
 export const viewLabel = (value: string) =>

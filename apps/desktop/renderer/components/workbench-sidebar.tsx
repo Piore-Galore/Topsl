@@ -19,10 +19,11 @@ const menuViews: ProjectView[] = [
   "all-sessions",
   "project-settings",
   "sessions",
+  "native",
   "advanced",
 ];
 
-export type GlobalPage = "projects" | "providers" | "settings";
+export type GlobalPage = "projects" | "providers" | "connections" | "settings";
 
 /**
  * One project's menu: All sessions, Project settings, Provider tools and
@@ -376,6 +377,7 @@ export function WorkbenchSidebar({
       <div className="sidebar-bottom">
         <nav aria-label="Application navigation">
           {globalLink("providers")}
+          {globalLink("connections")}
           {globalLink("settings")}
         </nav>
         <ActionButton

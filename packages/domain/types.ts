@@ -3,6 +3,7 @@ import type { TerminalModeId } from "./terminal-modes";
 import type { ChatPresetBlock, CodexApprovalPolicy } from "./chat-presets";
 import type { AutoAcceptLevel } from "./auto-accept";
 import type { ClaudeRouteDecision } from "./claude-route";
+import type { ProxyStateView } from "../proxy/service";
 export type Provider = "codex" | "claude";
 export type Theme = "paper" | "night" | "system";
 /**
@@ -331,9 +332,23 @@ export interface AppState {
   allowances: AllowanceSnapshot[];
   /** The owner's own token budgets, each with what Topsl observed against it. */
   providerBudgets: ProviderBudgetStatus[];
+  /**
+   * Native harness connections and routes, sanitized by the proxy process
+   * (no credentials). Null until the proxy is running.
+   */
+  proxy?: ProxyStateView | null;
 }
 export interface ServiceEvent {
   type:
-    "state" | "terminal" | "native-open" | "auth-url" | "changes" | "activity";
+    | "state"
+    | "terminal"
+    | "native-open"
+    | "auth-url"
+    | "changes"
+    | "activity"
+    /** A native harness attempt changed (docs/Native_Harness_Plan.md). */
+    | "native"
+    /** Provisional model output for a native attempt, batched. */
+    | "native-provisional";
   data: any;
 }
