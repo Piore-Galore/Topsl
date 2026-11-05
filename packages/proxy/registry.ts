@@ -22,6 +22,7 @@ import {
  */
 export const adapterRevisions: Record<ConnectionKind, string> = {
   "chatgpt-plan": "chatgpt-plan-responses-v1",
+  "claude-plan": "claude-plan-messages-e6e5708-v1",
   "openai-api": "openai-api-responses-v1",
   "anthropic-api": "anthropic-api-messages-v1",
   "openai-compatible": "openai-compatible-chat-v1",
@@ -31,7 +32,10 @@ export const adapterRevisions: Record<ConnectionKind, string> = {
 const now = () => new Date().toISOString();
 const aliasPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 
-function routeRevision(route: Omit<ProxyRoute, "revision" | "updatedAt">) {
+function routeRevision(
+  route: Omit<ProxyRoute, "revision" | "updatedAt">,
+  accountKey: string | null,
+) {
   return createHash("sha256")
     .update(
       JSON.stringify([
@@ -42,6 +46,7 @@ function routeRevision(route: Omit<ProxyRoute, "revision" | "updatedAt">) {
         route.protocol,
         route.adapterRevision,
         route.disabled,
+        accountKey,
       ]),
     )
     .digest("hex")
@@ -80,6 +85,7 @@ export class ProxyRegistry {
     kind: ConnectionKind;
     label: string;
     endpoint?: string | null;
+    protocol?: ClientProtocol;
     state?: ConnectionState;
   }): Connection {
     const endpoint = normalizeEndpoint(
@@ -87,11 +93,20 @@ export class ProxyRegistry {
       input.endpoint ?? defaultEndpoints[input.kind],
     );
     const at = now();
+    if (
+      input.protocol &&
+      input.kind !== "openai-compatible" &&
+      input.protocol !== upstreamProtocol[input.kind]
+    )
+      throw new Error(
+        "Only a gateway can select a different upstream protocol.",
+      );
     const connection: Connection = {
       id: randomUUID(),
       kind: input.kind,
       label: input.label.trim().slice(0, 200) || input.kind,
       endpoint,
+      protocol: input.protocol ?? upstreamProtocol[input.kind],
       authentication: connectionAuthentication[input.kind],
       funding: connectionFunding[input.kind],
       state: input.state ?? "signed-out",
@@ -147,6 +162,20 @@ export class ProxyRegistry {
       this.db
         .prepare("UPDATE connections SET body=? WHERE id=?")
         .run(JSON.stringify(next), id);
+      if (next.account.accountKey !== current.account.accountKey) {
+        for (const route of this.routes().filter(
+          (r) => r.connectionId === id,
+        )) {
+          const updated = {
+            ...route,
+            revision: routeRevision(route, next.account.accountKey),
+            updatedAt: now(),
+          };
+          this.db
+            .prepare("UPDATE routes SET body=? WHERE id=?")
+            .run(JSON.stringify(updated), route.id);
+        }
+      }
       return next;
     });
   }
@@ -166,19 +195,36 @@ export class ProxyRegistry {
     return this.db
       .prepare("SELECT body FROM routes ORDER BY rowid")
       .all()
-      .map((row: { body: string }) => JSON.parse(row.body) as ProxyRoute);
+      .map((row: { body: string }) =>
+        this.effectiveRoute(JSON.parse(row.body) as ProxyRoute),
+      );
   }
   route(id: string): ProxyRoute | null {
     const row = this.db
       .prepare("SELECT body FROM routes WHERE id=?")
       .get(id) as { body: string } | undefined;
-    return row ? (JSON.parse(row.body) as ProxyRoute) : null;
+    return row ? this.effectiveRoute(JSON.parse(row.body) as ProxyRoute) : null;
   }
   routeByAlias(alias: string): ProxyRoute | null {
     const row = this.db
       .prepare("SELECT body FROM routes WHERE alias=?")
       .get(alias) as { body: string } | undefined;
-    return row ? (JSON.parse(row.body) as ProxyRoute) : null;
+    return row ? this.effectiveRoute(JSON.parse(row.body) as ProxyRoute) : null;
+  }
+
+  /** Code upgrades and account changes invalidate frozen requests as well as edits do. */
+  private effectiveRoute(route: ProxyRoute): ProxyRoute {
+    const connection = this.connection(route.connectionId);
+    if (!connection) return route;
+    const current = {
+      ...route,
+      adapterRevision: adapterRevisions[connection.kind],
+      protocol: connection.protocol ?? upstreamProtocol[connection.kind],
+    };
+    return {
+      ...current,
+      revision: routeRevision(current, connection.account.accountKey),
+    };
   }
 
   /**
@@ -210,7 +256,8 @@ export class ProxyRegistry {
           `The alias ${input.alias} already names another route. Each alias resolves to one connection.`,
         );
       const at = now();
-      const protocol: ClientProtocol = upstreamProtocol[connection.kind];
+      const protocol: ClientProtocol =
+        connection.protocol ?? upstreamProtocol[connection.kind];
       const base = {
         id: existing?.id ?? randomUUID(),
         connectionId: connection.id,
@@ -234,7 +281,7 @@ export class ProxyRegistry {
       };
       const route: ProxyRoute = {
         ...base,
-        revision: routeRevision(base),
+        revision: routeRevision(base, connection.account.accountKey),
         updatedAt: at,
       };
       this.db
@@ -314,15 +361,27 @@ export function normalizeEndpoint(
   if (kind === "chatgpt-plan" || kind === "openai-api") {
     if (url.origin !== "https://api.openai.com")
       throw new Error("This connection uses OpenAI's documented endpoint.");
-  } else if (kind === "anthropic-api") {
+  } else if (kind === "anthropic-api" || kind === "claude-plan") {
     if (url.origin !== "https://api.anthropic.com")
       throw new Error("This connection uses Anthropic's documented endpoint.");
   } else if (kind === "ollama") {
     if (!loopback || url.protocol !== "http:")
       throw new Error("Ollama is reached over http on this computer only.");
-  } else if (url.protocol !== "https:" && !loopback)
+  } else if (
+    url.protocol !== "https:" &&
+    !(loopback && url.protocol === "http:")
+  )
     throw new Error(
       "A gateway must use https unless it runs on this computer.",
     );
+  if (url.search || url.hash)
+    throw new Error("The endpoint cannot include a query or fragment.");
+  if (
+    ["chatgpt-plan", "claude-plan", "openai-api", "anthropic-api"].includes(
+      kind,
+    ) &&
+    url.pathname.replace(/\/+$/, "") !== "/v1"
+  )
+    throw new Error("This connection uses the provider's /v1 endpoint.");
   return url.toString().replace(/\/+$/, "");
 }

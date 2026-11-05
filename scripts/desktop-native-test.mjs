@@ -128,8 +128,13 @@ try {
   await expect(
     page.getByRole("button", { name: "Connections", exact: true }),
   ).toBeVisible({ timeout: 45_000 });
-  await app.evaluate(({ dialog }, project) => {
+  await app.evaluate(({ dialog, shell }, project) => {
     globalThis.__dialogs = [];
+    globalThis.__authUrls = [];
+    // Observe built-in browser sign-in without contacting a live provider.
+    shell.openExternal = async (url) => {
+      globalThis.__authUrls.push(url);
+    };
     dialog.showOpenDialog = async () => ({
       canceled: false,
       filePaths: [project],
@@ -155,9 +160,39 @@ try {
   await expect(
     page.getByRole("heading", { name: "Connections", exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Continue with Claude", exact: true })
+    .click();
+  const claude = page.getByRole("article", { name: "Connection Claude plan" });
   await expect(
-    page.getByText("Claude subscription: not offered."),
+    claude.getByRole("button", { name: "Cancel sign-in", exact: true }),
   ).toBeVisible();
+  await expect
+    .poll(async () => (await app.evaluate(() => globalThis.__authUrls)).length)
+    .toBe(1);
+  const authUrl = new URL((await app.evaluate(() => globalThis.__authUrls))[0]);
+  expect(authUrl.origin).toBe("https://claude.ai");
+  const callback = new URL(authUrl.searchParams.get("redirect_uri"));
+  callback.searchParams.set("state", authUrl.searchParams.get("state"));
+  callback.searchParams.set("error", "access_denied");
+  await fetch(callback);
+  await expect(claude).toContainText("Sign-in was declined");
+  await claude
+    .getByRole("button", { name: "Continue with Claude", exact: true })
+    .click();
+  await expect(
+    claude.getByRole("button", {
+      name: "Complete sign-in from clipboard",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await claude
+    .getByRole("button", { name: "Cancel sign-in", exact: true })
+    .click();
+  await expect(
+    claude.getByRole("button", { name: "Cancel sign-in", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Gateway protocol")).toBeVisible();
   await page.getByLabel("Gateway base URL").fill(endpoint);
   await page.getByRole("button", { name: "Add gateway", exact: true }).click();
   const card = page.getByRole("article", { name: "Connection Gateway" });
@@ -239,7 +274,7 @@ try {
   expect(errors).toEqual([]);
   success = true;
   console.log(
-    "Native harness Electron journey passed: gateway connection, clipboard key, route, native edit task through the proxy process, sandboxed copy, candidate review and apply; key absent from window state.",
+    "Native harness Electron journey passed: built-in Claude browser sign-in, declined callback and cancellation (no live provider); gateway connection, clipboard key, native edit/candidate/apply; key absent from window state.",
   );
 } finally {
   await app.close();

@@ -51,6 +51,9 @@ export class McpClient {
     }
   >();
   stderr = "";
+  get running(): boolean {
+    return this.child !== null;
+  }
 
   constructor(
     readonly definition: Pick<McpServerDefinition, "name" | "argv">,

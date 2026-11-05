@@ -12,7 +12,7 @@ type ConnectionCommand = Extract<
 >;
 
 /** Sign-in pages Topsl opens for a connection; nothing else. */
-const signInOrigins = new Set(["https://auth.openai.com"]);
+const signInOrigins = new Set(["https://auth.openai.com", "https://claude.ai"]);
 
 export interface ProxyHostDeps {
   directory: string;
@@ -197,11 +197,15 @@ export class ProxyHost {
         return result;
       }
       case "connection-sign-in": {
+        const claude =
+          this.view?.connections.find((c) => c.id === command.connectionId)
+            ?.kind === "claude-plan";
+        const name = claude ? "Claude" : "ChatGPT";
         if (
           !(await this.deps.confirm(
-            "Continue with ChatGPT?",
-            "Your browser opens OpenAI's sign-in page. Approve Topsl there to let it use your ChatGPT plan for native tasks you start. Topsl's local proxy keeps the sign-in encrypted; it is never shown in the window or given to tools. You can disconnect at any time.",
-            "Continue with ChatGPT",
+            `Continue with ${name}?`,
+            `Your browser opens ${name}'s sign-in page. Topsl's proxy keeps this sign-in encrypted and uses its plan allowance for native tasks you start. You can disconnect at any time.${claude ? " This is an experimental community integration, not an Anthropic-supported application login." : ""}`,
+            `Continue with ${name}`,
           ))
         )
           return null;
@@ -209,6 +213,16 @@ export class ProxyHost {
           type: "connection-sign-in",
           connectionId: command.connectionId,
         });
+      }
+      case "connection-sign-in-complete": {
+        const callback = (await this.deps.readClipboard()).trim();
+        if (!callback || callback.length > 16_384)
+          throw new Error(
+            "Copy the complete Claude sign-in code or callback URL first.",
+          );
+        const result = await send({ ...command, callback });
+        await this.deps.clearClipboard(callback);
+        return result;
       }
       case "connection-disconnect":
       case "connection-remove": {

@@ -11,6 +11,7 @@ import * as responses from "./protocols/responses";
 import * as messages from "./protocols/messages";
 import * as chat from "./protocols/chat";
 import type { Connection, ConnectionKind, ProxyRoute } from "./types";
+import { CLAUDE_OAUTH_BETA } from "./oauth/claude";
 
 /**
  * Upstream adapters (docs/Native_Harness_Plan.md §2). An adapter turns a
@@ -54,6 +55,7 @@ export const DEFAULT_ANTHROPIC_MAX_TOKENS = 16_384;
 
 const paths: Record<ConnectionKind, string> = {
   "chatgpt-plan": "/responses",
+  "claude-plan": "/messages",
   "openai-api": "/responses",
   "anthropic-api": "/messages",
   "openai-compatible": "/chat/completions",
@@ -65,6 +67,13 @@ export function authorizationHeaders(
   kind: ConnectionKind,
   secret: string | null,
 ): Record<string, string> {
+  if (kind === "claude-plan")
+    return {
+      authorization: `Bearer ${secret ?? ""}`,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": CLAUDE_OAUTH_BETA,
+      "user-agent": "Topsl/0.1.3",
+    };
   if (kind === "anthropic-api")
     return {
       "x-api-key": secret ?? "",
@@ -123,16 +132,20 @@ export async function dispatchUpstream(
   let response: Response;
   try {
     response = await call.fetch(
-      `${connection.endpoint}${paths[connection.kind]}`,
+      `${connection.endpoint}${connection.kind === "openai-compatible" ? { responses: "/responses", messages: "/messages", chat: "/chat/completions" }[route.protocol] : paths[connection.kind]}`,
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
           accept: "text/event-stream",
+          ...(route.protocol === "messages"
+            ? { "anthropic-version": "2023-06-01" }
+            : {}),
           ...call.headers,
         },
         body: JSON.stringify(body),
         signal: call.signal,
+        redirect: "error",
       },
     );
   } catch (error) {
@@ -228,48 +241,76 @@ export async function listUpstreamModels(input: {
   signal?: AbortSignal;
 }): Promise<UpstreamModel[]> {
   const { connection } = input;
-  const response = await input.fetch(`${connection.endpoint}/models`, {
-    headers: { accept: "application/json", ...input.headers },
-    signal: input.signal,
-  });
-  if (!response.ok) {
-    const error = classifyHttpError(
-      connection.kind,
-      response.status,
-      await response.text().catch(() => ""),
-      requestIdOf(response.headers),
-    );
-    throw new UpstreamError(error);
+  const models: UpstreamModel[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const url = new URL(`${connection.endpoint}/models`);
+    if (cursor) url.searchParams.set("after_id", cursor);
+    const response = await input.fetch(url.toString(), {
+      headers: {
+        accept: "application/json",
+        ...(connection.protocol === "messages"
+          ? { "anthropic-version": "2023-06-01" }
+          : {}),
+        ...input.headers,
+      },
+      signal: input.signal
+        ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)])
+        : AbortSignal.timeout(30_000),
+      redirect: "error",
+    });
+    if (!response.ok)
+      throw new UpstreamError(
+        classifyHttpError(
+          connection.kind,
+          response.status,
+          await response.text().catch(() => ""),
+          requestIdOf(response.headers),
+        ),
+      );
+    const body = (await response.json()) as any;
+    if (connection.kind === "chatgpt-plan") {
+      if (!Array.isArray(body?.models))
+        throw new Error("The ChatGPT plan model list had an unexpected shape.");
+      return body.models
+        .filter(
+          (m: any) => m?.visibility === "list" && typeof m.slug === "string",
+        )
+        .map((m: any) => ({
+          id: m.slug,
+          name: typeof m.display_name === "string" ? m.display_name : m.slug,
+          source: "chatgpt-plan /v1/models",
+        }));
+    }
+    const data = Array.isArray(body?.data)
+      ? body.data
+      : Array.isArray(body?.models)
+        ? body.models
+        : null;
+    if (!data) throw new Error("The model list had an unexpected shape.");
+    for (const m of data) {
+      const id = m?.id ?? m?.name;
+      if (typeof id === "string" && !models.some((old) => old.id === id))
+        models.push({
+          id,
+          name: m.display_name ?? m.name ?? id,
+          source: `${connection.kind} /v1/models`,
+        });
+    }
+    if (!body.has_more) return models;
+    if (
+      typeof body.last_id !== "string" ||
+      !body.last_id ||
+      cursors.has(body.last_id)
+    )
+      throw new Error(
+        "The model catalog returned an invalid pagination cursor.",
+      );
+    cursor = body.last_id;
+    cursors.add(body.last_id);
   }
-  const body = (await response.json()) as any;
-  if (connection.kind === "chatgpt-plan") {
-    // The plan route lists `models` with `slug`, `display_name` and
-    // `visibility`; only `visibility: "list"` entries are offered.
-    if (!Array.isArray(body?.models))
-      throw new Error("The ChatGPT plan model list had an unexpected shape.");
-    return body.models
-      .filter(
-        (m: any) => m?.visibility === "list" && typeof m.slug === "string",
-      )
-      .map((m: any) => ({
-        id: m.slug,
-        name: typeof m.display_name === "string" ? m.display_name : m.slug,
-        source: "chatgpt-plan /v1/models",
-      }));
-  }
-  const data = Array.isArray(body?.data)
-    ? body.data
-    : Array.isArray(body?.models)
-      ? body.models
-      : null;
-  if (!data) throw new Error("The model list had an unexpected shape.");
-  return data
-    .filter((m: any) => typeof (m?.id ?? m?.name) === "string")
-    .map((m: any) => ({
-      id: m.id ?? m.name,
-      name: m.display_name ?? m.name ?? m.id,
-      source: `${connection.kind} /v1/models`,
-    }));
+  throw new Error("The model catalog exceeded the pagination limit.");
 }
 
 export class UpstreamError extends Error {

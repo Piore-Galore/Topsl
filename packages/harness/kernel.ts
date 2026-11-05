@@ -286,12 +286,13 @@ export class NativeKernel {
     for (const intent of openIntents(events, processes)) {
       if (intent.effect === "process") {
         const record = intent.processPid;
-        if (record !== null && alive(record)) kill(record);
+        const verified = record !== null && alive(record);
+        if (verified) kill(record!);
         drafts.push({
           kind: "tool-uncertain",
           body: {
             callId: intent.callId,
-            reason: `Topsl restarted while ${intent.tool} was running; its effects are unknown. Reconcile it before resuming.`,
+            reason: `Topsl restarted while ${intent.tool} was running; its effects are unknown. ${verified ? "The recorded process was verified and a stop requested." : "No matching process identity was established. Verify that the original process has stopped before reconciling."} Reconcile it before resuming.`,
           },
         });
         uncertain = true;

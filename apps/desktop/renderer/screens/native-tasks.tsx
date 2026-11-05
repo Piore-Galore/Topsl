@@ -310,15 +310,21 @@ function StartForm({
             </label>
           </div>
           {processes && (
-            <textarea
-              aria-label="Checks"
-              rows={2}
-              placeholder={
-                "Checks, one per line as name: command — e.g. test: npm test"
-              }
-              value={checks}
-              onChange={(e) => setChecks(e.target.value)}
-            />
+            <>
+              <textarea
+                aria-label="Checks"
+                rows={2}
+                placeholder={
+                  "Checks required before applying, one per line as name: command — e.g. test: npm test"
+                }
+                value={checks}
+                onChange={(e) => setChecks(e.target.value)}
+              />
+              <p className="muted">
+                Each listed check must pass after the final edit before you can
+                apply the candidate.
+              </p>
+            </>
           )}
           {!!native?.mcpServers.length && (
             <div className="actions wrap">

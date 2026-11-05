@@ -7,6 +7,8 @@
  * effects settle.
  */
 
+import type { Store } from "../persistence/store";
+
 class Semaphore {
   private held = 0;
   private queue: Array<{
@@ -22,6 +24,8 @@ class Semaphore {
     return this.queue.length;
   }
   acquire(holder: string, signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted)
+      return Promise.reject(new Error("Cancelled while waiting for capacity."));
     const release = () => {
       let done = false;
       return () => {
@@ -70,10 +74,19 @@ export class ResourceLedger {
   private readonly quota = new Map<string, QuotaWait>();
   private readonly listeners = new Set<(owner: string) => void>();
 
-  constructor(options: { inference?: number; processes?: number } = {}) {
+  constructor(
+    private options: {
+      inference?: number;
+      processes?: number;
+      store?: Store;
+    } = {},
+  ) {
     // The default global concurrency of two applies to model requests.
     this.inference = new Semaphore(options.inference ?? 2);
     this.processes = new Semaphore(options.processes ?? 2);
+    for (const wait of options.store?.iterate<QuotaWait>("native-quota-wait") ??
+      [])
+      this.quota.set(wait.owner, wait);
   }
 
   acquireInference(holder: string, signal?: AbortSignal) {
@@ -105,14 +118,18 @@ export class ResourceLedger {
    * same owner waits; none restarts on its own, and no reset time is inferred.
    */
   pauseQuota(owner: string, detail: string): void {
-    if (!this.quota.has(owner))
-      this.quota.set(owner, { owner, since: new Date().toISOString(), detail });
+    if (!this.quota.has(owner)) {
+      const wait = { owner, since: new Date().toISOString(), detail };
+      this.quota.set(owner, wait);
+      this.options.store?.put("native-quota-wait", { id: owner, ...wait });
+    }
   }
   quotaWait(owner: string | null): QuotaWait | null {
     return owner ? (this.quota.get(owner) ?? null) : null;
   }
   /** The owner chose to try the allowance again. */
   resumeQuota(owner: string): void {
+    this.options.store?.remove("native-quota-wait", owner);
     if (this.quota.delete(owner))
       for (const listener of this.listeners) listener(owner);
   }

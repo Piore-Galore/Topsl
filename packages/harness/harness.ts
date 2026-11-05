@@ -32,6 +32,7 @@ import {
   type ProxyEndpoint,
 } from "./model-client";
 import { ResourceLedger } from "./resources";
+import { nativeProcessIdentity } from "./process-identity";
 import { transcript } from "./context";
 import {
   admitTools,
@@ -58,6 +59,7 @@ import {
   type ExecutionBinding,
   type NativeAttemptView,
   type ToolGrants,
+  type JournalBodies,
 } from "./types";
 
 /**
@@ -123,6 +125,7 @@ export interface NativeHarnessOptions {
 /** Context windows used when a route has no observed value. */
 const defaultWindows: Record<string, number> = {
   "chatgpt-plan": 200_000,
+  "claude-plan": 200_000,
   "openai-api": 200_000,
   "anthropic-api": 200_000,
   "openai-compatible": 32_000,
@@ -166,11 +169,13 @@ export class NativeHarness {
     Map<string, { client: McpClient; tool: string }>
   >();
   private readonly baselines = new Map<string, Map<string, string | null>>();
+  private readonly mcpClients = new Map<string, Set<McpClient>>();
 
   constructor(private options: NativeHarnessOptions) {
     this.journal = new NativeJournal(options.store);
     this.blobs = new ProtectedBlobs(options.store);
-    this.resources = options.resources ?? new ResourceLedger();
+    this.resources =
+      options.resources ?? new ResourceLedger({ store: options.store });
     this.kernel = new NativeKernel({
       journal: this.journal,
       blobs: this.blobs,
@@ -201,6 +206,7 @@ export class NativeHarness {
             attemptId,
             callId,
             pid,
+            identity: nativeProcessIdentity(pid),
             startedAt: now(),
           });
       },
@@ -248,12 +254,45 @@ export class NativeHarness {
           revision: `mcp-${entry.client.definition.name}-${entry.tool}`,
         }),
     );
-    return admitTools(spec.grants, {
+    const tools = admitTools(spec.grants, {
       skills: (stored?.skills.length ?? 0) > 0,
       memory: true,
       mcp: stored ? this.mcpDefinitions(spec.attemptId, mcp) : mcp,
       childOf: spec.parentAttemptId,
     });
+    return tools.map((tool) =>
+      tool.name !== "run_check"
+        ? tool
+        : {
+            ...tool,
+            revision: "run_check-candidate-v2",
+            execute: async (args, ctx) => {
+              const check = spec.grants.checks.find(
+                (c) => c.name === args.name,
+              );
+              if (!check) return tool.execute(args, ctx);
+              const before = await this.captureWorkspace(spec, ctx.signal);
+              const outcome = await tool.execute(args, ctx);
+              const after = await this.captureWorkspace(spec, ctx.signal);
+              const unchanged = before.revision === after.revision;
+              return {
+                ...outcome,
+                ok: outcome.ok && unchanged,
+                output: unchanged
+                  ? outcome.output
+                  : `${outcome.output}\n\nThe workspace changed during this check. Run it again on the finished candidate.`,
+                evidence: {
+                  ...outcome.evidence,
+                  checkName: check.name,
+                  checkDefinitionHash: hash(stable(check)),
+                  checkCandidateId: after.id,
+                  checkCandidateRevision: after.revision,
+                  checkWorkspaceStable: unchanged,
+                },
+              };
+            },
+          },
+    );
   }
   private mcpDefinitions(
     attemptId: string,
@@ -287,6 +326,10 @@ export class NativeHarness {
       );
     if (!input.prompt.trim())
       throw new Error("Write what the native agent should do.");
+    if (input.checks.length && !input.processes)
+      throw new Error("Allow contained commands to run the configured checks.");
+    if (new Set(input.checks.map((c) => c.name)).size !== input.checks.length)
+      throw new Error("Give each configured check a unique name.");
     const info = this.options.route(input.routeAlias);
     if (!info)
       throw new Error(`No connection route is named ${input.routeAlias}.`);
@@ -442,7 +485,7 @@ export class NativeHarness {
         ? `Commands run in Topsl's sandbox: ${spec.grants.networkDomains.length ? `network only to ${spec.grants.networkDomains.join(", ")}` : "no network"}, writes only inside the workspace${spec.grants.write ? "" : " (not even there in this attempt)"} and a private temporary folder.`
         : "You cannot run commands in this attempt.",
       spec.grants.checks.length
-        ? `Checks you can run with run_check: ${spec.grants.checks.map((c) => c.name).join(", ")}.`
+        ? `Run every configured check with run_check after your final edit: ${spec.grants.checks.map((c) => c.name).join(", ")}. Each must pass on the unchanged final candidate before the owner can apply it. If a check changes the workspace, run it again after those changes settle.`
         : "",
       spec.grants.delegation
         ? `You may hand bounded sub-tasks to child agents with delegate (at most ${delegationLimits.maxDepth} levels deep and ${delegationLimits.maxActiveDescendants} active at a time). You alone integrate writable children's results.`
@@ -542,10 +585,25 @@ export class NativeHarness {
     this.kernel.pause(attemptId);
     return this.journal.require(attemptId);
   }
-  resume(attemptId: string) {
+  async resume(attemptId: string) {
     const spec = this.storedSpec(attemptId);
     if (!spec)
       throw new Error("The attempt's frozen specification is missing.");
+    const current = this.journal.require(attemptId);
+    if (terminalStates.has(current.state))
+      throw new Error("The attempt has finished.");
+    if (current.state === "uncertain")
+      throw new Error("Reconcile the uncertain tool call before resuming.");
+    if (this.kernel.isRunning(attemptId))
+      throw new Error("The attempt is already running.");
+    if (
+      (!this.mcp.has(attemptId) ||
+        [...(this.mcpClients.get(attemptId) ?? [])].some((c) => !c.running)) &&
+      spec.mcpServerIds.length
+    ) {
+      this.stopMcp(attemptId);
+      await this.startMcp(spec, spec.mcpServerIds, true);
+    }
     const owner = spec.binding.native?.quotaOwner;
     // Resuming a quota wait is the owner deciding to try the allowance again.
     if (owner && this.resources.quotaWait(owner))
@@ -579,37 +637,35 @@ export class NativeHarness {
       const spec = this.storedSpec(view.attemptId);
       if (!spec) continue;
       const processes = new Map<string, number>();
+      const identities = new Map<number, string>();
       for (const record of this.store.list<{
         id: string;
         attemptId: string;
         callId: string;
         pid: number;
+        identity?: string | null;
       }>("native-process"))
-        if (record.attemptId === view.attemptId)
+        if (record.attemptId === view.attemptId) {
           processes.set(record.callId, record.pid);
-      await this.kernel.recover(
-        spec,
-        processes,
-        (pid) => {
+          if (record.identity) identities.set(record.pid, record.identity);
+        }
+      const owned = (pid: number) => {
+        const recorded = identities.get(pid);
+        return !!recorded && nativeProcessIdentity(pid) === recorded;
+      };
+      await this.kernel.recover(spec, processes, owned, (pid) => {
+        if (!owned(pid)) return;
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          if (!owned(pid)) return;
           try {
-            process.kill(pid, 0);
-            return true;
+            process.kill(pid, "SIGKILL");
           } catch {
-            return false;
+            // Already gone.
           }
-        },
-        (pid) => {
-          try {
-            process.kill(-pid, "SIGKILL");
-          } catch {
-            try {
-              process.kill(pid, "SIGKILL");
-            } catch {
-              // Already gone.
-            }
-          }
-        },
-      );
+        }
+      });
       for (const callId of processes.keys())
         this.store.remove("native-process", `${view.attemptId}:${callId}`);
       count++;
@@ -619,21 +675,26 @@ export class NativeHarness {
 
   // ── Submission and application ─────────────────────────────────────────
 
+  private async captureWorkspace(spec: AttemptSpec, signal?: AbortSignal) {
+    return captureCandidate(this.store, {
+      root: spec.workspace.root,
+      owned: true,
+      projectId: spec.projectId,
+      workflowId: spec.rootAttemptId,
+      authorAttemptId: spec.attemptId,
+      baseCandidateId: spec.workspace.baselineCandidateId ?? undefined,
+      selectedPaths: await listFiles(spec.workspace.root),
+      signal,
+    });
+  }
+
   private async submit(
     spec: AttemptSpec,
     _summary: string,
   ): Promise<string | null> {
     if (!spec.workspace.writable || !spec.workspace.baselineCandidateId)
       return null;
-    const candidate = await captureCandidate(this.store, {
-      root: spec.workspace.root,
-      owned: true,
-      projectId: spec.projectId,
-      workflowId: spec.rootAttemptId,
-      authorAttemptId: spec.attemptId,
-      baseCandidateId: spec.workspace.baselineCandidateId,
-      selectedPaths: await listFiles(spec.workspace.root),
-    });
+    const candidate = await this.captureWorkspace(spec);
     return candidate.id;
   }
 
@@ -656,6 +717,32 @@ export class NativeHarness {
       view.candidateId,
     )!;
     const problems: string[] = [];
+    const checks = new Map<string, JournalBodies["tool-result"]>();
+    const checkCalls = new Map<string, string>();
+    for (const event of this.journal.all(attemptId)) {
+      if (event.kind === "tool-intended") {
+        const intent = event.body as JournalBodies["tool-intended"];
+        const args = intent.arguments as { name?: unknown } | null;
+        if (intent.tool === "run_check" && typeof args?.name === "string")
+          checkCalls.set(intent.callId, args.name);
+      }
+      if (event.kind !== "tool-result") continue;
+      const result = event.body as JournalBodies["tool-result"];
+      const name = checkCalls.get(result.callId);
+      if (typeof name === "string") checks.set(name, result);
+    }
+    for (const check of spec.grants.checks) {
+      const result = checks.get(check.name);
+      if (
+        !result?.ok ||
+        result.evidence?.checkDefinitionHash !== hash(stable(check)) ||
+        result.evidence?.checkCandidateRevision !== candidate.revision ||
+        result.evidence?.checkWorkspaceStable !== true
+      )
+        problems.push(
+          `Check ${check.name} has no passing result for this exact candidate. Start a new task to complete its checks before applying.`,
+        );
+    }
     if (!project.trusted) problems.push("The project folder must be trusted.");
     if (baseline.sourceRoot !== project.realPath)
       problems.push(
@@ -866,11 +953,31 @@ export class NativeHarness {
       depth: parent.depth + 1,
       delegationMode: request.mode,
     };
+    const inheritedServers = parentStored?.mcpServerIds ?? [];
+    const parentMcp = this.store.get<{ id: string }>(
+      "native-attempt-mcp",
+      parent.attemptId,
+    );
+    if (parentMcp)
+      this.store.put("native-attempt-mcp", { ...parentMcp, id: childId });
+    const inheritedTools = await this.startMcp(
+      spec,
+      inheritedServers,
+      !!parentMcp,
+    );
+    spec.grants = {
+      ...spec.grants,
+      mcpTools: inheritedTools.map((t) => t.name),
+    };
+    spec.binding = {
+      ...spec.binding,
+      policyRevision: hash(stable({ grants: spec.grants, limits })),
+    };
     this.store.put("native-attempt-spec", {
       ...spec,
       id: childId,
       skills: parentStored?.skills ?? [],
-      mcpServerIds: [],
+      mcpServerIds: inheritedServers,
     });
     const parentView = this.journal.require(parent.attemptId);
     this.journal.append(parent.attemptId, parentView.generation, [
@@ -1090,7 +1197,19 @@ export class NativeHarness {
   private async startMcp(
     spec: AttemptSpec,
     serverIds: string[],
+    restoring = false,
   ): Promise<NativeTool[]> {
+    const previous = this.store.get<{
+      id: string;
+      tools: NativeTool[];
+      servers?: Record<string, string>;
+    }>("native-attempt-mcp", spec.attemptId);
+    if (restoring && serverIds.length && !previous?.servers)
+      throw new Error(
+        "This task has no frozen MCP server configuration. Start a new task to use these tools.",
+      );
+    const servers: Record<string, string> = {};
+    const opened = new Set<McpClient>();
     const tools: Array<{
       name: string;
       description: string;
@@ -1098,50 +1217,76 @@ export class NativeHarness {
       revision: string;
     }> = [];
     const clients = new Map<string, { client: McpClient; tool: string }>();
-    for (const id of serverIds) {
-      const definition = this.store.get<McpServerDefinition>(
-        "native-mcp-server",
-        id,
-      );
-      if (!definition || definition.projectId !== spec.projectId)
-        throw new Error("An MCP server is not admitted for this project.");
-      const client = new McpClient(
-        definition,
-        {
-          workspaceRoot: spec.workspace.root,
-          writable: false,
-          tempRoot: path.join(spec.tempRoot, `mcp-${definition.name}`),
-          allowedDomains: definition.networkDomains,
-          extraReadable: toolchainFolders,
-        },
-        spec.workspace.root,
-      );
-      await mkdir(path.join(spec.tempRoot, `mcp-${definition.name}`), {
-        recursive: true,
-        mode: 0o700,
-      });
-      const listed = await client.start();
-      const { admitted, changed } = admittedMcpTools(definition, listed);
-      if (changed.length) {
-        client.close();
-        throw new Error(
-          `The MCP server ${definition.name} changed these tools since you admitted them: ${changed.join(", ")}. Inspect and admit it again.`,
+    try {
+      for (const id of serverIds) {
+        const definition = this.store.get<McpServerDefinition>(
+          "native-mcp-server",
+          id,
         );
-      }
-      for (const tool of admitted) {
-        const name = mcpToolName(definition.name, tool.name);
-        clients.set(name, { client, tool: tool.name });
-        tools.push({
-          name,
-          description: `[${definition.name}] ${tool.description}`,
-          inputSchema: tool.inputSchema,
-          revision: `mcp-${definition.id}-${schemaHash(tool.inputSchema).slice(0, 16)}`,
+        if (!definition || definition.projectId !== spec.projectId)
+          throw new Error("An MCP server is not admitted for this project.");
+        servers[id] = hash(stable(definition));
+        if (
+          restoring &&
+          previous?.servers &&
+          previous.servers[id] !== servers[id]
+        )
+          throw new Error(
+            "The admitted MCP configuration changed. Start a new task to use the new configuration.",
+          );
+        const client = new McpClient(
+          definition,
+          {
+            workspaceRoot: spec.workspace.root,
+            writable: false,
+            tempRoot: path.join(spec.tempRoot, `mcp-${definition.name}`),
+            allowedDomains: definition.networkDomains,
+            extraReadable: toolchainFolders,
+          },
+          spec.workspace.root,
+        );
+        opened.add(client);
+        await mkdir(path.join(spec.tempRoot, `mcp-${definition.name}`), {
+          recursive: true,
+          mode: 0o700,
         });
+        const listed = await client.start();
+        const { admitted, changed } = admittedMcpTools(definition, listed);
+        if (changed.length) {
+          client.close();
+          throw new Error(
+            `The MCP server ${definition.name} changed these tools since you admitted them: ${changed.join(", ")}. Inspect and admit it again.`,
+          );
+        }
+        for (const tool of admitted) {
+          const name = mcpToolName(definition.name, tool.name);
+          if (clients.has(name))
+            throw new Error("Two MCP tools have the same normalized name.");
+          clients.set(name, { client, tool: tool.name });
+          tools.push({
+            name,
+            description: `[${definition.name}] ${tool.description}`,
+            inputSchema: tool.inputSchema,
+            revision: `mcp-${definition.id}-${schemaHash(tool.inputSchema).slice(0, 16)}`,
+          });
+        }
       }
+      if (restoring && previous && stable(previous.tools) !== stable(tools))
+        throw new Error(
+          "The MCP tools changed since this task started. Start a new task after reviewing them.",
+        );
+      this.mcp.set(spec.attemptId, clients);
+      this.mcpClients.set(spec.attemptId, opened);
+      this.store.put("native-attempt-mcp", {
+        id: spec.attemptId,
+        tools,
+        servers,
+      });
+      return tools.map((t) => mcpTool(t));
+    } catch (error) {
+      for (const client of opened) client.close();
+      throw error;
     }
-    this.mcp.set(spec.attemptId, clients);
-    this.store.put("native-attempt-mcp", { id: spec.attemptId, tools });
-    return tools.map((t) => mcpTool(t));
   }
   private async callMcp(
     spec: AttemptSpec,
@@ -1158,8 +1303,8 @@ export class NativeHarness {
     return entry.client.call(entry.tool, args, spec.limits.toolTimeoutMs);
   }
   private stopMcp(attemptId: string) {
-    for (const entry of this.mcp.get(attemptId)?.values() ?? [])
-      entry.client.close();
+    for (const client of this.mcpClients.get(attemptId) ?? []) client.close();
+    this.mcpClients.delete(attemptId);
     this.mcp.delete(attemptId);
   }
 

@@ -11,6 +11,7 @@ import {
 } from "./native-fixture";
 import type { CandidateSnapshot } from "../packages/workflows/candidates";
 import { NativeHarness } from "../packages/harness/harness";
+import { nativeProcessIdentity } from "../packages/harness/process-identity";
 import { routeHeaders } from "../packages/proxy/types";
 import { sha256 } from "../packages/harness/tools";
 
@@ -174,6 +175,64 @@ describe("native subscription route (synthetic ChatGPT plan)", () => {
     },
   );
 
+  test.skipIf(!canSandbox).each(["skipped", "failed", "stale", "mutating"])(
+    "a %s check cannot authorize applying a candidate",
+    async (mode) => {
+      const f = await setup((_call, index) => {
+        if (mode !== "skipped" && index === 0)
+          return {
+            events: answer([{ tool: "run_check", args: { name: "probe" } }]),
+          };
+        if (mode === "stale" && index === 1)
+          return {
+            events: answer([
+              {
+                tool: "write_file",
+                args: {
+                  path: "new.txt",
+                  content: "changed after check",
+                  expected_sha256: null,
+                },
+              },
+            ]),
+          };
+        return { events: answer([{ text: "Candidate ready." }]) };
+      });
+      const { connection } = f.chatgpt();
+      f.route(connection.id, "chatgpt/test");
+      const started = await f.start({
+        routeAlias: "chatgpt/test",
+        prompt: "Check before applying",
+        processes: true,
+        checks: [
+          {
+            name: "probe",
+            argv: [
+              "/bin/sh",
+              "-c",
+              mode === "failed"
+                ? "exit 1"
+                : mode === "mutating"
+                  ? "printf changed > new.txt"
+                  : "exit 0",
+            ],
+            timeoutMs: 20_000,
+          },
+        ],
+      });
+      const final = await f.settle(started.attemptId);
+      expect(final.state).toBe("completed");
+      const preview = await f.harness.applyPreview(started.attemptId);
+      expect(preview.problems.join(" ")).toContain(
+        "no passing result for this exact candidate",
+      );
+      expect(
+        await f.harness.apply(started.attemptId, preview.digest),
+      ).toHaveProperty("refused");
+      expect(existsSync(path.join(f.root, "new.txt"))).toBe(false);
+    },
+  );
+
   test("a read-only investigation through the Anthropic API route", async () => {
     const f = await setup((call) => {
       const turn = call.request.messages.filter(
@@ -305,7 +364,7 @@ describe("failures, waits and fencing", () => {
     });
     expect((await f.settle(third.attemptId)).state).toBe("completed");
     // The owner resumes; the attempt continues on the same route.
-    f.harness.resume(first.attemptId);
+    await f.harness.resume(first.attemptId);
     expect((await f.settle(first.attemptId)).state).toBe("completed");
   });
 
@@ -647,7 +706,7 @@ describe("recovery", () => {
           (e.body as any).error?.code === "restart",
       ),
     ).toHaveLength(1);
-    recovered.resume(id);
+    await recovered.resume(id);
     const view = await recovered.kernel.settled(id);
     expect(view.state).toBe("completed");
     const result = [...recovered.journal.all(id)].find(
@@ -659,9 +718,9 @@ describe("recovery", () => {
     recovered.close();
   });
 
-  test.skipIf(!canSandbox)(
-    "a command running at restart is killed and stays uncertain until the owner reconciles it",
-    async () => {
+  test.skipIf(!canSandbox).each(["owned", "different", "missing"])(
+    "restart signals only a verified process (%s identity) and leaves its effects uncertain",
+    async (identity) => {
       let release!: () => void;
       const hold = new Promise<void>((resolve) => (release = resolve));
       const f = await setup((call, index) => {
@@ -683,6 +742,13 @@ describe("recovery", () => {
         detached: true,
         stdio: "ignore",
       });
+      fixtures.push({
+        close: async () => {
+          sleeper.kill("SIGKILL");
+        },
+      });
+      const recordedIdentity = nativeProcessIdentity(sleeper.pid!);
+      expect(recordedIdentity).toBeTruthy();
       const generation = f.harness.journal.require(id).generation;
       f.harness.journal.append(id, generation, [
         {
@@ -703,6 +769,12 @@ describe("recovery", () => {
         attemptId: id,
         callId: "call_run",
         pid: sleeper.pid,
+        identity:
+          identity === "owned"
+            ? recordedIdentity
+            : identity === "different"
+              ? "previous-process"
+              : undefined,
         startedAt: new Date().toISOString(),
       });
       const exited = new Promise((resolve) => sleeper.once("exit", resolve));
@@ -714,9 +786,14 @@ describe("recovery", () => {
         gitExecutable: "git",
       });
       await recovered.recoverAll();
-      await exited;
+      if (identity === "owned") await exited;
+      else {
+        expect(nativeProcessIdentity(sleeper.pid!)).toBe(recordedIdentity);
+        sleeper.kill("SIGKILL");
+        await exited;
+      }
       expect(recovered.view(id)!.state).toBe("uncertain");
-      expect(() => recovered.resume(id)).toThrow("Reconcile");
+      await expect(recovered.resume(id)).rejects.toThrow("Reconcile");
       release();
       await f.settle(id);
       expect(

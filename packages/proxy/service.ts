@@ -13,6 +13,7 @@ import {
   CredentialStore,
   keyFingerprint,
   type ChatGptCredential,
+  type ClaudeCredential,
   type StoredCredential,
 } from "./credentials";
 import {
@@ -23,6 +24,13 @@ import {
   type ChatGptAuthConfig,
   type SignInAttempt,
 } from "./oauth/chatgpt";
+import {
+  beginClaudeSignIn,
+  refreshClaude,
+  ClaudeAuthError,
+  type ClaudeAuthConfig,
+  type ClaudeSignInAttempt,
+} from "./oauth/claude";
 import {
   authorizationHeaders,
   dispatchUpstream,
@@ -55,16 +63,11 @@ const REFRESH_MARGIN_MS = 5 * 60_000;
 /** Largest request body the proxy reads. */
 export const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 
-/**
- * Claude subscription sign-in is not offered: Anthropic's published
- * conditions do not permit third-party applications to offer Claude.ai login
- * or to route requests through Free, Pro, Max or Ultra plan credentials
- * (docs/Native_Harness_Plan.md §1, "Provider status").
- */
 export const claudeSubscriptionStatus = {
-  available: false,
+  available: true,
+  experimental: true,
   reason:
-    "Anthropic's published conditions do not permit a third-party application to sign in to a Claude subscription or route requests through its credentials. Use Claude Code itself (Providers) for Claude-plan work, or an Anthropic API key here.",
+    "Direct Claude-plan access through Topsl's proxy is an experimental community integration. Live account and model availability are established by sign-in and inference, separately from the Anthropic API connection.",
   source: "https://code.claude.com/docs/en/legal-and-compliance",
 } as const;
 
@@ -81,10 +84,12 @@ export type ProxyCommand =
       kind: ConnectionKind;
       label: string;
       endpoint?: string | null;
+      protocol?: ClientProtocol;
     }
   | { type: "connection-rename"; connectionId: string; label: string }
   | { type: "connection-api-key"; connectionId: string; key: string }
   | { type: "connection-sign-in"; connectionId: string }
+  | { type: "connection-sign-in-complete"; attemptId: string; callback: string }
   | { type: "connection-sign-in-cancel"; attemptId: string }
   | { type: "connection-models"; connectionId: string }
   | { type: "connection-disconnect"; connectionId: string }
@@ -110,6 +115,7 @@ export interface ProxyServiceOptions {
   key: string;
   fetch?: typeof fetch;
   chatgpt?: ChatGptAuthConfig;
+  claude?: ClaudeAuthConfig;
   /** Called after every change the renderer should see (sanitized). */
   onState?: (state: ProxyStateView) => void;
   /** Opens a sign-in page in the person's browser. */
@@ -127,10 +133,16 @@ export class ProxyService {
   /** The local access token clients present. Never written to disk. */
   readonly accessToken = randomBytes(32).toString("base64url");
   private readonly fetch: typeof fetch;
+  private closed = false;
   private readonly active = new Map<string, Set<AbortController>>();
+  private readonly startingSignIns = new Map<string, symbol>();
   private readonly signIns = new Map<
     string,
-    { connectionId: string; attempt: SignInAttempt; startedAt: string }
+    {
+      connectionId: string;
+      attempt: SignInAttempt | ClaudeSignInAttempt;
+      startedAt: string;
+    }
   >();
 
   constructor(private options: ProxyServiceOptions) {
@@ -153,6 +165,7 @@ export class ProxyService {
     };
   }
   private changed(): void {
+    if (this.closed) return;
     this.options.onState?.(this.view());
   }
 
@@ -172,6 +185,7 @@ export class ProxyService {
           kind: command.kind,
           label: command.label,
           endpoint: command.endpoint ?? null,
+          protocol: command.protocol,
           state: command.kind === "ollama" ? "ready" : "signed-out",
         });
       case "connection-rename":
@@ -182,6 +196,13 @@ export class ProxyService {
         return this.storeApiKey(command.connectionId, command.key);
       case "connection-sign-in":
         return this.signIn(command.connectionId);
+      case "connection-sign-in-complete": {
+        const attempt = this.signIns.get(command.attemptId)?.attempt;
+        if (!attempt || !("submitCallback" in attempt))
+          throw new Error("This sign-in does not accept a pasted callback.");
+        await attempt.submitCallback(command.callback);
+        return null;
+      }
       case "connection-sign-in-cancel": {
         this.signIns.get(command.attemptId)?.attempt.cancel();
         return null;
@@ -242,12 +263,15 @@ export class ProxyService {
   private async signIn(
     connectionId: string,
   ): Promise<{ attemptId: string; authorizeUrl: string }> {
+    if (this.closed) throw new Error("The proxy is shutting down.");
     const connection = this.registry.requireConnection(connectionId);
-    if (connection.kind !== "chatgpt-plan")
-      throw new Error("Only a ChatGPT plan connection signs in.");
+    if (connection.kind !== "chatgpt-plan" && connection.kind !== "claude-plan")
+      throw new Error("Only a plan connection signs in.");
     for (const s of this.signIns.values())
       if (s.connectionId === connectionId)
         throw new Error("A sign-in for this connection is already open.");
+    if (this.startingSignIns.has(connectionId))
+      throw new Error("A sign-in for this connection is already opening.");
     const stored = this.credentials.get(connectionId)?.credential;
     const registration =
       stored?.kind === "oauth-chatgpt"
@@ -258,21 +282,49 @@ export class ProxyService {
             idToken: stored.idToken || null,
           }
         : undefined;
-    const attempt = await beginChatGptSignIn(this.options.chatgpt ?? {}, {
-      hostId: this.database.hostId(),
-      registration,
-      loginHint: registration?.email ?? undefined,
-    });
+    const opening = Symbol();
+    this.startingSignIns.set(connectionId, opening);
+    let attempt: SignInAttempt | ClaudeSignInAttempt;
+    try {
+      attempt =
+        connection.kind === "claude-plan"
+          ? await beginClaudeSignIn(
+              this.options.claude ?? {},
+              stored?.kind === "oauth-claude" ? stored : undefined,
+            )
+          : await beginChatGptSignIn(this.options.chatgpt ?? {}, {
+              hostId: this.database.hostId(),
+              registration,
+              loginHint: registration?.email ?? undefined,
+            });
+      if (
+        this.closed ||
+        this.startingSignIns.get(connectionId) !== opening ||
+        !this.registry.connection(connectionId)
+      ) {
+        attempt.cancel();
+        throw new Error("Sign-in was cancelled before the browser opened.");
+      }
+    } finally {
+      if (this.startingSignIns.get(connectionId) === opening)
+        this.startingSignIns.delete(connectionId);
+    }
     const startedAt = new Date().toISOString();
     this.signIns.set(attempt.id, { connectionId, attempt, startedAt });
+    const stillOpen = () =>
+      !this.closed &&
+      this.signIns.get(attempt.id)?.attempt === attempt &&
+      !!this.registry.connection(connectionId);
     void attempt.result
       .then(async (result) => {
+        if (!stillOpen()) return;
         if (
           result.outcome === "signed-in" ||
           result.outcome === "plan-use-disabled"
         ) {
           // Under the refresh lock, so a concurrent refresh never races this write.
           await this.credentials.withLock(connectionId, async () => {
+            if (!stillOpen()) return;
             const current = this.credentials.get(connectionId);
             this.credentials.put(
               connectionId,
@@ -280,13 +332,17 @@ export class ProxyService {
               current?.revision ?? null,
             );
           });
+          if (!stillOpen()) return;
           this.registry.updateConnection(connectionId, {
             hasCredential: true,
             state: result.planUse ? "ready" : "plan-use-disabled",
             stateDetail: result.planUse
               ? null
-              : "ChatGPT plan usage was not granted. Sign in again and allow plan usage, or use an API connection.",
-            account: chatGptAccount(result.credential),
+              : "Plan inference permission was not granted. Sign in again and allow plan usage.",
+            account:
+              result.credential.kind === "oauth-claude"
+                ? claudeAccount(result.credential)
+                : chatGptAccount(result.credential),
           });
         } else if (result.outcome === "declined")
           this.registry.updateConnection(connectionId, {
@@ -302,11 +358,12 @@ export class ProxyService {
             stateDetail: "Sign-in timed out before the browser returned.",
           });
       })
-      .catch((error) =>
-        this.registry.updateConnection(connectionId, {
-          stateDetail: `Sign-in did not complete: ${String(error?.message ?? error)}`,
-        }),
-      )
+      .catch((error) => {
+        if (stillOpen())
+          this.registry.updateConnection(connectionId, {
+            stateDetail: `Sign-in did not complete: ${String(error?.message ?? error)}`,
+          });
+      })
       .finally(() => {
         this.signIns.delete(attempt.id);
         this.changed();
@@ -325,6 +382,12 @@ export class ProxyService {
     detail: string;
   }> {
     const connection = this.registry.requireConnection(connectionId);
+    this.startingSignIns.delete(connectionId);
+    for (const [id, pending] of this.signIns)
+      if (pending.connectionId === connectionId) {
+        this.signIns.delete(id);
+        pending.attempt.cancel();
+      }
     this.registry.updateConnection(connectionId, {
       state: "disconnected",
       stateDetail: "Disconnecting…",
@@ -355,6 +418,11 @@ export class ProxyService {
           ? "OpenAI confirmed the sign-in was revoked."
           : `Remote revocation was not confirmed (${result.detail}). Topsl removed its copy; you can also disconnect Topsl in ChatGPT settings.`;
       }
+      if (stored?.kind === "oauth-claude") {
+        revocation = "not-supported";
+        detail =
+          "Topsl removed this Claude sign-in and cancelled its requests. Provider-side revocation was not established; manage connected sessions in your Claude account.";
+      }
       this.credentials.delete(connectionId);
     });
     this.registry.updateConnection(connectionId, {
@@ -384,7 +452,12 @@ export class ProxyService {
   private async headers(
     connection: Connection,
     force: boolean,
-  ): Promise<{ headers: Record<string, string>; identity: string | null }> {
+    rejectedRevision?: number,
+  ): Promise<{
+    headers: Record<string, string>;
+    identity: string | null;
+    revision?: number;
+  }> {
     if (connection.authentication === "none")
       return {
         headers: authorizationHeaders(connection.kind, null),
@@ -406,6 +479,8 @@ export class ProxyService {
         headers: authorizationHeaders(connection.kind, stored.credential.key),
         identity: stored.credential.fingerprint,
       };
+    if (stored.credential.kind === "oauth-claude")
+      return this.claudeHeaders(connection, force, rejectedRevision);
     return this.credentials.withLock(connection.id, async () => {
       // Re-read inside the lock: another request may have rotated the token.
       const current = this.credentials.get(connection.id);
@@ -426,7 +501,12 @@ export class ProxyService {
         );
       let active: ChatGptCredential = credential;
       const remaining = Date.parse(credential.expiresAt) - Date.now();
-      if (force || remaining < REFRESH_MARGIN_MS) {
+      if (
+        (force &&
+          (rejectedRevision === undefined ||
+            rejectedRevision === current.revision)) ||
+        remaining < REFRESH_MARGIN_MS
+      ) {
         try {
           const next = await refreshChatGpt(
             this.options.chatgpt ?? {},
@@ -487,6 +567,105 @@ export class ProxyService {
       return {
         headers: authorizationHeaders(connection.kind, active.accessToken),
         identity: `${active.issuer}#${active.subject}#${active.clientId}`,
+        revision: this.credentials.get(connection.id)?.revision,
+      };
+    });
+  }
+
+  private async claudeHeaders(
+    connection: Connection,
+    force: boolean,
+    rejectedRevision?: number,
+  ) {
+    return this.credentials.withLock(connection.id, async () => {
+      const current = this.credentials.get(connection.id);
+      const state = this.registry.requireConnection(connection.id).state;
+      if (
+        this.closed ||
+        state === "disconnected" ||
+        current?.credential.kind !== "oauth-claude" ||
+        !current.credential.accessToken
+      )
+        throw new UpstreamError(
+          failure(
+            "authentication",
+            401,
+            "not_connected",
+            null,
+            "Sign in to Claude for this connection.",
+          ),
+        );
+      let active = current.credential;
+      const remaining = Date.parse(active.expiresAt) - Date.now();
+      if (
+        (force &&
+          (rejectedRevision === undefined ||
+            current.revision === rejectedRevision)) ||
+        remaining < REFRESH_MARGIN_MS
+      ) {
+        try {
+          const renewed = await refreshClaude(
+            this.options.claude ?? {},
+            active,
+          );
+          this.credentials.put(connection.id, renewed, current.revision);
+          active = renewed;
+        } catch (error) {
+          if (error instanceof ClaudeAuthError && error.terminal) {
+            this.credentials.put(
+              connection.id,
+              { ...active, accessToken: "", refreshToken: null },
+              current.revision,
+            );
+            this.registry.updateConnection(connection.id, {
+              state: "reauthorization-required",
+              stateDetail:
+                "The Claude sign-in can no longer be renewed. Sign in again.",
+            });
+            this.changed();
+            throw new UpstreamError(
+              failure(
+                "authentication",
+                401,
+                error.code,
+                null,
+                "The Claude sign-in can no longer be renewed. Sign in again.",
+              ),
+            );
+          }
+          if (force || remaining <= 0)
+            throw new UpstreamError(
+              failure(
+                "unavailable",
+                503,
+                "refresh_unavailable",
+                null,
+                "The Claude sign-in could not be renewed right now.",
+                true,
+              ),
+            );
+        }
+      }
+      if (!active.scopes.includes("user:inference")) {
+        this.registry.updateConnection(connection.id, {
+          state: "plan-use-disabled",
+          stateDetail: "Claude inference permission was not granted.",
+        });
+        this.changed();
+        throw new UpstreamError(
+          failure(
+            "permission",
+            403,
+            "plan_use_disabled",
+            null,
+            "Claude inference permission was not granted.",
+          ),
+        );
+      }
+      return {
+        headers: authorizationHeaders("claude-plan", active.accessToken),
+        identity: `${active.accountId}:${active.organizationId}`,
+        revision: this.credentials.get(connection.id)?.revision,
       };
     });
   }
@@ -626,7 +805,7 @@ export class ProxyService {
           403,
           "plan_use_disabled",
           null,
-          "ChatGPT plan usage is not enabled for this sign-in.",
+          "Plan usage is not enabled for this sign-in.",
         ),
       );
     if (connection.state === "reauthorization-required")
@@ -637,11 +816,12 @@ export class ProxyService {
           401,
           "reauthorization_required",
           null,
-          "Sign in to ChatGPT again for this connection.",
+          "Sign in again for this connection.",
         ),
       );
 
     const controller = new AbortController();
+    if (input.signal.aborted) controller.abort();
     const abort = () => controller.abort();
     input.signal.addEventListener("abort", abort, { once: true });
     let set = this.active.get(connection.id);
@@ -667,9 +847,10 @@ export class ProxyService {
       if (
         !response.ok &&
         response.error.kind === "authentication" &&
-        connection.kind === "chatgpt-plan"
+        (connection.kind === "chatgpt-plan" ||
+          connection.kind === "claude-plan")
       ) {
-        const renewed = await this.headers(connection, true);
+        const renewed = await this.headers(connection, true, auth.revision);
         if (renewed.identity !== auth.identity)
           throw new Error("The renewed sign-in changed identity.");
         auth = renewed;
@@ -705,7 +886,7 @@ export class ProxyService {
       receipt.outcome = controller.signal.aborted ? "cancelled" : "failed";
       receipt.error = response.error;
       receipt.finishedAt = new Date().toISOString();
-      this.registry.recordReceipt(receipt);
+      if (!this.closed) this.registry.recordReceipt(receipt);
       return {
         kind: "json",
         status: statusFor(response.error),
@@ -798,8 +979,10 @@ export class ProxyService {
             ? "cancelled"
             : (outcome ?? "interrupted");
       receipt.finishedAt = new Date().toISOString();
-      this.registry.recordReceipt(receipt);
+      if (!this.closed) this.registry.recordReceipt(receipt);
       if (
+        !this.closed &&
+        this.registry.connection(connection.id) &&
         outcome === "completed" &&
         connection.state === "paused-usage-limit"
       ) {
@@ -814,11 +997,28 @@ export class ProxyService {
 
   /** Records a plan usage limit on the connection; the harness owns the wait. */
   private noteFailure(connection: Connection, error: ProxyErrorInfo): void {
-    if (error.kind === "quota" && connection.kind === "chatgpt-plan") {
+    if (
+      !this.closed &&
+      error.kind === "authentication" &&
+      connection.funding === "subscription" &&
+      this.registry.connection(connection.id)
+    ) {
+      this.registry.updateConnection(connection.id, {
+        state: "reauthorization-required",
+        stateDetail:
+          "The provider rejected this sign-in after renewal. Sign in again.",
+      });
+      this.changed();
+    }
+    if (
+      !this.closed &&
+      error.kind === "quota" &&
+      connection.funding === "subscription"
+    ) {
       this.registry.updateConnection(connection.id, {
         state: "paused-usage-limit",
         stateDetail:
-          "ChatGPT reported the plan's usage limit. Check ChatGPT settings → Usage; Topsl does not infer a reset time.",
+          "The provider reported the plan's usage limit. Check your account's usage; Topsl does not infer a reset time.",
       });
       this.changed();
     }
@@ -861,7 +1061,10 @@ export class ProxyService {
   }
 
   close(): void {
+    this.closed = true;
+    this.startingSignIns.clear();
     for (const s of this.signIns.values()) s.attempt.cancel();
+    this.signIns.clear();
     for (const set of this.active.values()) for (const c of set) c.abort();
     this.database.close();
   }
@@ -903,7 +1106,20 @@ export function chatGptAccount(credential: ChatGptCredential) {
     source: "id-token" as const,
     // One issued client ID covers one user and workspace; routes on
     // connections with the same registration share its plan allowance.
-    quotaOwner: `chatgpt:${credential.subject}:${credential.clientId}`,
+    // Separate registrations do not create extra allowance. Until a verified
+    // workspace meter is exposed, conservatively share a subject's pool.
+    quotaOwner: `chatgpt:${credential.subject}`,
+    observedAt: credential.savedAt,
+  };
+}
+
+export function claudeAccount(credential: ClaudeCredential) {
+  const owner = `claude:${credential.accountId}:${credential.organizationId}`;
+  return {
+    accountKey: owner,
+    email: credential.email,
+    source: "oauth-profile" as const,
+    quotaOwner: owner,
     observedAt: credential.savedAt,
   };
 }

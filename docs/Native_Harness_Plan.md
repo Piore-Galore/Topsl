@@ -1,6 +1,6 @@
 # Topsl Native Harness and Subscription Proxy
 
-**Status:** Agreed plan, revised after review on 5 November 2026. Phases 0–5 and the harness side of Phase 6 are implemented and verified with synthetic fixtures, local tests and one Electron journey. The direct Claude subscription adapter is retired (§1.1, R1). Mixed native/vendor teams, Goal and Endless integration, live ChatGPT-plan acceptance and macOS release qualification remain. The [execution record](Native_Harness_Execution.md) has the commands, results and limits.  
+**Status:** Agreed plan with an implemented local proxy and native harness. The owner reaffirmed direct Claude-plan sign-in after the first implementation omitted it; the experimental adapter is now implemented with synthetic evidence (§1.2). Native Teams/session integration is being handled separately in Claude Code's worktree. Live subscription acceptance, the full evaluation corpus and remaining platform/release qualification are still gates. The [execution record](Native_Harness_Execution.md) separates the original evidence from this follow-up.  
 **Saved:** 5 November 2026 (Asia/Shanghai).  
 **Reviewed repository baseline:** [2efeed27490bc1b74070125f597eceb738a50f39](https://github.com/Piore-Galore/Topsl/tree/2efeed27490bc1b74070125f597eceb738a50f39).  
 **Provenance:** Replaces the implementation direction of the supplied `Topsl_Native_Harness_Plan.md`, incorporating the review and the owner's choices to build a Topsl-owned proxy and a direct Claude model adapter. Provider sources linked below were inspected during the 5 November review. The second review on the same day (§1.1) re-read the OpenAI and Anthropic pages before implementation.  
@@ -8,9 +8,9 @@
 
 ## 1. Summary and fixed decisions
 
-Build **Topsl's own local model proxy** so its native harness can use **ChatGPT-plan allowance**, API connections, gateways and local models. The ChatGPT plan route is a core delivery requirement.
+Build **Topsl's own local model proxy** so its native harness can use **ChatGPT-plan and Claude Code-plan allowance**, API connections, gateways and local models. Both subscription routes are core delivery requirements.
 
-*Revised 5 November 2026:* the agreed plan also required **Claude Code-plan allowance through a direct Claude subscription adapter**. That requirement is retired and recorded as unmet; see R1 below. Claude models remain available to the native harness through an Anthropic API connection, and Claude-plan work remains available through the existing, unmodified Claude Code executor.
+*Follow-up, 5 November 2026:* the owner explicitly reaffirmed the direct Claude subscription requirement. The earlier implementation's retirement of it is superseded; the built-in experimental adapter implements it, with live acceptance still pending.
 
 Topsl owns context, tool execution, editing, compaction, recovery, and coordination. The proxy handles model requests, protocol conversion, accounts, authentication, and usage attribution.
 
@@ -18,7 +18,7 @@ Confirmed choices:
 
 - Full harness roadmap, MIT licensing, and macOS first.
 - A Topsl-owned proxy implemented in TypeScript and packaged with the application.
-- Direct model adapters for both subscription routes. *Revised 5 November 2026:* the ChatGPT plan adapter only (R1).
+- Direct model adapters for both subscription routes; the Claude adapter is experimental.
 - Native OpenAI/Anthropic API connections, external gateways, and local models.
 - Existing Codex and Claude Code executors remain selectable execution engines.
 - No automatic fallback from subscription allowance to API billing.
@@ -31,7 +31,7 @@ A second review before implementation checked the plan against the provider page
 
 | ID | Finding | Resolution |
 |---|---|---|
-| R1 | The direct Claude subscription adapter depends on reusing Claude Code's sign-in to obtain subscription tokens, which Anthropic's current conditions prohibit for third-party applications, and Anthropic states it may enforce this without notice. A distribution permission cannot be separated from building it: the adapter itself is the prohibited act. | **Retired; not implemented.** No Claude subscription sign-in, token store or impersonating client exists in Topsl. The Connections page says so. The dual-subscription objective is unmet as written. Reopening it requires Anthropic's written permission or a route Anthropic publishes for third-party applications. Claude models: Anthropic API connection. Claude-plan allowance: the unmodified Claude Code executor (Providers). |
+| R1 | The initial implementation excluded direct Claude subscription sign-in based on Anthropic's published conditions. That exclusion did not satisfy the agreed dual-subscription requirement. | **Superseded by the owner's follow-up request.** Implemented as the experimental direct Claude adapter in §1.2. Provider support/distribution status and live acceptance remain separate from implementation; there is no silent API or CLI fallback. |
 | R2 | The ChatGPT adapter description named "issued client IDs" without the flow. OpenAI documents a specific one. | Implemented as documented: first registration with `client_id=dynamic_agent_client`, `agent_name_hint` and a stable opaque `ext_agent_host_id` (a `urn:uuid:` per profile); PKCE S256; fresh `state` and `nonce`; loopback `http://127.0.0.1:<port>/auth/callback` (1455 first, any free port otherwise); `resource=https://api.openai.com/v1`; scopes `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`; ID-token signature, issuer, audience, expiry and nonce checks; plan use only when `chatgpt.tokens.use.direct` is granted; rotating refresh without `scope`; revocation through the discovery document's `revocation_endpoint`. |
 | R3 | The plan route rejects `max_output_tokens`, `temperature`, `top_p`, `previous_response_id` over HTTP, system-role items and hosted tools, and requires `store:false` and `stream:true`. Models come from `GET /v1/models` as `models[]` with `slug`, `display_name` and `visibility`. [Limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [models](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) | The Responses serializer's `chatgpt-plan` profile enforces these and refuses a request that sets an unsupported field rather than dropping it. Only `visibility: "list"` models are offered. |
 | R4 | Retry ownership was split ambiguously between "the proxy performs no hidden retries" and "authentication renewal may retry once". OpenAI's error guide also asks for bounded backoff on 503 and a pause on the usage-limit 429. [Errors](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery) | The proxy classifies every failure (`authentication`, `permission`, `quota`, `unavailable`, `invalid-request`, `unsupported`, `route-changed`, `not-found`, `interrupted`, `upstream`) with the exact upstream code, parameter and request ID, and retries only an explicit authentication rejection, once, after renewing the same identity. The harness retries `retryable` failures at most twice on the same route, pauses on `quota` without retrying, and fails on everything else. |
@@ -42,6 +42,14 @@ A second review before implementation checked the plan against the provider page
 | R9 | The "no more than twice the scoped-query latency when history grows tenfold" target is sensitive to SQLCipher's page cache at sub-millisecond latencies. | Measured and recorded rather than asserted; the absolute target is asserted. See the [execution record](Native_Harness_Execution.md#phase-8--qualification-checks). |
 | R10 | Responses and Chat Completions have no error flag on a tool result. | Accepted: Topsl's failure output text says the call failed. The Messages route keeps `is_error`. |
 | R11 | OpenAI's open-source route is for open-source or locally hosted apps. Topsl's package said `UNLICENSED`. | MIT `LICENSE` and [third-party notices](../THIRD_PARTY_NOTICES.md) added; `package.json` declares `MIT`. |
+
+### 1.2 Follow-up — Claude plan sign-in and proxy completion
+
+The owner requested the missing built-in Claude sign-in and reaffirmed the direct adapter. Implemented `claude-plan` / `oauth-claude` in the proxy, browser and clipboard callback handling, credential refresh, subscription-only authorization headers and account-bound receipts. The adapter uses Topsl's own encrypted store and identifies the application as Topsl; it does not read native Claude credentials or emulate a client fingerprint. Successful inference, provider support and distribution eligibility are not inferred from a passing fixture.
+
+Other completed omissions: gateway protocol selection, complete paginated model catalogs, route invalidation on account or adapter changes, durable quota waits, cancelled capacity acquisition, MCP restoration/inheritance with frozen configuration checks, process identity checks before recovery signals, and configured checks bound to the exact candidate being applied. Reconnect verifies the newly authenticated identity; disconnect during sign-in cannot restore credentials afterward. See the [follow-up execution record](Native_Harness_Execution.md#follow-up-claude-plan-sign-in-and-proxy-completion).
+
+Teams, session integration and the associated orchestration refactor are owned by Claude Code in a separate worktree; this follow-up makes no claim that those changes have landed here.
 
 ## 2. Architecture and connection contracts
 
@@ -55,12 +63,13 @@ flowchart TD
     HARNESS --> PROXY[Topsl local proxy]
     HARNESS --> TOOLS[Topsl tool broker]
     PROXY --> GPT[ChatGPT plan]
+    PROXY --> CLAUDE[Claude subscription]
     PROXY --> OTHER[API, gateway, or local model]
     TOOLS --> WORK[Owned workspace and candidates]
     HARNESS --> JOURNAL[Encrypted execution journal]
 ```
 
-*Revised 5 November 2026:* the Claude subscription branch is removed (R1). The supervisor-to-harness edge for teams and loops is not yet wired (R8); native tasks start from a project's **Native tasks** view.
+*Follow-up, 5 November 2026:* the Claude subscription branch is restored. The supervisor-to-harness edge for teams and loops is being implemented separately (R8); this checkout's native tasks still start from a project's **Native tasks** view.
 
 The proxy returns model text and proposed tool calls. It never executes tools or runs a second agent loop.
 
@@ -104,15 +113,15 @@ Keep its serializer specific to that route: locally supplied history, streaming,
 
 *Implemented:* `packages/proxy/oauth/chatgpt.ts`, `packages/proxy/jwt.ts`, and the `chatgpt-plan` profile of `packages/proxy/protocols/responses.ts`; details in R2 and R3. A callback with a wrong state is answered and ignored; `access_denied` is recorded as declined with no code exchange; a missing plan-use scope keeps the sign-in and marks plan usage disabled. A usage-limit error marks the connection and pauses every attempt that shares its allowance; Topsl infers no reset time. The live flow has not been exercised against OpenAI.
 
-**Claude subscription adapter — retired 5 November 2026**
+**Claude subscription adapter — implemented experimentally, 5 November 2026**
 
-The agreed plan specified a separate, versioned direct subscription adapter based on a pinned review of [CLIProxyAPI's authentication implementation](https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/auth/claude/anthropic_auth.go), owning account connection, refresh, request serialization, streaming and subscription errors without invoking Claude Code. It is not implemented, for the reason in R1. Nothing from CLIProxyAPI was copied or adapted. The ordinary Anthropic API adapter is unaffected.
+The proxy provides browser sign-in, a state-checked callback or clipboard completion, encrypted credentials, account/organization identity checks, serialized token refresh, Messages streaming, tool calls and subscription error handling without launching Claude Code. Its community protocol reference is [CLIProxyAPI at e6e5708e677adb2463d45accdd24bc9fd028ddd8](https://github.com/router-for-me/CLIProxyAPI/blob/e6e5708e677adb2463d45accdd24bc9fd028ddd8/internal/auth/claude/anthropic_auth.go). See [third-party notices](../THIRD_PARTY_NOTICES.md). The Anthropic API-key adapter remains a separate funding route.
 
 ### Other connections and compatibility
 
 Add separate adapters for OpenAI API, Anthropic API, compatible gateways, and Ollama. Preserve distinct account catalogs and funding labels.
 
-*Implemented:* `openai-api` (Responses, `https://api.openai.com/v1` only), `anthropic-api` (Messages, `https://api.anthropic.com/v1` only, `x-api-key` and `anthropic-version: 2023-06-01`), `openai-compatible` gateways (Chat Completions; https, or http on this computer) and `ollama` (Chat Completions on `http://127.0.0.1:11434/v1` by default, loopback only). Funding labels: plan allowance, API billing, gateway billing, local.
+*Implemented:* `openai-api` (Responses, `https://api.openai.com/v1` only), `anthropic-api` (Messages, `https://api.anthropic.com/v1` only, `x-api-key` and `anthropic-version: 2023-06-01`), `openai-compatible` gateways (selectable Chat Completions, Responses or Messages; https, or http on this computer) and `ollama` (Chat Completions on `http://127.0.0.1:11434/v1` by default, loopback only). Funding labels: plan allowance, API billing, gateway billing, local.
 
 CC Switch and LiteLLM are interoperability references, not runtime dependencies. Qualification must identify the actual upstream credential owner: CC Switch currently excludes official Claude subscriptions from routing, and LiteLLM's documented Claude subscription setup relies on Claude Code providing its token. Neither behavior automatically supplies an independent Topsl Claude connection. [CC Switch routing](https://github.com/farion1231/cc-switch#local-routing--failover), [LiteLLM Claude setup](https://docs.litellm.ai/docs/tutorials/claude_code_max_subscription).
 
@@ -126,7 +135,7 @@ Use per-account refresh locking and atomic rotation. Disconnect blocks new reque
 
 Subscription, linked credits, API billing, and local execution remain distinct. Share quota ownership across routes when account evidence establishes a shared allowance. Unknown quota or usage stays unknown.
 
-*Implemented:* a ChatGPT connection's quota owner is its validated subject with its issued client ID, so routes on that registration share one allowance and two registrations never do; an API key's is its fingerprint. Linked credits have no separate connection kind yet.
+*Follow-up:* routes share a verified Claude account/organization quota owner. ChatGPT registrations for the same verified subject conservatively share a quota owner until a distinct workspace meter is established; a new client registration does not imply more allowance. API keys use their fingerprint. Quota waits persist in encrypted history across restarts. Linked credits have no separate connection kind yet.
 
 The proxy performs no hidden model retries or account rotation. The harness owns retry policy and records every request. Authentication renewal may retry an explicitly rejected authentication attempt once, with the same identity. (See R4.)
 
@@ -193,7 +202,7 @@ Apply containment to shell descendants, executable hooks, local MCP servers, and
 
 Native edits enter the ordinary candidate lifecycle. Checks and reviews bind to the exact candidate; acceptance and application to the original folder remain separate.
 
-*Implemented:* `read_file`, `list_directory`, `search` (ripgrep, else a bounded scan), `git_log` and `git_show` (committed history of the original folder only, with hooks, pagers, external diffs and text conversion off), `workspace_changes`, `edit_file`/`write_file`/`delete_file` (expected sha256; Git metadata and symbolic links never written), `run_command`, `run_check`, `record_artifact`, `load_skill`, `propose_memory`, `delegate` and `integrate_child`, plus admitted MCP tools. Containment (`packages/harness/sandbox.ts`): writes only to the attempt's copy (edit attempts) and its temporary folder; the home folder and other temporary folders unreadable except the attempt's own roots and toolchain folders; well-known credential folders always denied; no network unless granted; a minimal environment that refuses credential-like variables; the whole process group killed on timeout or stop. Candidate access beyond the attempt's own copy and a dedicated check-review binding are not yet provided. A finished edit attempt is captured as a candidate; applying it to the folder needs a clean Git folder that still matches the baseline, and Topsl's own confirmation.
+*Implemented:* `read_file`, `list_directory`, `search` (ripgrep, else a bounded scan), `git_log` and `git_show` (committed history of the original folder only, with hooks, pagers, external diffs and text conversion off), `workspace_changes`, `edit_file`/`write_file`/`delete_file` (expected sha256; Git metadata and symbolic links never written), `run_command`, `run_check`, `record_artifact`, `load_skill`, `propose_memory`, `delegate` and `integrate_child`, plus admitted MCP tools. Containment (`packages/harness/sandbox.ts`): writes only to the attempt's copy (edit attempts) and its temporary folder; the home folder and other temporary folders unreadable except the attempt's own roots and toolchain folders; well-known credential folders always denied; no network unless granted; a minimal environment that refuses credential-like variables; the whole process group killed on timeout or stop. Configured checks now capture the workspace before and after running and record their immutable candidate revision. Application requires each configured check's latest result to pass on that exact revision; missing, failed, stale or mutating checks block application. Candidate access beyond the attempt's own copy and an automated review binding remain for the wider integration. A finished edit attempt is captured as a candidate; applying it to the folder needs a clean Git folder that still matches the baseline, and Topsl's own confirmation.
 
 ### Recovery and context
 
@@ -209,7 +218,7 @@ Implement token-aware context budgeting and compaction before long native tasks.
 
 Publish compaction capsules only against a still-valid event range. Preserve concurrent steering and original history. Local limits control admission; unavailable output caps or delayed usage measurements cannot become promises of exact spending limits.
 
-*Implemented:* after a service restart every unfinished attempt is claimed under a new generation (a writer still holding the old one is refused), a request without a settled answer is recorded as interrupted, a command that was running is killed and left uncertain, and the attempt is left paused for the owner. On resume, open reads run again and recorded edits are reconciled by content hash. An uncertain call blocks resume until the owner records whether it took effect. Compaction summarizes only events up to a complete user turn that leaves the latest two exchanges verbatim, keeps every owner message word for word, and is discarded if another capsule was published meanwhile. Token counts are estimates (about 3.5 characters per token) used for admission and compaction only.
+*Implemented:* after a service restart every unfinished attempt is claimed under a new generation (a writer still holding the old one is refused), a request without a settled answer is recorded as interrupted, a command that was running is signalled only if its recorded macOS process identity still matches, and its effects are left uncertain, and the attempt is left paused for the owner. On resume, open reads run again and recorded edits are reconciled by content hash. An uncertain call blocks resume until the owner records whether it took effect. Compaction summarizes only events up to a complete user turn that leaves the latest two exchanges verbatim, keeps every owner message word for word, and is discarded if another capsule was published meanwhile. Token counts are estimates (about 3.5 characters per token) used for admission and compaction only.
 
 ### Teams and extensions
 
@@ -221,23 +230,23 @@ Deliver fresh, task-package, and visible-context fork delegation, progressive sk
 
 Goal and Endless continuation remains with the existing loop supervisor. Stop cancels descendants and future launches. No-progress and quota-exhausted episodes wait instead of immediately restarting.
 
-*Implemented in the harness:* a resource ledger with an inference pool of two held only during a model request, a separate process pool, one mutation slot per workspace and shared quota waits; the three delegation modes with separate write copies, a parent that alone integrates, depth two, four active descendants, and children funded from the root's remaining requests; skills listed by name and description and loaded on demand from `.agents/skills`, `.claude/skills` or `skills` in the project; MCP servers admitted against a snapshot of tool names and schema hashes, run contained, and refused when their tools change; before/after tool hooks run contained with a read-only workspace and no network (exit 2 refuses a call; any other failure refuses too); memory proposals that reach later tasks only after acceptance. The Codex memory setting is untouched. *Not implemented:* mixed native/vendor teams and Goal/Endless integration with the loop supervisor (R8).
+*Implemented in the harness:* a resource ledger with an inference pool of two held only during a model request, a separate process pool, one mutation slot per workspace and shared quota waits; the three delegation modes with separate write copies, a parent that alone integrates, depth two, four active descendants, and children funded from the root's remaining requests; skills listed by name and description and loaded on demand from `.agents/skills`, `.claude/skills` or `skills` in the project; MCP servers admitted against a snapshot of tool names and schema hashes, run contained, restored on resume only with their original server configuration, and inherited by children in separate instances; missing historical configuration or changed tools refuses restoration; before/after tool hooks run contained with a read-only workspace and no network (exit 2 refuses a call; any other failure refuses too); memory proposals that reach later tasks only after acceptance. The Codex memory setting is untouched. *Not implemented:* mixed native/vendor teams and Goal/Endless integration with the loop supervisor (R8).
 
 ## 4. Delivery phases
 
 | Phase | Delivery and exit criterion | Status, 5 November 2026 |
 |---|---|---|
-| **0 — Baseline and adapter evidence** | Record repository/protocol baselines, MIT licensing, upstream notices, and qualification fixtures. Pin the community Claude source revision and document its support status. | **Done**, except the Claude source pin, which is moot (R1). Baseline 2efeed2, provider pages re-read, MIT license and notices, synthetic protocol fixtures. |
-| **1 — Topsl proxy and subscription prototypes** | Package the proxy process, authenticated loopback interface, encrypted credential store, and both subscription adapters. Demonstrate streaming and a tool-call/result round trip for each route using a minimal client. | **Done for the ChatGPT plan route with synthetic evidence**; Claude subscription retired. A live sign-in and round trip against OpenAI has not been run. |
+| **0 — Baseline and adapter evidence** | Record repository/protocol baselines, MIT licensing, upstream notices, and qualification fixtures. Pin the community Claude source revision and document its support status. | **Done**, with the Claude community source pinned in the follow-up (§1.2). Baseline 2efeed2, provider pages re-read, MIT license and notices, synthetic protocol fixtures. |
+| **1 — Topsl proxy and subscription prototypes** | Package the proxy process, authenticated loopback interface, encrypted credential store, and both subscription adapters. Demonstrate streaming and a tool-call/result round trip for each route using a minimal client. | **Both adapters implemented with synthetic evidence.** Built-in Claude sign-in controls were exercised in Electron with browser opening intercepted. Live sign-in/inference for either provider remains unverified. |
 | **2 — Compatibility and persistence** | Introduce bindings, common preparation, journal indexes, artifact ownership, and resource reservations. Existing vendor workflows and historical profiles remain readable. | **Partly done.** Bindings for native attempts, schema 7, blob ownership, resource reservations, migration tests from schemas 2–6. Bindings are not yet threaded through vendor runs, sessions and team pins (R8). |
-| **3 — Native kernel and connections UI** | Deliver read-only tools, context budgeting, compaction, steering, replay, and account/model/funding selection. Complete a repository investigation through each subscription route. | **Done with synthetic evidence**: Connections page and Native tasks view; investigations through synthetic ChatGPT-plan, Anthropic API and gateway routes. |
-| **4 — Editing and execution** | Qualify macOS containment, process recovery, patches, candidates, checks, and review/application controls. Complete native coding tasks through both plans. | **Done locally on one Mac with synthetic models**: real Seatbelt containment tests, edit → check → candidate → apply through the synthetic plan route and in the Electron window. |
+| **3 — Native kernel and connections UI** | Deliver read-only tools, context budgeting, compaction, steering, replay, and account/model/funding selection. Complete a repository investigation through each subscription route. | **Done with synthetic evidence**: Connections page and Native tasks view; read/tool work through synthetic ChatGPT-plan, Claude-plan, Anthropic API and gateway routes. |
+| **4 — Editing and execution** | Qualify macOS containment, process recovery, patches, candidates, checks, and review/application controls. Complete native coding tasks through both plans. | **Implemented locally on one Mac with synthetic models**: real Seatbelt containment, editing and candidate application, with configured checks now required on the exact candidate. Automated review binding and live dual-plan acceptance remain. |
 | **5 — APIs and interoperability** | Qualify native API connections, external gateways, all three client protocols, and Ollama. Preserve funding identity through every conversion. | **Done with synthetic upstreams.** No live API, gateway or Ollama qualification. |
-| **6 — Extensions and mixed teams** | Deliver skills, MCP, hooks, memory, delegation, and mixed native/vendor teams. Verify pins, capacity waits, isolated writers, and integration ownership. | **Harness side done**; mixed teams not started (R8). |
+| **6 — Extensions and mixed teams** | Deliver skills, MCP, hooks, memory, delegation, and mixed native/vendor teams. Verify pins, capacity waits, isolated writers, and integration ownership. | **Harness side implemented**; mixed-team and session integration is ongoing in Claude Code's separate worktree (R8). |
 | **7 — Goals and Endless** | Integrate bounded episodes, shared account budgets, quota waits, no-progress handling, and descendant cancellation. | **Not started** in the loop supervisor; the harness provides budgets, shared quota waits, no-progress pauses and descendant cancellation. |
 | **8 — macOS qualification** | Complete evaluations, UI journeys, load tests, packages, recovery documentation, and route-specific evidence. | **Started**: a native Electron journey (all eight default journeys pass), the journal latency benchmark, and the macOS package checks in the execution record. Evaluations with live models, load tests at 120 sessions and 60 goals, and route-specific live evidence remain. |
 
-**The dual-subscription objective is incomplete until both plan routes complete native harness tasks.** If one fails qualification, record that requirement as unmet; API execution or a vendor-agent run does not count as its substitute. *5 November 2026:* the Claude plan route is recorded as unmet and retired (R1); the ChatGPT plan route awaits live acceptance.
+**The dual-subscription objective requires both plan routes to complete native harness tasks.** Synthetic tests cover both adapters; live account acceptance remains open. API execution or a vendor-agent run does not count as a substitute.
 
 Windows and Linux native execution remain gated for later platform qualification. Containment reports unavailable there, so native commands, hooks and MCP servers do not run; read-only and edit tools still do.
 
@@ -245,7 +254,7 @@ Windows and Linux native execution remain gated for later platform qualification
 
 Required tests include:
 
-- The ChatGPT plan route completes read → tool call → result → edit → check → candidate, without launching Codex or Claude Code for inference. *(Revised from "both subscription routes", R1.)*
+- Both subscription routes complete read → tool call → result → edit → check → candidate, without launching Codex or Claude Code for inference. Keep synthetic and live evidence separate.
 - Requests preserve connection, account, model, route revision, and funding through streaming, retries, compaction, and delegation.
 - Expiry, concurrent refresh, revoked credentials, declined sign-in, unavailable models, and mid-stream quota failures produce accurate states.
 - Protocol conversion preserves tool IDs/results and rejects unsupported features.
@@ -264,4 +273,4 @@ Run focused tests per phase, `npm run check` at integration boundaries, affected
 
 The [execution record](Native_Harness_Execution.md#acceptance-coverage) maps each bullet above to the tests that cover it, all synthetic or local, and lists what none of them covers.
 
-This file is the canonical plan. Update the existing [design](Topsl_Design.md) and [implementation-status](Implementation_Status.md) documents during implementation, and revise [README](../README.md) and release claims only when supported by evidence. Preserve source provenance, record the retired Claude adapter as retired wherever it was described, verify documentation links, and run `git diff --check`.
+This file is the canonical plan. Update the existing [design](Topsl_Design.md) and [implementation-status](Implementation_Status.md) documents during implementation, and revise [README](../README.md) and release claims only when supported by evidence. Preserve source provenance, label the Claude adapter as experimental and distinguish implementation from live qualification, verify documentation links, and run `git diff --check`.

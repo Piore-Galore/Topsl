@@ -20,6 +20,7 @@ export const connectionCommands = [
     type: z.literal("connection-create"),
     kind: z.enum([
       "chatgpt-plan",
+      "claude-plan",
       "openai-api",
       "anthropic-api",
       "openai-compatible",
@@ -27,6 +28,7 @@ export const connectionCommands = [
     ]),
     label: z.string().min(1).max(200),
     endpoint: z.string().max(2000).nullable().optional(),
+    protocol: z.enum(["responses", "messages", "chat"]).optional(),
   }),
   z.object({
     type: z.literal("connection-rename"),
@@ -36,6 +38,7 @@ export const connectionCommands = [
   /** Main reads the key from the clipboard after the owner confirms. */
   z.object({ type: z.literal("connection-key-paste"), connectionId: id }),
   z.object({ type: z.literal("connection-sign-in"), connectionId: id }),
+  z.object({ type: z.literal("connection-sign-in-complete"), attemptId: id }),
   z.object({ type: z.literal("connection-sign-in-cancel"), attemptId: id }),
   z.object({ type: z.literal("connection-models"), connectionId: id }),
   z.object({ type: z.literal("connection-disconnect"), connectionId: id }),

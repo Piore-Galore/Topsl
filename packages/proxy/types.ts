@@ -9,6 +9,7 @@ import type { ClientProtocol, ProxyErrorInfo } from "./canonical";
 /** What kind of upstream a connection reaches. */
 export type ConnectionKind =
   | "chatgpt-plan"
+  | "claude-plan"
   | "openai-api"
   | "anthropic-api"
   | "openai-compatible"
@@ -20,10 +21,12 @@ export type ConnectionKind =
  */
 export type FundingKind = "subscription" | "api-billing" | "gateway" | "local";
 
-export type AuthenticationKind = "oauth-chatgpt" | "api-key" | "none";
+export type AuthenticationKind =
+  "oauth-chatgpt" | "oauth-claude" | "api-key" | "none";
 
 export const connectionFunding: Record<ConnectionKind, FundingKind> = {
   "chatgpt-plan": "subscription",
+  "claude-plan": "subscription",
   "openai-api": "api-billing",
   "anthropic-api": "api-billing",
   "openai-compatible": "gateway",
@@ -35,6 +38,7 @@ export const connectionAuthentication: Record<
   AuthenticationKind
 > = {
   "chatgpt-plan": "oauth-chatgpt",
+  "claude-plan": "oauth-claude",
   "openai-api": "api-key",
   "anthropic-api": "api-key",
   "openai-compatible": "api-key",
@@ -44,6 +48,7 @@ export const connectionAuthentication: Record<
 /** The protocol each connection kind speaks upstream. */
 export const upstreamProtocol: Record<ConnectionKind, ClientProtocol> = {
   "chatgpt-plan": "responses",
+  "claude-plan": "messages",
   "openai-api": "responses",
   "anthropic-api": "messages",
   "openai-compatible": "chat",
@@ -52,6 +57,7 @@ export const upstreamProtocol: Record<ConnectionKind, ClientProtocol> = {
 
 export const defaultEndpoints: Record<ConnectionKind, string | null> = {
   "chatgpt-plan": "https://api.openai.com/v1",
+  "claude-plan": "https://api.anthropic.com/v1",
   "openai-api": "https://api.openai.com/v1",
   "anthropic-api": "https://api.anthropic.com/v1",
   "openai-compatible": null,
@@ -73,7 +79,8 @@ export interface AccountEvidence {
   accountKey: string | null;
   email: string | null;
   /** How the identity was established. */
-  source: "id-token" | "api-key-fingerprint" | "endpoint" | "none";
+  source:
+    "id-token" | "oauth-profile" | "api-key-fingerprint" | "endpoint" | "none";
   /** An allowance shared with other connections, when the evidence shows one. */
   quotaOwner: string | null;
   observedAt: string | null;
@@ -84,6 +91,8 @@ export interface Connection {
   kind: ConnectionKind;
   label: string;
   endpoint: string;
+  /** Configurable for gateways; absent on older profiles means the kind's default. */
+  protocol?: ClientProtocol;
   authentication: AuthenticationKind;
   funding: FundingKind;
   state: ConnectionState;

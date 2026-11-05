@@ -17,6 +17,7 @@ type Props = {
 
 const kindText: Record<ConnectionKind, string> = {
   "chatgpt-plan": "ChatGPT plan",
+  "claude-plan": "Claude plan (experimental)",
   "openai-api": "OpenAI API key",
   "anthropic-api": "Anthropic API key",
   "openai-compatible": "Gateway (OpenAI-compatible)",
@@ -39,6 +40,7 @@ const stateText: Record<Connection["state"], string> = {
 };
 const aliasPrefix: Record<ConnectionKind, string> = {
   "chatgpt-plan": "chatgpt",
+  "claude-plan": "claude-plan",
   "openai-api": "openai",
   "anthropic-api": "anthropic",
   "openai-compatible": "gateway",
@@ -54,6 +56,9 @@ const aliasPrefix: Record<ConnectionKind, string> = {
 export function ConnectionsScreen({ state, act }: Props) {
   const proxy = state.proxy ?? null;
   const [gateway, setGateway] = useState("");
+  const [gatewayProtocol, setGatewayProtocol] = useState<
+    "chat" | "responses" | "messages"
+  >("chat");
   return (
     <>
       <div className="page-heading">
@@ -81,7 +86,7 @@ export function ConnectionsScreen({ state, act }: Props) {
           <div className="info-strip" role="note">
             <span className="status-dot notice" />
             <div>
-              <strong>Claude subscription: not offered.</strong>{" "}
+              <strong>Claude plan connection</strong>{" "}
               <span>{proxy.claudeSubscription.reason}</span>
             </div>
           </div>
@@ -104,6 +109,22 @@ export function ConnectionsScreen({ state, act }: Props) {
                 }}
               >
                 Continue with ChatGPT
+              </ActionButton>
+              <ActionButton
+                onClick={async () => {
+                  const connection = await act({
+                    type: "connection-create",
+                    kind: "claude-plan",
+                    label: "Claude plan",
+                  });
+                  if (connection?.id)
+                    await act({
+                      type: "connection-sign-in",
+                      connectionId: connection.id,
+                    });
+                }}
+              >
+                Continue with Claude
               </ActionButton>
               <ActionButton
                 onClick={() =>
@@ -149,6 +170,20 @@ export function ConnectionsScreen({ state, act }: Props) {
                   onChange={(e) => setGateway(e.target.value)}
                 />
               </label>
+              <label>
+                Gateway protocol{" "}
+                <select
+                  aria-label="Gateway protocol"
+                  value={gatewayProtocol}
+                  onChange={(e) =>
+                    setGatewayProtocol(e.target.value as typeof gatewayProtocol)
+                  }
+                >
+                  <option value="chat">Chat Completions</option>
+                  <option value="responses">Responses</option>
+                  <option value="messages">Anthropic Messages</option>
+                </select>
+              </label>
               <ActionButton
                 disabled={!gateway.trim()}
                 onClick={async () => {
@@ -157,6 +192,7 @@ export function ConnectionsScreen({ state, act }: Props) {
                     kind: "openai-compatible",
                     label: "Gateway",
                     endpoint: gateway.trim(),
+                    protocol: gatewayProtocol,
                   });
                   if (created) setGateway("");
                 }}
@@ -256,7 +292,8 @@ function ConnectionCard({
         <p className="muted">{connection.stateDetail}</p>
       )}
       <div className="actions wrap">
-        {connection.kind === "chatgpt-plan" &&
+        {(connection.kind === "chatgpt-plan" ||
+          connection.kind === "claude-plan") &&
           (signingIn ? (
             <ActionButton
               onClick={() =>
@@ -280,9 +317,24 @@ function ConnectionCard({
             >
               {connection.hasCredential
                 ? "Sign in again"
-                : "Continue with ChatGPT"}
+                : connection.kind === "claude-plan"
+                  ? "Continue with Claude"
+                  : "Continue with ChatGPT"}
             </ActionButton>
           ))}
+        {signingIn && connection.kind === "claude-plan" && (
+          <ActionButton
+            title="If Claude shows a code instead of returning here, copy the complete code and use this button."
+            onClick={() =>
+              void act({
+                type: "connection-sign-in-complete",
+                attemptId: signingIn,
+              })
+            }
+          >
+            Complete sign-in from clipboard
+          </ActionButton>
+        )}
         {connection.authentication === "api-key" && (
           <ActionButton
             className={connection.hasCredential ? "" : "primary"}
