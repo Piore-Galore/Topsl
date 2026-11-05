@@ -2,6 +2,7 @@ import {
   emptyUsage,
   type CanonicalEvent,
   type CanonicalMessage,
+  type CanonicalOutputFormat,
   type CanonicalPart,
   type CanonicalRequest,
   type CanonicalResponse,
@@ -37,6 +38,8 @@ import {
   optionalCount,
   optionalNumber,
   optionalString,
+  outputFormatOf,
+  parseSchemaFormat,
   path,
   reject,
   toolResultsFirst,
@@ -113,14 +116,23 @@ export function parseRequest(body: unknown): CanonicalRequest {
     reject("Only one choice (`n: 1`) can be carried.", "n");
   if (isSet(request.logprobs) && request.logprobs !== false)
     reject("Log probabilities cannot be carried to every route.", "logprobs");
+  let outputFormat: CanonicalOutputFormat | null = null;
   if (isSet(request.response_format)) {
     const format = expectObject(request.response_format, "response_format");
-    checkFields(format, ["type"], "response_format");
-    if (format.type !== "text")
-      reject(
-        'Only plain text output (`response_format.type: "text"`) can be carried.',
-        "response_format.type",
+    if (format.type === "json_schema") {
+      checkFields(format, ["type", "json_schema"], "response_format");
+      outputFormat = parseSchemaFormat(
+        expectObject(format.json_schema, "response_format.json_schema"),
+        "response_format.json_schema",
       );
+    } else {
+      checkFields(format, ["type"], "response_format");
+      if (format.type !== "text")
+        reject(
+          'Only plain text (`response_format.type: "text"`) or a JSON Schema (`"json_schema"`) can be carried; JSON mode without a schema cannot.',
+          "response_format.type",
+        );
+    }
   }
   if (isSet(request.modalities)) {
     const modalities = expectArray(request.modalities, "modalities");
@@ -173,6 +185,7 @@ export function parseRequest(body: unknown): CanonicalRequest {
       "parallel_tool_calls",
     ),
     stream: optionalBoolean(request.stream, "stream") ?? false,
+    ...(outputFormat ? { outputFormat } : {}),
     clientProtocol: protocol,
   };
 }
@@ -450,6 +463,18 @@ export function serializeRequest(
   if (request.stop.length > 0) body.stop = request.stop;
   if (request.reasoningEffort !== null)
     body.reasoning_effort = request.reasoningEffort;
+  const format = outputFormatOf(request);
+  // Gateways and local servers differ in whether they enforce it; a server
+  // that refuses `response_format` answers with an error, which is shown.
+  if (format)
+    body.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: format.name,
+        schema: format.schema,
+        strict: format.strict,
+      },
+    };
   body.stream = true;
   body.stream_options = { include_usage: true };
   return body;

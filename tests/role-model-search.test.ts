@@ -16,6 +16,7 @@ const option = (
   key: `${provider}-install:${model}`,
   provider,
   installationId: `${provider}-install`,
+  routeId: null,
   model,
   name,
   efforts: [],

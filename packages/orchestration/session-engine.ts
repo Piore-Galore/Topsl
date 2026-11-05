@@ -10,6 +10,7 @@ import type {
   RoleGroupSettings,
   RoleRound,
 } from "../domain/role-groups";
+import { memberRuntimeId } from "../domain/role-groups";
 import {
   buildSessionContext,
   CONTEXT_MESSAGES,
@@ -875,7 +876,7 @@ export class SessionSupervisor {
       assignmentRevision: a.revision,
       provider: a.provider!,
       model: a.model!,
-      installationId: a.installationId!,
+      installationId: memberRuntimeId(a)!,
       order,
       state: "queued",
       phase: "initial",

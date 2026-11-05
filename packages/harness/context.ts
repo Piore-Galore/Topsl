@@ -1,6 +1,7 @@
 import { hash, stable } from "../domain/invariants";
 import type {
   CanonicalMessage,
+  CanonicalOutputFormat,
   CanonicalPart,
   CanonicalRequest,
   CanonicalTool,
@@ -227,6 +228,7 @@ export interface CompileInput {
   conversation: Conversation;
   tools: CanonicalTool[];
   reasoningEffort: string | null;
+  outputFormat?: CanonicalOutputFormat | null;
 }
 
 export function compileRequest(input: CompileInput): {
@@ -247,15 +249,20 @@ export function compileRequest(input: CompileInput): {
     thinkingBudget: null,
     parallelToolCalls: null,
     stream: true,
+    ...(input.outputFormat ? { outputFormat: input.outputFormat } : {}),
     clientProtocol: "responses",
   };
   return {
     request,
-    estimatedTokens: estimateMessages(
-      input.instructions,
-      input.conversation.messages,
-      input.tools,
-    ),
+    estimatedTokens:
+      estimateMessages(
+        input.instructions,
+        input.conversation.messages,
+        input.tools,
+      ) +
+      (input.outputFormat
+        ? estimateTokens(JSON.stringify(input.outputFormat.schema))
+        : 0),
   };
 }
 

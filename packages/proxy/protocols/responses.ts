@@ -2,6 +2,7 @@ import {
   emptyUsage,
   type CanonicalEvent,
   type CanonicalMessage,
+  type CanonicalOutputFormat,
   type CanonicalPart,
   type CanonicalReasoningPart,
   type CanonicalRequest,
@@ -41,6 +42,8 @@ import {
   optionalNumber,
   optionalString,
   ownReasoning,
+  outputFormatOf,
+  parseSchemaFormat,
   path,
   reject,
   sequentialParts,
@@ -134,17 +137,22 @@ export function parseRequest(body: unknown): CanonicalRequest {
           path("include", index),
         );
     });
+  let outputFormat: CanonicalOutputFormat | null = null;
   if (isSet(request.text)) {
     const text = expectObject(request.text, "text");
     checkFields(text, ["format"], "text");
     if (isSet(text.format)) {
       const format = expectObject(text.format, "text.format");
-      checkFields(format, ["type"], "text.format");
-      if (format.type !== "text")
-        reject(
-          'Only plain text output (`text.format.type: "text"`) can be carried.',
-          "text.format.type",
-        );
+      if (format.type === "json_schema")
+        outputFormat = parseSchemaFormat(format, "text.format");
+      else {
+        checkFields(format, ["type"], "text.format");
+        if (format.type !== "text")
+          reject(
+            'Only plain text (`text.format.type: "text"`) or a JSON Schema (`"json_schema"`) can be carried; JSON mode without a schema cannot.',
+            "text.format.type",
+          );
+      }
     }
   }
   let reasoningEffort: string | null = null;
@@ -185,6 +193,7 @@ export function parseRequest(body: unknown): CanonicalRequest {
       "parallel_tool_calls",
     ),
     stream: optionalBoolean(request.stream, "stream") ?? false,
+    ...(outputFormat ? { outputFormat } : {}),
     clientProtocol: protocol,
   };
 }
@@ -538,6 +547,18 @@ export function serializeRequest(
     body.max_output_tokens = request.maxOutputTokens;
   if (request.temperature !== null) body.temperature = request.temperature;
   if (request.topP !== null) body.top_p = request.topP;
+  const format = outputFormatOf(request);
+  // The ChatGPT-plan limitations (read 5 November 2026) neither list
+  // `text.format` as refused nor as accepted; it is sent as on the API.
+  if (format)
+    body.text = {
+      format: {
+        type: "json_schema",
+        name: format.name,
+        schema: format.schema,
+        strict: format.strict,
+      },
+    };
   body.store = false;
   body.stream = true;
   return body;

@@ -711,7 +711,7 @@ describe("TEAM-01: any role on any qualified route", () => {
             r.provider === provider
               ? route(
                   r.provider,
-                  r.installationId,
+                  r.installationId!,
                   r.catalog.models.map((m) => [m.model, m.name]),
                   { blocked: [role.purpose] },
                 )

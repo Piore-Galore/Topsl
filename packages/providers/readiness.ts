@@ -196,3 +196,46 @@ export function evaluateStepReadiness(input: {
     models: [],
   };
 }
+
+/**
+ * Whether a native proxy route can serve a member purpose
+ * (docs/Native_Harness_Plan.md §3, "Compatibility with existing Topsl").
+ * A native member needs no installation or vendor qualification: it needs
+ * the proxy running, the route on, its connection usable, and, for a turn
+ * that must answer in a schema, a route not recorded as unable to enforce
+ * one. A connection paused at its usage limit stays eligible: the loop and
+ * the harness wait on its allowance instead of choosing another route.
+ */
+export interface NativeRouteFacts {
+  alias: string;
+  disabled: boolean;
+  structuredOutput: "supported" | "unsupported" | "unknown";
+  connectionLabel: string;
+  connectionState: string;
+  connectionDetail: string | null;
+  proxyRunning: boolean;
+}
+export function nativeRouteReadiness(
+  route: NativeRouteFacts,
+  purpose: string,
+): { ready: boolean; blockers: string[] } {
+  const blockers: string[] = [];
+  if (!route.proxyRunning)
+    blockers.push(
+      "proxy-not-running: Topsl's local model proxy is not running. It starts after the vault opens.",
+    );
+  if (route.disabled)
+    blockers.push(
+      `route-disabled: ${route.alias} is turned off under Connections.`,
+    );
+  if (!["ready", "paused-usage-limit"].includes(route.connectionState))
+    blockers.push(
+      `connection-${route.connectionState}: ${route.connectionLabel} is ${route.connectionState}${route.connectionDetail ? ` (${route.connectionDetail})` : ""}. Fix it under Connections.`,
+    );
+  // Every member purpose except direct chat parses a structured final answer.
+  if (purpose !== "direct-chat" && route.structuredOutput === "unsupported")
+    blockers.push(
+      `structured-output-unsupported: ${route.alias} is recorded as unable to enforce a response schema, which ${purpose} turns need.`,
+    );
+  return { ready: !blockers.length, blockers };
+}

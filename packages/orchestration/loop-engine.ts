@@ -58,6 +58,7 @@ import {
   type Goal,
   type GoalLoopBinding,
   type MemberIntent,
+  type NativeRouteBinding,
   type ParticipantContribution,
   type ResolvedMemberAssignment,
   type RoleCompletion,
@@ -2122,11 +2123,22 @@ export class LoopSupervisor {
       this.softWait(run, blocked);
       return;
     }
-    if (run.waitReason?.kind === "reconciliation")
+    // A member turn waiting on a native allowance, or paused for no
+    // progress, keeps the iteration where it is: the run shows the wait and
+    // nothing restarts. Other members and stages carry on meanwhile.
+    const waiting = this.waitingTurns(run, it);
+    if (waiting) this.softWait(run, waiting);
+    else if (
+      run.waitReason?.kind === "reconciliation" ||
+      ((run.waitReason?.kind === "quota" ||
+        run.waitReason?.kind === "no-progress") &&
+        run.state === "active")
+    )
       run = this.saveRun(run, {
         waitReason: null,
         detail: `Iteration ${it.number}: ${it.state}.`,
       });
+    run = this.run(run.id);
     switch (it.state) {
       case "assessing":
         return this.assess(run, it);
@@ -2457,6 +2469,51 @@ export class LoopSupervisor {
       runIds: [...new Set(blocked.map((b) => b.runId))],
       detail: `${blocked.length === 1 ? "A member turn" : `${blocked.length} member turns`} ended with an unknown outcome: ${named}. Each holds its workspace until the owner inspects and reconciles that run under Runs.`,
     };
+  }
+
+  /**
+   * A quota or no-progress wait reported by a running member turn of this
+   * iteration (its decision rounds and child goal), or null.
+   */
+  private waitingTurns(
+    run: LoopRun,
+    it: LoopIteration,
+  ): LoopWaitReason | null {
+    const children = new Set(it.childExecutionGoalIds);
+    const active = [
+      ...this.scoped<LoopRound>(loopKinds.round, run)
+        .filter((r) => r.iterationId === it.id)
+        .flatMap((r) => r.members),
+      ...(children.size
+        ? this.repo
+            .all<RoleRound>(kinds.round, run.projectId)
+            .filter((r) => children.has(r.goalId))
+            .flatMap((r) => r.members)
+        : []),
+    ];
+    const quota: string[] = [];
+    const stalled: Array<{ attemptId: string; detail: string }> = [];
+    for (const m of active) {
+      if (!m.activeAttemptId) continue;
+      const obs = this.driver.observe(m.activeAttemptId);
+      if (obs.state !== "running" || !obs.wait) continue;
+      if (obs.wait.kind === "quota") quota.push(obs.wait.detail);
+      else if (obs.wait.kind === "no-progress")
+        stalled.push({ attemptId: m.activeAttemptId, detail: obs.wait.detail });
+    }
+    if (quota.length)
+      return {
+        kind: "quota",
+        detail: `${quota.length === 1 ? "A member turn is" : `${quota.length} member turns are`} waiting on an allowance. ${[...new Set(quota)][0]}`,
+        retryAt: null,
+      };
+    if (stalled.length)
+      return {
+        kind: "no-progress",
+        attemptIds: stalled.map((s) => s.attemptId),
+        detail: `${stalled.length === 1 ? "A member turn" : `${stalled.length} member turns`} stopped making progress. ${stalled[0].detail}`,
+      };
+    return null;
   }
 
   private childTurns(it: LoopIteration): number {
@@ -3806,6 +3863,8 @@ export class LoopSupervisor {
     // Every required function resolves before anything starts; a required
     // assignment that cannot run is a visible blocker, never a smaller team.
     const assignments: AssignmentRevisionRef[] = [];
+    // Native members' frozen routes: their allowance is checked by quota owner.
+    const nativeRoutes: NativeRouteBinding[] = [];
     const blockers: string[] = [];
     let pinned = false;
     for (const r of topology.roles.filter((x) => x.active)) {
@@ -3820,6 +3879,7 @@ export class LoopSupervisor {
         resolved.group.members.map((m) => [m.memberId, m.required]),
       );
       for (const a of resolved.assignments) {
+        if (a.status === "resolved" && a.native) nativeRoutes.push(a.native);
         assignments.push({
           roleId: r.roleId,
           memberId: a.memberId,
@@ -3866,10 +3926,13 @@ export class LoopSupervisor {
         assignments
           .filter((a) => a.status === "resolved")
           .map((a) => a.provider!)
-          .filter(Boolean),
+          .filter((p): p is "codex" | "claude" => p === "codex" || p === "claude"),
       ),
     ];
-    const limits = this.loop.providerLimits?.(providers) ?? [];
+    // A native allowance that reported its limit holds every member funded
+    // by it (the same quota owner), so the iteration waits instead of
+    // starting turns that would wait or fail.
+    const limits = this.loop.providerLimits?.(providers, nativeRoutes) ?? [];
     if (limits.length) {
       const first = limits[0];
       return this.wait(

@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { optionalFields } from "./patches";
+import { memberProviders } from "./role-groups";
 import type {
   CollaborationMode,
   ExecutionPurpose,
   GoalCheckDefinition,
+  MemberProvider,
   RoleDefinition,
   RoleGroupSettings,
   RoundMember,
@@ -47,6 +49,12 @@ export type LoopWaitReason =
   | { kind: "route"; detail: string }
   | { kind: "pinned-model"; detail: string }
   | { kind: "quota"; detail: string; retryAt: string | null }
+  /**
+   * A member turn stopped making progress (a native turn paused after
+   * repeating a failed operation). It waits for the owner instead of
+   * restarting; added 5 November 2026.
+   */
+  | { kind: "no-progress"; detail: string; attemptIds: string[] }
   | { kind: "allowance"; detail: string; renewsAt: string | null }
   | { kind: "capacity"; detail: string }
   | { kind: "verification"; detail: string }
@@ -151,7 +159,7 @@ export interface AssignmentRevisionRef {
   bindingId: string | null;
   assignmentId: string;
   assignmentRevision: number;
-  provider: "codex" | "claude" | null;
+  provider: MemberProvider | null;
   model: string | null;
   required: boolean;
   status: string;
@@ -466,8 +474,9 @@ export interface LoopOutcome {
   memberId: string;
   assignmentId: string;
   assignmentRevision: number;
-  provider: "codex" | "claude";
+  provider: MemberProvider;
   model: string;
+  /** The vendor installation, or for a native member its proxy route ID. */
   installationId: string;
   installationRevision: string | null;
   effort: string | null;
@@ -578,8 +587,8 @@ export const loopPolicySchema = z
       .min(1)
       .default(["implementation", "information"]),
     excludedProviders: z
-      .array(z.enum(["codex", "claude"]))
-      .max(2)
+      .array(z.enum(memberProviders))
+      .max(memberProviders.length)
       .default([]),
     /** The protected run-level regression and acceptance protocol. */
     checks: z

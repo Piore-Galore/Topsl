@@ -1,4 +1,5 @@
 import type {
+  CanonicalOutputFormat,
   CanonicalPart,
   CanonicalUsage,
   ClientProtocol,
@@ -48,6 +49,20 @@ export interface ExecutionBinding {
   /** Hash of the grants and limits the attempt runs under. */
   policyRevision: string;
   createdAt: string;
+}
+
+/**
+ * What a member turn's native attempt belongs to. The orchestration driver
+ * prepares its copy and captures its candidate; the harness does neither.
+ */
+export interface NativeMemberContext {
+  goalId: string;
+  roundId: string;
+  memberId: string;
+  launchId: string;
+  purpose: string;
+  /** The output protocol's kind and stage, for the record. */
+  protocol: string;
 }
 
 export interface NativeLimits {
@@ -126,6 +141,10 @@ export interface JournalBodies {
   "attempt-started": {
     title: string;
     prompt: string;
+    /** The JSON Schema every step asks the final text to follow; absent: free text. */
+    outputFormat?: CanonicalOutputFormat | null;
+    /** Set for a coordinator, session or loop member turn. */
+    member?: NativeMemberContext | null;
     binding: ExecutionBinding;
     limits: NativeLimits;
     grants: ToolGrants;
@@ -250,6 +269,13 @@ export interface NativeAttemptView {
   summary: string | null;
   children: string[];
   pendingSteering: number;
+  /**
+   * Why a paused attempt paused, while it is paused. Absent in projections
+   * written before 5 November 2026's member-engine work.
+   */
+  pauseKind?: JournalBodies["paused"]["kind"] | null;
+  /** The model the upstream reported for the latest settled answer. */
+  reportedModel?: string | null;
   createdAt: string;
   updatedAt: string;
 }

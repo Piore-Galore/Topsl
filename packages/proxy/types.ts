@@ -104,6 +104,12 @@ export interface CapabilityEvidence {
   images: "supported" | "unsupported" | "unknown";
   reasoning: "supported" | "unsupported" | "unknown";
   outputCap: "supported" | "unsupported" | "unknown";
+  /**
+   * Whether the route enforces a JSON Schema on the final text. Absent on
+   * routes saved before 5 November 2026, which reads as unknown. A route
+   * recorded as unsupported is refused for turns that need a schema.
+   */
+  structuredOutput?: "supported" | "unsupported" | "unknown";
   /** The model catalog entry or document the evidence came from. */
   source: string;
   observedAt: string | null;

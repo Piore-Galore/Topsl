@@ -43,7 +43,7 @@ import {
   type RoutingMode,
 } from "./routing";
 import { customRoleDefinition } from "./roles";
-import { builtInRoles } from "../domain/role-groups";
+import { builtInRoles, memberRuntimeId } from "../domain/role-groups";
 import {
   effectiveGroup,
   goalComplexity,
@@ -136,6 +136,17 @@ export interface AttemptObservation {
   /** The runtime run that carries the attempt, when there is one. */
   runId?: string | null;
   evidence: Evidence;
+  /**
+   * Why a running attempt is not making progress now: a native member
+   * waiting on its allowance (shared by every route with the same quota
+   * owner), paused for no progress, or paused by the owner. The engine
+   * waits; it never starts a replacement for a waiting member.
+   */
+  wait?: {
+    kind: "quota" | "no-progress" | "paused";
+    detail: string;
+    quotaOwner: string | null;
+  } | null;
 }
 
 /**
@@ -1650,7 +1661,7 @@ export class Orchestrator {
       assignmentRevision: a.revision,
       provider: a.provider!,
       model: a.model!,
-      installationId: a.installationId!,
+      installationId: memberRuntimeId(a)!,
       required: required.get(a.memberId) ?? true,
       state: "queued",
       phase: "initial",
@@ -2118,7 +2129,22 @@ export class Orchestrator {
       }
       if (!m.activeAttemptId) continue;
       const obs = this.driver.observe(m.activeAttemptId);
-      if (obs.state === "running") continue;
+      if (obs.state === "running") {
+        // A waiting native member is shown waiting; the marker of a cohort
+        // restart is kept.
+        if (m.detail !== "cohort-restart") {
+          const shown = obs.wait
+            ? `Waiting: ${obs.wait.detail}`
+            : m.detail.startsWith("Waiting: ")
+              ? ""
+              : m.detail;
+          if (m.detail !== shown) {
+            m.detail = shown;
+            changed = true;
+          }
+        }
+        continue;
+      }
       if (obs.state === "uncertain" || !obs.quiescent) {
         const detail =
           obs.state === "uncertain"
@@ -4641,6 +4667,15 @@ export class Orchestrator {
       routes: routes.map((r) => ({
         provider: r.provider,
         installationId: r.installationId,
+        // A native route's identity for pins and display; no account key.
+        native: r.native
+          ? {
+              routeId: r.native.routeId,
+              routeAlias: r.native.routeAlias,
+              connectionLabel: r.native.connectionLabel,
+              funding: r.native.funding,
+            }
+          : null,
         route: r.route,
         accountLabel: r.accountLabel,
         fanout: r.fanout,

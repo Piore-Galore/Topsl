@@ -126,6 +126,7 @@ const loopWaits: Record<string, string> = {
   allowance: "Allowance",
   "pinned-model": "Choose model",
   reconciliation: "Reconcile",
+  "no-progress": "Review stalled turn",
 };
 
 /** What a loop run needs from the owner, if anything. */

@@ -19,16 +19,25 @@ import type {
 } from "../domain/types";
 import type {
   ContextPackage,
+  Evidence,
   ExecutionAttempt,
   Task,
   Verification,
   Workspace,
 } from "../domain/workflow";
-import type {
-  ExecutionPurpose,
-  GoalApplication,
-  GoalCheckDefinition,
+import {
+  memberEngine,
+  type ExecutionPurpose,
+  type GoalApplication,
+  type GoalCheckDefinition,
+  type NativeRouteBinding,
 } from "../domain/role-groups";
+import type { NativeHarness } from "../harness/harness";
+import { terminalStates, type NativeAttemptView } from "../harness/types";
+import type { Connection, ProxyRoute } from "../proxy/types";
+import { nativeRouteReadiness } from "../providers/readiness";
+import { reviewOutputSchema } from "../workflows/builder-reviewer";
+import { purposeOutputSchema } from "./contracts";
 import type { Store } from "../persistence/store";
 import type { Coordinator } from "../runtime/coordinator";
 import type { RuntimeExecution } from "../runtime/coordinator";
@@ -105,6 +114,21 @@ export interface RuntimeDriverDeps {
    */
   integrationRoot?: string;
   gitExecutable?: string;
+  /**
+   * Topsl's native harness, for members bound to a local proxy route
+   * (docs/Native_Harness_Plan.md, Phases 6b and 7). Absent: no native
+   * routes are offered.
+   */
+  native?: NativeMemberHost;
+}
+
+/** The native harness and the proxy routes the control service can see. */
+export interface NativeMemberHost {
+  harness: NativeHarness;
+  /** Sanitized proxy routes with their connections; never a credential. */
+  routes(): Array<{ route: ProxyRoute; connection: Connection }>;
+  /** Whether the proxy process is running now. */
+  running(): boolean;
 }
 
 interface CopyRecord {
@@ -120,6 +144,8 @@ interface CopyRecord {
   permittedOutputs: string[];
   goalId: string;
   state: "active" | "processed";
+  /** Set for a native member's copy; absent for vendor runs. */
+  engine?: "native";
 }
 interface CaptureRecord {
   id: string;
@@ -137,6 +163,49 @@ async function makeWritable(dir: string): Promise<void> {
       await chmod(target, (await stat(target)).mode | 0o200);
   }
 }
+
+/** Why a native member attempt did not end with a usable answer, when the driver ended it. */
+interface NativeEnding {
+  id: string;
+  projectId: string;
+  detail: string;
+  at: string;
+}
+
+const activeNativeStates = new Set<NativeAttemptView["state"]>([
+  "starting",
+  "running",
+  "waiting-model",
+  "running-tools",
+  "waiting-children",
+]);
+
+/** The native route identity a member assignment freezes. */
+export function nativeRouteBinding(
+  route: ProxyRoute,
+  connection: Connection,
+): NativeRouteBinding {
+  return {
+    routeId: route.id,
+    routeAlias: route.alias,
+    routeRevision: route.revision,
+    connectionId: connection.id,
+    connectionKind: connection.kind,
+    connectionLabel: connection.label,
+    protocol: route.protocol,
+    upstreamModel: route.upstreamModel,
+    funding: connection.funding,
+    accountKey: connection.account.accountKey,
+    quotaOwner: connection.account.quotaOwner,
+  };
+}
+
+const fundingLabels: Record<Connection["funding"], string> = {
+  subscription: "plan allowance",
+  "api-billing": "API billing",
+  gateway: "gateway billing",
+  local: "local",
+};
 
 const purposes: ExecutionPurpose[] = [
   "coordinator-contribution",
@@ -156,6 +225,8 @@ const purposes: ExecutionPurpose[] = [
  * manager); nothing here lifts those checks.
  */
 export class RuntimeOrchestrationDriver implements OrchestrationDriver {
+  /** Native attempts recorded and being started now. */
+  private starting = new Set<string>();
   constructor(private deps: RuntimeDriverDeps) {}
   private get store() {
     return this.deps.store;
@@ -238,7 +309,73 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
           : "unknown",
       });
     }
+    routes.push(...this.nativeRoutes());
     return routes;
+  }
+
+  /**
+   * One candidate per native proxy route: its single model is the route's
+   * upstream model, and its readiness needs no installation or vendor
+   * qualification (packages/providers/readiness.ts nativeRouteReadiness).
+   */
+  private nativeRoutes(): RouteCandidate[] {
+    const host = this.deps.native;
+    if (!host) return [];
+    const running = host.running();
+    return host.routes().map(({ route, connection }) => {
+      const binding = nativeRouteBinding(route, connection);
+      return {
+        provider: "native",
+        engine: "native",
+        installationId: null,
+        installationRevision: null,
+        executableIdentity: null,
+        native: binding,
+        route: "managed-structured",
+        nativeAccountKey: connection.account.accountKey,
+        nativeProfileId: null,
+        // The vendor billing routes do not describe proxy funding; the
+        // native binding carries it.
+        billingRoute: null,
+        accountLabel: `${connection.label} · ${fundingLabels[connection.funding]}`,
+        catalog: {
+          models: [
+            {
+              id: route.alias,
+              model: route.upstreamModel,
+              name: route.alias,
+              description: `${connection.label} (${fundingLabels[connection.funding]})`,
+              isDefault: false,
+              // No observed effort catalog: a pinned effort is refused.
+              supportedReasoningEfforts: [],
+            },
+          ],
+          observedAt: route.updatedAt,
+          // The route is the owner's own configuration, read now.
+          fresh: true,
+        },
+        purposes: Object.fromEntries(
+          purposes.map((purpose) => [
+            purpose,
+            nativeRouteReadiness(
+              {
+                alias: route.alias,
+                disabled: route.disabled,
+                structuredOutput:
+                  route.capabilities.structuredOutput ?? "unknown",
+                connectionLabel: connection.label,
+                connectionState: connection.state,
+                connectionDetail: connection.stateDetail,
+                proxyRunning: running,
+              },
+              purpose,
+            ),
+          ]),
+        ),
+        // Member turns get no delegation tool, so no hidden fan-out.
+        fanout: "disabled",
+      } satisfies RouteCandidate;
+    });
   }
 
   capacity() {
@@ -246,13 +383,37 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     return {
       total: snapshot.totalLimit,
       perProvider: snapshot.perProviderLimit,
-      held: snapshot.active.map(
-        (s: { provider: "codex" | "claude"; weight: number }) => ({
-          provider: s.provider,
-          weight: s.weight,
-        }),
-      ),
+      held: [
+        ...snapshot.active.map(
+          (s: { provider: "codex" | "claude"; weight: number }) => ({
+            provider: s.provider as RouteCandidate["provider"],
+            weight: s.weight,
+          }),
+        ),
+        // A native member holds one slot while it executes. One waiting on
+        // its allowance, or paused, holds none: it makes no requests.
+        ...this.nativeCopies()
+          .filter((c) => {
+            const view = this.deps.native!.harness.view(c.attemptId!);
+            return !!view && activeNativeStates.has(view.state);
+          })
+          .map(() => ({ provider: "native" as const, weight: 1 })),
+      ],
     };
+  }
+
+  private nativeCopies(): CopyRecord[] {
+    if (!this.deps.native) return [];
+    return [...this.store.iterate<CopyRecord>("orchestration-copy")].filter(
+      (c) => c.engine === "native" && c.state === "active" && !!c.attemptId,
+    );
+  }
+
+  private isNative(attemptId: string): boolean {
+    return (
+      this.store.get<{ engine?: string }>("orchestration-native-member", attemptId)
+        ?.engine === "native"
+    );
   }
 
   private snapshot(id: string): CandidateSnapshot {
@@ -326,7 +487,13 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
 
   async launch(turn: MemberTurn): Promise<{ attemptId: string }> {
     const a = turn.assignment;
-    if (a.status !== "resolved" || !a.installationId || !a.model || !a.provider)
+    if (memberEngine(a) === "native") return this.launchNative(turn);
+    if (
+      a.status !== "resolved" ||
+      !a.installationId ||
+      !a.model ||
+      (a.provider !== "codex" && a.provider !== "claude")
+    )
       throw new Error("The member has no resolved assignment.");
     const installation = this.repository.require<Installation>(
       "installation",
@@ -342,43 +509,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     const project = this.repository.require<Project>("project", turn.projectId);
     const edit = turn.purpose === "implementation";
     if (edit) this.deps.assertLocalOwner(project.id);
-    // Each member gets its own copy, so concurrent members never share a
-    // checkout or a workspace lease.
-    // A loop turn reads its iteration's accepted content; it never captures
-    // the original folder again.
-    const source =
-      turn.purpose === "candidate-review" || edit
-        ? turn.candidateId
-        : (turn.contextCandidateId ??
-          (await this.contextSnapshot(turn.projectId, turn.goalId)));
-    let root: string;
-    if (source) {
-      const copy = await materializeCandidate(
-        this.snapshot(source),
-        undefined,
-        this.store,
-        { readOnlyFolders: !edit },
-      );
-      root = copy.root;
-      // Materialized files are read-only; an implementation member's own copy
-      // must be writable. Review and control copies stay read-only.
-      if (edit) await makeWritable(root);
-    } else root = await mkdtemp(path.join(os.tmpdir(), "topsl-control-"));
-    const copyRecord: CopyRecord = {
-      id: turn.launchId,
-      projectId: turn.projectId,
-      launchId: turn.launchId,
-      attemptId: null,
-      purpose: turn.purpose,
-      root,
-      readOnly: readOnlyPurposes.has(turn.purpose),
-      candidateId: source,
-      baselineId: edit ? source : null,
-      permittedOutputs: turn.permittedOutputs,
-      goalId: turn.goalId,
-      state: "active",
-    };
-    this.store.put("orchestration-copy", copyRecord);
+    const { root, source, copyRecord } = await this.memberCopy(turn);
     let attempt: ExecutionAttempt | undefined;
     try {
       const identity = canonicalWorkspaceIdentity(root),
@@ -602,11 +733,177 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     }
   }
 
+  /**
+   * The member's own Topsl-owned copy, so concurrent members never share a
+   * checkout or a workspace lease. A loop turn reads its iteration's
+   * accepted content; it never captures the original folder again.
+   */
+  private async memberCopy(
+    turn: MemberTurn,
+    engine?: "native",
+  ): Promise<{ root: string; source: string | null; copyRecord: CopyRecord }> {
+    const edit = turn.purpose === "implementation";
+    const source =
+      turn.purpose === "candidate-review" || edit
+        ? turn.candidateId
+        : (turn.contextCandidateId ??
+          (await this.contextSnapshot(turn.projectId, turn.goalId)));
+    let root: string;
+    if (source) {
+      const copy = await materializeCandidate(
+        this.snapshot(source),
+        undefined,
+        this.store,
+        { readOnlyFolders: !edit },
+      );
+      root = copy.root;
+      // Materialized files are read-only; an implementation member's own copy
+      // must be writable. Review and control copies stay read-only.
+      if (edit) await makeWritable(root);
+    } else root = await mkdtemp(path.join(os.tmpdir(), "topsl-control-"));
+    const copyRecord: CopyRecord = {
+      id: turn.launchId,
+      projectId: turn.projectId,
+      launchId: turn.launchId,
+      attemptId: null,
+      purpose: turn.purpose,
+      root,
+      readOnly: readOnlyPurposes.has(turn.purpose),
+      candidateId: source,
+      baselineId: edit ? source : null,
+      permittedOutputs: turn.permittedOutputs,
+      goalId: turn.goalId,
+      state: "active",
+      ...(engine ? { engine } : {}),
+    };
+    this.store.put("orchestration-copy", copyRecord);
+    return { root, source, copyRecord };
+  }
+
+  /**
+   * Starts a native member turn: Topsl's harness runs it in the member's own
+   * copy on the route the assignment froze. The route's revision, connection
+   * and account must still match, or the group resolves again; nothing is
+   * redirected to another route or account. The turn's output contract is
+   * the same JSON Schema a vendor runtime enforces for this purpose and
+   * protocol, carried through the proxy.
+   */
+  private async launchNative(turn: MemberTurn): Promise<{ attemptId: string }> {
+    const host = this.deps.native;
+    const a = turn.assignment;
+    if (!host)
+      throw new Error("Topsl's native harness is not available here.");
+    if (a.status !== "resolved" || !a.native || !a.model)
+      throw new Error("The member has no resolved native route.");
+    const frozen = a.native;
+    const current = host.routes().find((r) => r.route.id === frozen.routeId);
+    if (!current)
+      throw new Error(
+        `The member's route ${frozen.routeAlias} no longer exists. Resolve the group again.`,
+      );
+    if (
+      current.route.revision !== frozen.routeRevision ||
+      current.connection.id !== frozen.connectionId ||
+      current.connection.account.accountKey !== frozen.accountKey ||
+      current.route.upstreamModel !== a.model
+    )
+      throw new Error(
+        `The member's route ${frozen.routeAlias} changed since it was assigned (route, connection, account or model). Resolve the group again.`,
+      );
+    const project = this.repository.require<Project>("project", turn.projectId);
+    const edit = turn.purpose === "implementation";
+    if (edit) this.deps.assertLocalOwner(project.id);
+    const schema =
+      turn.purpose === "candidate-review"
+        ? (reviewOutputSchema as Record<string, unknown>)
+        : purposeOutputSchema(turn.purpose, turn.protocol);
+    const { root, source, copyRecord } = await this.memberCopy(turn, "native");
+    const attemptId = uid();
+    const at = now();
+    // Recorded before dispatch: a restart adopts this attempt instead of
+    // starting another, and observe reports it failed if it never began.
+    this.store.immutable("orchestration-native-member", {
+      id: attemptId,
+      projectId: project.id,
+      engine: "native",
+      launchId: turn.launchId,
+      goalId: turn.goalId,
+      roundId: turn.roundId,
+      memberId: turn.memberId,
+      routeId: frozen.routeId,
+      routeRevision: frozen.routeRevision,
+      createdAt: at,
+    });
+    this.store.immutable("orchestration-launch", {
+      id: turn.launchId,
+      projectId: project.id,
+      attemptId,
+      roundId: turn.roundId,
+      memberId: turn.memberId,
+    });
+    this.store.put("orchestration-copy", { ...copyRecord, attemptId });
+    this.starting.add(attemptId);
+    try {
+      const view = await host.harness.startMember({
+        attemptId,
+        projectId: project.id,
+        routeAlias: frozen.routeAlias,
+        title: `${turn.roleId} ${turn.memberId} · ${turn.phase}`,
+        prompt: turn.prompt,
+        workspace: { root, writable: edit, baselineCandidateId: source },
+        outputSchema: schema
+          ? { name: outputSchemaName(turn), schema }
+          : null,
+        member: {
+          goalId: turn.goalId,
+          roundId: turn.roundId,
+          memberId: turn.memberId,
+          launchId: turn.launchId,
+          purpose: turn.purpose,
+          protocol: `${turn.protocol.kind}${turn.protocol.stage ? `:${turn.protocol.stage}` : ""}`,
+        },
+        reasoningEffort: a.effort ?? null,
+        maxRequests: null,
+      });
+      // Member/session binding, as for vendor members: one per attempt.
+      this.store.immutable("member-session", {
+        id: attemptId,
+        projectId: project.id,
+        goalId: turn.goalId,
+        roundId: turn.roundId,
+        memberId: turn.memberId,
+        assignmentId: a.id,
+        assignmentRevision: a.revision,
+        sessionId: attemptId,
+        provider: "native",
+        engine: "native",
+        nativeAccountKey: frozen.accountKey,
+        binding: view.binding,
+        purpose: turn.purpose,
+        createdAt: at,
+      });
+      return { attemptId };
+    } catch (error) {
+      // The engine adopts the recorded attempt through findLaunch; it reads
+      // as failed with this reason, and its copy is removed.
+      this.store.put("orchestration-native-ending", {
+        id: attemptId,
+        projectId: project.id,
+        detail: `The native turn did not start: ${safeError(error)}`,
+        at: now(),
+      } satisfies NativeEnding);
+      throw error;
+    } finally {
+      this.starting.delete(attemptId);
+    }
+  }
+
   private terminal(attempt: ExecutionAttempt) {
     return ["completed", "failed", "interrupted"].includes(attempt.state);
   }
 
   observe(attemptId: string): AttemptObservation {
+    if (this.isNative(attemptId)) return this.observeNative(attemptId);
     const attempt = this.repository.require<ExecutionAttempt>(
       "attempt",
       attemptId,
@@ -674,7 +971,97 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     };
   }
 
+  /**
+   * What a native member's attempt shows the engine. A turn waiting on its
+   * allowance, paused for no progress, or paused by the owner is still
+   * running: the engine waits and never starts a replacement. A turn the
+   * driver ended (its request budget used) reads as failed with that reason.
+   */
+  private observeNative(attemptId: string): AttemptObservation {
+    const host = this.deps.native;
+    const view = host?.harness.view(attemptId) ?? null;
+    const ending = this.store.get<NativeEnding>(
+      "orchestration-native-ending",
+      attemptId,
+    );
+    const copy = this.copyOf(attemptId);
+    const capture = this.store.get<CaptureRecord>(
+      "orchestration-capture",
+      attemptId,
+    );
+    const route = view?.binding.native;
+    const evidence: Evidence = {
+      level: view?.reportedModel ? "provider-ack" : "none",
+      source: "native-harness",
+      observedAt: view?.updatedAt ?? null,
+      detail: route
+        ? `Topsl's native harness on ${route.routeAlias} (${route.connectionLabel}, ${fundingLabels[route.funding]}): ${view!.requests} model requests; the model is as the upstream reported it.`
+        : "The native turn did not start.",
+    };
+    const base = { reportedEffort: null, evidence, runId: null };
+    const processed = !copy || copy.state === "processed";
+    if (!view)
+      return {
+        ...base,
+        state: "failed",
+        quiescent: processed,
+        finalText: null,
+        reportedModel: null,
+        error:
+          ending?.detail ?? "The native turn did not start before Topsl stopped.",
+      };
+    if (view.state === "uncertain")
+      return {
+        ...base,
+        state: "uncertain",
+        quiescent: false,
+        finalText: null,
+        reportedModel: view.reportedModel ?? null,
+        error: view.stateDetail,
+      };
+    if (!terminalStates.has(view.state))
+      return {
+        ...base,
+        state: "running",
+        quiescent: false,
+        finalText: null,
+        reportedModel: null,
+        wait: nativeWait(view),
+      };
+    const quiescent = processed && !host!.harness.kernel.isRunning(attemptId);
+    return {
+      ...base,
+      state:
+        view.state === "completed"
+          ? "completed"
+          : view.state === "cancelled" && !ending
+            ? "interrupted"
+            : "failed",
+      quiescent,
+      finalText:
+        quiescent && view.state === "completed" ? view.summary : null,
+      reportedModel: view.reportedModel ?? null,
+      candidateId: capture?.candidateId ?? null,
+      error:
+        capture?.error ??
+        ending?.detail ??
+        (view.state === "completed" ? null : view.stateDetail),
+    };
+  }
+
+  private copyOf(attemptId: string): CopyRecord | undefined {
+    return [...this.store.iterate<CopyRecord>("orchestration-copy")].find(
+      (c) => c.attemptId === attemptId,
+    );
+  }
+
   async interrupt(attemptId: string): Promise<void> {
+    // Stopping a native member cancels its descendants too, and the kernel
+    // refuses any further launch under it.
+    if (this.isNative(attemptId)) {
+      await this.deps.native?.harness.cancel(attemptId);
+      return;
+    }
     const attempt = this.repository.require<ExecutionAttempt>(
       "attempt",
       attemptId,
@@ -690,6 +1077,10 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
   async sync(): Promise<void> {
     for (const copy of this.store.iterate<CopyRecord>("orchestration-copy")) {
       if (copy.state !== "active" || !copy.attemptId) continue;
+      if (copy.engine === "native") {
+        await this.syncNative(copy);
+        continue;
+      }
       const attempt = this.store.get<ExecutionAttempt>(
         "attempt",
         copy.attemptId,
@@ -707,7 +1098,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
           copy.purpose === "implementation" &&
           attempt.state === "completed"
         ) {
-          candidateId = await this.captureMember(copy, attempt);
+          candidateId = await this.captureMember(copy, attempt.id);
         } else if (
           copy.readOnly &&
           copy.candidateId &&
@@ -745,9 +1136,76 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     }
   }
 
+  /**
+   * Post-run work for a native member: a turn paused at its request budget
+   * ends (a bounded episode), one paused by a Topsl restart continues (its
+   * journal was reconciled, and member turns run no commands), and a
+   * finished turn's copy is captured or checked, then removed.
+   */
+  private async syncNative(copy: CopyRecord): Promise<void> {
+    const host = this.deps.native;
+    const attemptId = copy.attemptId!;
+    if (!host || this.starting.has(attemptId)) return;
+    let view = host.harness.view(attemptId);
+    if (view?.state === "paused" && !host.harness.kernel.isRunning(attemptId)) {
+      if (view.pauseKind === "budget") {
+        this.store.put("orchestration-native-ending", {
+          id: attemptId,
+          projectId: copy.projectId,
+          detail: `The native turn ended without an answer: ${view.stateDetail ?? "its request budget is used."}`,
+          at: now(),
+        } satisfies NativeEnding);
+        await host.harness.cancel(attemptId);
+      } else if (view.pauseKind === "restart") {
+        try {
+          host.harness.resume(attemptId);
+        } catch {
+          // Claimed or finished meanwhile.
+        }
+        return;
+      } else return;
+      view = host.harness.view(attemptId);
+    }
+    if (view && (!terminalStates.has(view.state) || host.harness.kernel.isRunning(attemptId)))
+      return;
+    let candidateId: string | null = null,
+      error: string | null = null;
+    if (!view)
+      error =
+        this.store.get<NativeEnding>("orchestration-native-ending", attemptId)
+          ?.detail ?? "The native turn did not start before Topsl stopped.";
+    else
+      try {
+        if (copy.purpose === "implementation" && view.state === "completed")
+          candidateId = await this.captureMember(copy, attemptId);
+        else if (
+          copy.readOnly &&
+          copy.candidateId &&
+          copy.purpose === "candidate-review"
+        )
+          await assertMaterializedCandidate(
+            this.snapshot(copy.candidateId),
+            copy.root,
+            true,
+          );
+      } catch (e) {
+        error = safeError(e);
+      }
+    this.store.immutable("orchestration-capture", {
+      id: attemptId,
+      projectId: copy.projectId,
+      candidateId,
+      error,
+      at: now(),
+    } satisfies CaptureRecord);
+    await removeMaterializedCopy(copy.root).catch(() => {});
+    if (view) await host.harness.discardWorkspace(attemptId).catch(() => {});
+    this.store.put("orchestration-copy", { ...copy, state: "processed" });
+  }
+
   private async captureMember(
     copy: CopyRecord,
-    attempt: ExecutionAttempt,
+    attemptId: string,
   ): Promise<string> {
     const baseline = this.snapshot(copy.baselineId!);
     const known = new Set(baseline.files.map((f) => f.path));
@@ -774,7 +1232,7 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       owned: true,
       projectId: copy.projectId,
       workflowId: copy.goalId,
-      authorAttemptId: attempt.id,
+      authorAttemptId: attemptId,
       baseCandidateId: baseline.id,
       selectedPaths: [
         ...new Set([
@@ -1201,4 +1659,34 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     }
     return { applied: preview.files };
   }
+}
+
+/** A schema name OpenAI accepts, from the turn's protocol and purpose. */
+function outputSchemaName(turn: MemberTurn): string {
+  return `${turn.protocol.kind}_${turn.purpose}${turn.protocol.stage ? `_${turn.protocol.stage}` : ""}`
+    .replace(/[^A-Za-z0-9_-]/g, "_")
+    .slice(0, 64);
+}
+
+/** Why a running native member is not making requests now, or null. */
+function nativeWait(view: NativeAttemptView): AttemptObservation["wait"] {
+  const route = view.binding.native;
+  if (view.state === "waiting-quota")
+    return {
+      kind: "quota",
+      quotaOwner: route?.quotaOwner ?? null,
+      detail: `Waiting for ${route?.connectionLabel ?? "the connection"}'s allowance: ${view.stateDetail ?? "it reported its usage limit."} Every turn on this allowance waits; none restarts.`,
+    };
+  if (view.state !== "paused") return null;
+  if (view.pauseKind === "repetition")
+    return {
+      kind: "no-progress",
+      quotaOwner: null,
+      detail: `Paused for no progress: ${view.stateDetail ?? "it repeated a failing operation."} It waits for the owner under Native tasks instead of restarting.`,
+    };
+  return {
+    kind: "paused",
+    quotaOwner: null,
+    detail: `Paused: ${view.stateDetail ?? "by the owner."}`,
+  };
 }
