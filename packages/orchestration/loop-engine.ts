@@ -4115,10 +4115,13 @@ export class LoopSupervisor {
         const stuck = /^(Coordinators|Reviewers) cannot start: /.exec(
           goal.detail,
         );
+        // A member waiting on its allowance or paused for no progress keeps
+        // that reason shown while the child goal runs.
+        const waiting = stuck ? null : this.waitingTurns(run, it);
         this.softWait(
           run,
-          stuck ? { kind: "route", detail: goal.detail } : null,
-          stuck ? undefined : `Iteration ${it.number}: ${goal.detail}`,
+          stuck ? { kind: "route", detail: goal.detail } : waiting,
+          stuck || waiting ? undefined : `Iteration ${it.number}: ${goal.detail}`,
         );
         return;
       }

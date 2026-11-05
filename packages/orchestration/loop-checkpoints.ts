@@ -166,6 +166,46 @@ export interface ProviderLimit {
   quotaOwner?: string | null;
 }
 
+/**
+ * Native allowances that block new loop work now. Routes with the same quota
+ * owner share one allowance (an account whose evidence established it), so
+ * one limit holds all of them; a route with no known owner is limited only
+ * through its own connection. Topsl infers no reset time: the wait lasts
+ * until the owner resumes the allowance.
+ */
+export function nativeAllowanceLimits(
+  routes: NativeRouteBinding[],
+  facts: {
+    /** The harness's shared wait for an owner, when one is recorded. */
+    quotaWait(owner: string): { since: string; detail: string } | null;
+    /** The connection's current state, as the proxy reported it. */
+    connectionState(connectionId: string): string | null;
+  },
+): ProviderLimit[] {
+  const limits: ProviderLimit[] = [];
+  const seen = new Set<string>();
+  for (const route of routes) {
+    const owner = route.quotaOwner ?? `connection:${route.connectionId}`;
+    if (seen.has(owner)) continue;
+    seen.add(owner);
+    const wait = facts.quotaWait(owner);
+    const paused =
+      facts.connectionState(route.connectionId) === "paused-usage-limit";
+    if (!wait && !paused) continue;
+    const sharing = routes.filter(
+      (r) => (r.quotaOwner ?? `connection:${r.connectionId}`) === owner,
+    );
+    limits.push({
+      provider: "native",
+      kind: "quota",
+      quotaOwner: owner,
+      detail: `${route.connectionLabel} reported its usage limit${wait ? ` (since ${wait.since})` : ""}. ${sharing.length > 1 ? `${[...new Set(sharing.map((r) => r.routeAlias))].join(", ")} share this allowance and wait together.` : `${route.routeAlias} waits on it.`} Resume the allowance under Native tasks when it is available.`,
+      retryAt: null,
+    });
+  }
+  return limits;
+}
+
 /** The digest of a snapshot's files: path, content hash and executable bit. */
 export function filesDigest(c: Pick<CandidateSnapshot, "files">): string {
   return hash(

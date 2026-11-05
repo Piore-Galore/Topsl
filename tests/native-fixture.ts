@@ -190,6 +190,63 @@ export function redirectFetch(port: number): typeof fetch {
   };
 }
 
+/**
+ * The synthetic upstream behind Topsl's real local proxy (loopback server,
+ * encrypted connection store, route revisions), without a harness: for a
+ * test that attaches the proxy to a whole control service.
+ */
+export async function nativeProxy(script: Script) {
+  const directory = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "topsl-test-proxy-")),
+  );
+  const upstream = await startUpstream(script);
+  const proxy = new ProxyService({
+    file: path.join(directory, "connections.sqlite"),
+    key: randomBytes(32).toString("hex"),
+    fetch: redirectFetch(upstream.port),
+  });
+  const server: ProxyServer = await startProxyServer(proxy);
+  const endpoint = { port: server.port, token: proxy.accessToken };
+  return {
+    upstream,
+    proxy,
+    server,
+    endpoint,
+    /** An API-key connection with a synthetic key. */
+    async apiKey(
+      kind: "openai-api" | "anthropic-api",
+      key = `sk-synthetic-${randomBytes(12).toString("hex")}`,
+      label: string = kind,
+    ) {
+      const connection = proxy.registry.createConnection({ kind, label });
+      await proxy.command({
+        type: "connection-api-key",
+        connectionId: connection.id,
+        key,
+      });
+      return {
+        connection: proxy.registry.requireConnection(connection.id),
+        key,
+      };
+    },
+    route(
+      connectionId: string,
+      alias: string,
+      upstreamModel = "upstream-model-reported",
+    ) {
+      return proxy.registry.saveRoute({ connectionId, alias, upstreamModel });
+    },
+    async close() {
+      await server.close();
+      proxy.close();
+      await upstream.close();
+      await rm(directory, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    },
+  };
+}
+
 export async function nativeFixture(
   script: Script,
   options: { files?: Record<string, string>; git?: boolean } = {},
