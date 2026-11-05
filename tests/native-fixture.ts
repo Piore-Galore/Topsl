@@ -36,8 +36,14 @@ export interface UpstreamCall {
   request: CanonicalRequest;
 }
 export type UpstreamReply =
-  | { events: CanonicalEvent[]; delayMs?: number; hold?: Promise<void> }
-  | { status: number; body: unknown };
+  | {
+      events: CanonicalEvent[];
+      delayMs?: number;
+      hold?: Promise<void>;
+      /** Extra response headers, such as a gateway's route revision echo. */
+      headers?: Record<string, string>;
+    }
+  | { status: number; body: unknown; headers?: Record<string, string> };
 export type Script = (
   call: UpstreamCall,
   index: number,
@@ -107,11 +113,27 @@ export function lastResults(
 
 export async function startUpstream(script: Script) {
   const calls: UpstreamCall[] = [];
+  /** What `GET …/gateway/capabilities` answers; 404 unless a test sets it. */
+  const document: {
+    status: number;
+    body: unknown;
+    requests: http.IncomingHttpHeaders[];
+  } = { status: 404, body: { error: { message: "not found" } }, requests: [] };
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     const text = Buffer.concat(chunks).toString("utf8");
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (req.method === "GET" && url.pathname.endsWith("/gateway/capabilities")) {
+      document.requests.push(req.headers);
+      res.writeHead(document.status, { "content-type": "application/json" });
+      res.end(
+        typeof document.body === "string"
+          ? document.body
+          : JSON.stringify(document.body),
+      );
+      return;
+    }
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -143,6 +165,7 @@ export async function startUpstream(script: Script) {
       res.writeHead(reply.status, {
         "content-type": "application/json",
         "x-request-id": `req_${calls.length}`,
+        ...reply.headers,
       });
       res.end(JSON.stringify(reply.body));
       return;
@@ -152,6 +175,7 @@ export async function startUpstream(script: Script) {
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "x-request-id": `req_${calls.length}`,
+      ...reply.headers,
     });
     const scripted = reply.events;
     async function* events() {
@@ -169,6 +193,7 @@ export async function startUpstream(script: Script) {
   return {
     port,
     calls,
+    document,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();
@@ -300,6 +325,8 @@ export async function nativeFixture(
   });
   const server: ProxyServer = await startProxyServer(proxy);
   const endpoint = { port: server.port, token: proxy.accessToken };
+  /** Route IDs a test has retired, with the reason the harness reports. */
+  const retired = new Map<string, string>();
   const harness = new NativeHarness({
     store,
     profileDirectory: directory,
@@ -309,6 +336,7 @@ export async function nativeFixture(
       const connection = route && proxy.registry.connection(route.connectionId);
       return route && connection ? { route, connection } : null;
     },
+    retired: ({ routeId }) => retired.get(routeId) ?? null,
     gitExecutable,
   });
   return {
@@ -322,6 +350,7 @@ export async function nativeFixture(
     server,
     endpoint,
     harness,
+    retired,
     /** A ChatGPT plan connection with a synthetic, unexpired sign-in. */
     chatgpt(subject = "user-subject-1", clientId = "oaiapp_fixture") {
       const connection = proxy.registry.createConnection({

@@ -86,6 +86,24 @@ export class ProxyModelClient implements ModelClient {
       };
       return;
     }
+    if (native.connectionKind === "claude-plan") {
+      // A binding frozen before the direct Claude connection was retired.
+      yield {
+        type: "error",
+        error: {
+          kind: "route-changed",
+          status: 410,
+          code: "route_retired",
+          param: "model",
+          message:
+            "This task's route used the retired direct Claude subscription connection, so nothing was sent.",
+          retryable: false,
+          requestId: null,
+        },
+      };
+      return;
+    }
+    const profile = native.connectionKind;
     const module = protocolModule(native.protocol);
     let body: Record<string, unknown>;
     try {
@@ -97,7 +115,7 @@ export class ProxyModelClient implements ModelClient {
         },
         {
           model: native.routeAlias,
-          profile: native.connectionKind,
+          profile,
           defaultMaxOutputTokens: DEFAULT_ANTHROPIC_MAX_TOKENS,
         },
       );

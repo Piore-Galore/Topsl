@@ -6,7 +6,11 @@ import type {
   FinishReason,
   ProxyErrorInfo,
 } from "../proxy/canonical";
-import type { ConnectionKind, FundingKind } from "../proxy/types";
+import type {
+  ConnectionKind,
+  FundingKind,
+  RetiredConnectionKind,
+} from "../proxy/types";
 
 /**
  * Native harness records (docs/Native_Harness_Plan.md §2–§3).
@@ -28,7 +32,8 @@ export interface ExecutionBinding {
     routeAlias: string;
     routeRevision: string;
     connectionId: string;
-    connectionKind: ConnectionKind;
+    /** A retired kind only in bindings frozen before it was retired; never dispatched. */
+    connectionKind: ConnectionKind | RetiredConnectionKind;
     connectionLabel: string;
     protocol: ClientProtocol;
     upstreamModel: string;

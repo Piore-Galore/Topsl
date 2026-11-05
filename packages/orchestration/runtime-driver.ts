@@ -35,6 +35,7 @@ import {
 import type { NativeHarness } from "../harness/harness";
 import { terminalStates, type NativeAttemptView } from "../harness/types";
 import type { Connection, ProxyRoute } from "../proxy/types";
+import { memberCapabilityBlockers } from "../proxy/capabilities";
 import { nativeRouteReadiness } from "../providers/readiness";
 import { reviewOutputSchema } from "../workflows/builder-reviewer";
 import { purposeOutputSchema } from "./contracts";
@@ -203,7 +204,7 @@ export function nativeRouteBinding(
 const fundingLabels: Record<Connection["funding"], string> = {
   subscription: "plan allowance",
   "api-billing": "API billing",
-  gateway: "gateway billing",
+  gateway: "managed by external service",
   local: "local",
 };
 
@@ -367,6 +368,11 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
                 connectionState: connection.state,
                 connectionDetail: connection.stateDetail,
                 proxyRunning: running,
+                capabilityBlockers: memberCapabilityBlockers(
+                  route,
+                  connection,
+                  purpose !== "direct-chat",
+                ),
               },
               purpose,
             ),
@@ -1159,10 +1165,21 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       } else if (view.pauseKind === "restart") {
         try {
           await host.harness.resume(attemptId);
-        } catch {
+          return;
+        } catch (error) {
           // Claimed or finished meanwhile.
+          if ((error as { code?: string } | null)?.code !== "route-retired")
+            return;
+          // Its route was retired: the member ends with that reason, and
+          // nothing moves it to another route, account or engine.
+          this.store.put("orchestration-native-ending", {
+            id: attemptId,
+            projectId: copy.projectId,
+            detail: (error as Error).message,
+            at: now(),
+          } satisfies NativeEnding);
+          await host.harness.cancel(attemptId);
         }
-        return;
       } else return;
       view = host.harness.view(attemptId);
     }

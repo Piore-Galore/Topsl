@@ -32,7 +32,9 @@ afterEach(async () => {
 
 async function fakeAuth() {
   const requests: Array<{ path: string; form: URLSearchParams }> = [];
-  let refreshReply: () => { status: number; body: unknown } = () => ({
+  let refreshReply: () =>
+    | { status: number; body: unknown }
+    | Promise<{ status: number; body: unknown }> = () => ({
     status: 200,
     body: {
       access_token: `access-${randomBytes(6).toString("hex")}`,
@@ -64,7 +66,7 @@ async function fakeAuth() {
     }
     if (url.pathname === "/api/accounts/oauth/token") {
       await new Promise((r) => setTimeout(r, 50));
-      const reply = refreshReply();
+      const reply = await refreshReply();
       res.writeHead(reply.status, { "content-type": "application/json" });
       res.end(JSON.stringify(reply.body));
       return;
@@ -281,6 +283,44 @@ describe("plan sign-in maintenance", () => {
       stream: true,
     });
     expect(after.status).toBe(401);
+  });
+
+  test("a refresh still running at disconnect cannot restore the credential or send its request", async () => {
+    const f = await setup(() => ({ events: answer([{ text: "unused" }]) }));
+    const { connection } = f.signIn(60_000);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    f.auth.setRefresh(async () => {
+      await gate;
+      return {
+        status: 200,
+        body: {
+          access_token: "access-late",
+          refresh_token: "refresh-late",
+          token_type: "Bearer",
+          expires_in: 3600,
+          scope: "chatgpt.tokens.use.direct",
+        },
+      };
+    });
+    const pending = f
+      .post("/v1/responses", { model: "chatgpt/x", input: "x", stream: true })
+      .then(async (r) => ({ status: r.status, body: await r.text() }));
+    await expect
+      .poll(() => f.auth.requests.filter((r) => r.path.endsWith("/token")).length)
+      .toBe(1);
+    // Disconnect cancels the request first, then waits for the refresh lock.
+    const disconnecting = f.proxy.disconnect(connection.id);
+    release();
+    await disconnecting;
+    const result = await pending;
+    expect(result.status).not.toBe(200);
+    expect(f.proxy.credentials.get(connection.id)).toBeNull();
+    expect(f.proxy.registry.requireConnection(connection.id)).toMatchObject({
+      hasCredential: false,
+      state: "disconnected",
+    });
+    expect(f.upstream.calls).toHaveLength(0);
   });
 });
 

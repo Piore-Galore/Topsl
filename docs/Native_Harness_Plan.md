@@ -1,6 +1,6 @@
 # Topsl Native Harness and Subscription Proxy
 
-**Status:** Agreed plan with an implemented local proxy and native harness. The owner reaffirmed direct Claude-plan sign-in after the first implementation omitted it; the experimental adapter is now implemented with synthetic evidence (§1.2). *Later on 5 November 2026:* native members in coordinator teams, Topsl sessions and Recursive Looping (Phases 6b and 7, R8) are implemented and verified with synthetic routes and stand-ins ([record](Native_Harness_Execution.md#phases-6b-and-7--native-members-in-teams-sessions-and-loops)); both lines are merged on `main`. Live subscription acceptance, the full evaluation corpus and remaining platform/release qualification are still gates. The [execution record](Native_Harness_Execution.md) separates the original evidence from these follow-ups.  
+**Status:** Agreed plan with an implemented local proxy and native harness. The direct Claude-plan adapter, restored earlier on 5 November 2026 (§1.2), was **retired again later that day and removed from the code** (§1.3); Claude-plan work stays with the unmodified Claude Code executor. The native harness reaches separately operated [external model services](External_Model_Services.md) over standard protocols (§1.3). *Later on 5 November 2026:* native members in coordinator teams, Topsl sessions and Recursive Looping (Phases 6b and 7, R8) are implemented and verified with synthetic routes and stand-ins ([record](Native_Harness_Execution.md#phases-6b-and-7--native-members-in-teams-sessions-and-loops)); both lines are merged on `main`. Live subscription acceptance, the full evaluation corpus and remaining platform/release qualification are still gates. The [execution record](Native_Harness_Execution.md) separates the original evidence from these follow-ups.  
 **Saved:** 5 November 2026 (Asia/Shanghai).  
 **Reviewed repository baseline:** [2efeed27490bc1b74070125f597eceb738a50f39](https://github.com/Piore-Galore/Topsl/tree/2efeed27490bc1b74070125f597eceb738a50f39).  
 **Provenance:** Replaces the implementation direction of the supplied `Topsl_Native_Harness_Plan.md`, incorporating the review and the owner's choices to build a Topsl-owned proxy and a direct Claude model adapter. Provider sources linked below were inspected during the 5 November review. The second review on the same day (§1.1) re-read the OpenAI and Anthropic pages before implementation.  
@@ -8,9 +8,11 @@
 
 ## 1. Summary and fixed decisions
 
-Build **Topsl's own local model proxy** so its native harness can use **ChatGPT-plan and Claude Code-plan allowance**, API connections, gateways and local models. Both subscription routes are core delivery requirements.
+Build **Topsl's own local model proxy** so its native harness can use **ChatGPT-plan allowance**, API connections, external model services and local models. *(Originally: ChatGPT-plan and Claude Code-plan allowance, with both subscription routes as core requirements.)*
 
 *Follow-up, 5 November 2026:* the owner explicitly reaffirmed the direct Claude subscription requirement. The earlier implementation's retirement of it is superseded; the built-in experimental adapter implements it, with live acceptance still pending.
+
+*Later on 5 November 2026:* the owner's implementation brief removed the direct Claude subscription adapter and its sign-in (§1.3). Claude-plan allowance is no longer a native harness route; it remains available only through the unmodified Claude Code executor under the user's own sign-in.
 
 Topsl owns context, tool execution, editing, compaction, recovery, and coordination. The proxy handles model requests, protocol conversion, accounts, authentication, and usage attribution.
 
@@ -18,8 +20,8 @@ Confirmed choices:
 
 - Full harness roadmap, MIT licensing, and macOS first.
 - A Topsl-owned proxy implemented in TypeScript and packaged with the application.
-- Direct model adapters for both subscription routes; the Claude adapter is experimental.
-- Native OpenAI/Anthropic API connections, external gateways, and local models.
+- A direct model adapter for the ChatGPT plan route. *(The experimental direct Claude adapter was retired later on 5 November 2026, §1.3.)*
+- Native OpenAI/Anthropic API connections, external model services, and local models.
 - Existing Codex and Claude Code executors remain selectable execution engines.
 - No automatic fallback from subscription allowance to API billing.
 
@@ -31,7 +33,7 @@ A second review before implementation checked the plan against the provider page
 
 | ID | Finding | Resolution |
 |---|---|---|
-| R1 | The initial implementation excluded direct Claude subscription sign-in based on Anthropic's published conditions. That exclusion did not satisfy the agreed dual-subscription requirement. | **Superseded by the owner's follow-up request.** Implemented as the experimental direct Claude adapter in §1.2. Provider support/distribution status and live acceptance remain separate from implementation; there is no silent API or CLI fallback. |
+| R1 | The initial implementation excluded direct Claude subscription sign-in based on Anthropic's published conditions. That exclusion did not satisfy the agreed dual-subscription requirement. | **Superseded by the owner's follow-up request.** Implemented as the experimental direct Claude adapter in §1.2. Provider support/distribution status and live acceptance remain separate from implementation; there is no silent API or CLI fallback. *Retired again later on 5 November 2026:* removed by the owner's implementation brief; existing profiles are migrated (§1.3). |
 | R2 | The ChatGPT adapter description named "issued client IDs" without the flow. OpenAI documents a specific one. | Implemented as documented: first registration with `client_id=dynamic_agent_client`, `agent_name_hint` and a stable opaque `ext_agent_host_id` (a `urn:uuid:` per profile); PKCE S256; fresh `state` and `nonce`; loopback `http://127.0.0.1:<port>/auth/callback` (1455 first, any free port otherwise); `resource=https://api.openai.com/v1`; scopes `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`; ID-token signature, issuer, audience, expiry and nonce checks; plan use only when `chatgpt.tokens.use.direct` is granted; rotating refresh without `scope`; revocation through the discovery document's `revocation_endpoint`. |
 | R3 | The plan route rejects `max_output_tokens`, `temperature`, `top_p`, `previous_response_id` over HTTP, system-role items and hosted tools, and requires `store:false` and `stream:true`. Models come from `GET /v1/models` as `models[]` with `slug`, `display_name` and `visibility`. [Limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [models](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) | The Responses serializer's `chatgpt-plan` profile enforces these and refuses a request that sets an unsupported field rather than dropping it. Only `visibility: "list"` models are offered. |
 | R4 | Retry ownership was split ambiguously between "the proxy performs no hidden retries" and "authentication renewal may retry once". OpenAI's error guide also asks for bounded backoff on 503 and a pause on the usage-limit 429. [Errors](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery) | The proxy classifies every failure (`authentication`, `permission`, `quota`, `unavailable`, `invalid-request`, `unsupported`, `route-changed`, `not-found`, `interrupted`, `upstream`) with the exact upstream code, parameter and request ID, and retries only an explicit authentication rejection, once, after renewing the same identity. The harness retries `retryable` failures at most twice on the same route, pauses on `quota` without retrying, and fails on everything else. |
@@ -42,6 +44,7 @@ A second review before implementation checked the plan against the provider page
 | R9 | The "no more than twice the scoped-query latency when history grows tenfold" target is sensitive to SQLCipher's page cache at sub-millisecond latencies. | Measured and recorded rather than asserted; the absolute target is asserted. See the [execution record](Native_Harness_Execution.md#phase-8--qualification-checks). |
 | R10 | Responses and Chat Completions have no error flag on a tool result. | Accepted: Topsl's failure output text says the call failed. The Messages route keeps `is_error`. |
 | R11 | OpenAI's open-source route is for open-source or locally hosted apps. Topsl's package said `UNLICENSED`. | MIT `LICENSE` and [third-party notices](../THIRD_PARTY_NOTICES.md) added; `package.json` declares `MIT`. |
+| R12 | *Added later on 5 November 2026.* The subscription-only pilot keeps API keys out of Claude Code's environment and stops a structured turn that reports API-key credentials (`billingConflicts()`, README). Anthropic's conditions for products that run Claude Code say customers may not remove, disable or restrict an authentication method built into it, including the user's own API key ([legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)). | **Open review item, behavior unchanged.** The filter protects a personal profile from unexpected API charges, and whether those product conditions apply to a locally run personal pilot is not established here. Review it before distributing Topsl as a product that runs Claude Code. |
 
 ### 1.2 Follow-up — Claude plan sign-in and proxy completion
 
@@ -50,6 +53,25 @@ The owner requested the missing built-in Claude sign-in and reaffirmed the direc
 Other completed omissions: gateway protocol selection, complete paginated model catalogs, route invalidation on account or adapter changes, durable quota waits, cancelled capacity acquisition, MCP restoration/inheritance with frozen configuration checks, process identity checks before recovery signals, and configured checks bound to the exact candidate being applied. Reconnect verifies the newly authenticated identity; disconnect during sign-in cannot restore credentials afterward. See the [follow-up execution record](Native_Harness_Execution.md#follow-up-claude-plan-sign-in-and-proxy-completion).
 
 Teams, session integration and the associated orchestration refactor are owned by Claude Code in a separate worktree; this follow-up makes no claim that those changes have landed here.
+
+*Superseded in part later on 5 November 2026 (§1.3):* the Claude sign-in, clipboard completion, refresh, subscription headers and `claude-plan` dispatch described above were removed. The other completed omissions remain implemented.
+
+### 1.3 Follow-up — direct Claude plan retired again and external model services
+
+An owner's implementation brief, reviewed against `837a1f7`, asked Topsl to stop implementing its own Claude subscription OAuth and subscription-funded Messages transport, and to let the native harness reach a separately operated external model service. Implemented later on 5 November 2026 with synthetic evidence; see the [execution record](Native_Harness_Execution.md#retirement-of-the-direct-claude-plan-connection-and-external-model-services).
+
+**Retirement.** `packages/proxy/oauth/claude.ts` and every production caller are removed: sign-in, clipboard callback completion, refresh, profile lookup, subscription headers and `claude-plan` dispatch. The kind is no longer in `ConnectionKind`. Creating or authenticating it is refused by the window's command schema, by the proxy's registry (a run-time check, for stale windows and direct commands) and by every connection command, which name the retirement reason. Connections has no Claude banner or control, and Electron main opens sign-in pages only on `https://auth.openai.com`. There is no hidden switch or download path. The official Claude Code executor, its qualification and its own browser sign-in are unchanged.
+
+**Migration (proxy schema 2,** `packages/proxy/retirement.ts`**).** It runs when the proxy opens `connections.sqlite`, before the proxy publishes state or listens:
+
+1. *Fence:* one exclusive transaction creates the history tables, records the marker `fenced` and raises `user_version` to 2, so an older Topsl refuses the file from then on.
+2. *Cleanup:* one exclusive transaction moves each `claude-plan` connection into a history-only descriptor (ID, label, funding, account fingerprint and quota owner; no email) and its routes into history-only routes (ID, alias, model, frozen revision), deletes their credentials and any orphaned `oauth-claude` credential, and marks the marker `complete` with non-secret counts. The cleanup records its attempt first; a failure rolls the cleanup back and the next open retries behind the fence. A completed upgrade changes nothing on later opens.
+
+The proxy process is the database's only writer: Electron's single-instance lock keeps a second Topsl off the profile, and the broker starts a new proxy only after the previous one exited. The upgrade transactions are also exclusive, so a writer still holding the file makes the open fail instead of having credentials deleted beneath it. The migration contacts no provider, exports nothing and makes no credential-bearing backup. Deleting the rows does not revoke the sign-in at Anthropic, and it does not remove copies in earlier backups or filesystem snapshots; `secure_delete` overwrites the freed pages and the write-ahead log is checkpointed, best effort.
+
+**Retired history.** Receipts, journals, candidates and accepted results are kept. A retired alias stays reserved, so it can never name another connection; a request for it is refused with HTTP 410 `route_retired` and its reason. A native task bound to a retired route keeps its frozen binding and history, shows the reason, and refuses **Resume** (`RouteRetiredError`); uncertain effects stay uncertain. A team member paused by a restart on such a route ends as failed with the reason. A binding frozen on `claude-plan` is refused by the model client before anything is serialized. Nothing moves a retired task to API billing, another account, an external service or Claude Code.
+
+**External model services.** The existing `openai-compatible` kind is presented as **External model service**, with selectable protocol, Bearer or `x-api-key` authentication (or none on loopback), funding shown as managed by the service, an optional version 1 capability document, unknown/declared/probed capability evidence bound to the route's configuration, an explicit billable connection test, stricter member readiness, and optional remote route pinning with `X-Gateway-Route-Revision`. The contract is in [External model services](External_Model_Services.md). Moving an integration into a separate service does not establish that it is permitted (see that document).
 
 ## 2. Architecture and connection contracts
 
@@ -63,13 +85,12 @@ flowchart TD
     HARNESS --> PROXY[Topsl local proxy]
     HARNESS --> TOOLS[Topsl tool broker]
     PROXY --> GPT[ChatGPT plan]
-    PROXY --> CLAUDE[Claude subscription]
-    PROXY --> OTHER[API, gateway, or local model]
+    PROXY --> OTHER[API, external model service, or local model]
     TOOLS --> WORK[Owned workspace and candidates]
     HARNESS --> JOURNAL[Encrypted execution journal]
 ```
 
-*Follow-up, 5 November 2026:* the Claude subscription branch is restored. *Later the same day:* the supervisor-to-harness edge for teams and loops is wired (R8). The coordinator engine, the session supervisor and the loop supervisor reach the harness through the orchestration driver (`packages/orchestration/runtime-driver.ts`) when a member is bound to a native route; standalone native tasks start from a project's **Native tasks** view.
+*Follow-up, 5 November 2026:* the Claude subscription branch is restored, and later the same day removed again (§1.3). *Later the same day:* the supervisor-to-harness edge for teams and loops is wired (R8). The coordinator engine, the session supervisor and the loop supervisor reach the harness through the orchestration driver (`packages/orchestration/runtime-driver.ts`) when a member is bound to a native route; standalone native tasks start from a project's **Native tasks** view.
 
 The proxy returns model text and proposed tool calls. It never executes tools or runs a second agent loop.
 
@@ -86,7 +107,7 @@ Provide:
 - `POST /v1/messages`
 - `POST /v1/chat/completions`
 
-Use Responses for native OpenAI connections and Messages for native Claude connections. Chat Completions provides compatibility for gateways and local models. Reject unsupported conversions rather than silently losing tool calls, reasoning controls, images, or continuation state.
+Use Responses for native OpenAI connections and Messages for Anthropic API connections. Chat Completions provides compatibility for external model services and local models; an external service may also use Responses or Messages. Reject unsupported conversions rather than silently losing tool calls, reasoning controls, images, or continuation state.
 
 Bind to `127.0.0.1` on an available port. Require an application-generated local access token, delivered privately to the control service. Account management uses trusted IPC rather than an unauthenticated HTTP administration endpoint. LAN serving and multi-user hosting are outside the initial release.
 
@@ -113,15 +134,17 @@ Keep its serializer specific to that route: locally supplied history, streaming,
 
 *Implemented:* `packages/proxy/oauth/chatgpt.ts`, `packages/proxy/jwt.ts`, and the `chatgpt-plan` profile of `packages/proxy/protocols/responses.ts`; details in R2 and R3. A callback with a wrong state is answered and ignored; `access_denied` is recorded as declined with no code exchange; a missing plan-use scope keeps the sign-in and marks plan usage disabled. A usage-limit error marks the connection and pauses every attempt that shares its allowance; Topsl infers no reset time. The live flow has not been exercised against OpenAI.
 
-**Claude subscription adapter — implemented experimentally, 5 November 2026**
+**Claude subscription adapter — retired, 5 November 2026**
 
-The proxy provides browser sign-in, a state-checked callback or clipboard completion, encrypted credentials, account/organization identity checks, serialized token refresh, Messages streaming, tool calls and subscription error handling without launching Claude Code. Its community protocol reference is [CLIProxyAPI at e6e5708e677adb2463d45accdd24bc9fd028ddd8](https://github.com/router-for-me/CLIProxyAPI/blob/e6e5708e677adb2463d45accdd24bc9fd028ddd8/internal/auth/claude/anthropic_auth.go). See [third-party notices](../THIRD_PARTY_NOTICES.md). The Anthropic API-key adapter remains a separate funding route.
+*Retired later on 5 November 2026 and removed from the code (§1.3).* The paragraph below describes what was implemented experimentally earlier that day, at `4f82336`.
+
+The proxy provided browser sign-in, a state-checked callback or clipboard completion, encrypted credentials, account/organization identity checks, serialized token refresh, Messages streaming, tool calls and subscription error handling without launching Claude Code. Its community protocol reference was [CLIProxyAPI at e6e5708e677adb2463d45accdd24bc9fd028ddd8](https://github.com/router-for-me/CLIProxyAPI/blob/e6e5708e677adb2463d45accdd24bc9fd028ddd8/internal/auth/claude/anthropic_auth.go). See [third-party notices](../THIRD_PARTY_NOTICES.md). The Anthropic API-key adapter remains a separate funding route.
 
 ### Other connections and compatibility
 
 Add separate adapters for OpenAI API, Anthropic API, compatible gateways, and Ollama. Preserve distinct account catalogs and funding labels.
 
-*Implemented:* `openai-api` (Responses, `https://api.openai.com/v1` only), `anthropic-api` (Messages, `https://api.anthropic.com/v1` only, `x-api-key` and `anthropic-version: 2023-06-01`), `openai-compatible` gateways (selectable Chat Completions, Responses or Messages; https, or http on this computer) and `ollama` (Chat Completions on `http://127.0.0.1:11434/v1` by default, loopback only). Funding labels: plan allowance, API billing, gateway billing, local.
+*Implemented:* `openai-api` (Responses, `https://api.openai.com/v1` only), `anthropic-api` (Messages, `https://api.anthropic.com/v1` only, `x-api-key` and `anthropic-version: 2023-06-01`), `openai-compatible` gateways (selectable Chat Completions, Responses or Messages; https, or http on this computer) and `ollama` (Chat Completions on `http://127.0.0.1:11434/v1` by default, loopback only). Funding labels: plan allowance, API billing, gateway billing, local. *Later on 5 November 2026:* gateways are presented as [external model services](External_Model_Services.md), with Bearer, `x-api-key` or no-key authentication, capability evidence and optional remote pinning; their funding reads "managed by external service".
 
 CC Switch and LiteLLM are interoperability references, not runtime dependencies. Qualification must identify the actual upstream credential owner: CC Switch currently excludes official Claude subscriptions from routing, and LiteLLM's documented Claude subscription setup relies on Claude Code providing its token. Neither behavior automatically supplies an independent Topsl Claude connection. [CC Switch routing](https://github.com/farion1231/cc-switch#local-routing--failover), [LiteLLM Claude setup](https://docs.litellm.ai/docs/tutorials/claude_code_max_subscription).
 
@@ -135,7 +158,7 @@ Use per-account refresh locking and atomic rotation. Disconnect blocks new reque
 
 Subscription, linked credits, API billing, and local execution remain distinct. Share quota ownership across routes when account evidence establishes a shared allowance. Unknown quota or usage stays unknown.
 
-*Follow-up:* routes share a verified Claude account/organization quota owner. ChatGPT registrations for the same verified subject conservatively share a quota owner until a distinct workspace meter is established; a new client registration does not imply more allowance. API keys use their fingerprint. Quota waits persist in encrypted history across restarts. Linked credits have no separate connection kind yet.
+*Follow-up:* routes share a verified Claude account/organization quota owner (retired with the Claude connection, §1.3). ChatGPT registrations for the same verified subject conservatively share a quota owner until a distinct workspace meter is established; a new client registration does not imply more allowance. API keys use their fingerprint. Quota waits persist in encrypted history across restarts. Linked credits have no separate connection kind yet.
 
 The proxy performs no hidden model retries or account rotation. The harness owns retry policy and records every request. Authentication renewal may retry an explicitly rejected authentication attempt once, with the same identity. (See R4.)
 
@@ -240,17 +263,17 @@ Goal and Endless continuation remains with the existing loop supervisor. Stop ca
 
 | Phase | Delivery and exit criterion | Status, 5 November 2026 |
 |---|---|---|
-| **0 — Baseline and adapter evidence** | Record repository/protocol baselines, MIT licensing, upstream notices, and qualification fixtures. Pin the community Claude source revision and document its support status. | **Done**, with the Claude community source pinned in the follow-up (§1.2). Baseline 2efeed2, provider pages re-read, MIT license and notices, synthetic protocol fixtures. |
-| **1 — Topsl proxy and subscription prototypes** | Package the proxy process, authenticated loopback interface, encrypted credential store, and both subscription adapters. Demonstrate streaming and a tool-call/result round trip for each route using a minimal client. | **Both adapters implemented with synthetic evidence.** Built-in Claude sign-in controls were exercised in Electron with browser opening intercepted. Live sign-in/inference for either provider remains unverified. |
+| **0 — Baseline and adapter evidence** | Record repository/protocol baselines, MIT licensing, upstream notices, and qualification fixtures. Pin the community Claude source revision and document its support status. | **Done**, with the Claude community source pinned in the follow-up (§1.2) and no longer used after §1.3. Baseline 2efeed2, provider pages re-read, MIT license and notices, synthetic protocol fixtures. |
+| **1 — Topsl proxy and subscription prototypes** | Package the proxy process, authenticated loopback interface, encrypted credential store, and both subscription adapters. Demonstrate streaming and a tool-call/result round trip for each route using a minimal client. | **ChatGPT adapter implemented with synthetic evidence.** The Claude adapter was implemented and then retired (§1.3). Live ChatGPT sign-in and inference remain unverified. |
 | **2 — Compatibility and persistence** | Introduce bindings, common preparation, journal indexes, artifact ownership, and resource reservations. Existing vendor workflows and historical profiles remain readable. | **Mostly done.** Bindings for native attempts, schema 7, blob ownership, resource reservations, migration tests from schemas 2–6; *later on 5 November 2026* threaded through assignments, team pins, rounds, sessions and loops. Vendor runs keep their own records; the provider usage views do not yet show native usage. |
-| **3 — Native kernel and connections UI** | Deliver read-only tools, context budgeting, compaction, steering, replay, and account/model/funding selection. Complete a repository investigation through each subscription route. | **Done with synthetic evidence**: Connections page and Native tasks view; read/tool work through synthetic ChatGPT-plan, Claude-plan, Anthropic API and gateway routes. |
-| **4 — Editing and execution** | Qualify macOS containment, process recovery, patches, candidates, checks, and review/application controls. Complete native coding tasks through both plans. | **Implemented locally on one Mac with synthetic models**: real Seatbelt containment, editing and candidate application, with configured checks now required on the exact candidate. Automated review binding and live dual-plan acceptance remain. |
-| **5 — APIs and interoperability** | Qualify native API connections, external gateways, all three client protocols, and Ollama. Preserve funding identity through every conversion. | **Done with synthetic upstreams.** No live API, gateway or Ollama qualification. |
+| **3 — Native kernel and connections UI** | Deliver read-only tools, context budgeting, compaction, steering, replay, and account/model/funding selection. Complete a repository investigation through each subscription route. | **Done with synthetic evidence**: Connections page and Native tasks view; read/tool work through synthetic ChatGPT-plan, Claude-plan (since retired), Anthropic API and external-service routes. |
+| **4 — Editing and execution** | Qualify macOS containment, process recovery, patches, candidates, checks, and review/application controls. Complete native coding tasks through both plans. | **Implemented locally on one Mac with synthetic models**: real Seatbelt containment, editing and candidate application, with configured checks now required on the exact candidate. Automated review binding and live ChatGPT-plan acceptance remain. |
+| **5 — APIs and interoperability** | Qualify native API connections, external gateways, all three client protocols, and Ollama. Preserve funding identity through every conversion. | **Done with synthetic upstreams.** *Later on 5 November 2026:* external model services with three authentication modes, capability documents, connection tests and remote pinning (§1.3). No live API, external service or Ollama qualification. |
 | **6 — Extensions and mixed teams** | Deliver skills, MCP, hooks, memory, delegation, and mixed native/vendor teams. Verify pins, capacity waits, isolated writers, and integration ownership. | **Done with synthetic evidence** (6b later on 5 November 2026): pins to native routes, capacity, members' own copies, the driver's capture and integration. Member turns do not yet get delegation, MCP or hooks. |
 | **7 — Goals and Endless** | Integrate bounded episodes, shared account budgets, quota waits, no-progress handling, and descendant cancellation. | **Done with synthetic evidence** (later on 5 November 2026): bounded member episodes, waits by quota owner before and during iterations, no-progress waits, native usage in loop accounting, Stop cancelling native members. Quota waits were kept in memory in this work; after the merge with §1.2 the harness ledger stores them in encrypted history, untested across a restart during a member's wait. |
 | **8 — macOS qualification** | Complete evaluations, UI journeys, load tests, packages, recovery documentation, and route-specific evidence. | **Started**: a native Electron journey (all eight default journeys pass), the journal latency benchmark, and the macOS package checks in the execution record. Evaluations with live models, load tests at 120 sessions and 60 goals, and route-specific live evidence remain. |
 
-**The dual-subscription objective requires both plan routes to complete native harness tasks.** Synthetic tests cover both adapters; live account acceptance remains open. API execution or a vendor-agent run does not count as a substitute.
+**The dual-subscription objective requires both plan routes to complete native harness tasks.** Synthetic tests cover both adapters; live account acceptance remains open. API execution or a vendor-agent run does not count as a substitute. *Revised later on 5 November 2026:* the Claude route was retired (§1.3), so this objective now covers the ChatGPT plan route only; it is not met for Claude, and an external service does not count as a substitute.
 
 Windows and Linux native execution remain gated for later platform qualification. Containment reports unavailable there, so native commands, hooks and MCP servers do not run; read-only and edit tools still do.
 
@@ -258,7 +281,8 @@ Windows and Linux native execution remain gated for later platform qualification
 
 Required tests include:
 
-- Both subscription routes complete read → tool call → result → edit → check → candidate, without launching Codex or Claude Code for inference. Keep synthetic and live evidence separate.
+- Both subscription routes complete read → tool call → result → edit → check → candidate, without launching Codex or Claude Code for inference. Keep synthetic and live evidence separate. *(Revised later on 5 November 2026: the ChatGPT plan route; the Claude route was retired, §1.3.)*
+- *Added later on 5 November 2026:* legacy profiles upgrade safely and retired routes never dispatch; external model services complete each protocol, keep declared, probed and unknown evidence apart, and honor remote pinning (§1.3).
 - Requests preserve connection, account, model, route revision, and funding through streaming, retries, compaction, and delegation.
 - Expiry, concurrent refresh, revoked credentials, declined sign-in, unavailable models, and mid-stream quota failures produce accurate states.
 - Protocol conversion preserves tool IDs/results and rejects unsupported features.
@@ -277,4 +301,4 @@ Run focused tests per phase, `npm run check` at integration boundaries, affected
 
 The [execution record](Native_Harness_Execution.md#acceptance-coverage) maps each bullet above to the tests that cover it, all synthetic or local, and lists what none of them covers.
 
-This file is the canonical plan. Update the existing [design](Topsl_Design.md) and [implementation-status](Implementation_Status.md) documents during implementation, and revise [README](../README.md) and release claims only when supported by evidence. Preserve source provenance, label the Claude adapter as experimental and distinguish implementation from live qualification, verify documentation links, and run `git diff --check`.
+This file is the canonical plan. Update the existing [design](Topsl_Design.md) and [implementation-status](Implementation_Status.md) documents during implementation, and revise [README](../README.md) and release claims only when supported by evidence. Preserve source provenance, describe the direct Claude adapter as retired and distinguish implementation from live qualification, verify documentation links, and run `git diff --check`.

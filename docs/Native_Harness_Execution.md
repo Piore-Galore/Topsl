@@ -118,6 +118,8 @@ Not done: the packaged app's own Electron journey (a packaged app ignores the te
 
 ## Follow-up: Claude plan sign-in and proxy completion
 
+*Later on 5 November 2026:* the Claude sign-in and transport this record describes were removed; see [Retirement of the direct Claude plan connection](#retirement-of-the-direct-claude-plan-connection-and-external-model-services). The record below keeps its original scope.
+
 **Recorded:** 5 November 2026 (Asia/Shanghai), on the same macOS arm64 host and base revision `2efeed27490bc1b74070125f597eceb738a50f39`, with the original implementation and this follow-up uncommitted. Tooling: Node 26.0.0; macOS 27.0.1 (26A434). The owner explicitly requested the missing built-in Claude subscription sign-in and other omissions. The earlier R1 retirement was not the owner's decision and is superseded. Teams and session integration is being implemented by Claude Code in a separate worktree; no changes from that worktree were merged or evaluated here.
 
 ### Implemented behavior
@@ -236,3 +238,76 @@ A scratch probe (not kept in the repository) passed each member schema through `
 | `env -u ANTHROPIC_BASE_URL -u OPENAI_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u OPENAI_API_KEY npm run test:desktop`, started 10:00:50 on that build | **All eight journeys passed**: the main desktop harness with encrypted restart, coordinator, Atlas, loop, session, Claude usage, Providers, and the native harness journey (Claude browser sign-in with a declined callback and cancellation, gateway, clipboard key, edit → candidate → apply) | The actual Electron window against stand-ins and synthetic upstreams. No journey pins a native member, and no live provider or account was contacted. |
 
 Not established by the merge: everything listed as not established in the two records it joins, including live sign-in and inference on either plan, an Electron journey that pins a native member, CI, other platforms and the packaged app.
+
+## Retirement of the direct Claude plan connection and external model services
+
+**Recorded:** 5 November 2026 (Asia/Shanghai), on the same macOS arm64 host, starting from `837a1f7fda7c20f97c311a7ed37315c96135cf1d` (clean working tree, equal to `origin/main`). Brief: the owner's `Topsl_Claude_Code_Implementation_Instructions.md`, reviewed against the same commit. Plan: [§1.3](Native_Harness_Plan.md#13-follow-up--direct-claude-plan-retired-again-and-external-model-services); contract: [External model services](External_Model_Services.md).
+**Evidence scope:** synthetic local services, synthetic tokens and an isolated test profile. No provider, account or model was contacted.
+
+### Inventory before the change
+
+`rg` for `claude-plan`, `oauth-claude`, `ClaudeCredential`, `claudeSubscriptionStatus`, `beginClaudeSignIn`, `refreshClaude`, `CLAUDE_OAUTH_BETA`, `claudeAccount` and "Continue with Claude" found 18 files. Classified:
+
+| Class | Files | Treatment |
+|---|---|---|
+| Active implementation | `packages/proxy/oauth/claude.ts`; the Claude branches of `packages/proxy/{service,adapters,credentials,registry,types}.ts`; `packages/domain/native-commands.ts` (kind and `connection-sign-in-complete`); `apps/desktop/proxy-host.ts` (Claude confirmation, clipboard completion, `https://claude.ai` origin); `apps/desktop/renderer/screens/connections.tsx` (banner and controls); `packages/harness/harness.ts` (context-window default) | Removed. |
+| Historical data | `connections` rows of kind `claude-plan`, their routes, `oauth-claude` credentials, receipts; native bindings with `connectionKind: "claude-plan"` | Migrated or kept readable (below). Receipts and bindings are not rewritten. |
+| Tests and fixtures | `tests/proxy-claude-auth.test.ts`; one `claude-plan` connection in `tests/proxy-followup.test.ts`; the Claude steps of `scripts/desktop-native-test.mjs` | The Claude-auth suite is deleted: its generic checks (receipts, cancellation, disconnect races, the native read → edit → check → candidate → apply path) are covered by the proxy service, ChatGPT and native harness suites and by the new tests below. The pagination test uses an Anthropic API connection. The desktop journey now starts from a seeded legacy profile. |
+| Current documentation | README, this record's newest sections, the plan, the design and the implementation status | Updated to describe the retirement. |
+| Dated evidence | §1.2 of the plan and [the follow-up record above](#follow-up-claude-plan-sign-in-and-proxy-completion) | Kept as written, with a dated pointer here. |
+
+The history database's `packages/persistence/migrations/native-retirement.ts` is an unrelated, earlier migration and was not touched; this upgrade lives in the proxy's own database.
+
+### What changed
+
+| Area | Files |
+|---|---|
+| Supported and retired kinds; service authentication; capability evidence, manifest and pin types | `packages/proxy/types.ts` |
+| Proxy schema 2: fence and cleanup, exclusive transactions | `packages/proxy/retirement.ts`, `packages/proxy/database.ts` |
+| Credential format without the Claude record | `packages/proxy/credentials.ts` |
+| Supported-only decoding, retired lookups, run-time refusal, reserved aliases, no-key loopback rule, declared evidence and pins on routes | `packages/proxy/registry.ts` |
+| Bearer or `x-api-key` service keys, pin header, 409 and echo checks before any body, capability document reader | `packages/proxy/adapters.ts` |
+| Document parsing, evidence configuration and merging, the connection test, member capability requirements | `packages/proxy/capabilities.ts` (new) |
+| Retired routes refused with 410; `connection-capabilities` and `connection-test`; retired records and per-route evidence in the proxy view | `packages/proxy/service.ts` |
+| Command schema; broker confirmation for the test; ChatGPT-only sign-in origin | `packages/domain/native-commands.ts`, `apps/desktop/proxy-host.ts` |
+| Retired bindings: resume refused, members ended with the reason, model client refuses `claude-plan` | `packages/harness/{harness,model-client,types}.ts`, `apps/service/native.ts`, `packages/orchestration/runtime-driver.ts` |
+| Member readiness on external services | `packages/providers/readiness.ts`, `packages/orchestration/runtime-driver.ts` |
+| Connections (external service form and card, capability evidence, retired section) and Native tasks (retired banner, no Resume) | `apps/desktop/renderer/screens/{connections,native-tasks}.tsx` |
+
+### Decisions
+
+- **Retired records live in their own tables** (`retired_connections`, `retired_routes`), not in `connections`, so no code path that expects a usable connection can decode one; `ProxyRegistry.connections()` also skips any row whose kind is not supported.
+- **The fence and the cleanup are separate transactions**, as the brief asked, although one transaction would also be atomic: the fence guarantees an older Topsl refuses the file before any credential is touched, and the recorded attempt count shows a retry.
+- **No in-process retirement path exists.** The upgrade runs before the proxy serves, in a process that never had a Claude sign-in or refresh open, so there are no callbacks to invalidate. The race the brief names for in-process removal is covered for ChatGPT disconnect (a refresh in flight cannot restore the credential).
+- **External-service connection settings are fixed at creation**, so route revisions need no endpoint or authentication fingerprint; a remote pin is appended to the revision only when present, so routes without one keep the revisions their bindings froze.
+- **Members on external services need probed evidence; native tasks do not.** Only an external service's upstream is invisible to Topsl; official API routes keep the existing rule (refused only on evidence of no schema support).
+- **A missing or wrong revision echo is a 502 failure that is not retried.** Found by the new tests: the first version kept the service's HTTP 200, which the harness read as a broken stream and retried.
+
+### Published history
+
+The direct Claude adapter is present in commits `4f82336` and `837a1f7` on GitHub's `main` (public). No published release contains it: the newest, v0.1.3 (26 October 2026), predates the native harness. The local `release/Topsl-0.1.3-mac-arm64.zip` (SHA-256 `8438acc7…`, built at 03:17 that day) was checked and contains neither the adapter's client ID nor the `claude-plan` kind. Removing the files changes new revisions only; earlier commits were not rewritten.
+
+### Validation
+
+Commands ran from the repository root on the uncommitted change over `837a1f7`. Each `env -u …` line removed `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and (for the last two rows) `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and `CLAUDE_CODE_USE_FOUNDRY` from the environment, so the agent session's own settings could not stand in for the synthetic profile.
+
+| Command | Result | What it covers |
+|---|---|---|
+| `node scripts/test.mjs tests/proxy-retirement.test.ts` | **7 passed** | A mixed schema 1 profile (Claude connection, route, credential and receipt; an orphaned Claude credential; ChatGPT and OpenAI API connections) upgrades with a fetch that fails if called: Claude credentials gone, every other credential, connection, route and receipt byte-for-byte unchanged, descriptors with ID, alias, funding and account fingerprint and no email, counts recorded, reopening idempotent. A cleanup fault rolls back behind the fence (schema 2, marker `fenced`) and the next open completes (`attempts: 2`). A second handle holding a write lock makes the upgrade fail with nothing changed; schema 3 is refused. A retired alias gets 410 `route_retired` with no upstream call and stays reserved. Create, sign-in, disconnect, remove, models and key commands all refuse the retired kind; the window schema cannot name it; a stray row is never decoded. A waiting task on a retired route refuses resume with `RouteRetiredError`, keeping its binding and journal. A `claude-plan` binding sends nothing. |
+| `node scripts/test.mjs tests/external-service.test.ts` | **13 passed** (after the echo fix above; the first run failed 2) | Chat Completions, Responses and Messages each complete a streamed tool-call/result round trip with Bearer, `x-api-key` and no-key authentication, the key only in the chosen header and never in the proxy view. No-key mode only on loopback. Capability document 404, 501, not JSON and version 2 leave inference working; 401 is a rejection and changes nothing. Declarations stay declared; **Test route** records probed evidence and receipts; a later declaration does not overwrite a probe; a new pin makes the probe stale and changes the route revision. A failed structured test gives members a clear reason. A non-`model-api` route is neither declared nor pinned. Pinned requests carry the header; a missing or different echo delivers no tool call and is not replayed; a 409 is surfaced without a document read or replay; a document outage keeps the pin; a new remote revision stops a bound task's next request in Topsl's proxy. |
+| `node scripts/test.mjs tests/proxy-service.test.ts` | **9 passed**, including the new case | A refresh still running at disconnect cannot restore the credential, and its request never reaches the upstream. |
+| `node scripts/test.mjs tests/proxy-followup.test.ts tests/proxy-service.test.ts tests/proxy-protocols.test.ts tests/proxy-chatgpt-auth.test.ts` | **103 passed** (before the new proxy-service case) | Existing proxy behavior, with the pagination test moved to an Anthropic API connection. |
+| `env -u … node scripts/test.mjs tests/native-harness.test.ts tests/native-members.test.ts tests/native-loops.test.ts tests/native-mcp-recovery.test.ts tests/claude-route.test.ts tests/harness-sandbox.test.ts` | **94 passed** | Native tasks, members in teams, sessions and loops (vendor and native branches of the driver), MCP recovery, real macOS containment, and the official Claude Code executor route. |
+| `npm run build`, then `env -u … node scripts/desktop-native-test.mjs` | **Passed** | Actual Electron window and proxy process, from a profile seeded at schema 1 by `scripts/desktop-legacy-proxy-seed.cjs`: no Claude control or banner; **Retired connections** shows the Claude record, its reason, its route and its receipt, with no sign-in button; no browser page opened. An external model service with Chat Completions and a Bearer key, **Read service capabilities** against a service without a document ("Not published"), unknown capabilities shown, a native edit task applied, and neither the key nor the retired credential or email in window state. The screenshot `test-results/native-connections.png` was inspected (disposable, not committed). It led to one layout change: capability evidence moved to a row under each route so the controls fit the card. |
+| `env -u … npm run check`, started 12:51:48 | **Passed**: typecheck; 1,413 tests passed and 6 skipped across 102 files (99 passed, 3 skipped); all 18 release checks; production build | The environment-dependent failures recorded [above](#full-suite) did not reproduce, as in the previous two runs. The build still warns about a renderer chunk over 500 kB. |
+| `env -u … npm run test:desktop`, started 12:57:02 on that build | **All eight journeys passed**: the main desktop harness with encrypted restart, coordinator, Atlas, loop, session, Claude usage, Providers (both runtimes qualified against stand-ins, Claude Code effort passed as `--effort`), and the native harness journey above | Actual Electron window against stand-ins and synthetic services. |
+| `rg` over `apps`, `packages`, `scripts`, `tests` and the rebuilt `dist/` | No adapter client ID, Claude sign-in endpoint, plan-only beta header or Claude Code session scope | `claude-plan` remains in `dist/` only in the retirement migration and the guards that refuse it. |
+| Link check over README, notices and `docs/*.md`; `git diff --check`; whitespace in new files | **1,230 links and anchors resolve; clean** | Documentation hygiene. |
+
+### Remaining limits
+
+- Live qualification of any external service, and live ChatGPT-plan sign-in and inference.
+- The upgrade was exercised on synthetic schema 1 profiles and one seeded desktop profile, not on a profile from a real Claude sign-in.
+- Deleting the credential does not revoke it at Anthropic or remove it from earlier backups and filesystem snapshots.
+- No test restarts Topsl while a member waits on its allowance; no Electron journey pins a native member or runs **Test route**.
+- Review item R12 (billing-override filtering for Claude Code) is open; behavior is unchanged.

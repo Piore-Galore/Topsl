@@ -40,24 +40,12 @@ export interface ApiKeyCredential {
   savedAt: string;
 }
 
-/** Experimental Claude subscription OAuth; never a Console API key. */
-export interface ClaudeCredential {
-  kind: "oauth-claude";
-  clientId: string;
-  accountId: string;
-  organizationId: string;
-  email: string | null;
-  accessToken: string;
-  refreshToken: string | null;
-  tokenType: string;
-  expiresAt: string;
-  scopes: string[];
-  scopeEvidence: "reported" | "requested";
-  savedAt: string;
-}
-
-export type StoredCredential =
-  ChatGptCredential | ClaudeCredential | ApiKeyCredential;
+/**
+ * Credentials the proxy can use. The retired direct Claude sign-in's
+ * `oauth-claude` records are deleted by the schema 2 retirement
+ * (packages/proxy/retirement.ts) and are not readable here.
+ */
+export type StoredCredential = ChatGptCredential | ApiKeyCredential;
 
 /** A write lost a race: the stored revision is not the one the writer read. */
 export class CredentialConflict extends Error {
@@ -106,24 +94,6 @@ function parseCredential(body: string): StoredCredential {
       isString(record.savedAt)
     )
       return record as unknown as ApiKeyCredential;
-  } else if (record.kind === "oauth-claude") {
-    if (
-      [
-        "clientId",
-        "accountId",
-        "organizationId",
-        "accessToken",
-        "tokenType",
-        "expiresAt",
-        "savedAt",
-      ].every((name) => isString(record[name])) &&
-      isNullableString(record.email) &&
-      isNullableString(record.refreshToken) &&
-      Array.isArray(record.scopes) &&
-      record.scopes.every(isString) &&
-      ["reported", "requested"].includes(String(record.scopeEvidence))
-    )
-      return record as unknown as ClaudeCredential;
   } else if (record.kind === "oauth-chatgpt") {
     const strings = [
       "clientId",

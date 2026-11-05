@@ -10,8 +10,14 @@ import { parseSse } from "./sse";
 import * as responses from "./protocols/responses";
 import * as messages from "./protocols/messages";
 import * as chat from "./protocols/chat";
-import type { Connection, ConnectionKind, ProxyRoute } from "./types";
-import { CLAUDE_OAUTH_BETA } from "./oauth/claude";
+import {
+  gatewayRouteRevisionHeader,
+  type Connection,
+  type ConnectionKind,
+  type ProxyRoute,
+  type ServiceManifestStatus,
+} from "./types";
+import { MAX_DOCUMENT_BYTES, parseServiceDocument } from "./capabilities";
 
 /**
  * Upstream adapters (docs/Native_Harness_Plan.md §2). An adapter turns a
@@ -47,6 +53,8 @@ export type UpstreamResponse =
       ok: true;
       events: AsyncGenerator<CanonicalEvent>;
       requestId: string | null;
+      /** False when the upstream answered a streaming request with one JSON body. */
+      streamed: boolean;
     }
   | { ok: false; error: ProxyErrorInfo };
 
@@ -55,31 +63,32 @@ export const DEFAULT_ANTHROPIC_MAX_TOKENS = 16_384;
 
 const paths: Record<ConnectionKind, string> = {
   "chatgpt-plan": "/responses",
-  "claude-plan": "/messages",
   "openai-api": "/responses",
   "anthropic-api": "/messages",
   "openai-compatible": "/chat/completions",
   ollama: "/chat/completions",
 };
 
-/** The headers a credential becomes for each kind of upstream. */
+/**
+ * The headers a credential becomes for each kind of upstream. An external
+ * model service gets its key as a Bearer token (the default) or in
+ * `x-api-key`, as the owner chose when adding it, and no key in `none` mode.
+ */
 export function authorizationHeaders(
-  kind: ConnectionKind,
+  connection: Pick<Connection, "kind" | "serviceAuth">,
   secret: string | null,
 ): Record<string, string> {
-  if (kind === "claude-plan")
-    return {
-      authorization: `Bearer ${secret ?? ""}`,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": CLAUDE_OAUTH_BETA,
-      "user-agent": "Topsl/0.1.3",
-    };
-  if (kind === "anthropic-api")
+  if (connection.kind === "anthropic-api")
     return {
       "x-api-key": secret ?? "",
       "anthropic-version": "2023-06-01",
     };
-  if (kind === "ollama" || !secret) return {};
+  if (connection.kind === "ollama" || !secret) return {};
+  if (connection.kind === "openai-compatible") {
+    const method = connection.serviceAuth ?? "bearer";
+    if (method === "none") return {};
+    if (method === "x-api-key") return { "x-api-key": secret };
+  }
   return { authorization: `Bearer ${secret}` };
 }
 
@@ -141,6 +150,9 @@ export async function dispatchUpstream(
           ...(route.protocol === "messages"
             ? { "anthropic-version": "2023-06-01" }
             : {}),
+          ...(route.remotePin
+            ? { [gatewayRouteRevisionHeader]: route.remotePin.routeRevision }
+            : {}),
           ...call.headers,
         },
         body: JSON.stringify(body),
@@ -175,6 +187,20 @@ export async function dispatchUpstream(
   const requestId = requestIdOf(response.headers);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
+    if (route.remotePin && response.status === 409)
+      // Surfaced as it is: Topsl neither fetches a new revision nor replays.
+      return {
+        ok: false,
+        error: failure(
+          "route-changed",
+          409,
+          "gateway_route_revision_mismatch",
+          "model",
+          `The external service refused pinned route revision ${route.remotePin.routeRevision}: its route changed after this route was saved. Read its capabilities again and start a new task.`,
+          false,
+          requestId,
+        ),
+      };
     return {
       ok: false,
       error: classifyHttpError(
@@ -184,6 +210,29 @@ export async function dispatchUpstream(
         requestId,
       ),
     };
+  }
+  if (route.remotePin) {
+    // Checked before any body is read, so a wrong answer delivers nothing,
+    // tool calls included.
+    const echoed = response.headers.get(gatewayRouteRevisionHeader);
+    if (echoed !== route.remotePin.routeRevision) {
+      await response.body?.cancel().catch(() => undefined);
+      return {
+        ok: false,
+        // 502, not the upstream's 200: the local client must see a failure.
+        error: failure(
+          "upstream",
+          502,
+          "gateway_route_revision_unconfirmed",
+          null,
+          echoed
+            ? `The external service answered on route revision ${echoed.slice(0, 200)}, not the pinned ${route.remotePin.routeRevision}. Topsl discarded the answer. The service may already have run the request, so it is not repeated.`
+            : `The external service did not confirm pinned route revision ${route.remotePin.routeRevision}. Topsl discarded the answer. The service may already have run the request, so it is not repeated.`,
+          false,
+          requestId,
+        ),
+      };
+    }
   }
   const type = response.headers.get("content-type") ?? "";
   if (!response.body)
@@ -203,6 +252,7 @@ export async function dispatchUpstream(
     return {
       ok: true,
       requestId,
+      streamed: true,
       events: withRequestId(
         module.readStream(parseSse(bodyChunks(response.body))),
         requestId,
@@ -214,6 +264,7 @@ export async function dispatchUpstream(
   return {
     ok: true,
     requestId,
+    streamed: false,
     events: withRequestId(
       (async function* () {
         yield* events;
@@ -311,6 +362,78 @@ export async function listUpstreamModels(input: {
     cursors.add(body.last_id);
   }
   throw new Error("The model catalog exceeded the pagination limit.");
+}
+
+/**
+ * Reads an external model service's optional capability document,
+ * `GET <inference base>/gateway/capabilities`. A 404 or 501, a malformed or
+ * future-version document, or an unreachable service leaves capabilities
+ * unknown. A 401 or 403 is an authentication or permission rejection and is
+ * thrown as one; Topsl never substitutes another credential.
+ */
+export async function readServiceDocument(input: {
+  connection: Connection;
+  headers: Record<string, string>;
+  fetch: typeof fetch;
+}): Promise<ServiceManifestStatus> {
+  const checkedAt = new Date().toISOString();
+  const unavailable = (detail: string): ServiceManifestStatus => ({
+    state: "unavailable",
+    checkedAt,
+    detail,
+    gatewayId: null,
+    revision: null,
+    routes: [],
+  });
+  let response: Response;
+  try {
+    response = await input.fetch(
+      `${input.connection.endpoint}/gateway/capabilities`,
+      {
+        headers: { accept: "application/json", ...input.headers },
+        signal: AbortSignal.timeout(15_000),
+        redirect: "error",
+      },
+    );
+  } catch (error) {
+    return unavailable(`The service could not be reached: ${message(error)}`);
+  }
+  if (response.status === 401 || response.status === 403)
+    throw new UpstreamError(
+      classifyHttpError(
+        input.connection.kind,
+        response.status,
+        await response.text().catch(() => ""),
+        requestIdOf(response.headers),
+      ),
+    );
+  if (response.status === 404 || response.status === 501) {
+    await response.body?.cancel().catch(() => undefined);
+    return {
+      ...unavailable("The service publishes no capability document."),
+      state: "absent",
+    };
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    return unavailable(`The capability document returned HTTP ${response.status}.`);
+  }
+  const length = Number(response.headers.get("content-length") ?? 0);
+  if (length > MAX_DOCUMENT_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    return {
+      ...unavailable("The capability document is larger than 1 MB."),
+      state: "unrecognized",
+    };
+  }
+  const text = await response.text().catch(() => null);
+  if (text === null) return unavailable("The capability document could not be read.");
+  if (Buffer.byteLength(text) > MAX_DOCUMENT_BYTES)
+    return {
+      ...unavailable("The capability document is larger than 1 MB."),
+      state: "unrecognized",
+    };
+  return parseServiceDocument(text, checkedAt);
 }
 
 export class UpstreamError extends Error {
