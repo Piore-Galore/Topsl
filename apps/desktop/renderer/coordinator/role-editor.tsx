@@ -504,10 +504,13 @@ export function RoleEditor({
               ? `Choose one of ${filtered.length} ${filtered.length === 1 ? "model" : "models"}`
               : "No observed model matches"}
           </option>
-          {(["claude", "codex"] as const).map((provider) => {
+          {(["claude", "codex", "native"] as const).map((provider) => {
             const group = filtered.filter((o) => o.provider === provider);
             return group.length ? (
-              <optgroup key={provider} label={label(provider)}>
+              <optgroup
+                key={provider}
+                label={provider === "native" ? "Topsl native" : label(provider)}
+              >
                 {group.map((o) => (
                   <option key={o.key} value={o.key}>
                     {o.name} ({o.model})

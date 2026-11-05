@@ -2232,16 +2232,23 @@ export class LoopSupervisor {
 
   /** What would make reassessment worthwhile sooner than the backoff. */
   private async inputsFingerprint(run: LoopRun): Promise<string> {
-    const routes = this.driver
-      .routes(run.projectId)
-      .map((r) => [
-        r.provider,
-        r.installationId,
-        r.installationRevision,
-        r.catalog.fresh,
-        r.catalog.models.map((m) => m.model),
-        Object.entries(r.purposes).map(([p, v]) => [p, v?.ready]),
-      ]);
+    const candidates = this.driver.routes(run.projectId);
+    const routes = candidates.map((r) => [
+      r.provider,
+      r.installationId,
+      r.installationRevision,
+      r.native?.routeRevision ?? null,
+      r.catalog.fresh,
+      r.catalog.models.map((m) => m.model),
+      Object.entries(r.purposes).map(([p, v]) => [p, v?.ready]),
+    ]);
+    // A native allowance the owner resumes wakes a waiting run early.
+    const native = candidates.flatMap((r) => (r.native ? [r.native] : []));
+    const allowances = native.length
+      ? (this.loop.providerLimits?.([], native) ?? []).map(
+          (l) => l.quotaOwner ?? l.detail,
+        )
+      : [];
     return hash(
       stable({
         checkpoint: run.acceptedCheckpointId,
@@ -2249,6 +2256,7 @@ export class LoopSupervisor {
         policy: run.policyRevision,
         overrides: run.overrideRevision,
         routes,
+        ...(allowances.length ? { allowances } : {}),
         project: (await this.loop.projectFingerprint?.(run.projectId)) ?? null,
       }),
     ).slice(0, 24);

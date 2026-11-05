@@ -786,3 +786,51 @@ test("a member that needs a schema is refused on a route recorded as unable to e
   expect(f.upstream.calls).toHaveLength(1);
   expect(f.upstream.calls[0].body).not.toHaveProperty("text");
 });
+
+test("a Topsl session takes a native coordinator beside a Codex one: both answer session-v1 intake in their schema", async () => {
+  const f = await setup();
+  const created = await f.service.command({
+    type: "session-create",
+    projectId: "p",
+    configuration: {
+      coordinators: [
+        nativeMember("native-coordinator", f.route.id),
+        vendor("astra", "fixture-astra"),
+      ],
+    },
+    text: "What does file.ts hold?",
+    mode: "discuss",
+    kind: "code",
+    commandId: `c-${uid()}`,
+  });
+  const intakeId = created.intakeId as string;
+  await vi.waitFor(
+    async () => {
+      await f.service.orchestration.tick();
+      await f.service.sessions.tick();
+      expect(
+        f.service.store.get<{ stage: string }>("session-intake", intakeId)
+          ?.stage,
+      ).toBe("decided");
+    },
+    { timeout: 60_000, interval: 100 },
+  );
+  const intake = f.service.store.get<{
+    members: Array<{ provider: string; state: string; installationId: string }>;
+    outcome: { kind: string; intent: string };
+  }>("session-intake", intakeId)!;
+  expect(intake.outcome).toMatchObject({ kind: "reply", intent: "discuss" });
+  expect(
+    intake.members
+      .filter((m) => m.provider === "native")
+      .map((m) => [m.installationId, m.state]),
+  ).toContainEqual([f.route.id, "returned"]);
+  // The native coordinator's requests asked for the session-v1 intake schema.
+  expect(
+    f.native.upstream.calls.some((c) =>
+      String(c.body.text?.format?.name).startsWith(
+        "session-v1_coordinator-contribution",
+      ),
+    ),
+  ).toBe(true);
+}, 120_000);

@@ -131,9 +131,12 @@ describe("native members in Recursive Looping", () => {
     expect(t.supervisor.run(started.run.id).waitReason?.kind).toBe("quota");
     expect(t.driver.launches.length).toBe(before);
 
-    // The owner tries the allowance again: the next wakeup continues.
+    // The owner tries the allowance again: the changed allowance wakes the
+    // run before its backoff is due.
     t.ledger.resumeQuota(OWNER);
-    t.advance(3_600_000);
+    t.advance(1_000);
+    await t.supervisor.tick();
+    expect(t.supervisor.run(started.run.id).state).not.toBe("waiting");
     view = await driveLoop(t, started.run.id, (v) =>
       ["completed", "stopped"].includes(v.run.state),
     );
