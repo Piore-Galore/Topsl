@@ -885,3 +885,100 @@ test("stopping a native attempt cancels its running descendants", async () => {
   expect(f.harness.view(task.attemptId)!.state).toBe("cancelled");
   expect(f.harness.view(child)!.state).toBe("cancelled");
 });
+
+/**
+ * Loop turns judge the target's file.ts, so the synthetic model reads it
+ * with read_file first and answers from what it read.
+ */
+function loopScript(scratch: string): Script {
+  const base = memberScript(scratch);
+  return async (call, index) => {
+    const prompt = promptOf(call);
+    if (
+      !/"protocolKind": "recursive-loop-v1"/.test(prompt) ||
+      !/Stage: \w+\./.test(prompt)
+    )
+      return base(call, index);
+    const turn = call.request.messages.filter(
+      (m) => m.role === "assistant",
+    ).length;
+    if (turn === 0)
+      return { events: reply([{ tool: "read_file", args: { path: "file.ts" } }]) };
+    const seen = path.join(scratch, `loop-turn-${index}`);
+    execFileSync("mkdir", ["-p", seen]);
+    await writeFile(
+      path.join(seen, "file.ts"),
+      lastResults(call.request)[0]?.output ?? "",
+    );
+    return { events: reply([{ text: answer(prompt, seen) }]) };
+  };
+}
+
+test("a Goal loop with a native coordinator and implementer answers recursive-loop-v1 through the proxy and promotes its result", async () => {
+  const f = await setup(loopScript);
+  await f.service.command({ type: "loop-feature-set", enabled: true });
+  await group(f.service, "coordinator", [
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [vendor("sol", "fixture-sol")]);
+  const created = await f.service.command({
+    type: "loop-create",
+    projectId: "p",
+    conversationId: null,
+    mode: "goal",
+    text: "Change the value to two.",
+    policy: { scheduling: { reserveForDirectWork: 0 } },
+    commandId: `c-${uid()}`,
+  });
+  const runId = created.run.id as string;
+  const authority = f.service.review("loop-authority", runId) as {
+    digest: string;
+  };
+  await f.service.command(
+    { type: "loop-start", runId, commandId: `c-${uid()}` },
+    { digest: authority.digest },
+  );
+  await vi.waitFor(
+    async () => {
+      await f.service.orchestration.tick();
+      await f.service.loops.tick();
+      expect(
+        ["completed", "waiting", "stopped"].includes(
+          f.service.loops.view(runId).run.state,
+        ),
+      ).toBe(true);
+    },
+    { timeout: 120_000, interval: 100 },
+  );
+  const view = f.service.loops.view(runId);
+  expect(view.run.state).toBe("completed");
+  expect(view.checkpoint!.sequence).toBe(1);
+  const head = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    view.checkpoint!.candidateId,
+  )!;
+  expect(
+    candidateFileBytes(
+      head,
+      head.files.find((x) => x.path === "file.ts")!,
+      f.service.store,
+    )!.toString(),
+  ).toBe("export const value = 2;\n");
+  // Decision turns went through the native route in the loop's own schema,
+  // and the native implementer made the change.
+  const formats = f.native.upstream.calls.map(
+    (c) => c.body.text?.format?.name as string,
+  );
+  expect(
+    formats.some((n) => n.startsWith("recursive-loop-v1_coordinator-contribution")),
+  ).toBe(true);
+  expect(formats).toContain("coordinator-v1_implementation");
+  // Native turns count in the loop's accounting with their reported usage.
+  expect(view.usage.memberTurns).toBeGreaterThan(0);
+  expect(await readFile(path.join(f.project, "file.ts"), "utf8")).toBe(
+    "export const value = 1;\n",
+  );
+}, 180_000);
