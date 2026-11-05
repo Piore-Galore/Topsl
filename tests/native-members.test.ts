@@ -529,3 +529,260 @@ test("a native member's route that changed after assignment is refused before di
   ).rejects.toThrow(/changed since it was assigned/);
   expect(f.native.upstream.calls).toHaveLength(0);
 });
+
+/** A coordinator that only ever reads: it never answers. */
+const endlessReader: Script = () => ({
+  events: reply([{ tool: "read_file", args: { path: "file.ts" } }]),
+});
+
+test("a native member turn is a bounded episode: a used request budget ends it as failed, and the engine's retry allowance decides what follows", async () => {
+  const f = await setup(() => endlessReader);
+  await group(f.service, "coordinator", [
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  const posted = await post(f.service, "Change the value to two.");
+  const goal = await untilGoal(f.service, posted.goal.id, ["blocked"]);
+  const coordination = (
+    f.service.orchestration.rounds(goal.id) as RoleRound[]
+  ).find((r) => r.kind === "coordination")!;
+  const member = coordination.members[0];
+  // One first attempt and the one retry the default policy allows; each
+  // ended at its budget of 50 requests, never paused forever.
+  expect(member.attemptIds).toHaveLength(2);
+  expect(member.state).toBe("failed");
+  expect(member.detail).toMatch(/ended without an answer: This attempt used its 50 model requests/);
+  for (const id of member.attemptIds) {
+    const view = f.service.native.harness.view(id)!;
+    expect(view.state).toBe("cancelled");
+    expect(view.requests).toBe(50);
+  }
+  expect(f.native.upstream.calls).toHaveLength(100);
+}, 120_000);
+
+test("a native member paused for no progress waits instead of restarting, and Stop cancels it", async () => {
+  // An implementer that keeps sending an edit with a wrong expected hash.
+  const f = await setup((scratch) => {
+    const base = memberScript(scratch);
+    return (call, index) =>
+      /When done, reply/.test(promptOf(call))
+        ? {
+            events: reply([
+              {
+                tool: "edit_file",
+                args: {
+                  path: "file.ts",
+                  old_text: "value = 1",
+                  new_text: "value = 2",
+                  expected_sha256: "0".repeat(64),
+                },
+              },
+            ]),
+          }
+        : base(call, index);
+  });
+  await group(f.service, "coordinator", [vendor("astra", "fixture-astra")]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [vendor("sol", "fixture-sol")]);
+  const posted = await post(f.service, "Change the value to two.");
+  const work = async () =>
+    (f.service.orchestration.rounds(posted.goal.id) as RoleRound[]).find(
+      (r) => r.kind === "work",
+    );
+  await vi.waitFor(
+    async () => {
+      await f.service.orchestration.tick();
+      expect((await work())?.members[0].detail).toMatch(
+        /^Waiting: Paused for no progress/,
+      );
+    },
+    { timeout: 60_000, interval: 100 },
+  );
+  const member = (await work())!.members[0];
+  const attemptId = member.activeAttemptId!;
+  expect(member.state).toBe("running");
+  expect(f.service.native.harness.view(attemptId)).toMatchObject({
+    state: "paused",
+    pauseKind: "repetition",
+  });
+  // Further ticks start no replacement.
+  for (let i = 0; i < 5; i++) await f.service.orchestration.tick();
+  expect((await work())!.members[0].attemptIds).toEqual([attemptId]);
+  // Stopping the goal cancels the native attempt (and any descendants).
+  await f.service.command({
+    type: "orchestration-control",
+    projectId: "p",
+    goalId: posted.goal.id,
+    action: "stop",
+    commandId: `c-${uid()}`,
+  });
+  await vi.waitFor(
+    async () => {
+      await f.service.orchestration.tick();
+      expect(f.service.native.harness.view(attemptId)!.state).toBe(
+        "cancelled",
+      );
+      expect(f.service.store.get<Goal>("goal", posted.goal.id)!.state).toBe(
+        "stopped",
+      );
+    },
+    { timeout: 30_000, interval: 100 },
+  );
+}, 120_000);
+
+// ---------------------------------------------------------------------------
+// The harness's member turns, directly (no control service).
+
+async function memberHarness(script: Script) {
+  const { nativeFixture } = await import("./native-fixture");
+  const f = await nativeFixture(script);
+  cleanups.push(() => f.close());
+  let n = 0;
+  const copy = async () => {
+    const root = path.join(f.directory, `member-copy-${++n}`);
+    execFileSync("mkdir", ["-p", root]);
+    await writeFile(path.join(root, "file.ts"), "export const value = 1;\n");
+    return root;
+  };
+  const start = async (
+    routeAlias: string,
+    schema: Record<string, unknown> | null = null,
+    memberId = `member-${n + 1}`,
+  ) =>
+    f.harness.startMember({
+      projectId: f.project.id,
+      routeAlias,
+      title: memberId,
+      prompt: "Answer.",
+      workspace: {
+        root: await copy(),
+        writable: false,
+        baselineCandidateId: null,
+      },
+      outputSchema: schema ? { name: "answer", schema } : null,
+      member: {
+        goalId: "goal",
+        roundId: "round",
+        memberId,
+        launchId: uid(),
+        purpose: "coordinator-contribution",
+        protocol: "coordinator-v1",
+      },
+      reasoningEffort: null,
+      maxRequests: null,
+    });
+  return { ...f, start };
+}
+
+const answerSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: { summary: { type: "string", minLength: 1, maxLength: 500 } },
+  required: ["summary"],
+  additionalProperties: false,
+};
+
+test("members on two routes of one account share one allowance wait, and all continue when the owner resumes it", async () => {
+  let limited = true;
+  const f = await memberHarness(() =>
+    limited
+      ? {
+          status: 429,
+          body: {
+            error: {
+              code: "subscription_sharing_usage_limit_exceeded",
+              message: "Usage limit reached.",
+            },
+          },
+        }
+      : { events: reply([{ text: JSON.stringify({ summary: "Done." }) }]) },
+  );
+  const { connection } = f.chatgpt();
+  f.route(connection.id, "chatgpt/a");
+  f.route(connection.id, "chatgpt/b", "upstream-model-2");
+  const owner = connection.account.quotaOwner!;
+  const first = await f.start("chatgpt/a", answerSchema, "a");
+  expect((await f.settle(first.attemptId)).state).toBe("waiting-quota");
+  // The second member, on the other route, waits before any request.
+  const second = await f.start("chatgpt/b", answerSchema, "b");
+  expect((await f.settle(second.attemptId)).state).toBe("waiting-quota");
+  expect(f.upstream.calls).toHaveLength(1);
+  expect(f.harness.resources.quotaWait(owner)).not.toBeNull();
+  // The owner tries the allowance again once: both member turns continue.
+  limited = false;
+  f.harness.resumeQuota(owner);
+  await vi.waitFor(async () => {
+    expect((await f.settle(first.attemptId)).state).toBe("completed");
+    expect((await f.settle(second.attemptId)).state).toBe("completed");
+  });
+  expect(f.harness.view(first.attemptId)!.summary).toBe(
+    JSON.stringify({ summary: "Done." }),
+  );
+  // A member turn's candidate is the driver's to capture, not the harness's.
+  expect(f.harness.view(first.attemptId)!.candidateId).toBeNull();
+  expect(f.upstream.calls).toHaveLength(3);
+  // Both carried the schema (strict: every field required, objects closed).
+  for (const call of f.upstream.calls.slice(1))
+    expect(call.body.text.format).toEqual({
+      type: "json_schema",
+      name: "answer",
+      schema: {
+        type: "object",
+        properties: {
+          summary: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        required: ["summary"],
+        additionalProperties: false,
+      },
+      strict: true,
+    });
+});
+
+test("on a Messages route a member's schema is relaxed to what Anthropic accepts, and the instructions ask for the JSON alone", async () => {
+  const f = await memberHarness(() => ({
+    events: reply([{ text: JSON.stringify({ summary: "Done." }) }]),
+  }));
+  const { connection } = await f.apiKey("anthropic-api");
+  await new Promise((r) => setTimeout(r, 10));
+  f.route(connection.id, "claude/api", "upstream-model-reported");
+  const started = await f.start("claude/api", answerSchema);
+  const view = await f.settle(started.attemptId);
+  expect(view.state).toBe("completed");
+  expect(view.reportedModel).toBe("upstream-model-reported");
+  const body = f.upstream.calls[0].body;
+  expect(f.upstream.calls[0].path).toBe("/anthropic/messages");
+  expect(body.output_config).toEqual({
+    format: {
+      type: "json_schema",
+      schema: {
+        type: "object",
+        properties: { summary: { type: "string" } },
+        required: ["summary"],
+        additionalProperties: false,
+      },
+    },
+  });
+  expect(JSON.stringify(body.system)).toContain(
+    "with only the JSON object your task describes",
+  );
+});
+
+test("a member that needs a schema is refused on a route recorded as unable to enforce one", async () => {
+  const f = await memberHarness(() => ({ events: reply([{ text: "{}" }]) }));
+  const { connection } = await f.apiKey("openai-api");
+  f.proxy.registry.saveRoute({
+    connectionId: connection.id,
+    alias: "gateway/plain",
+    upstreamModel: "upstream-model",
+    capabilities: { structuredOutput: "unsupported" },
+  });
+  await expect(f.start("gateway/plain", answerSchema)).rejects.toThrow(
+    /unable to enforce a response schema/,
+  );
+  // A free-text turn on the same route is not refused.
+  const plain = await f.start("gateway/plain", null);
+  expect((await f.settle(plain.attemptId)).state).toBe("completed");
+  expect(f.upstream.calls).toHaveLength(1);
+  expect(f.upstream.calls[0].body).not.toHaveProperty("text");
+});
