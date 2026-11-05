@@ -304,6 +304,8 @@ Commands ran from the repository root on the uncommitted change over `837a1f7`. 
 | `rg` over `apps`, `packages`, `scripts`, `tests` and the rebuilt `dist/` | No adapter client ID, Claude sign-in endpoint, plan-only beta header or Claude Code session scope | `claude-plan` remains in `dist/` only in the retirement migration and the guards that refuse it. |
 | Link check over README, notices and `docs/*.md`; `git diff --check`; whitespace in new files | **1,230 links and anchors resolve; clean** | Documentation hygiene. |
 
+**Remote CI (pull request #48).** At `a2a08b6`, seven of the eight required checks passed and **Windows x64** failed one test, `tests/native-harness.test.ts` "a Chat Completions gateway route carries tool calls and results": the `search` tool's JavaScript fallback, used where no ripgrep is installed, reported `src\math.js` instead of `src/math.js`. `main` failed the same check at `837a1f7`, so the defect came with the native harness, not this change. The fallback now reports workspace paths with `/` on every platform, as the other tools do. macOS uses ripgrep, so only the Windows run exercises the fix.
+
 ### Remaining limits
 
 - Live qualification of any external service, and live ChatGPT-plan sign-in and inference.

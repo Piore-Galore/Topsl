@@ -521,7 +521,8 @@ const searchTool = define({
           .forEach((line, i) => {
             if (found.length < args.max_results && expression.test(line))
               found.push(
-                `${path.relative(root, entry)}:${i + 1}:${line.slice(0, 400)}`,
+                // Workspace paths use "/" on every platform, as the other tools report them.
+                `${path.relative(root, entry).split(path.sep).join("/")}:${i + 1}:${line.slice(0, 400)}`,
               );
           });
       }
