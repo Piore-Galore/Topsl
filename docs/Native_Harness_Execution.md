@@ -151,6 +151,29 @@ Not done: the packaged app's own Electron journey (a packaged app ignores the te
 
 | Command | Result | What it covers |
 |---|---|---|
-| `node scripts/test.mjs tests/native-members.test.ts` | 8 passed | Service level: a team with a Codex and a native coordinator, a native implementer and a Codex reviewer runs a goal to acceptance and is accepted through Topsl's confirmation; a changed route refused before dispatch; a bounded episode ending at 50 requests and retried once; a no-progress pause waiting without a replacement, then cancelled by Stop; a session with a native and a Codex coordinator answering session-v1 intake. Harness level: two members on two routes of one ChatGPT account waiting on one allowance and both continuing when it is resumed; a Messages route's relaxed schema; a route recorded unable to carry a schema refused for a structured turn |
+| `node scripts/test.mjs tests/native-members.test.ts` | 9 passed | Service level: a team with a Codex and a native coordinator, a native implementer and a Codex reviewer runs a goal to acceptance and is accepted through Topsl's confirmation; a changed route refused before dispatch; a bounded episode ending at 50 requests and retried once; a no-progress pause waiting without a replacement, then cancelled by Stop; a session with a native and a Codex coordinator answering session-v1 intake. Harness level: two members on two routes of one ChatGPT account waiting on one allowance and both continuing when it is resumed; a Messages route's relaxed schema; a route recorded unable to carry a schema refused for a structured turn; cancelling a native task cancels its child waiting on the model |
 | `node scripts/test.mjs tests/native-loops.test.ts` | 4 passed | An iteration waiting on an allowance two routes share and continuing after it is resumed; a native coordinator waiting in place mid-round and finishing the same turn; a no-progress wait; Stop during a quota wait |
 | `node scripts/test.mjs tests/proxy-protocols.test.ts` | 52 passed (5 new) | Output formats parsed from and serialized to each protocol, every client → upstream conversion, Messages refusal and relaxation, strict detection, refusal of JSON mode without a schema, descriptions and bad names |
+
+A scratch probe (not kept in the repository) passed each member schema through `memberOutputFormat`: the coordinator-v1 contribution, endorsement, information and implementation schemas, the review schema, the session-v1 intake schema and a recursive-loop-v1 boundary envelope are all strict-compatible for OpenAI, and after relaxation each passes the Messages checks.
+
+### Acceptance — what "done" asked for
+
+| Criterion | Covered by | Not covered |
+|---|---|---|
+| A stand-in-backed coordinator team with a native member on a synthetic route runs a goal to acceptance | `native-members`: "a coordinator team with a native coordinator and a native implementer on a synthetic route runs a goal to acceptance" (real control service, proxy and harness; Codex stand-in for the vendor members; owner acceptance through the digest) | A live model; an Electron journey that pins a native member |
+| A loop that waits on a shared quota | `native-loops`: "an iteration waits on an allowance two routes share…" and the mid-round case; `native-members`: "members on two routes of one account share one allowance wait…" (real kernel and proxy) | A service-level loop run with native members |
+| Topsl sessions | `native-members`: "a Topsl session takes a native coordinator beside a Codex one…" | Session work items with native implementers |
+| Bounded episodes, no-progress waits, Stop cancelling native members and descendants | `native-members`: the bounded-episode and no-progress cases, and "stopping a native attempt cancels its running descendants" (a native task's child waiting on the model is cancelled with its parent); `native-loops`: no-progress and Stop | A member turn with descendants: member turns get no delegation tool yet |
+| Historical records keep their reading | `memberEngine` and the optional fields; the existing orchestration, loop and session suites pass unchanged | A profile written before this work, opened and run again |
+
+### Limits
+
+- **Synthetic only.** No live ChatGPT, OpenAI, Anthropic, gateway or Ollama request; whether the ChatGPT plan route accepts `text.format`, and whether a given gateway or Ollama enforces `response_format`, is unknown.
+- **Member turns are narrower than native tasks.** No commands, network, delegation, MCP tools or hooks, and no per-member request budget (the default 50).
+- **No pinned effort for native members.** A route has no observed effort catalog, so a pinned effort is refused rather than sent unverified.
+- **Quota waits are kept in memory.** After a restart a waiting member is resumed like any interrupted member and will wait again if the upstream still reports its limit.
+- **Capacity is counted twice over.** The engine counts an executing native member against its shared capacity, and the harness bounds native requests with its own pool of two; the vendor concurrency budget does not see native requests, so chats and vendor workflows outside the engine can run beside them.
+- **Native tasks lists member turns.** Member attempts are root attempts in the journal, so they appear under **Native tasks** (with titles such as `coordinator native-coordinator · initial`); that is where a stalled member is resumed. They offer no apply: their candidates belong to the goal.
+- **No route capability editor.** `structuredOutput` defaults to `unknown`; nothing in the window records it yet.
+- **Usage views.** The provider usage views still show vendor usage only; native usage is in the attempt's journal, the proxy's receipts and loop accounting.

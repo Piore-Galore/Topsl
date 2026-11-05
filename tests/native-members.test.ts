@@ -834,3 +834,54 @@ test("a Topsl session takes a native coordinator beside a Codex one: both answer
     ),
   ).toBe(true);
 }, 120_000);
+
+test("stopping a native attempt cancels its running descendants", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  cleanups.push(async () => release());
+  const f = await memberHarness((call) => {
+    const text = call.request.messages
+      .flatMap((m) => m.parts)
+      .filter((p) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("\n");
+    // The child's request never answers until the test ends.
+    if (text.includes("CHILD TASK"))
+      return { events: reply([{ text: "late" }]), hold: held };
+    return {
+      events: reply([
+        {
+          tool: "delegate",
+          args: { mode: "fresh", task: "CHILD TASK: read", writable: false },
+        },
+      ]),
+    };
+  });
+  const { connection } = f.chatgpt();
+  f.route(connection.id, "chatgpt/test");
+  // A native task with delegation: member turns get no delegation tool.
+  const task = await f.harness.start({
+    projectId: f.project.id,
+    prompt: "Delegate a read",
+    routeAlias: "chatgpt/test",
+    mode: "investigate",
+    processes: false,
+    networkDomains: [],
+    checks: [],
+    delegation: true,
+    mcpServerIds: [],
+    reasoningEffort: null,
+    contextWindowTokens: null,
+    maxRequests: null,
+  });
+  await vi.waitFor(() =>
+    expect(f.harness.view(task.attemptId)!.children).toHaveLength(1),
+  );
+  const child = f.harness.view(task.attemptId)!.children[0];
+  await vi.waitFor(() =>
+    expect(f.harness.view(child)!.state).toBe("waiting-model"),
+  );
+  await f.harness.cancel(task.attemptId);
+  expect(f.harness.view(task.attemptId)!.state).toBe("cancelled");
+  expect(f.harness.view(child)!.state).toBe("cancelled");
+});
