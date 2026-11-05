@@ -28,6 +28,8 @@ export type Reply =
       state?: AttemptObservation["state"];
       candidateId?: string | null;
     }
+  /** Still running, with the wait a native member reports (quota, no progress). */
+  | { wait: NonNullable<AttemptObservation["wait"]> }
   | "hang";
 
 export const allPurposes: ExecutionPurpose[] = [
@@ -77,6 +79,72 @@ export function route(
       ]),
     ),
     fanout: options.fanout ?? "disabled",
+  };
+}
+
+/**
+ * A native proxy route candidate, as the runtime driver derives one from a
+ * route and its connection. Routes given the same `quotaOwner` share one
+ * allowance. Fixture values only.
+ */
+export function nativeRoute(
+  alias: string,
+  model: string,
+  options: {
+    quotaOwner?: string | null;
+    connectionId?: string;
+    connectionLabel?: string;
+    blocked?: ExecutionPurpose[];
+  } = {},
+): RouteCandidate {
+  const connectionId = options.connectionId ?? `connection-${alias}`;
+  return {
+    provider: "native",
+    engine: "native",
+    installationId: null,
+    installationRevision: null,
+    executableIdentity: null,
+    native: {
+      routeId: `route-${alias}`,
+      routeAlias: alias,
+      routeRevision: `revision-${alias}`,
+      connectionId,
+      connectionKind: "chatgpt-plan",
+      connectionLabel: options.connectionLabel ?? `Connection ${connectionId}`,
+      protocol: "responses",
+      upstreamModel: model,
+      funding: "subscription",
+      accountKey: options.quotaOwner ?? null,
+      quotaOwner: options.quotaOwner === undefined ? null : options.quotaOwner,
+    },
+    route: "managed-structured",
+    nativeAccountKey: options.quotaOwner ?? null,
+    nativeProfileId: null,
+    billingRoute: null,
+    accountLabel: options.connectionLabel ?? null,
+    catalog: {
+      models: [
+        {
+          id: alias,
+          model,
+          name: alias,
+          description: "fixture native route",
+          isDefault: false,
+          supportedReasoningEfforts: [],
+        },
+      ],
+      observedAt: now(),
+      fresh: true,
+    },
+    purposes: Object.fromEntries(
+      allPurposes.map((p) => [
+        p,
+        options.blocked?.includes(p)
+          ? { ready: false, blockers: [`${p} is not ready (fixture).`] }
+          : { ready: true, blockers: [] },
+      ]),
+    ),
+    fanout: "disabled",
   };
 }
 
@@ -373,6 +441,10 @@ export class ScriptedDriver implements OrchestrationDriver {
       if (a.obs.state !== "running") continue;
       const reply = this.reply(a.turn);
       if (reply === "hang") continue;
+      if ("wait" in reply) {
+        a.obs = { ...a.obs, wait: reply.wait };
+        continue;
+      }
       a.obs = {
         ...a.obs,
         state: reply.state ?? "completed",
@@ -386,6 +458,7 @@ export class ScriptedDriver implements OrchestrationDriver {
         candidateId: reply.candidateId ?? null,
         error:
           reply.state && reply.state !== "completed" ? "fixture failure" : null,
+        wait: null,
       };
       void id;
     }

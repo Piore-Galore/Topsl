@@ -271,6 +271,7 @@ export class ProxyRegistry {
           reasoning: "unknown",
           outputCap:
             connection.kind === "chatgpt-plan" ? "unsupported" : "unknown",
+          structuredOutput: "unknown",
           source: "not observed",
           observedAt: null,
           ...existing?.capabilities,

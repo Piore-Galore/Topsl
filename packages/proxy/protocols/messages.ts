@@ -2,6 +2,7 @@ import {
   emptyUsage,
   type CanonicalEvent,
   type CanonicalMessage,
+  type CanonicalOutputFormat,
   type CanonicalPart,
   type CanonicalReasoningPart,
   type CanonicalRequest,
@@ -42,6 +43,8 @@ import {
   optionalNumber,
   optionalString,
   ownReasoning,
+  outputFormatOf,
+  messagesSchemaProblem,
   path,
   proxyError,
   reject,
@@ -80,6 +83,7 @@ const requestFields = [
   "stop_sequences",
   "stream",
   "thinking",
+  "output_config",
 ] as const;
 
 const rejectedRequestFields: Readonly<Record<string, string>> = {
@@ -99,6 +103,7 @@ export function parseRequest(body: unknown): CanonicalRequest {
   const request = expectObject(body, "body");
   checkFields(request, requestFields, "", rejectedRequestFields);
   const choice = parseToolChoice(request.tool_choice);
+  const outputFormat = parseOutputConfig(request.output_config);
   return {
     model: expectString(request.model, "model"),
     instructions: parseSystem(request.system),
@@ -117,7 +122,38 @@ export function parseRequest(body: unknown): CanonicalRequest {
     thinkingBudget: parseThinking(request.thinking),
     parallelToolCalls: choice.parallelToolCalls,
     stream: optionalBoolean(request.stream, "stream") ?? false,
+    ...(outputFormat ? { outputFormat } : {}),
     clientProtocol: protocol,
+  };
+}
+
+/** The name a Messages output format gets on protocols that require one. */
+export const MESSAGES_FORMAT_NAME = "output";
+
+/**
+ * `output_config` as far as the canonical request carries it: a JSON
+ * Schema output format. Messages always constrains decoding to it.
+ */
+function parseOutputConfig(value: unknown): CanonicalOutputFormat | null {
+  if (!isSet(value)) return null;
+  const config = expectObject(value, "output_config");
+  checkFields(config, ["format"], "output_config", {
+    effort:
+      "Messages effort is not carried; the canonical reasoning effort is refused for Messages routes.",
+    task_budget: "task budgets cannot be carried to every route.",
+  });
+  if (!isSet(config.format)) return null;
+  const format = expectObject(config.format, "output_config.format");
+  checkFields(format, ["type", "schema"], "output_config.format");
+  if (format.type !== "json_schema")
+    reject(
+      'Only a JSON Schema output format (`type: "json_schema"`) can be carried.',
+      "output_config.format.type",
+    );
+  return {
+    name: MESSAGES_FORMAT_NAME,
+    schema: expectObject(format.schema, "output_config.format.schema"),
+    strict: true,
   };
 }
 
@@ -436,6 +472,17 @@ export function serializeRequest(
   if (request.stop.length > 0) body.stop_sequences = request.stop;
   if (request.thinkingBudget !== null)
     body.thinking = { type: "enabled", budget_tokens: request.thinkingBudget };
+  const format = outputFormatOf(request);
+  if (format) {
+    // Refused rather than relaxed: dropping a client's constraints would
+    // change what its schema promises. The native harness relaxes its own
+    // schemas knowingly and validates the full schema afterwards.
+    const problem = messagesSchemaProblem(format.schema);
+    if (problem) reject(problem, clientParam(request, "outputFormat"));
+    body.output_config = {
+      format: { type: "json_schema", schema: format.schema },
+    };
+  }
   body.stream = true;
   return body;
 }

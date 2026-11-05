@@ -141,7 +141,12 @@ import { Orchestrator } from "../../packages/orchestration/engine";
 import { RuntimeOrchestrationDriver } from "../../packages/orchestration/runtime-driver";
 import { SessionSupervisor } from "../../packages/orchestration/session-engine";
 import { LoopSupervisor } from "../../packages/orchestration/loop-engine";
-import { RuntimeLoopDriver } from "../../packages/orchestration/loop-checkpoints";
+import {
+  RuntimeLoopDriver,
+  nativeAllowanceLimits,
+  type ProviderLimit,
+} from "../../packages/orchestration/loop-checkpoints";
+import type { NativeRouteBinding } from "../../packages/domain/role-groups";
 import { LOOP_FEATURE_FLAG } from "../../packages/domain/recursive-loops";
 
 export interface TrustedInput {
@@ -459,6 +464,7 @@ export class Service {
       assertLocalOwner: (projectId) =>
         this.replication.assertLocalOwner(projectId),
       integrationRoot: path.join(directory, "orchestration-integrations"),
+      native: this.native.memberHost(),
     });
     this.orchestration = new Orchestrator(this.store, orchestrationDriver, () =>
       this.changed(),
@@ -474,7 +480,18 @@ export class Service {
         ownedRoots: [path.join(directory, "orchestration-integrations")],
         assertLocalOwner: (projectId) =>
           this.replication.assertLocalOwner(projectId),
-        providerLimits: (providers) => this.loopProviderLimits(providers),
+        providerLimits: (providers, native) =>
+          this.loopProviderLimits(providers, native ?? []),
+        nativeUsage: (attemptId) => {
+          const view = this.native.harness.view(attemptId);
+          return view
+            ? {
+                input: view.usage.input,
+                output: view.usage.output,
+                unknownRequests: view.usage.unknownRequests,
+              }
+            : null;
+        },
       }),
       () => this.changed(),
       {
@@ -1468,13 +1485,20 @@ export class Service {
    * Provider quota a runtime reported as reached, and owner allowances used
    * up, for the providers a loop's next work would use.
    */
-  private loopProviderLimits(providers: Array<"codex" | "claude">) {
-    const limits: Array<{
-      provider: "codex" | "claude";
-      kind: "quota" | "allowance";
-      detail: string;
-      retryAt: string | null;
-    }> = [];
+  private loopProviderLimits(
+    providers: Array<"codex" | "claude">,
+    native: NativeRouteBinding[] = [],
+  ) {
+    // A native allowance that reported its limit, or a connection paused at
+    // it, holds every route with the same quota owner.
+    const limits: ProviderLimit[] = nativeAllowanceLimits(native, {
+      quotaWait: (owner) => this.native.harness.resources.quotaWait(owner),
+      connectionState: (connectionId) =>
+        this.native
+          .routeInfos()
+          .find((r) => r.connection.id === connectionId)?.connection.state ??
+        null,
+    });
     for (const snapshot of this.store.list<AllowanceSnapshot>(
       "allowance-snapshot",
     )) {

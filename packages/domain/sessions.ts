@@ -1,10 +1,12 @@
 import { z } from "zod";
 import {
   memberIntentSchema,
+  memberProviders,
   roleGroupSettingsSchema,
   roleIdSchema,
   type GoalCheckDefinition,
   type GoalState,
+  type MemberProvider,
   type MemberRoundState,
   type RoleGroupSettings,
 } from "./role-groups";
@@ -223,8 +225,9 @@ export interface IntakeMember {
   memberId: string;
   assignmentId: string;
   assignmentRevision: number;
-  provider: "codex" | "claude";
+  provider: MemberProvider;
   model: string;
+  /** The vendor installation, or for a native member its proxy route ID. */
   installationId: string;
   /** Position in the configured coordinator order; 0 prepares the wording. */
   order: number;
@@ -320,9 +323,12 @@ export interface SessionIntake {
 // ---------------------------------------------------------------------------
 // The session-v1 protocol: coordinators' structured answers.
 
-const provider = z.enum(["codex", "claude"]);
+const provider = z.enum(memberProviders);
 
-/** A model reference keeps its provider, not just a model name. */
+/**
+ * A model reference keeps its provider, not just a model name. "native" is
+ * Topsl's native harness on a proxy route.
+ */
 export const sessionModelRefSchema = z
   .object({ provider, model: z.string().min(1).max(200) })
   .strict();

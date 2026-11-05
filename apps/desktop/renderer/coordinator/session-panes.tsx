@@ -13,7 +13,9 @@ import {
   RoleEditor,
   filterModelOptions,
   modelOptions,
+  optionPin,
   routeBlockers,
+  routeOptionKey,
   teamLine,
   type ModelOption,
 } from "./role-editor";
@@ -30,7 +32,9 @@ export const providerName = (provider: string) =>
     ? "Claude Code"
     : provider === "codex"
       ? "Codex"
-      : provider;
+      : provider === "native"
+        ? "Topsl native"
+        : provider;
 
 const intentLabel: Record<string, string> = {
   discuss: "Discuss",
@@ -150,13 +154,15 @@ export function CoordinatorPicker({
         {routes.map((route) => {
           const status = routeBlockers(route, "coordinator-contribution");
           const group = shown.filter(
-            (o) => o.installationId === route.installationId,
+            (o) => o.key.startsWith(`${routeOptionKey(route)}:`),
           );
           if (search.trim() && !group.length) return null;
-          const name = providerName(route.provider);
+          const name = route.native
+            ? `${providerName(route.provider)} · ${route.native.routeAlias} (${route.native.connectionLabel})`
+            : providerName(route.provider);
           return (
             <section
-              key={route.installationId}
+              key={routeOptionKey(route)}
               className="model-group"
               aria-label={`${name} coordinator models`}
             >
@@ -214,14 +220,7 @@ export function CoordinatorPicker({
                         disabled={!o.available}
                         title={o.available ? undefined : o.reason}
                         aria-label={`Add ${o.name} (${name}) as a coordinator`}
-                        onClick={() =>
-                          add({
-                            label: o.name,
-                            provider: o.provider,
-                            installationId: o.installationId,
-                            model: o.model,
-                          })
-                        }
+                        onClick={() => add(optionPin(o))}
                       >
                         Add
                       </button>

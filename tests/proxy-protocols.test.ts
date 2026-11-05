@@ -2400,3 +2400,246 @@ describe("error bodies", () => {
     });
   });
 });
+
+describe("structured output (a JSON Schema for the final text)", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      summary: { type: "string", minLength: 1, maxLength: 200 },
+      count: { type: "integer", minimum: 0 },
+      items: { type: "array", items: { type: "string" }, maxItems: 4 },
+    },
+    required: ["summary", "count", "items"],
+    additionalProperties: false,
+  };
+  const closed = {
+    type: "object",
+    properties: { summary: { type: "string" } },
+    required: ["summary"],
+    additionalProperties: false,
+  };
+  // The shared conversation without sampling settings the plan route refuses.
+  const simple = (outputFormat: CanonicalRequest["outputFormat"]) => ({
+    ...conversation,
+    temperature: null,
+    outputFormat,
+  });
+
+  test("each client protocol's schema field parses to one canonical format", () => {
+    expect(
+      responses.parseRequest({
+        model: "m",
+        input: "hi",
+        text: {
+          format: { type: "json_schema", name: "plan", schema, strict: true },
+        },
+      }).outputFormat,
+    ).toEqual({ name: "plan", schema, strict: true });
+    expect(
+      chat.parseRequest({
+        model: "m",
+        messages: [{ role: "user", content: "hi" }],
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "plan", schema },
+        },
+      }).outputFormat,
+    ).toEqual({ name: "plan", schema, strict: false });
+    expect(
+      messages.parseRequest({
+        model: "m",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "hi" }],
+        output_config: { format: { type: "json_schema", schema: closed } },
+      }).outputFormat,
+    ).toEqual({ name: "output", schema: closed, strict: true });
+    // Plain text needs no format, and none is added.
+    expect(
+      responses.parseRequest({
+        model: "m",
+        input: "hi",
+        text: { format: { type: "text" } },
+      }),
+    ).not.toHaveProperty("outputFormat");
+  });
+
+  test("each upstream protocol carries it in its own field", () => {
+    const format = { name: "plan", schema, strict: true };
+    expect(
+      responses.serializeRequest(simple(format), {
+        model: "gpt",
+        profile: "openai-api",
+      }).text,
+    ).toEqual({ format: { type: "json_schema", ...format } });
+    // Not among the plan route's documented refusals (5 November 2026).
+    expect(
+      responses.serializeRequest(
+        simple(format),
+        { model: "gpt", profile: "chatgpt-plan" },
+      ).text,
+    ).toEqual({ format: { type: "json_schema", ...format } });
+    expect(
+      chat.serializeRequest(simple(format), {
+        model: "local",
+        profile: "ollama",
+      }).response_format,
+    ).toEqual({ type: "json_schema", json_schema: format });
+    expect(
+      messages.serializeRequest(
+        simple({ name: "plan", schema: closed, strict: false }),
+        { model: "claude", profile: "anthropic-api", defaultMaxOutputTokens: 8 },
+      ).output_config,
+    ).toEqual({ format: { type: "json_schema", schema: closed } });
+    // Without a format nothing is added.
+    expect(
+      responses.serializeRequest(conversation, {
+        model: "gpt",
+        profile: "openai-api",
+      }),
+    ).not.toHaveProperty("text");
+  });
+
+  test("Messages refuses a schema it would have to weaken; the relaxed copy is the caller's choice", async () => {
+    const { relaxSchemaForMessages, strictCompatible } = await import(
+      "../packages/proxy/protocols/shared"
+    );
+    const refused = rejection(() =>
+      messages.serializeRequest(simple({ name: "plan", schema, strict: true }), {
+        model: "claude",
+        profile: "anthropic-api",
+        defaultMaxOutputTokens: 8,
+      }),
+    );
+    expect(refused.message).toContain("minLength");
+    // Named as the client (a Chat Completions client here) sent it.
+    expect(refused.param).toBe("response_format");
+    const open = { type: "object", properties: { a: { type: "string" } } };
+    expect(
+      rejection(() =>
+        messages.serializeRequest(
+          simple({ name: "plan", schema: open, strict: false }),
+          { model: "claude", profile: "anthropic-api", defaultMaxOutputTokens: 8 },
+        ),
+      ).message,
+    ).toContain("additionalProperties: false");
+    const relaxed = relaxSchemaForMessages(schema) as Record<string, any>;
+    expect(relaxed.properties.summary).toEqual({ type: "string" });
+    expect(relaxed.properties.count).toEqual({ type: "integer" });
+    expect(relaxed.properties.items).toEqual({
+      type: "array",
+      items: { type: "string" },
+    });
+    expect(
+      messages.serializeRequest(
+        simple({ name: "plan", schema: relaxed, strict: true }),
+        { model: "claude", profile: "anthropic-api", defaultMaxOutputTokens: 8 },
+      ).output_config,
+    ).toEqual({ format: { type: "json_schema", schema: relaxed } });
+    // OpenAI strict mode needs every object closed and every field required.
+    expect(strictCompatible(schema)).toBe(true);
+    expect(strictCompatible(open)).toBe(false);
+    expect(
+      strictCompatible({ ...closed, properties: { a: {}, b: {} }, required: ["a"] }),
+    ).toBe(false);
+  });
+
+  test("JSON mode without a schema, descriptions and other format types are refused", () => {
+    expect(
+      rejection(() =>
+        responses.parseRequest({
+          model: "m",
+          input: "hi",
+          text: { format: { type: "json_object" } },
+        }),
+      ).param,
+    ).toBe("text.format.type");
+    expect(
+      rejection(() =>
+        chat.parseRequest({
+          model: "m",
+          messages: [{ role: "user", content: "hi" }],
+          response_format: { type: "json_object" },
+        }),
+      ).param,
+    ).toBe("response_format.type");
+    expect(
+      rejection(() =>
+        responses.parseRequest({
+          model: "m",
+          input: "hi",
+          text: {
+            format: {
+              type: "json_schema",
+              name: "plan",
+              schema: closed,
+              description: "A plan.",
+            },
+          },
+        }),
+      ).param,
+    ).toBe("text.format.description");
+    expect(
+      rejection(() =>
+        responses.parseRequest({
+          model: "m",
+          input: "hi",
+          text: { format: { type: "json_schema", name: "bad name", schema: closed } },
+        }),
+      ).param,
+    ).toBe("text.format.name");
+    expect(
+      rejection(() =>
+        messages.parseRequest({
+          model: "m",
+          max_tokens: 10,
+          messages: [{ role: "user", content: "hi" }],
+          output_config: { effort: "high" },
+        }),
+      ).param,
+    ).toBe("output_config.effort");
+  });
+
+  test("a format survives every client → upstream conversion", () => {
+    const format = { name: "output", schema: closed, strict: true };
+    const clients = {
+      responses: {
+        model: "m",
+        input: "hi",
+        text: { format: { type: "json_schema", ...format } },
+      },
+      chat: {
+        model: "m",
+        messages: [{ role: "user", content: "hi" }],
+        response_format: { type: "json_schema", json_schema: format },
+      },
+      messages: {
+        model: "m",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "hi" }],
+        output_config: { format: { type: "json_schema", schema: closed } },
+      },
+    } as const;
+    for (const [client, body] of Object.entries(clients)) {
+      const request = converters[client as ClientProtocol].parseRequest(body);
+      expect(request.outputFormat).toEqual(format);
+      for (const upstream of ["responses", "chat", "messages"] as const) {
+        const profile =
+          upstream === "messages"
+            ? "anthropic-api"
+            : upstream === "chat"
+              ? "openai-compatible"
+              : "openai-api";
+        const sent = converters[upstream].serializeRequest(request, {
+          model: "u",
+          profile,
+          defaultMaxOutputTokens: 8,
+        });
+        const back = converters[upstream].parseRequest({
+          ...sent,
+          stream: false,
+        });
+        expect(back.outputFormat?.schema).toEqual(closed);
+      }
+    }
+  });
+});

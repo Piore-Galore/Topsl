@@ -3,6 +3,7 @@ import {
   type CanonicalEvent,
   type CanonicalImagePart,
   type CanonicalMessage,
+  type CanonicalOutputFormat,
   type CanonicalPart,
   type CanonicalReasoningPart,
   type CanonicalRequest,
@@ -126,7 +127,8 @@ export type CanonicalField =
   | "stop"
   | "reasoningEffort"
   | "thinkingBudget"
-  | "parallelToolCalls";
+  | "parallelToolCalls"
+  | "outputFormat";
 
 const clientParams: Record<ClientProtocol, Record<CanonicalField, string>> = {
   responses: {
@@ -141,6 +143,7 @@ const clientParams: Record<ClientProtocol, Record<CanonicalField, string>> = {
     reasoningEffort: "reasoning.effort",
     thinkingBudget: "thinking",
     parallelToolCalls: "parallel_tool_calls",
+    outputFormat: "text.format",
   },
   messages: {
     instructions: "system",
@@ -154,6 +157,7 @@ const clientParams: Record<ClientProtocol, Record<CanonicalField, string>> = {
     reasoningEffort: "reasoning_effort",
     thinkingBudget: "thinking.budget_tokens",
     parallelToolCalls: "tool_choice.disable_parallel_tool_use",
+    outputFormat: "output_config.format",
   },
   chat: {
     instructions: "messages",
@@ -167,6 +171,7 @@ const clientParams: Record<ClientProtocol, Record<CanonicalField, string>> = {
     reasoningEffort: "reasoning_effort",
     thinkingBudget: "thinking",
     parallelToolCalls: "parallel_tool_calls",
+    outputFormat: "response_format",
   },
 };
 
@@ -179,6 +184,165 @@ export function clientParam(
   field: CanonicalField,
 ): string {
   return clientParams[request.clientProtocol][field];
+}
+
+// ---------------------------------------------------------------------------
+// Structured output
+
+/** OpenAI's rule for a schema name; Messages names none. */
+const schemaName = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * A JSON-Schema output format from a client's OpenAI-style fields (the
+ * Responses `text.format` object or the Chat `response_format.json_schema`
+ * object). A description has no canonical slot and is refused.
+ */
+export function parseSchemaFormat(
+  format: JsonObject,
+  at: string,
+): CanonicalOutputFormat {
+  checkFields(format, ["name", "schema", "strict", "type"], at, {
+    description: "a schema description has no canonical field.",
+  });
+  const name = expectString(format.name, path(at, "name"));
+  if (!schemaName.test(name))
+    reject(
+      `\`${path(at, "name")}\` must be 1–64 letters, digits, underscores or hyphens.`,
+      path(at, "name"),
+    );
+  return {
+    name,
+    schema: expectObject(format.schema, path(at, "schema")),
+    strict: optionalBoolean(format.strict, path(at, "strict")) ?? false,
+  };
+}
+
+/** The output format a request carries, or null. */
+export function outputFormatOf(
+  request: CanonicalRequest,
+): CanonicalOutputFormat | null {
+  return request.outputFormat ?? null;
+}
+
+/**
+ * JSON Schema keywords Anthropic's structured outputs do not accept
+ * (numeric, string-length and array-size constraints), as Anthropic's
+ * documentation lists them in November 2026.
+ */
+export const messagesUnsupportedKeywords = [
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "minProperties",
+  "maxProperties",
+] as const;
+
+const schemaChildren = (node: JsonObject): Array<[string, unknown]> => {
+  const out: Array<[string, unknown]> = [];
+  for (const key of ["properties", "$defs", "definitions", "patternProperties"])
+    if (isObject(node[key]))
+      for (const [name, child] of Object.entries(node[key] as JsonObject))
+        out.push([`${key}.${name}`, child]);
+  for (const key of ["items", "not", "additionalProperties", "contains"])
+    if (isObject(node[key])) out.push([key, node[key]]);
+  for (const key of ["anyOf", "allOf", "oneOf", "prefixItems"])
+    if (Array.isArray(node[key]))
+      (node[key] as unknown[]).forEach((child, i) =>
+        out.push([`${key}[${i}]`, child]),
+      );
+  return out;
+};
+
+/**
+ * Why a schema cannot be sent as a Messages output format exactly, or null:
+ * an unsupported keyword, or an object that allows other properties
+ * (Anthropic requires `additionalProperties: false` on every object).
+ */
+export function messagesSchemaProblem(
+  schema: unknown,
+  at = "schema",
+): string | null {
+  if (!isObject(schema)) return null;
+  for (const keyword of messagesUnsupportedKeywords)
+    if (isSet(schema[keyword]))
+      return `\`${at}.${keyword}\` is not accepted by Messages structured output.`;
+  const isObjectType =
+    schema.type === "object" ||
+    (Array.isArray(schema.type) && schema.type.includes("object"));
+  if (isObjectType && schema.additionalProperties !== false)
+    return `\`${at}\` must set \`additionalProperties: false\` for Messages structured output.`;
+  for (const [key, child] of schemaChildren(schema)) {
+    if (key === "additionalProperties") continue;
+    const problem = messagesSchemaProblem(child, `${at}.${key}`);
+    if (problem) return problem;
+  }
+  return null;
+}
+
+/**
+ * A copy of `schema` that Messages accepts: the unsupported constraint
+ * keywords removed and every object closed. A caller that uses it validates
+ * the final text against the full schema itself, as Anthropic's SDKs do;
+ * the proxy never relaxes a client's schema on its own.
+ */
+export function relaxSchemaForMessages(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(relaxSchemaForMessages);
+  if (!isObject(schema)) return schema;
+  const out: JsonObject = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if ((messagesUnsupportedKeywords as readonly string[]).includes(key))
+      continue;
+    out[key] =
+      key === "properties" ||
+      key === "$defs" ||
+      key === "definitions" ||
+      key === "patternProperties"
+        ? Object.fromEntries(
+            Object.entries(isObject(value) ? value : {}).map(([k, v]) => [
+              k,
+              relaxSchemaForMessages(v),
+            ]),
+          )
+        : typeof value === "object"
+          ? relaxSchemaForMessages(value)
+          : value;
+  }
+  const isObjectType =
+    out.type === "object" ||
+    (Array.isArray(out.type) && out.type.includes("object"));
+  if (isObjectType && out.additionalProperties !== false)
+    out.additionalProperties = false;
+  return out;
+}
+
+/**
+ * Whether OpenAI's strict structured outputs can take the schema as it is:
+ * every object closed and every property required. A schema that is not
+ * strict-compatible is sent with `strict: false` (guided, not enforced).
+ */
+export function strictCompatible(schema: unknown): boolean {
+  if (!isObject(schema)) return true;
+  const isObjectType =
+    schema.type === "object" ||
+    (Array.isArray(schema.type) && schema.type.includes("object"));
+  if (isObjectType) {
+    if (schema.additionalProperties !== false) return false;
+    const properties = isObject(schema.properties)
+      ? Object.keys(schema.properties)
+      : [];
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    if (properties.some((p) => !required.includes(p))) return false;
+  }
+  return schemaChildren(schema).every(([key, child]) =>
+    key === "additionalProperties" ? true : strictCompatible(child),
+  );
 }
 
 // ---------------------------------------------------------------------------

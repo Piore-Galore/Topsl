@@ -27,6 +27,12 @@ import {
 const id = z.string().min(1).max(256);
 /** A terminal's permission mode; the provider's own settings decide unless the owner picks another. */
 const permissionMode = z.enum(terminalModeIds).default("provider-default");
+/**
+ * A vendor runtime assignment for the builder–reviewer, parallel-specialist
+ * and advanced routing workflows. These dispatch through an installation,
+ * so they stay vendor-only; coordinator teams, sessions and loops bind
+ * native members through role-group pins (packages/domain/role-groups.ts).
+ */
 const roleAssignment = z.object({
   provider: z.enum(["codex", "claude"]),
   installationId: id,

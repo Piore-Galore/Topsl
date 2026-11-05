@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Evidence } from "./workflow";
 import { optionalFields } from "./patches";
+import type {
+  ExecutionBinding,
+  ExecutionEngine,
+} from "../harness/types";
 
 /**
  * Role groups for the coordinator feature (docs/Coordinator_Teams.md). A role
@@ -59,7 +63,52 @@ export const schedulingKinds = [
 export type SchedulingKind = (typeof schedulingKinds)[number];
 
 const id = z.string().min(1).max(256);
-const provider = z.enum(["codex", "claude"]);
+
+/**
+ * Who runs a member: a vendor runtime (Codex, Claude Code) from its
+ * installation, or Topsl's native harness on a local proxy route
+ * (docs/Native_Harness_Plan.md, Phases 6b and 7). Only vendor members need
+ * an installation.
+ */
+export const memberProviders = ["codex", "claude", "native"] as const;
+export type MemberProvider = (typeof memberProviders)[number];
+const provider = z.enum(memberProviders);
+
+/**
+ * A member's runtime identity for rounds and history: its vendor
+ * installation, or a native member's proxy route ID.
+ */
+export function memberRuntimeId(assignment: {
+  installationId: string | null;
+  native?: { routeId: string } | null;
+}): string | null {
+  return assignment.installationId ?? assignment.native?.routeId ?? null;
+}
+
+/** A native member's frozen proxy route: connection, account, funding, quota owner. */
+export type NativeRouteBinding = NonNullable<ExecutionBinding["native"]>;
+
+/**
+ * The engine a member runs on. Assignments written before 5 November 2026
+ * carry no engine and read as their vendor's, as they always ran.
+ */
+export function memberEngine(
+  assignment: Pick<ResolvedMemberAssignment, "provider"> & {
+    engine?: ExecutionEngine | null;
+  },
+): ExecutionEngine | null {
+  if (assignment.engine) return assignment.engine;
+  switch (assignment.provider) {
+    case "codex":
+      return "codex";
+    case "claude":
+      return "claude-code";
+    case "native":
+      return "native";
+    default:
+      return null;
+  }
+}
 
 /** A member's model pin. Labels are for people; execution needs `model`. */
 export const memberPinSchema = z
@@ -68,6 +117,8 @@ export const memberPinSchema = z
     label: z.string().min(1).max(200).optional(),
     provider: provider.optional(),
     installationId: id.optional(),
+    /** A native member's proxy route, when the pin names one route. */
+    routeId: id.optional(),
     /** The provider's actual model identifier. */
     model: z.string().min(1).max(200).optional(),
     effort: z.string().min(1).max(100).optional(),
@@ -268,9 +319,18 @@ export interface ResolvedMemberAssignment {
   selection: "pinned" | "auto" | "fallback";
   /** The primary pin this fallback stands in for, kept as intent. */
   primaryPin: MemberPin | null;
-  provider: "codex" | "claude" | null;
+  provider: MemberProvider | null;
+  /** Absent in assignments written before 5 November 2026; see memberEngine. */
+  engine?: ExecutionEngine | null;
   route: "managed-structured" | "assisted-terminal" | null;
+  /** The vendor installation; null for a native member. */
   installationId: string | null;
+  /**
+   * A native member's proxy route, frozen when the member resolved; a
+   * changed route revision is refused before dispatch. Absent or null for
+   * vendor members and historical records.
+   */
+  native?: NativeRouteBinding | null;
   installationRevision: string | null;
   executableIdentity: string | null;
   /** The native sign-in, never an agent instruction profile. */
@@ -302,8 +362,9 @@ export interface RoundMember {
   memberId: string;
   assignmentId: string;
   assignmentRevision: number;
-  provider: "codex" | "claude";
+  provider: MemberProvider;
   model: string;
+  /** The vendor installation, or for a native member its proxy route ID. */
   installationId: string;
   required: boolean;
   state: MemberRoundState;
@@ -450,7 +511,7 @@ export interface GoalLoopBinding {
   activeRoles: string[];
   /** Adaptive settings per role; they fill only fields no user layer set. */
   adaptive: Record<string, RoleGroupSettings>;
-  excludedProviders: Array<"codex" | "claude">;
+  excludedProviders: MemberProvider[];
   /** Outcome-aware model order for Auto slots, best first, per role. */
   ranking: Record<string, string[]>;
   /**

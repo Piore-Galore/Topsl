@@ -148,3 +148,91 @@ Commands ran from the repository root. The full check used the final executable 
 All authorization tokens, model responses and account identities in automated tests are synthetic. The Electron journey opens an actual window and runs the actual proxy utility process, but intercepts the external browser launch and supplies a declined callback; it does not sign in to a live account. The original package/hash and journal benchmark above describe the earlier implementation and were not rerun for this follow-up.
 
 Remaining gates: live Claude and ChatGPT sign-in, refresh and inference; live APIs, gateways and local models; the evaluation corpus; 60-goal and chunk-to-screen load targets; candidate access/review integration beyond standalone native tasks; native Teams/session work in the other checkout; an updated packaged-app journey, CI and other platforms. Existing vendor executor qualification does not qualify these proxy adapters.
+
+## Phases 6b and 7 — native members in teams, sessions and loops
+
+**Recorded:** 5 November 2026 (Asia/Shanghai), later the same day, on branch `claude/elated-kare-7a2d5b`: commit `3bf36c6` is a verbatim snapshot of the uncommitted working tree this record describes above (on `2efeed2`), and the commits after it are this work.  
+**Plan:** [§1.1 R8](Native_Harness_Plan.md#11-review--5-november-2026), Phases 6b and 7.  
+**Evidence scope:** the same machine and toolchain as above; synthetic upstreams through the real local proxy, the real harness and the real control service, with the Codex stand-in process for vendor members. No live model, account or provider was contacted.
+
+### What was built
+
+| Area | Files |
+|---|---|
+| Member engines. `MemberProvider` is `codex`, `claude` or `native`; an assignment records its `engine` and, for a native member, the frozen proxy route (`native`: route, revision, connection, account, funding, quota owner). A pin can name a native route (`routeId`). Session model references and loop provider exclusions accept `native` | `packages/domain/role-groups.ts`, `packages/domain/sessions.ts`, `packages/domain/recursive-loops.ts` |
+| Route selection over vendor installations and proxy routes (`RouteCandidate.native`, `routeKey`) | `packages/orchestration/selection.ts` |
+| Native readiness: the proxy running, the route on, its connection ready or paused at its usage limit, and for a structured turn a route not recorded as unable to enforce a schema. No installation or vendor qualification | `packages/providers/readiness.ts` (`nativeRouteReadiness`) |
+| The orchestration driver's native path: routes, launch on the member's own copy, observation with waits, Stop as cancel, post-run capture, capacity | `packages/orchestration/runtime-driver.ts` |
+| Harness member turns (`startMember`): a frozen output schema, read (and for implementation edit) tools only, capture left to the driver, and automatic continuation of waiting members when their allowance is resumed. The attempt view records why it paused and the model the upstream reported | `packages/harness/{harness,kernel,context,journal,types}.ts` |
+| Structured output end to end: `CanonicalRequest.outputFormat`, carried as Responses `text.format`, Chat Completions `response_format` and Messages `output_config.format`; route capability `structuredOutput`; the proxy names the upstream-reported model to harness requests | `packages/proxy/canonical.ts`, `packages/proxy/protocols/*`, `packages/proxy/types.ts`, `packages/proxy/registry.ts`, `packages/proxy/service.ts` |
+| The engine shows a waiting member's reason, and its capacity view counts native members | `packages/orchestration/engine.ts`, `packages/orchestration/schedule.ts` |
+| Loops: native allowance limits by quota owner before an iteration starts, quota and `no-progress` waits during one, native usage in loop accounting | `packages/orchestration/loop-engine.ts`, `packages/orchestration/loop-checkpoints.ts`, `packages/domain/threads.ts` |
+| Service wiring and the window: native routes in the role editor and the session coordinator picker | `apps/service/service.ts`, `apps/service/native.ts`, `apps/desktop/renderer/coordinator/{role-editor,session-panes}.tsx` |
+
+### Decisions
+
+- **A native member is one proxy route.** Its catalog is the route's single upstream model, so the assignment's model is the upstream model and model evidence compares what the upstream reported. Before this work the proxy wrote the alias back to every client; it now names the upstream-reported model to requests that carry a frozen route revision (the harness), and other clients still see the alias they asked for.
+- **Only vendor members need an installation.** A native assignment has no installation; a round's `installationId` for a native member holds its route ID. Launch refuses a member whose route revision, connection, account or model changed since it resolved; it is never redirected to another route or account.
+- **A member turn is a bounded episode** of the harness's default 50 requests. A turn that pauses at its budget is ended by the driver and reads as failed with that reason; the round's retry allowance decides what follows.
+- **Waits are not restarts.** A member waiting on its allowance (every route with the same quota owner waits), paused after three identical failures (no progress) or paused by the owner stays running for the engine, with its reason on the round; nothing replaces it. Resuming the allowance under **Native tasks** continues every waiting member on it; a stalled member is resumed there too. A member paused by a Topsl restart continues on its own: member turns run no commands and edits reconcile by content hash, whereas a native task stays paused for its owner.
+- **Output contracts are the vendor ones.** A member gets the same JSON Schema a vendor runtime enforces for its purpose, protocol and stage (`purposeOutputSchema`, or the review schema), sent `strict` when OpenAI's strict mode can take it. On a Messages route the harness relaxes its own schema to what Anthropic accepts (constraint keywords removed, objects closed); the proxy refuses a client's schema it would have to weaken. The engine validates the full schema in every case. A route recorded as unable to enforce a schema is refused for structured turns; routes record `unknown` by default, which is not evidence either way. The ChatGPT-plan limitations page (re-read 5 November 2026) neither lists `text.format` as refused nor as accepted, so it is sent as on the API; that is not verified live.
+- **Capacity.** An executing native member holds one slot of the engine's shared capacity (two by default); a waiting one holds none. The harness's own inference pool of two still bounds model requests.
+- **Loops.** Before an iteration starts, a native allowance in a quota wait, or a connection paused at its usage limit, holds it: the run waits with kind `quota` and names the routes sharing that allowance. Topsl infers no reset time. During an iteration, a member's quota or no-progress wait is shown as the run's wait while other work continues. Stopping a loop or goal interrupts its native members, which cancels their descendants; nothing further launches.
+- **History keeps its reading.** An assignment without `engine` reads as its vendor's engine; a projection without a pause kind, or a route without `structuredOutput`, reads as unknown. No record was rewritten.
+- **Vendor-only workflows stay vendor-only.** Builder–reviewer, parallel specialists and advanced routing presets dispatch through an installation, so their `roleAssignment` schema is unchanged.
+
+### Automated tests
+
+| Command | Result | What it covers |
+|---|---|---|
+| `node scripts/test.mjs tests/native-members.test.ts` | 10 passed | Service level: a team with a Codex and a native coordinator, a native implementer and a Codex reviewer runs a goal to acceptance and is accepted through Topsl's confirmation; a Goal loop whose native coordinator answers `recursive-loop-v1` turns (reading the target with `read_file`) and whose native implementer makes the change, promoted to checkpoint 1; a changed route refused before dispatch; a bounded episode ending at 50 requests and retried once; a no-progress pause waiting without a replacement, then cancelled by Stop; a session with a native and a Codex coordinator answering session-v1 intake. Harness level: two members on two routes of one ChatGPT account waiting on one allowance and both continuing when it is resumed; a Messages route's relaxed schema; a route recorded unable to carry a schema refused for a structured turn; cancelling a native task cancels its child waiting on the model |
+| `node scripts/test.mjs tests/native-loops.test.ts` | 4 passed | An iteration waiting on an allowance two routes share and continuing after it is resumed; a native coordinator waiting in place mid-round and finishing the same turn; a no-progress wait; Stop during a quota wait |
+| `node scripts/test.mjs tests/proxy-protocols.test.ts` | 52 passed (5 new) | Output formats parsed from and serialized to each protocol, every client → upstream conversion, Messages refusal and relaxation, strict detection, refusal of JSON mode without a schema, descriptions and bad names |
+
+A scratch probe (not kept in the repository) passed each member schema through `memberOutputFormat`: the coordinator-v1 contribution, endorsement, information and implementation schemas, the review schema, the session-v1 intake schema and a recursive-loop-v1 boundary envelope are all strict-compatible for OpenAI, and after relaxation each passes the Messages checks.
+
+### Acceptance — what "done" asked for
+
+| Criterion | Covered by | Not covered |
+|---|---|---|
+| A stand-in-backed coordinator team with a native member on a synthetic route runs a goal to acceptance | `native-members`: "a coordinator team with a native coordinator and a native implementer on a synthetic route runs a goal to acceptance" (real control service, proxy and harness; Codex stand-in for the vendor members; owner acceptance through the digest) | A live model; an Electron journey that pins a native member |
+| A loop that waits on a shared quota | `native-loops`: "an iteration waits on an allowance two routes share…" (and its early wake when the allowance is resumed) and the mid-round case; `native-members`: "members on two routes of one account share one allowance wait…" (real kernel and proxy) | A service-level loop that waits on a quota: the service-level Goal loop (`native-members`) runs without one |
+| Loops run with native members | `native-members`: "a Goal loop with a native coordinator and implementer answers recursive-loop-v1 through the proxy and promotes its result" | Endless mode with native members |
+| Topsl sessions | `native-members`: "a Topsl session takes a native coordinator beside a Codex one…" | Session work items with native implementers |
+| Bounded episodes, no-progress waits, Stop cancelling native members and descendants | `native-members`: the bounded-episode and no-progress cases, and "stopping a native attempt cancels its running descendants" (a native task's child waiting on the model is cancelled with its parent); `native-loops`: no-progress and Stop | A member turn with descendants: member turns get no delegation tool yet |
+| Historical records keep their reading | `memberEngine` and the optional fields; the existing orchestration, loop and session suites pass unchanged | A profile written before this work, opened and run again |
+
+### Limits
+
+- **Synthetic only.** No live ChatGPT, OpenAI, Anthropic, gateway or Ollama request; whether the ChatGPT plan route accepts `text.format`, and whether a given gateway or Ollama enforces `response_format`, is unknown.
+- **Member turns are narrower than native tasks.** No commands, network, delegation, MCP tools or hooks, and no per-member request budget (the default 50).
+- **No pinned effort for native members.** A route has no observed effort catalog, so a pinned effort is refused rather than sent unverified.
+- **Quota waits are kept in memory.** After a restart a waiting member is resumed like any interrupted member and will wait again if the upstream still reports its limit.
+- **Capacity is counted twice over.** The engine counts an executing native member against its shared capacity, and the harness bounds native requests with its own pool of two; the vendor concurrency budget does not see native requests, so chats and vendor workflows outside the engine can run beside them.
+- **Native tasks lists member turns.** Member attempts are root attempts in the journal, so they appear under **Native tasks** (with titles such as `coordinator native-coordinator · initial`); that is where a stalled member is resumed. They offer no apply: their candidates belong to the goal.
+- **No route capability editor.** `structuredOutput` defaults to `unknown`; nothing in the window records it yet.
+- **Usage views.** The provider usage views still show vendor usage only; native usage is in the attempt's journal, the proxy's receipts and loop accounting.
+
+### Full suite and desktop journeys
+
+- **`npx tsc --noEmit`, then `env -u ANTHROPIC_BASE_URL node scripts/test.mjs`, on commit `b515f7b` (started 09:32:47):** typecheck clean; 1,351 passed, 25 failed, 6 skipped (1,382 tests in 98 files). The 25 failures are the ones described [above](#full-suite): all 21 in `tests/environments.test.ts` and 4 in `tests/round2-acceptance.test.ts`, every one the same missing `npm-cli.js` beside Electron's executable. No other test failed. An earlier run on `46ce891` gave the same 25 failures with 1,349 passed.
+- **Desktop journeys:** `npm run build`, then `env -u ANTHROPIC_BASE_URL npm run test:desktop`, on commit `8e58e01` (the last change to window code): **all eight journeys passed** (main desktop harness with encrypted restart, coordinator, Atlas, loop, session, Claude usage, Providers, and the native harness journey). None of them pins a native member; they show that the role editor and session picker changes broke none of the existing paths.
+
+## Merge of the follow-up and native members — 5 November 2026
+
+**Recorded:** 5 November 2026 (Asia/Shanghai), on the same macOS arm64 host. The [Claude plan and proxy follow-up](#follow-up-claude-plan-sign-in-and-proxy-completion) and [Phases 6b and 7](#phases-6b-and-7--native-members-in-teams-sessions-and-loops) were built in parallel from the same snapshot, `3bf36c6`. The follow-up was committed on that snapshot as `4f82336` and merged on `main` with branch `claude/elated-kare-7a2d5b` at `2f62083`.
+
+### What the merge changed
+
+- **Conflicts were in documentation only:** this record, the [plan](Native_Harness_Plan.md), the [design](Topsl_Design.md) and the [implementation status](Implementation_Status.md). Each kept both sides' statements, with the member work added as a later dated note. The code in `packages/harness/{harness,kernel}.ts` and `packages/proxy/{registry,service,types}.ts` merged without conflicts.
+- **One interaction fixed.** The follow-up made `NativeHarness.resume` asynchronous so that it can restore MCP servers. The member driver (`packages/orchestration/runtime-driver.ts`) called it without `await` inside a `try`, so a refused resume after a restart would have become an unhandled rejection instead of being ignored. It now awaits the call.
+- **Statements written before the merge are kept as written.** The follow-up says the team and session work had not been merged here, and the member work says quota waits are kept in memory. After the merge, loops read the harness's quota ledger (`apps/service/service.ts`), which the follow-up stores in encrypted history (`packages/harness/resources.ts`). No test restarts Topsl while a member waits on its allowance.
+
+### Validation after the merge
+
+| Command | Result | Scope |
+|---|---|---|
+| `env -u ANTHROPIC_BASE_URL -u OPENAI_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u OPENAI_API_KEY npm run check`, started 09:55:47 on the merge (with the `await` fix) | **Passed:** typecheck; 1,409 tests passed and 6 skipped across 101 files (98 passed, 3 skipped); all 18 release checks; production build | Local and synthetic. As in the follow-up's run, the 25 environment-dependent failures recorded [above](#full-suite) did not reproduce. The build still prints Vite's warning about a chunk over 500 kB. |
+| `env -u ANTHROPIC_BASE_URL -u OPENAI_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u OPENAI_API_KEY npm run test:desktop`, started 10:00:50 on that build | **All eight journeys passed**: the main desktop harness with encrypted restart, coordinator, Atlas, loop, session, Claude usage, Providers, and the native harness journey (Claude browser sign-in with a declined callback and cancellation, gateway, clipboard key, edit → candidate → apply) | The actual Electron window against stand-ins and synthetic upstreams. No journey pins a native member, and no live provider or account was contacted. |
+
+Not established by the merge: everything listed as not established in the two records it joins, including live sign-in and inference on either plan, an Electron journey that pins a native member, CI, other platforms and the packaged app.

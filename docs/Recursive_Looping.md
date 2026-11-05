@@ -288,3 +288,14 @@ Loops are created through a native session's **Work → Create loop**, with the 
 - A loop in a session that started with an import carries the session's frozen reference in its coordinator prompts and child goals.
 
 Evidence: `tests/session-loops.test.ts` and the loop journey ([validation](UX_Cleanup_Plan.md#validation-30-october-2026)).
+
+## Follow-up: native members (5 November 2026)
+
+Loop teams can include members bound to Topsl's native harness on a local proxy route ([plan Phase 7](Native_Harness_Plan.md#4-delivery-phases)). The supervisor and its contracts are unchanged; it accounts for native members as follows:
+
+- **Shared allowance.** Before admitting an iteration's child goal, the supervisor asks for limits on the providers and native routes the iteration's resolved team uses. Native routes with the same quota owner share one allowance, so a usage limit on one holds them all: the run waits with kind `quota`, names the routes sharing it, and infers no reset time. The owner resumes the allowance under **Native tasks**; the next wakeup continues.
+- **Waits during an iteration.** A native member waiting on its allowance, or paused after repeating a failed operation (`no-progress`, a new wait kind), is shown as the run's wait; nothing restarts it, and other work carries on.
+- **Accounting.** Native turns count toward member-turn allowances like other turns, and their reported token usage is added to the run's; unreported usage stays unknown.
+- **Stop.** Stopping a run interrupts its native members, which cancels their descendants; nothing further launches.
+
+Evidence: `tests/native-loops.test.ts` (scripted stand-in driver with the harness's real resource ledger and the service's limit check); in `tests/native-members.test.ts`, a service-level Goal loop whose native coordinator and implementer run through the real harness and proxy to a promoted checkpoint, and the harness-level shared-allowance case. See the [native harness record](Native_Harness_Execution.md#phases-6b-and-7--native-members-in-teams-sessions-and-loops).

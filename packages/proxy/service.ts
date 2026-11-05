@@ -903,18 +903,26 @@ export class ProxyService {
       release,
       controller,
     );
-    if (request.stream)
+    if (request.stream) {
+      const meta = {
+        model: request.model,
+        responseId: receipt.id,
+        // A Chat Completions client gets a usage chunk only when it asked for one.
+        includeUsage:
+          input.protocol === "chat" ? includeUsage(input.body) : true,
+      };
       return {
         kind: "stream",
         status: 200,
-        chunks: module.writeStream(observed, {
-          model: request.model,
-          responseId: receipt.id,
-          // A Chat Completions client gets a usage chunk only when it asked for one.
-          includeUsage:
-            input.protocol === "chat" ? includeUsage(input.body) : true,
-        }),
+        // Topsl's harness (a request with a frozen route revision) is told
+        // the model the upstream reported, which it records as evidence;
+        // other clients see the alias they asked for.
+        chunks: module.writeStream(
+          frozen ? reportingUpstreamModel(observed, meta) : observed,
+          meta,
+        ),
       };
+    }
     const events: CanonicalEvent[] = [];
     for await (const event of observed) events.push(event);
     const collected = collectResponse(events);
@@ -1125,3 +1133,18 @@ export function claudeAccount(credential: ClaudeCredential) {
 }
 
 export type { StoredCredential };
+
+/**
+ * Passes events through, naming the upstream-reported model in `meta`
+ * before the writer emits its first frame (the writers read `meta.model`
+ * when they start).
+ */
+async function* reportingUpstreamModel(
+  events: AsyncGenerator<CanonicalEvent>,
+  meta: { model: string },
+): AsyncGenerator<CanonicalEvent> {
+  for await (const event of events) {
+    if (event.type === "response-start" && event.model) meta.model = event.model;
+    yield event;
+  }
+}

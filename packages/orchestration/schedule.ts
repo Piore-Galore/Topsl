@@ -1,10 +1,16 @@
-import type { RoleRound, RoundMember } from "../domain/role-groups";
+import {
+  memberProviders,
+  type MemberProvider,
+  type RoleRound,
+  type RoundMember,
+} from "../domain/role-groups";
 
 /** What the shared concurrency budget holds now. */
 export interface CapacityView {
   total: number;
   perProvider: number;
-  held: Array<{ provider: "codex" | "claude"; weight: number }>;
+  /** Native members hold capacity like vendor members, under "native". */
+  held: Array<{ provider: MemberProvider; weight: number }>;
 }
 
 /**
@@ -36,7 +42,7 @@ export interface Admission {
 export function admit(
   round: Pick<RoleRound, "scheduling" | "executionWidth" | "members">,
   phase: RoundMember["phase"],
-  weights: Record<string, { provider: "codex" | "claude"; weight: number }>,
+  weights: Record<string, { provider: MemberProvider; weight: number }>,
   capacity: CapacityView,
 ): Admission {
   const inPhase = round.members.filter((m) => m.phase === phase);
@@ -56,7 +62,7 @@ export function admit(
   const fits = (ids: string[]) => {
     const total = ids.reduce((n, id) => n + weights[id].weight, 0);
     if (heldTotal + total > capacity.total) return false;
-    for (const provider of ["codex", "claude"] as const) {
+    for (const provider of memberProviders) {
       const p = ids
         .filter((id) => weights[id].provider === provider)
         .reduce((n, id) => n + weights[id].weight, 0);

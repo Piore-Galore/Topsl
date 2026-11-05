@@ -145,7 +145,9 @@ export class ScriptedLoopDriver implements LoopDriver {
       notes: [],
     };
   }
-  providerLimits() {
+  providerLimits(
+    ..._input: Parameters<NonNullable<LoopDriver["providerLimits"]>>
+  ): ReturnType<NonNullable<LoopDriver["providerLimits"]>> {
     return this.limits;
   }
 }

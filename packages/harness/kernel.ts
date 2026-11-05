@@ -4,6 +4,7 @@ import type { ProtectedBlobs } from "../persistence/blobs";
 import {
   collectResponse,
   type CanonicalEvent,
+  type CanonicalOutputFormat,
   type CanonicalResponse,
   type CanonicalToolCallPart,
 } from "../proxy/canonical";
@@ -41,6 +42,7 @@ import {
   type JournalEvent,
   type NativeAttemptView,
   type NativeLimits,
+  type NativeMemberContext,
   type ToolGrants,
 } from "./types";
 
@@ -83,6 +85,13 @@ export interface AttemptSpec {
   rootAttemptId: string;
   depth: number;
   delegationMode: DelegationMode | null;
+  /**
+   * The JSON Schema the final text must follow, frozen at start and sent
+   * with every step request (not with compaction). Absent: free text.
+   */
+  outputFormat?: CanonicalOutputFormat | null;
+  /** Set for a member turn; its candidate is captured by the orchestration driver. */
+  member?: NativeMemberContext | null;
 }
 
 export interface KernelDeps {
@@ -168,6 +177,8 @@ export class NativeKernel {
       rootAttemptId: spec.rootAttemptId,
       depth: spec.depth,
       delegationMode: spec.delegationMode,
+      ...(spec.outputFormat ? { outputFormat: spec.outputFormat } : {}),
+      ...(spec.member ? { member: spec.member } : {}),
     });
     this.launch(spec, view.generation);
     return view;
@@ -501,6 +512,7 @@ export class NativeKernel {
           conversation,
           tools: toolDefinitions(rt.tools),
           reasoningEffort: spec.binding.model.reasoningEffort,
+          outputFormat: spec.outputFormat ?? null,
         });
         const window = spec.binding.model.contextWindowTokens;
         if (compiled.estimatedTokens > spec.limits.compactAt * window) {

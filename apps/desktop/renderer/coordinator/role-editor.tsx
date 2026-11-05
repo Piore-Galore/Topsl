@@ -32,8 +32,11 @@ export function teamLine(group: any, assignments: any[] = []): string {
 
 export interface ModelOption {
   key: string;
-  provider: "codex" | "claude";
-  installationId: string;
+  provider: "codex" | "claude" | "native";
+  /** The vendor installation; null for a native proxy route. */
+  installationId: string | null;
+  /** A native proxy route's ID; null for a vendor installation. */
+  routeId: string | null;
   model: string;
   name: string;
   /** Effort levels the runtime's catalog lists for this model. */
@@ -111,14 +114,34 @@ export function routeBlockers(
   return { reasons: [...reasons], details };
 }
 
+/** A route's key: its installation, or a native route's ID. */
+export function routeOptionKey(route: {
+  installationId?: string | null;
+  native?: { routeId: string } | null;
+}): string {
+  return route.installationId ?? `native:${route.native?.routeId ?? ""}`;
+}
+
+/** The pin an option adds: a vendor installation or a native route. */
+export function optionPin(option: ModelOption): MemberPin {
+  return {
+    label: option.name,
+    provider: option.provider,
+    ...(option.installationId ? { installationId: option.installationId } : {}),
+    ...(option.routeId ? { routeId: option.routeId } : {}),
+    model: option.model,
+  };
+}
+
 export function modelOptions(routes: any[], purpose: string): ModelOption[] {
   return routes.flatMap((r) =>
     r.models.map((m: any) => {
       const reason = routeBlockers(r, purpose).reasons.join(" ");
       return {
-        key: `${r.installationId}:${m.model}`,
+        key: `${routeOptionKey(r)}:${m.model}`,
         provider: r.provider,
-        installationId: r.installationId,
+        installationId: r.installationId ?? null,
+        routeId: r.native?.routeId ?? null,
         model: m.model,
         name: m.name,
         efforts: m.efforts ?? [],
@@ -281,16 +304,7 @@ export function RoleEditor({
     (filtered.length === 1 ? filtered[0] : null);
   const total = form === "exact" ? members.length : Number(count) || null;
   function add(option: ModelOption | null) {
-    addPin(
-      option
-        ? {
-            label: option.name,
-            provider: option.provider,
-            installationId: option.installationId,
-            model: option.model,
-          }
-        : null,
-    );
+    addPin(option ? optionPin(option) : null);
   }
   function addPin(pin: MemberPin | null) {
     const n = members.length + 1;
@@ -490,10 +504,13 @@ export function RoleEditor({
               ? `Choose one of ${filtered.length} ${filtered.length === 1 ? "model" : "models"}`
               : "No observed model matches"}
           </option>
-          {(["claude", "codex"] as const).map((provider) => {
+          {(["claude", "codex", "native"] as const).map((provider) => {
             const group = filtered.filter((o) => o.provider === provider);
             return group.length ? (
-              <optgroup key={provider} label={label(provider)}>
+              <optgroup
+                key={provider}
+                label={provider === "native" ? "Topsl native" : label(provider)}
+              >
                 {group.map((o) => (
                   <option key={o.key} value={o.key}>
                     {o.name} ({o.model})

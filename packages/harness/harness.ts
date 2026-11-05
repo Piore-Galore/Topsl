@@ -24,6 +24,12 @@ import {
 import { candidateChanges } from "../workflows/parallel-specialists";
 import { writeManagedSnapshot } from "../workspace/managed";
 import type { Connection, ProxyRoute } from "../proxy/types";
+import type { CanonicalOutputFormat } from "../proxy/canonical";
+import {
+  relaxSchemaForMessages,
+  strictCompatible,
+} from "../proxy/protocols/shared";
+import { canonicalWorkspaceIdentity } from "../workspace/ownership";
 import { NativeJournal } from "./journal";
 import { NativeKernel, type AttemptSpec } from "./kernel";
 import {
@@ -58,6 +64,7 @@ import {
   terminalStates,
   type ExecutionBinding,
   type NativeAttemptView,
+  type NativeMemberContext,
   type ToolGrants,
   type JournalBodies,
 } from "./types";
@@ -88,6 +95,33 @@ export interface NativeStartInput {
   mcpServerIds: string[];
   reasoningEffort: string | null;
   contextWindowTokens: number | null;
+  maxRequests: number | null;
+}
+
+/**
+ * A coordinator, session or loop member turn on Topsl's native harness
+ * (docs/Native_Harness_Plan.md §3, "Teams and extensions"). The
+ * orchestration driver prepares the member's own copy and captures its
+ * candidate; the harness runs the turn there under a frozen binding.
+ */
+export interface NativeMemberStartInput {
+  /** Chosen by the caller when it records the launch before starting it. */
+  attemptId?: string;
+  projectId: string;
+  routeAlias: string;
+  title: string;
+  prompt: string;
+  workspace: {
+    root: string;
+    writable: boolean;
+    /** The snapshot the copy was made from, when there is one. */
+    baselineCandidateId: string | null;
+  };
+  /** The JSON Schema the final answer must follow, or null for free text. */
+  outputSchema: { name: string; schema: Record<string, unknown> } | null;
+  member: NativeMemberContext;
+  reasoningEffort: string | null;
+  /** The episode's request budget; null keeps the default. */
   maxRequests: number | null;
 }
 
@@ -216,6 +250,9 @@ export class NativeHarness {
       },
       onProvisional: options.onProvisional,
     });
+    // A member turn waits with every attempt on its allowance; when the
+    // owner tries the allowance again, the waiting members continue.
+    this.resources.onQuotaResumed((owner) => this.resumeQuotaMembers(owner));
   }
 
   private get store() {
@@ -425,6 +462,118 @@ export class NativeHarness {
     return this.kernel.start(spec);
   }
 
+  /**
+   * Starts one member turn in the copy the orchestration driver prepared.
+   * The turn gets read (and, for implementation, edit) tools only: no
+   * commands, network, delegation or MCP, so its effects stay in its copy.
+   * A turn that needs a schema is refused on a route recorded as unable to
+   * carry one.
+   */
+  async startMember(input: NativeMemberStartInput): Promise<NativeAttemptView> {
+    const project = this.store.get<Project>("project", input.projectId);
+    if (!project) throw new Error("The project does not exist.");
+    const info = this.options.route(input.routeAlias);
+    if (!info)
+      throw new Error(`No connection route is named ${input.routeAlias}.`);
+    if (info.route.disabled) throw new Error("That route is turned off.");
+    if (!["ready", "paused-usage-limit"].includes(info.connection.state))
+      throw new Error(
+        `${info.connection.label} is not ready (${info.connection.state}).`,
+      );
+    if (
+      input.outputSchema &&
+      info.route.capabilities.structuredOutput === "unsupported"
+    )
+      throw new Error(
+        `${info.route.alias} is recorded as unable to enforce a response schema, which this turn needs.`,
+      );
+    if (!existsSync(input.workspace.root))
+      throw new Error("The member's workspace copy does not exist.");
+    const attemptId = input.attemptId ?? randomUUID();
+    const grants: ToolGrants = {
+      write: input.workspace.writable,
+      processes: false,
+      networkDomains: [],
+      checks: [],
+      delegation: false,
+      mcpTools: [],
+      candidates: [],
+    };
+    const limits = {
+      ...defaultLimits,
+      ...(input.maxRequests
+        ? { maxRequests: Math.min(Math.max(input.maxRequests, 1), 500) }
+        : {}),
+    };
+    const binding = this.binding(
+      info,
+      input.reasoningEffort,
+      null,
+      grants,
+      limits,
+    );
+    const outputFormat = memberOutputFormat(
+      input.outputSchema,
+      info.route.protocol,
+    );
+    const identity = canonicalWorkspaceIdentity(input.workspace.root);
+    const skills = await this.readSkills(input.workspace.root);
+    const spec: AttemptSpec = {
+      attemptId,
+      projectId: project.id,
+      title: input.title.slice(0, 120),
+      prompt: input.prompt,
+      instructions: "",
+      binding,
+      limits,
+      grants,
+      workspace: {
+        root: identity.canonicalRoot,
+        identity: identity.filesystemIdentity,
+        writable: input.workspace.writable,
+        baselineCandidateId: input.workspace.baselineCandidateId,
+      },
+      projectRoot: project.realPath,
+      tempRoot: await this.tempRoot(attemptId),
+      parentAttemptId: null,
+      rootAttemptId: attemptId,
+      depth: 0,
+      delegationMode: null,
+      outputFormat,
+      member: input.member,
+    };
+    // Instruction files and skills come from the member's copy: the content
+    // the turn was given, not a fresh read of the project folder.
+    spec.instructions = await this.instructions(
+      { ...project, realPath: identity.canonicalRoot },
+      spec,
+      skills,
+    );
+    this.store.put("native-attempt-spec", {
+      ...spec,
+      id: attemptId,
+      skills,
+      mcpServerIds: [],
+    });
+    return this.kernel.start(spec);
+  }
+
+  /** Continues every member turn that waited on `owner`'s allowance. */
+  private resumeQuotaMembers(owner: string): void {
+    for (const view of this.journal.unfinished()) {
+      if (view.state !== "waiting-quota") continue;
+      if (view.binding.native?.quotaOwner !== owner) continue;
+      if (this.kernel.isRunning(view.attemptId)) continue;
+      const spec = this.storedSpec(view.attemptId);
+      if (!spec?.member) continue;
+      try {
+        this.kernel.resume(spec);
+      } catch {
+        // Finished or claimed meanwhile; nothing to continue.
+      }
+    }
+  }
+
   private binding(
     info: RouteInfo,
     reasoningEffort: string | null,
@@ -490,7 +639,9 @@ export class NativeHarness {
       spec.grants.delegation
         ? `You may hand bounded sub-tasks to child agents with delegate (at most ${delegationLimits.maxDepth} levels deep and ${delegationLimits.maxActiveDescendants} active at a time). You alone integrate writable children's results.`
         : "",
-      "When you are done, answer with a concise summary of what you found or changed and how you verified it, without calling tools.",
+      spec.outputFormat
+        ? "When you are done, answer without calling tools, with only the JSON object your task describes. It must follow the response schema exactly; nothing before or after it."
+        : "When you are done, answer with a concise summary of what you found or changed and how you verified it, without calling tools.",
     ].filter(Boolean);
     const files = await this.projectInstructionFiles(project.realPath);
     if (files)
@@ -692,6 +843,9 @@ export class NativeHarness {
     spec: AttemptSpec,
     _summary: string,
   ): Promise<string | null> {
+    // A member turn's candidate is captured by the orchestration driver,
+    // which checks it against the turn's permitted outputs.
+    if (spec.member) return null;
     if (!spec.workspace.writable || !spec.workspace.baselineCandidateId)
       return null;
     const candidate = await this.captureWorkspace(spec);
@@ -1392,4 +1546,25 @@ export class NativeHarness {
   close(): void {
     for (const id of [...this.mcp.keys()]) this.stopMcp(id);
   }
+}
+
+/**
+ * The output format a member turn sends: its schema as given, strict when
+ * OpenAI's strict mode can take it, and on a Messages route relaxed to what
+ * Anthropic accepts. The engine validates the final text against the full
+ * schema in every case.
+ */
+export function memberOutputFormat(
+  schema: NativeMemberStartInput["outputSchema"],
+  protocol: ProxyRoute["protocol"],
+): CanonicalOutputFormat | null {
+  if (!schema) return null;
+  const { $schema: _ignored, ...body } = schema.schema;
+  if (protocol === "messages")
+    return {
+      name: schema.name,
+      schema: relaxSchemaForMessages(body) as Record<string, unknown>,
+      strict: true,
+    };
+  return { name: schema.name, schema: body, strict: strictCompatible(body) };
 }

@@ -1,25 +1,35 @@
 import type { ProviderModel } from "../providers/contract";
-import type {
-  EffectiveRoleGroup,
-  ExecutionPurpose,
-  MemberIntent,
-  MemberPin,
-  ResolvedMemberAssignment,
-  RoleDefinition,
+import {
+  memberEngine,
+  type EffectiveRoleGroup,
+  type ExecutionPurpose,
+  type MemberIntent,
+  type MemberPin,
+  type MemberProvider,
+  type NativeRouteBinding,
+  type ResolvedMemberAssignment,
+  type RoleDefinition,
 } from "../domain/role-groups";
+import type { ExecutionEngine } from "../harness/types";
 import { autoCount } from "./membership";
 
 /**
  * One authorized runtime route a member could run on, with its observed
  * model catalog and per-purpose readiness. The service derives these from
- * installations, runtime qualification and the catalog cache; tests supply
- * them directly. Nothing in selection prefers a provider for a role.
+ * vendor installations (runtime qualification and the catalog cache) and
+ * from the native harness's proxy routes; tests supply them directly.
+ * Nothing in selection prefers a provider for a role.
  */
 export interface RouteCandidate {
-  provider: "codex" | "claude";
-  installationId: string;
-  installationRevision: string;
-  executableIdentity: string;
+  provider: MemberProvider;
+  /** Absent: the provider's engine (see memberEngine). */
+  engine?: ExecutionEngine;
+  /** The vendor installation; null for a native proxy route. */
+  installationId: string | null;
+  installationRevision: string | null;
+  executableIdentity: string | null;
+  /** A native proxy route's frozen identity; null or absent for vendor routes. */
+  native?: NativeRouteBinding | null;
   route: "managed-structured" | "assisted-terminal";
   nativeAccountKey: string | null;
   nativeProfileId: string | null;
@@ -51,6 +61,11 @@ interface Option {
   model: ProviderModel;
 }
 
+/** A route's identity for distinctness and ordering: its installation or proxy route. */
+export function routeKey(route: Pick<RouteCandidate, "installationId" | "native">) {
+  return route.installationId ?? `native:${route.native?.routeId ?? "unknown"}`;
+}
+
 const words = (v: string) => v.toLowerCase();
 function labelMatches(model: ProviderModel, label: string): boolean {
   const l = words(label).trim();
@@ -72,6 +87,7 @@ function optionsFor(pin: MemberPin, pool: RouteCandidate[]): Option[] {
     if (pin.provider && route.provider !== pin.provider) continue;
     if (pin.installationId && route.installationId !== pin.installationId)
       continue;
+    if (pin.routeId && route.native?.routeId !== pin.routeId) continue;
     for (const model of route.catalog.models) {
       if (pin.model) {
         if (model.model === pin.model || model.id === pin.model)
@@ -128,6 +144,11 @@ function assignment(
     selection,
     primaryPin: member.pin,
     provider: option?.route.provider ?? member.pin?.provider ?? null,
+    engine: option
+      ? (option.route.engine ?? memberEngine({ provider: option.route.provider }))
+      : member.pin?.provider
+        ? memberEngine({ provider: member.pin.provider })
+        : null,
     route:
       option?.route.route ??
       (member.pin?.route === "assisted" ? "assisted-terminal" : null),
@@ -135,6 +156,7 @@ function assignment(
       option?.route.installationId ?? member.pin?.installationId ?? null,
     installationRevision: option?.route.installationRevision ?? null,
     executableIdentity: option?.route.executableIdentity ?? null,
+    native: option?.route.native ?? null,
     nativeAccountKey: option?.route.nativeAccountKey ?? null,
     nativeProfileId: option?.route.nativeProfileId ?? null,
     billingRoute: option?.route.billingRoute ?? null,
@@ -221,7 +243,7 @@ export function resolveGroup(input: {
       const options = optionsFor(pin, pool);
       const distinct = [
         ...new Map(
-          options.map((o) => [`${o.route.installationId}:${o.model.model}`, o]),
+          options.map((o) => [`${routeKey(o.route)}:${o.model.model}`, o]),
         ).values(),
       ];
       if (!distinct.length) {
@@ -241,7 +263,12 @@ export function resolveGroup(input: {
         );
         continue;
       }
-      if (usable.length > 1 && !pin.model && !pin.installationId) {
+      if (
+        usable.length > 1 &&
+        !pin.model &&
+        !pin.installationId &&
+        !pin.routeId
+      ) {
         tried.push(
           `The label "${describePin(pin)}" matches ${usable.length} models (${usable.map((o) => o.model.model).join(", ")}). Choose one exact model.`,
         );
@@ -348,7 +375,7 @@ export function resolveGroup(input: {
       (a, b) =>
         score(a) - score(b) ||
         a.route.provider.localeCompare(b.route.provider) ||
-        a.route.installationId.localeCompare(b.route.installationId) ||
+        routeKey(a.route).localeCompare(routeKey(b.route)) ||
         a.model.model.localeCompare(b.model.model),
     );
     const option = ranked[0];

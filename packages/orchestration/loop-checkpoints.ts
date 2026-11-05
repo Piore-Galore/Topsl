@@ -4,7 +4,11 @@ import path from "node:path";
 import { hash, now, safeError, stable } from "../domain/invariants";
 import type { Project, UsageFact } from "../domain/types";
 import type { ExecutionAttempt } from "../domain/workflow";
-import type { GoalCheckDefinition } from "../domain/role-groups";
+import type {
+  GoalCheckDefinition,
+  MemberProvider,
+  NativeRouteBinding,
+} from "../domain/role-groups";
 import type { Store } from "../persistence/store";
 import { summarizeUsage } from "../domain/usage";
 import { bindCheckInputs } from "../workflows/check-inputs";
@@ -141,13 +145,65 @@ export interface LoopDriver {
     complete: boolean;
     notes: string[];
   };
-  /** Provider quota or owner allowance limits that block new work now. */
-  providerLimits?(providers: Array<"codex" | "claude">): Array<{
-    provider: "codex" | "claude";
-    kind: "quota" | "allowance";
-    detail: string;
-    retryAt: string | null;
-  }>;
+  /**
+   * Provider quota or owner allowance limits that block new work now: for
+   * vendor providers, what their runtimes reported; for native members,
+   * their allowance's quota owner, shared by every route on that account.
+   */
+  providerLimits?(
+    providers: Array<"codex" | "claude">,
+    native?: NativeRouteBinding[],
+  ): ProviderLimit[];
+}
+
+/** A limit that keeps a loop from starting work now. */
+export interface ProviderLimit {
+  provider: MemberProvider;
+  kind: "quota" | "allowance";
+  detail: string;
+  retryAt: string | null;
+  /** For a native allowance: the quota owner every route on it shares. */
+  quotaOwner?: string | null;
+}
+
+/**
+ * Native allowances that block new loop work now. Routes with the same quota
+ * owner share one allowance (an account whose evidence established it), so
+ * one limit holds all of them; a route with no known owner is limited only
+ * through its own connection. Topsl infers no reset time: the wait lasts
+ * until the owner resumes the allowance.
+ */
+export function nativeAllowanceLimits(
+  routes: NativeRouteBinding[],
+  facts: {
+    /** The harness's shared wait for an owner, when one is recorded. */
+    quotaWait(owner: string): { since: string; detail: string } | null;
+    /** The connection's current state, as the proxy reported it. */
+    connectionState(connectionId: string): string | null;
+  },
+): ProviderLimit[] {
+  const limits: ProviderLimit[] = [];
+  const seen = new Set<string>();
+  for (const route of routes) {
+    const owner = route.quotaOwner ?? `connection:${route.connectionId}`;
+    if (seen.has(owner)) continue;
+    seen.add(owner);
+    const wait = facts.quotaWait(owner);
+    const paused =
+      facts.connectionState(route.connectionId) === "paused-usage-limit";
+    if (!wait && !paused) continue;
+    const sharing = routes.filter(
+      (r) => (r.quotaOwner ?? `connection:${r.connectionId}`) === owner,
+    );
+    limits.push({
+      provider: "native",
+      kind: "quota",
+      quotaOwner: owner,
+      detail: `${route.connectionLabel} reported its usage limit${wait ? ` (since ${wait.since})` : ""}. ${sharing.length > 1 ? `${[...new Set(sharing.map((r) => r.routeAlias))].join(", ")} share this allowance and wait together.` : `${route.routeAlias} waits on it.`} Resume the allowance under Native tasks when it is available.`,
+      retryAt: null,
+    });
+  }
+  return limits;
 }
 
 /** The digest of a snapshot's files: path, content hash and executable bit. */
@@ -182,6 +238,15 @@ export interface RuntimeLoopDriverDeps {
   assertLocalOwner(projectId: string): void;
   gitExecutable?: string;
   providerLimits?: LoopDriver["providerLimits"];
+  /**
+   * A native member attempt's usage as the upstream reported it; null for
+   * an attempt that is not native. Requests with no report stay unknown.
+   */
+  nativeUsage?(attemptId: string): {
+    input: number | null;
+    output: number | null;
+    unknownRequests: number;
+  } | null;
 }
 
 export class RuntimeLoopDriver implements LoopDriver {
@@ -645,25 +710,47 @@ export class RuntimeLoopDriver implements LoopDriver {
 
   usage(projectId: string, attemptIds: string[]) {
     const runs = new Map<string, string>();
+    const native: Array<NonNullable<ReturnType<NonNullable<RuntimeLoopDriverDeps["nativeUsage"]>>>> = [];
     for (const id of attemptIds) {
       const attempt = this.store.get<ExecutionAttempt>("attempt", id);
       if (attempt?.legacyRunId) runs.set(attempt.legacyRunId, id);
+      else {
+        const usage = this.deps.nativeUsage?.(id);
+        if (usage) native.push(usage);
+      }
     }
     const facts = [
       ...this.store.iterate<UsageFact>("usage", { projectId }),
     ].filter((f) => runs.has(f.runId));
     const summary = summarizeUsage(facts, [...runs.keys()]);
+    // Native turns add what their upstream reported; an unreported request
+    // keeps the total incomplete, never zero.
+    const covered = native.filter(
+      (u) => u.unknownRequests === 0 && u.input !== null && u.output !== null,
+    );
+    const add = (a: number | null, b: number | null) =>
+      a === null && b === null ? null : (a ?? 0) + (b ?? 0);
+    const notes = [...summary.notes];
+    if (covered.length < native.length)
+      notes.push(
+        "Some native model requests reported no usage; their usage is unknown.",
+      );
     return {
-      input: summary.input,
-      output: summary.output,
-      coveredAttempts: summary.coveredRuns,
+      input: covered.reduce((n, u) => add(n, u.input), summary.input),
+      output: covered.reduce((n, u) => add(n, u.output), summary.output),
+      coveredAttempts: summary.coveredRuns + covered.length,
       totalAttempts: attemptIds.length,
-      complete: summary.complete && runs.size === attemptIds.length,
-      notes: summary.notes,
+      complete:
+        summary.complete &&
+        runs.size + covered.length === attemptIds.length,
+      notes,
     };
   }
 
-  providerLimits(providers: Array<"codex" | "claude">) {
-    return this.deps.providerLimits?.(providers) ?? [];
+  providerLimits(
+    providers: Array<"codex" | "claude">,
+    native: NativeRouteBinding[] = [],
+  ) {
+    return this.deps.providerLimits?.(providers, native) ?? [];
   }
 }

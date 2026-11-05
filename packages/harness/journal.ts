@@ -367,6 +367,7 @@ export function reduce(
         .map((p) => (p as { text: string }).text)
         .join("");
       if (text) next.lastText = text.slice(-4000);
+      if (body.reportedModel) next.reportedModel = body.reportedModel;
       if (!finished) next.state = "running";
       break;
     }
@@ -400,6 +401,7 @@ export function reduce(
             ? "uncertain"
             : "paused";
       next.stateDetail = body.reason;
+      next.pauseKind = body.kind;
       break;
     }
     case "resumed":
@@ -407,6 +409,7 @@ export function reduce(
       if (!finished && view.state !== "uncertain") {
         next.state = "running";
         next.stateDetail = null;
+        next.pauseKind = null;
       }
       break;
     case "child-started":

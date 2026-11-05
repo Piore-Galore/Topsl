@@ -75,6 +75,23 @@ export interface CanonicalTool {
 export type CanonicalToolChoice =
   "auto" | "none" | "required" | { name: string };
 
+/**
+ * A JSON Schema the response's final text must follow (structured output).
+ * Each protocol carries it in its own field: Responses `text.format`, Chat
+ * Completions `response_format`, Messages `output_config.format`. Plain
+ * JSON mode without a schema is not representable.
+ */
+export interface CanonicalOutputFormat {
+  /** The schema's name; Messages has none, and its requests use "output". */
+  name: string;
+  schema: Record<string, unknown>;
+  /**
+   * Whether the provider is asked to enforce the schema exactly (OpenAI
+   * `strict`). Messages always constrains decoding, which is never weaker.
+   */
+  strict: boolean;
+}
+
 export interface CanonicalRequest {
   /** The client-facing model alias. The router resolves it to a route. */
   model: string;
@@ -94,6 +111,11 @@ export interface CanonicalRequest {
   thinkingBudget: number | null;
   parallelToolCalls: boolean | null;
   stream: boolean;
+  /**
+   * The final text's JSON Schema. Absent or null: free text. (Absent in
+   * requests built before structured output was carried.)
+   */
+  outputFormat?: CanonicalOutputFormat | null;
   /** The protocol the client spoke. */
   clientProtocol: ClientProtocol;
 }

@@ -14,6 +14,7 @@ import {
 } from "../../packages/harness/sandbox";
 import type { NativeAttemptView } from "../../packages/harness/types";
 import type { ProxyStateView } from "../../packages/proxy/service";
+import type { NativeMemberHost } from "../../packages/orchestration/runtime-driver";
 
 type NativeCommand = Extract<Command, { type: `native-${string}` }>;
 
@@ -84,6 +85,30 @@ export class NativeService {
   }
   setProxyState(state: ProxyStateView): void {
     this.proxy = state;
+  }
+
+  /**
+   * The harness as coordinator teams, sessions and loops use it: member
+   * turns on proxy routes (packages/orchestration/runtime-driver.ts).
+   */
+  memberHost(): NativeMemberHost {
+    return {
+      harness: this.harness,
+      routes: () => this.routeInfos(),
+      running: () => this.endpoint !== null,
+    };
+  }
+
+  /** Every route the proxy reported, with its connection. */
+  routeInfos(): RouteInfo[] {
+    const state = this.proxy;
+    if (!state) return [];
+    return state.routes.flatMap((route) => {
+      const connection = state.connections.find(
+        (c) => c.id === route.connectionId,
+      );
+      return connection ? [{ route, connection }] : [];
+    });
   }
 
   private route(alias: string): RouteInfo | null {
