@@ -49,7 +49,7 @@ const finished = new Set(["completed", "failed", "cancelled"]);
 const fundingWords = {
   subscription: "plan allowance",
   "api-billing": "API billing",
-  gateway: "gateway billing",
+  gateway: "managed by external service",
   local: "local model",
 } as const;
 
@@ -189,6 +189,14 @@ export function NativeTasks({
           key={current.attemptId}
           view={current}
           provisional={provisional[current.attemptId] ?? null}
+          retired={
+            (state.proxy?.retired?.routes ?? []).find(
+              (r) => r.id === current.binding.native?.routeId,
+            )?.reason ??
+            (current.binding.native?.connectionKind === "claude-plan"
+              ? "Direct Claude subscription sign-in was removed from Topsl."
+              : null)
+          }
           act={act}
           refresh={refresh}
         />
@@ -436,11 +444,14 @@ function describe(event: JournalEvent): string | null {
 function AttemptDetail({
   view,
   provisional,
+  retired,
   act,
   refresh,
 }: {
   view: NativeAttemptView;
   provisional: string | null;
+  /** Why this task's route was retired; it then cannot continue. */
+  retired: string | null;
   act: Act;
   refresh: () => Promise<void>;
 }) {
@@ -512,6 +523,19 @@ function AttemptDetail({
         {view.compactions ? ` · compacted ${view.compactions}×` : ""}
       </p>
       {view.stateDetail && <p>{view.stateDetail}</p>}
+      {retired && !finished.has(view.state) && (
+        <div className="info-strip" role="note">
+          <span className="status-dot notice" />
+          <div>
+            <strong>This task's model route was retired.</strong>{" "}
+            <span>
+              {retired} It cannot continue, and Topsl does not move it to
+              another route or account. Its history stays here; start a new
+              task on a supported route.
+            </span>
+          </div>
+        </div>
+      )}
       <ol className="transcript" aria-label="Journal">
         {events.map((event) => {
           const text = describe(event);
@@ -549,7 +573,7 @@ function AttemptDetail({
           >
             Send steering
           </ActionButton>
-          {["paused", "waiting-quota"].includes(view.state) ? (
+          {retired ? null : ["paused", "waiting-quota"].includes(view.state) ? (
             <ActionButton
               className="primary"
               onClick={() =>

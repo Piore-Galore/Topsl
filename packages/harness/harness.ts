@@ -25,6 +25,7 @@ import { candidateChanges } from "../workflows/parallel-specialists";
 import { writeManagedSnapshot } from "../workspace/managed";
 import type { Connection, ProxyRoute } from "../proxy/types";
 import type { CanonicalOutputFormat } from "../proxy/canonical";
+import { memberCapabilityBlockers } from "../proxy/capabilities";
 import {
   relaxSchemaForMessages,
   strictCompatible,
@@ -149,6 +150,11 @@ export interface NativeHarnessOptions {
   profileDirectory: string;
   endpoint: () => ProxyEndpoint | null;
   route: (alias: string) => RouteInfo | null;
+  /**
+   * Why a bound route can no longer be used, when it was retired; null when
+   * it was not. Retired bindings stay readable and are never dispatched.
+   */
+  retired?: (binding: { routeId: string; connectionId: string }) => string | null;
   gitExecutable: string;
   model?: ModelClient;
   resources?: ResourceLedger;
@@ -159,7 +165,6 @@ export interface NativeHarnessOptions {
 /** Context windows used when a route has no observed value. */
 const defaultWindows: Record<string, number> = {
   "chatgpt-plan": 200_000,
-  "claude-plan": 200_000,
   "openai-api": 200_000,
   "anthropic-api": 200_000,
   "openai-compatible": 32_000,
@@ -191,6 +196,20 @@ async function listFiles(root: string, prefix = ""): Promise<string[]> {
       out.push(rel);
   }
   return out;
+}
+
+/**
+ * A task's model route was retired. Its history stays readable; it cannot
+ * continue, and Topsl never moves it to another route, account or engine.
+ */
+export class RouteRetiredError extends Error {
+  readonly code = "route-retired";
+  constructor(readonly reason: string) {
+    super(
+      `This task's model route was retired, so it cannot continue. ${reason} Its history stays here; start a new task on a supported route.`,
+    );
+    this.name = "RouteRetiredError";
+  }
 }
 
 export class NativeHarness {
@@ -263,6 +282,20 @@ export class NativeHarness {
     attemptId: string,
   ): (AttemptSpec & { skills: SkillEntry[]; mcpServerIds: string[] }) | null {
     return this.store.get("native-attempt-spec", attemptId) ?? null;
+  }
+
+  /** Why the binding's route was retired, or null when it is usable. */
+  retiredReason(binding: AttemptSpec["binding"]): string | null {
+    const native = binding.native;
+    if (!native) return null;
+    const reason = this.options.retired?.({
+      routeId: native.routeId,
+      connectionId: native.connectionId,
+    });
+    if (reason) return reason;
+    return native.connectionKind === "claude-plan"
+      ? "Direct Claude subscription sign-in was removed from Topsl."
+      : null;
   }
 
   private baseline(spec: AttemptSpec): Map<string, string | null> {
@@ -487,6 +520,13 @@ export class NativeHarness {
       throw new Error(
         `${info.route.alias} is recorded as unable to enforce a response schema, which this turn needs.`,
       );
+    const capabilityBlocker = memberCapabilityBlockers(
+      info.route,
+      info.connection,
+      !!input.outputSchema,
+    )[0];
+    if (capabilityBlocker)
+      throw new Error(capabilityBlocker.slice(capabilityBlocker.indexOf(":") + 2));
     if (!existsSync(input.workspace.root))
       throw new Error("The member's workspace copy does not exist.");
     const attemptId = input.attemptId ?? randomUUID();
@@ -566,6 +606,7 @@ export class NativeHarness {
       if (this.kernel.isRunning(view.attemptId)) continue;
       const spec = this.storedSpec(view.attemptId);
       if (!spec?.member) continue;
+      if (this.retiredReason(spec.binding)) continue;
       try {
         this.kernel.resume(spec);
       } catch {
@@ -747,6 +788,8 @@ export class NativeHarness {
       throw new Error("Reconcile the uncertain tool call before resuming.");
     if (this.kernel.isRunning(attemptId))
       throw new Error("The attempt is already running.");
+    const retired = this.retiredReason(spec.binding);
+    if (retired) throw new RouteRetiredError(retired);
     if (
       (!this.mcp.has(attemptId) ||
         [...(this.mcpClients.get(attemptId) ?? [])].some((c) => !c.running)) &&

@@ -13,14 +13,14 @@ const argv = z.array(z.string().min(1).max(4096)).min(1).max(100);
  * them to the proxy process over its trusted channel; they never reach the
  * control service, and no credential travels through the renderer: an API
  * key is read from the clipboard by main, and ChatGPT sign-in completes in
- * the browser.
+ * the browser. The retired direct Claude connection (`claude-plan`) has no
+ * command: creating one is refused here and again by the proxy.
  */
 export const connectionCommands = [
   z.object({
     type: z.literal("connection-create"),
     kind: z.enum([
       "chatgpt-plan",
-      "claude-plan",
       "openai-api",
       "anthropic-api",
       "openai-compatible",
@@ -29,6 +29,8 @@ export const connectionCommands = [
     label: z.string().min(1).max(200),
     endpoint: z.string().max(2000).nullable().optional(),
     protocol: z.enum(["responses", "messages", "chat"]).optional(),
+    /** External model services only: how the key is sent. */
+    serviceAuth: z.enum(["bearer", "x-api-key", "none"]).optional(),
   }),
   z.object({
     type: z.literal("connection-rename"),
@@ -38,9 +40,12 @@ export const connectionCommands = [
   /** Main reads the key from the clipboard after the owner confirms. */
   z.object({ type: z.literal("connection-key-paste"), connectionId: id }),
   z.object({ type: z.literal("connection-sign-in"), connectionId: id }),
-  z.object({ type: z.literal("connection-sign-in-complete"), attemptId: id }),
   z.object({ type: z.literal("connection-sign-in-cancel"), attemptId: id }),
   z.object({ type: z.literal("connection-models"), connectionId: id }),
+  /** Reads an external model service's optional capability document. Not billed. */
+  z.object({ type: z.literal("connection-capabilities"), connectionId: id }),
+  /** The explicit, billable connection test; main confirms it first. */
+  z.object({ type: z.literal("connection-test"), routeId: id }),
   z.object({ type: z.literal("connection-disconnect"), connectionId: id }),
   z.object({ type: z.literal("connection-remove"), connectionId: id }),
   z.object({

@@ -45,6 +45,14 @@ export class NativeService {
       profileDirectory,
       endpoint: () => this.endpoint,
       route: (alias) => this.route(alias),
+      retired: ({ routeId, connectionId }) => {
+        const retired = this.proxy?.retired;
+        const route = retired?.routes.find((r) => r.id === routeId);
+        const connection = retired?.connections.find(
+          (c) => c.id === connectionId,
+        );
+        return route?.reason ?? connection?.reason ?? null;
+      },
       gitExecutable: git,
       onChange: (view) => {
         this.changed.set(view.attemptId, view);

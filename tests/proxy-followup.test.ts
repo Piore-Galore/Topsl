@@ -57,8 +57,8 @@ test("catalog pagination preserves all models and refuses repeated cursors", asy
   }));
   cleanups.push(() => f.close());
   const c = f.proxy.registry.createConnection({
-    kind: "claude-plan",
-    label: "Claude",
+    kind: "anthropic-api",
+    label: "Anthropic API",
   });
   const paths: string[] = [];
   const fetcher: typeof fetch = async (url) => {

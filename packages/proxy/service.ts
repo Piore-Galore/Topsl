@@ -13,7 +13,6 @@ import {
   CredentialStore,
   keyFingerprint,
   type ChatGptCredential,
-  type ClaudeCredential,
   type StoredCredential,
 } from "./credentials";
 import {
@@ -25,28 +24,36 @@ import {
   type SignInAttempt,
 } from "./oauth/chatgpt";
 import {
-  beginClaudeSignIn,
-  refreshClaude,
-  ClaudeAuthError,
-  type ClaudeAuthConfig,
-  type ClaudeSignInAttempt,
-} from "./oauth/claude";
-import {
   authorizationHeaders,
   dispatchUpstream,
   failure,
   listUpstreamModels,
   protocolModule,
+  readServiceDocument,
   UpstreamError,
   type UpstreamModel,
 } from "./adapters";
 import {
+  capabilityConfiguration,
+  connectionTestRequests,
+  effectiveCapabilities,
+  testTool,
+} from "./capabilities";
+import type { RetirementOptions } from "./retirement";
+import {
   routeHeaders,
+  type CapabilityName,
+  type CapabilityObservation,
   type Connection,
+  type EffectiveCapability,
   type ConnectionKind,
   type ProxyRoute,
   type ReceiptOutcome,
   type RequestReceipt,
+  type RetiredConnection,
+  type RetiredRoute,
+  type ServiceAuthentication,
+  type ServiceManifestStatus,
 } from "./types";
 
 /**
@@ -63,19 +70,23 @@ const REFRESH_MARGIN_MS = 5 * 60_000;
 /** Largest request body the proxy reads. */
 export const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 
-export const claudeSubscriptionStatus = {
-  available: true,
-  experimental: true,
-  reason:
-    "Direct Claude-plan access through Topsl's proxy is an experimental community integration. Live account and model availability are established by sign-in and inference, separately from the Anthropic API connection.",
-  source: "https://code.claude.com/docs/en/legal-and-compliance",
-} as const;
-
 export interface ProxyStateView {
   connections: Connection[];
   routes: ProxyRoute[];
   signIns: Array<{ id: string; connectionId: string; startedAt: string }>;
-  claudeSubscription: typeof claudeSubscriptionStatus;
+  /** Each route's applicable capability evidence, by route ID. */
+  capabilities: Record<string, Record<CapabilityName, EffectiveCapability>>;
+  /** History-only records of retired connections and their routes. */
+  retired: {
+    connections: RetiredConnection[];
+    routes: RetiredRoute[];
+  };
+}
+
+/** One result of the explicit connection test. */
+export interface ConnectionTestResult {
+  value: "supported" | "unsupported" | null;
+  detail: string;
 }
 
 export type ProxyCommand =
@@ -85,13 +96,15 @@ export type ProxyCommand =
       label: string;
       endpoint?: string | null;
       protocol?: ClientProtocol;
+      serviceAuth?: ServiceAuthentication;
     }
   | { type: "connection-rename"; connectionId: string; label: string }
   | { type: "connection-api-key"; connectionId: string; key: string }
   | { type: "connection-sign-in"; connectionId: string }
-  | { type: "connection-sign-in-complete"; attemptId: string; callback: string }
   | { type: "connection-sign-in-cancel"; attemptId: string }
   | { type: "connection-models"; connectionId: string }
+  | { type: "connection-capabilities"; connectionId: string }
+  | { type: "connection-test"; routeId: string }
   | { type: "connection-disconnect"; connectionId: string }
   | { type: "connection-remove"; connectionId: string }
   | {
@@ -115,7 +128,8 @@ export interface ProxyServiceOptions {
   key: string;
   fetch?: typeof fetch;
   chatgpt?: ChatGptAuthConfig;
-  claude?: ClaudeAuthConfig;
+  /** Test-only fault injection for the schema 2 upgrade. */
+  retirement?: RetirementOptions;
   /** Called after every change the renderer should see (sanitized). */
   onState?: (state: ProxyStateView) => void;
   /** Opens a sign-in page in the person's browser. */
@@ -140,28 +154,46 @@ export class ProxyService {
     string,
     {
       connectionId: string;
-      attempt: SignInAttempt | ClaudeSignInAttempt;
+      attempt: SignInAttempt;
       startedAt: string;
     }
   >();
 
   constructor(private options: ProxyServiceOptions) {
-    this.database = new ProxyDatabase(options.file, options.key);
+    this.database = new ProxyDatabase(
+      options.file,
+      options.key,
+      options.retirement,
+    );
     this.registry = new ProxyRegistry(this.database);
     this.credentials = new CredentialStore(this.database);
     this.fetch = options.fetch ?? fetch;
   }
 
   view(): ProxyStateView {
+    const connections = this.registry.connections();
+    const routes = this.registry.routes();
+    const byId = new Map(connections.map((c) => [c.id, c]));
     return {
-      connections: this.registry.connections(),
-      routes: this.registry.routes(),
+      connections,
+      routes,
+      capabilities: Object.fromEntries(
+        routes.flatMap((route) => {
+          const connection = byId.get(route.connectionId);
+          return connection
+            ? [[route.id, effectiveCapabilities(route, connection)]]
+            : [];
+        }),
+      ),
       signIns: [...this.signIns.entries()].map(([id, s]) => ({
         id,
         connectionId: s.connectionId,
         startedAt: s.startedAt,
       })),
-      claudeSubscription: claudeSubscriptionStatus,
+      retired: {
+        connections: this.registry.retiredConnections(),
+        routes: this.registry.retiredRoutes(),
+      },
     };
   }
   private changed(): void {
@@ -186,6 +218,7 @@ export class ProxyService {
           label: command.label,
           endpoint: command.endpoint ?? null,
           protocol: command.protocol,
+          serviceAuth: command.serviceAuth,
           state: command.kind === "ollama" ? "ready" : "signed-out",
         });
       case "connection-rename":
@@ -196,19 +229,16 @@ export class ProxyService {
         return this.storeApiKey(command.connectionId, command.key);
       case "connection-sign-in":
         return this.signIn(command.connectionId);
-      case "connection-sign-in-complete": {
-        const attempt = this.signIns.get(command.attemptId)?.attempt;
-        if (!attempt || !("submitCallback" in attempt))
-          throw new Error("This sign-in does not accept a pasted callback.");
-        await attempt.submitCallback(command.callback);
-        return null;
-      }
       case "connection-sign-in-cancel": {
         this.signIns.get(command.attemptId)?.attempt.cancel();
         return null;
       }
       case "connection-models":
         return this.models(command.connectionId);
+      case "connection-capabilities":
+        return this.readCapabilities(command.connectionId);
+      case "connection-test":
+        return this.testRoute(command.routeId);
       case "connection-disconnect":
         return this.disconnect(command.connectionId);
       case "connection-remove": {
@@ -265,8 +295,8 @@ export class ProxyService {
   ): Promise<{ attemptId: string; authorizeUrl: string }> {
     if (this.closed) throw new Error("The proxy is shutting down.");
     const connection = this.registry.requireConnection(connectionId);
-    if (connection.kind !== "chatgpt-plan" && connection.kind !== "claude-plan")
-      throw new Error("Only a plan connection signs in.");
+    if (connection.kind !== "chatgpt-plan")
+      throw new Error("Only a ChatGPT plan connection signs in.");
     for (const s of this.signIns.values())
       if (s.connectionId === connectionId)
         throw new Error("A sign-in for this connection is already open.");
@@ -284,19 +314,13 @@ export class ProxyService {
         : undefined;
     const opening = Symbol();
     this.startingSignIns.set(connectionId, opening);
-    let attempt: SignInAttempt | ClaudeSignInAttempt;
+    let attempt: SignInAttempt;
     try {
-      attempt =
-        connection.kind === "claude-plan"
-          ? await beginClaudeSignIn(
-              this.options.claude ?? {},
-              stored?.kind === "oauth-claude" ? stored : undefined,
-            )
-          : await beginChatGptSignIn(this.options.chatgpt ?? {}, {
-              hostId: this.database.hostId(),
-              registration,
-              loginHint: registration?.email ?? undefined,
-            });
+      attempt = await beginChatGptSignIn(this.options.chatgpt ?? {}, {
+        hostId: this.database.hostId(),
+        registration,
+        loginHint: registration?.email ?? undefined,
+      });
       if (
         this.closed ||
         this.startingSignIns.get(connectionId) !== opening ||
@@ -339,10 +363,7 @@ export class ProxyService {
             stateDetail: result.planUse
               ? null
               : "Plan inference permission was not granted. Sign in again and allow plan usage.",
-            account:
-              result.credential.kind === "oauth-claude"
-                ? claudeAccount(result.credential)
-                : chatGptAccount(result.credential),
+            account: chatGptAccount(result.credential),
           });
         } else if (result.outcome === "declined")
           this.registry.updateConnection(connectionId, {
@@ -418,11 +439,6 @@ export class ProxyService {
           ? "OpenAI confirmed the sign-in was revoked."
           : `Remote revocation was not confirmed (${result.detail}). Topsl removed its copy; you can also disconnect Topsl in ChatGPT settings.`;
       }
-      if (stored?.kind === "oauth-claude") {
-        revocation = "not-supported";
-        detail =
-          "Topsl removed this Claude sign-in and cancelled its requests. Provider-side revocation was not established; manage connected sessions in your Claude account.";
-      }
       this.credentials.delete(connectionId);
     });
     this.registry.updateConnection(connectionId, {
@@ -460,7 +476,7 @@ export class ProxyService {
   }> {
     if (connection.authentication === "none")
       return {
-        headers: authorizationHeaders(connection.kind, null),
+        headers: authorizationHeaders(connection, null),
         identity: null,
       };
     const stored = this.credentials.get(connection.id);
@@ -476,11 +492,9 @@ export class ProxyService {
       );
     if (stored.credential.kind === "api-key")
       return {
-        headers: authorizationHeaders(connection.kind, stored.credential.key),
+        headers: authorizationHeaders(connection, stored.credential.key),
         identity: stored.credential.fingerprint,
       };
-    if (stored.credential.kind === "oauth-claude")
-      return this.claudeHeaders(connection, force, rejectedRevision);
     return this.credentials.withLock(connection.id, async () => {
       // Re-read inside the lock: another request may have rotated the token.
       const current = this.credentials.get(connection.id);
@@ -565,106 +579,8 @@ export class ProxyService {
         }
       }
       return {
-        headers: authorizationHeaders(connection.kind, active.accessToken),
+        headers: authorizationHeaders(connection, active.accessToken),
         identity: `${active.issuer}#${active.subject}#${active.clientId}`,
-        revision: this.credentials.get(connection.id)?.revision,
-      };
-    });
-  }
-
-  private async claudeHeaders(
-    connection: Connection,
-    force: boolean,
-    rejectedRevision?: number,
-  ) {
-    return this.credentials.withLock(connection.id, async () => {
-      const current = this.credentials.get(connection.id);
-      const state = this.registry.requireConnection(connection.id).state;
-      if (
-        this.closed ||
-        state === "disconnected" ||
-        current?.credential.kind !== "oauth-claude" ||
-        !current.credential.accessToken
-      )
-        throw new UpstreamError(
-          failure(
-            "authentication",
-            401,
-            "not_connected",
-            null,
-            "Sign in to Claude for this connection.",
-          ),
-        );
-      let active = current.credential;
-      const remaining = Date.parse(active.expiresAt) - Date.now();
-      if (
-        (force &&
-          (rejectedRevision === undefined ||
-            current.revision === rejectedRevision)) ||
-        remaining < REFRESH_MARGIN_MS
-      ) {
-        try {
-          const renewed = await refreshClaude(
-            this.options.claude ?? {},
-            active,
-          );
-          this.credentials.put(connection.id, renewed, current.revision);
-          active = renewed;
-        } catch (error) {
-          if (error instanceof ClaudeAuthError && error.terminal) {
-            this.credentials.put(
-              connection.id,
-              { ...active, accessToken: "", refreshToken: null },
-              current.revision,
-            );
-            this.registry.updateConnection(connection.id, {
-              state: "reauthorization-required",
-              stateDetail:
-                "The Claude sign-in can no longer be renewed. Sign in again.",
-            });
-            this.changed();
-            throw new UpstreamError(
-              failure(
-                "authentication",
-                401,
-                error.code,
-                null,
-                "The Claude sign-in can no longer be renewed. Sign in again.",
-              ),
-            );
-          }
-          if (force || remaining <= 0)
-            throw new UpstreamError(
-              failure(
-                "unavailable",
-                503,
-                "refresh_unavailable",
-                null,
-                "The Claude sign-in could not be renewed right now.",
-                true,
-              ),
-            );
-        }
-      }
-      if (!active.scopes.includes("user:inference")) {
-        this.registry.updateConnection(connection.id, {
-          state: "plan-use-disabled",
-          stateDetail: "Claude inference permission was not granted.",
-        });
-        this.changed();
-        throw new UpstreamError(
-          failure(
-            "permission",
-            403,
-            "plan_use_disabled",
-            null,
-            "Claude inference permission was not granted.",
-          ),
-        );
-      }
-      return {
-        headers: authorizationHeaders("claude-plan", active.accessToken),
-        identity: `${active.accountId}:${active.organizationId}`,
         revision: this.credentials.get(connection.id)?.revision,
       };
     });
@@ -736,6 +652,21 @@ export class ProxyService {
           null,
           null,
           String((error as Error)?.message ?? error),
+        ),
+      );
+    }
+    const retired = this.registry.retiredRouteByAlias(request.model);
+    if (retired) {
+      receipt.routeId = retired.id;
+      receipt.connectionId = retired.connectionId;
+      return reject(
+        410,
+        failure(
+          "route-changed",
+          410,
+          "route_retired",
+          "model",
+          `${retired.alias} was retired, so this request was not sent. ${retired.reason}`,
         ),
       );
     }
@@ -847,8 +778,7 @@ export class ProxyService {
       if (
         !response.ok &&
         response.error.kind === "authentication" &&
-        (connection.kind === "chatgpt-plan" ||
-          connection.kind === "claude-plan")
+        connection.kind === "chatgpt-plan"
       ) {
         const renewed = await this.headers(connection, true, auth.revision);
         if (renewed.identity !== auth.identity)
@@ -1032,6 +962,197 @@ export class ProxyService {
     }
   }
 
+  /**
+   * Reads an external model service's optional capability document and
+   * records it. This is discovery, not a model call: nothing is billed.
+   */
+  private async readCapabilities(connectionId: string): Promise<{
+    document: ServiceManifestStatus;
+    changedRoutes: string[];
+  }> {
+    const connection = this.registry.requireConnection(connectionId);
+    if (connection.kind !== "openai-compatible")
+      throw new Error(
+        "Only an external model service publishes a capability document.",
+      );
+    const { headers } = await this.headers(connection, false);
+    let document: ServiceManifestStatus;
+    try {
+      document = await readServiceDocument({
+        connection,
+        headers,
+        fetch: this.fetch,
+      });
+    } catch (error) {
+      if (error instanceof UpstreamError)
+        throw new Error(
+          `The service ${error.info.kind === "authentication" ? "rejected the key" : "refused the request"} for its capability document (HTTP ${error.info.status}): ${error.info.message}`,
+        );
+      throw error;
+    }
+    const { changedRoutes } = this.registry.applyServiceDocument(
+      connectionId,
+      document,
+    );
+    return { document, changedRoutes };
+  }
+
+  /**
+   * The explicit connection test: three small, billable requests on one
+   * route (packages/proxy/capabilities.ts, `connectionTestPlan`). Each result
+   * is recorded as probed evidence for the route's current configuration.
+   * One conforming answer shows the route accepted the request, not that
+   * every later answer will conform; the harness still validates them.
+   */
+  async testRoute(routeId: string): Promise<{
+    route: ProxyRoute;
+    results: Record<"streaming" | "tools" | "structuredOutput", ConnectionTestResult>;
+  }> {
+    const route = this.registry.route(routeId);
+    if (!route) throw new Error("The route does not exist.");
+    if (route.disabled) throw new Error("Turn the route on before testing it.");
+    const connection = this.registry.requireConnection(route.connectionId);
+    if (!["ready", "paused-usage-limit"].includes(connection.state))
+      throw new Error(`${connection.label} is not ready.`);
+    const requests = connectionTestRequests(route.alias);
+    const configuration = capabilityConfiguration(route, connection);
+    const results = {} as Record<
+      "streaming" | "tools" | "structuredOutput",
+      ConnectionTestResult
+    >;
+    const observations: Partial<Record<CapabilityName, CapabilityObservation>> =
+      {};
+    for (const name of ["streaming", "tools", "structuredOutput"] as const) {
+      const result = await this.probe(connection, route, requests[name], name);
+      results[name] = result;
+      if (result.value)
+        observations[name] = {
+          value: result.value,
+          evidence: "probed",
+          source: `Topsl connection test: ${result.detail}`,
+          model: route.upstreamModel,
+          protocol: route.protocol,
+          configuration,
+          observedAt: new Date().toISOString(),
+        };
+    }
+    return { route: this.registry.recordProbe(route.id, observations), results };
+  }
+
+  private async probe(
+    connection: Connection,
+    route: ProxyRoute,
+    request: CanonicalRequest,
+    name: "streaming" | "tools" | "structuredOutput",
+  ): Promise<ConnectionTestResult> {
+    const receipt: RequestReceipt = {
+      id: randomUUID(),
+      correlationId: `connection-test:${name}`,
+      attemptId: null,
+      routeId: route.id,
+      routeRevision: route.revision,
+      connectionId: connection.id,
+      accountKey: connection.account.accountKey,
+      funding: connection.funding,
+      clientProtocol: route.protocol,
+      upstreamProtocol: route.protocol,
+      requestedModel: route.alias,
+      upstreamModel: route.upstreamModel,
+      reportedModel: null,
+      outcome: "interrupted",
+      error: null,
+      usage: { input: null, output: null, cachedInput: null, reasoning: null },
+      upstreamRequestId: null,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    let set = this.active.get(connection.id);
+    if (!set) this.active.set(connection.id, (set = new Set()));
+    set.add(controller);
+    const settle = (outcome: ReceiptOutcome, error: ProxyErrorInfo | null) => {
+      receipt.outcome = controller.signal.aborted ? "cancelled" : outcome;
+      receipt.error = error;
+      receipt.finishedAt = new Date().toISOString();
+      if (!this.closed) this.registry.recordReceipt(receipt);
+    };
+    try {
+      const auth = await this.headers(connection, false);
+      const response = await dispatchUpstream(
+        {
+          connection,
+          route,
+          headers: auth.headers,
+          fetch: this.fetch,
+          signal: controller.signal,
+        },
+        request,
+      );
+      if (!response.ok) {
+        receipt.upstreamRequestId = response.error.requestId;
+        settle("failed", response.error);
+        return response.error.kind === "unsupported" ||
+          response.error.kind === "invalid-request"
+          ? { value: "unsupported", detail: `the request was refused: ${response.error.message}` }
+          : { value: null, detail: `not established: ${response.error.message}` };
+      }
+      receipt.upstreamRequestId = response.requestId;
+      const events: CanonicalEvent[] = [];
+      for await (const event of response.events) events.push(event);
+      const collected = collectResponse(events);
+      receipt.reportedModel = collected.model;
+      receipt.usage = collected.usage;
+      if (collected.error) {
+        settle("failed", collected.error);
+        return { value: null, detail: `not established: ${collected.error.message}` };
+      }
+      settle(collected.finish === "stop" || collected.finish === "tool-calls" ? "completed" : "incomplete", null);
+      const text = collected.output
+        .filter((p) => p.type === "text")
+        .map((p) => (p as { text: string }).text)
+        .join("");
+      if (name === "streaming")
+        return !response.streamed
+          ? { value: "unsupported", detail: "the service answered a streaming request with one JSON body" }
+          : text.trim()
+            ? { value: "supported", detail: "a streamed answer arrived" }
+            : { value: null, detail: "not established: the streamed answer was empty" };
+      if (name === "tools") {
+        const call = collected.output.find(
+          (p) => p.type === "tool-call" && p.name === testTool.name,
+        ) as { arguments: string } | undefined;
+        if (!call)
+          return { value: "unsupported", detail: "the answer did not call the test tool" };
+        try {
+          JSON.parse(call.arguments || "{}");
+          return { value: "supported", detail: "the test tool was called with JSON arguments" };
+        } catch {
+          return { value: "unsupported", detail: "the test tool's arguments were not JSON" };
+        }
+      }
+      try {
+        const value = JSON.parse(text);
+        const keys = value && typeof value === "object" ? Object.keys(value) : [];
+        return typeof value?.ok === "boolean" && keys.length === 1
+          ? { value: "supported", detail: "the answer matched the test schema" }
+          : { value: "unsupported", detail: "the answer did not match the test schema" };
+      } catch {
+        return { value: "unsupported", detail: "the answer was not JSON" };
+      }
+    } catch (error) {
+      const info =
+        error instanceof UpstreamError
+          ? error.info
+          : failure("upstream", null, null, null, String((error as Error)?.message ?? error));
+      settle("failed", info);
+      return { value: null, detail: `not established: ${info.message}` };
+    } finally {
+      clearTimeout(timer);
+      set.delete(controller);
+    }
+  }
+
   /** Lists routes as models, in the OpenAI or Anthropic shape the client expects. */
   modelList(anthropic: boolean): unknown {
     const routes = this.registry.routes().filter((r) => !r.disabled);
@@ -1117,17 +1238,6 @@ export function chatGptAccount(credential: ChatGptCredential) {
     // Separate registrations do not create extra allowance. Until a verified
     // workspace meter is exposed, conservatively share a subject's pool.
     quotaOwner: `chatgpt:${credential.subject}`,
-    observedAt: credential.savedAt,
-  };
-}
-
-export function claudeAccount(credential: ClaudeCredential) {
-  const owner = `claude:${credential.accountId}:${credential.organizationId}`;
-  return {
-    accountKey: owner,
-    email: credential.email,
-    source: "oauth-profile" as const,
-    quotaOwner: owner,
     observedAt: credential.savedAt,
   };
 }

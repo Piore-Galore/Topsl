@@ -2,10 +2,15 @@ import { useState } from "react";
 import type { AppState } from "../../../../packages/domain/types";
 import type { Command } from "../../../../packages/domain/commands";
 import type {
+  CapabilityName,
   Connection,
   ConnectionKind,
+  EffectiveCapability,
   ProxyRoute,
   RequestReceipt,
+  RetiredConnection,
+  RetiredRoute,
+  ServiceAuthentication,
 } from "../../../../packages/proxy/types";
 import { ActionButton } from "../components/action-button";
 import { Badge } from "../components/atlas";
@@ -17,16 +22,15 @@ type Props = {
 
 const kindText: Record<ConnectionKind, string> = {
   "chatgpt-plan": "ChatGPT plan",
-  "claude-plan": "Claude plan (experimental)",
   "openai-api": "OpenAI API key",
   "anthropic-api": "Anthropic API key",
-  "openai-compatible": "Gateway (OpenAI-compatible)",
+  "openai-compatible": "External model service",
   ollama: "Ollama on this computer",
 };
 const fundingText: Record<Connection["funding"], string> = {
   subscription: "Plan allowance",
   "api-billing": "API billing",
-  gateway: "Gateway billing",
+  gateway: "Managed by external service",
   local: "Local",
 };
 const stateText: Record<Connection["state"], string> = {
@@ -40,34 +44,72 @@ const stateText: Record<Connection["state"], string> = {
 };
 const aliasPrefix: Record<ConnectionKind, string> = {
   "chatgpt-plan": "chatgpt",
-  "claude-plan": "claude-plan",
   "openai-api": "openai",
   "anthropic-api": "anthropic",
-  "openai-compatible": "gateway",
+  "openai-compatible": "external",
   ollama: "ollama",
 };
+const protocolText = {
+  chat: "Chat Completions",
+  responses: "Responses",
+  messages: "Anthropic Messages",
+} as const;
+const authText: Record<ServiceAuthentication, string> = {
+  bearer: "Key as a Bearer token",
+  "x-api-key": "Key in the x-api-key header",
+  none: "No key (this computer only)",
+};
+const capabilityText: Partial<Record<CapabilityName, string>> = {
+  streaming: "Streaming",
+  tools: "Tool calls",
+  structuredOutput: "Structured output",
+};
+
+function evidenceText(capability: EffectiveCapability | undefined): string {
+  if (!capability || capability.evidence === "unknown") return "unknown";
+  if (capability.evidence === "stale")
+    return "unknown (earlier configuration)";
+  const when = capability.observation
+    ? ` ${new Date(capability.observation.observedAt).toLocaleDateString()}`
+    : "";
+  return `${capability.value}, ${capability.evidence === "probed" ? `tested by Topsl${when}` : "declared by the service"}`;
+}
+
+function documentText(connection: Connection): string {
+  const m = connection.manifest;
+  if (!m) return "Not read";
+  if (m.state === "read")
+    return `Version 1, ${m.gatewayId} revision ${m.revision} (${m.routes.length} route${m.routes.length === 1 ? "" : "s"})`;
+  if (m.state === "absent") return "Not published; capabilities stay unknown";
+  return `${m.state === "unrecognized" ? "Not recognized" : "Unavailable"}: ${m.detail ?? ""}`;
+}
 
 /**
- * Connections (docs/Native_Harness_Plan.md §2): the model accounts Topsl's
- * native harness can use, each with its funding kept separate. Credentials
- * never pass through this page: ChatGPT sign-in completes in the browser and
- * an API key is read from the clipboard by Topsl itself.
+ * Connections (docs/Native_Harness_Plan.md §2): the model accounts and
+ * services Topsl's native harness can use, each with its funding kept
+ * separate. Credentials never pass through this page: ChatGPT sign-in
+ * completes in the browser and a key is read from the clipboard by Topsl
+ * itself.
  */
 export function ConnectionsScreen({ state, act }: Props) {
   const proxy = state.proxy ?? null;
-  const [gateway, setGateway] = useState("");
-  const [gatewayProtocol, setGatewayProtocol] = useState<
+  const [service, setService] = useState("");
+  const [serviceProtocol, setServiceProtocol] = useState<
     "chat" | "responses" | "messages"
   >("chat");
+  const [serviceAuth, setServiceAuth] =
+    useState<ServiceAuthentication>("bearer");
+  const retired = proxy?.retired ?? { connections: [], routes: [] };
   return (
     <>
       <div className="page-heading">
         <div>
           <h1>Connections</h1>
           <p className="muted">
-            Model accounts for Topsl's own native agent. Each request stays on
-            the connection and funding you chose; Topsl never moves work to
-            another account or to API billing.
+            Model accounts and services for Topsl's own native agent. Each
+            request stays on the connection and funding you chose; Topsl never
+            moves work to another account or to API billing. For Claude-plan
+            work, use Claude Code under Providers.
           </p>
         </div>
       </div>
@@ -83,13 +125,6 @@ export function ConnectionsScreen({ state, act }: Props) {
         </div>
       ) : (
         <>
-          <div className="info-strip" role="note">
-            <span className="status-dot notice" />
-            <div>
-              <strong>Claude plan connection</strong>{" "}
-              <span>{proxy.claudeSubscription.reason}</span>
-            </div>
-          </div>
           <section className="application-card" aria-label="Add a connection">
             <h2>Add a connection</h2>
             <div className="actions wrap">
@@ -109,22 +144,6 @@ export function ConnectionsScreen({ state, act }: Props) {
                 }}
               >
                 Continue with ChatGPT
-              </ActionButton>
-              <ActionButton
-                onClick={async () => {
-                  const connection = await act({
-                    type: "connection-create",
-                    kind: "claude-plan",
-                    label: "Claude plan",
-                  });
-                  if (connection?.id)
-                    await act({
-                      type: "connection-sign-in",
-                      connectionId: connection.id,
-                    });
-                }}
-              >
-                Continue with Claude
               </ActionButton>
               <ActionButton
                 onClick={() =>
@@ -160,44 +179,66 @@ export function ConnectionsScreen({ state, act }: Props) {
                 Ollama
               </ActionButton>
             </div>
+            <h3>External model service</h3>
+            <p className="muted tiny">
+              A separately operated service that speaks a standard inference
+              protocol, on this computer or at an https address. Topsl sends
+              requests only to the URL you enter, in the protocol you choose;
+              the service runs its own upstream accounts, terms and billing.
+            </p>
             <div className="actions wrap">
               <label>
-                Gateway base URL{" "}
+                Inference base URL{" "}
                 <input
-                  aria-label="Gateway base URL"
-                  placeholder="https://gateway.example/v1"
-                  value={gateway}
-                  onChange={(e) => setGateway(e.target.value)}
+                  aria-label="Inference base URL"
+                  placeholder="https://service.example/v1"
+                  value={service}
+                  onChange={(e) => setService(e.target.value)}
                 />
               </label>
               <label>
-                Gateway protocol{" "}
+                Protocol{" "}
                 <select
-                  aria-label="Gateway protocol"
-                  value={gatewayProtocol}
+                  aria-label="Protocol"
+                  value={serviceProtocol}
                   onChange={(e) =>
-                    setGatewayProtocol(e.target.value as typeof gatewayProtocol)
+                    setServiceProtocol(e.target.value as typeof serviceProtocol)
                   }
                 >
-                  <option value="chat">Chat Completions</option>
-                  <option value="responses">Responses</option>
-                  <option value="messages">Anthropic Messages</option>
+                  <option value="chat">{protocolText.chat}</option>
+                  <option value="responses">{protocolText.responses}</option>
+                  <option value="messages">{protocolText.messages}</option>
+                </select>
+              </label>
+              <label>
+                Authentication{" "}
+                <select
+                  aria-label="Authentication"
+                  value={serviceAuth}
+                  onChange={(e) =>
+                    setServiceAuth(e.target.value as ServiceAuthentication)
+                  }
+                >
+                  <option value="bearer">{authText.bearer}</option>
+                  <option value="x-api-key">{authText["x-api-key"]}</option>
+                  <option value="none">{authText.none}</option>
                 </select>
               </label>
               <ActionButton
-                disabled={!gateway.trim()}
+                disabled={!service.trim()}
                 onClick={async () => {
                   const created = await act({
                     type: "connection-create",
                     kind: "openai-compatible",
-                    label: "Gateway",
-                    endpoint: gateway.trim(),
-                    protocol: gatewayProtocol,
+                    label: "External service",
+                    endpoint: service.trim(),
+                    protocol: serviceProtocol,
+                    serviceAuth,
                   });
-                  if (created) setGateway("");
+                  if (created) setService("");
                 }}
               >
-                Add gateway
+                Add external service
               </ActionButton>
             </div>
           </section>
@@ -212,6 +253,7 @@ export function ConnectionsScreen({ state, act }: Props) {
                 routes={proxy.routes.filter(
                   (r) => r.connectionId === connection.id,
                 )}
+                capabilities={proxy.capabilities ?? {}}
                 signingIn={
                   proxy.signIns.find((s) => s.connectionId === connection.id)
                     ?.id ?? null
@@ -220,20 +262,133 @@ export function ConnectionsScreen({ state, act }: Props) {
               />
             ))}
           </div>
+          {retired.connections.length > 0 && (
+            <section aria-label="Retired connections">
+              <h2>Retired connections</h2>
+              <p className="muted">
+                Kept so earlier requests and tasks still read. They cannot sign
+                in, be renewed or send requests, and their credentials were
+                deleted from Topsl.
+              </p>
+              <div className="application-grid">
+                {retired.connections.map((connection) => (
+                  <RetiredCard
+                    key={connection.id}
+                    connection={connection}
+                    routes={retired.routes.filter(
+                      (r) => r.connectionId === connection.id,
+                    )}
+                    act={act}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
         </>
       )}
     </>
   );
 }
 
+function Receipts({ receipts }: { receipts: RequestReceipt[] }) {
+  return (
+    <>
+      <h3>Recent requests</h3>
+      {receipts.length === 0 ? (
+        <p className="muted">None yet.</p>
+      ) : (
+        <ul className="tiny">
+          {receipts.map((r) => (
+            <li key={r.id}>
+              {new Date(r.startedAt).toLocaleString()} · {r.requestedModel} ·{" "}
+              {r.outcome}
+              {r.correlationId?.startsWith("connection-test:")
+                ? " · connection test"
+                : ""}
+              {r.usage.input !== null
+                ? ` · ${r.usage.input} in / ${r.usage.output ?? "?"} out`
+                : " · usage unknown"}
+              {r.error
+                ? ` · ${r.error.code ?? r.error.kind}: ${r.error.message}`
+                : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function RetiredCard({
+  connection,
+  routes,
+  act,
+}: {
+  connection: RetiredConnection;
+  routes: RetiredRoute[];
+  act: Props["act"];
+}) {
+  const [receipts, setReceipts] = useState<RequestReceipt[] | null>(null);
+  return (
+    <article
+      className="application-card"
+      aria-label={`Retired connection ${connection.label}`}
+    >
+      <div className="card-title">
+        <div>
+          <h2>{connection.label}</h2>
+          <span className="muted tiny">Claude plan (direct sign-in)</span>
+        </div>
+        <Badge>Retired</Badge>
+      </div>
+      <p>{connection.reason}</p>
+      <dl>
+        <div>
+          <dt>Funding</dt>
+          <dd>{fundingText[connection.funding] ?? connection.funding}</dd>
+        </div>
+        <div>
+          <dt>Retired</dt>
+          <dd>{new Date(connection.retiredAt).toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>Routes</dt>
+          <dd>
+            {routes.length
+              ? routes.map((r) => r.alias).join(", ")
+              : "None"}
+          </dd>
+        </div>
+      </dl>
+      <div className="actions wrap">
+        <ActionButton
+          onClick={async () => {
+            const listed = await act({
+              type: "connection-receipts",
+              connectionId: connection.id,
+              limit: 20,
+            });
+            if (Array.isArray(listed)) setReceipts(listed);
+          }}
+        >
+          Recent requests
+        </ActionButton>
+      </div>
+      {receipts && <Receipts receipts={receipts} />}
+    </article>
+  );
+}
+
 function ConnectionCard({
   connection,
   routes,
+  capabilities,
   signingIn,
   act,
 }: {
   connection: Connection;
   routes: ProxyRoute[];
+  capabilities: Record<string, Record<CapabilityName, EffectiveCapability>>;
   signingIn: string | null;
   act: Props["act"];
 }) {
@@ -244,7 +399,11 @@ function ConnectionCard({
   const [model, setModel] = useState("");
   const [alias, setAlias] = useState("");
   const [receipts, setReceipts] = useState<RequestReceipt[] | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const external = connection.kind === "openai-compatible";
   const suggested = model ? `${aliasPrefix[connection.kind]}/${model}` : "";
+  const usable =
+    connection.state === "ready" || connection.state === "paused-usage-limit";
   return (
     <article
       className="application-card"
@@ -287,13 +446,33 @@ function ConnectionCard({
             <code>{connection.endpoint}</code>
           </dd>
         </div>
+        {external && (
+          <>
+            <div>
+              <dt>Protocol</dt>
+              <dd>{protocolText[connection.protocol ?? "chat"]}</dd>
+            </div>
+            <div>
+              <dt>Authentication</dt>
+              <dd>{authText[connection.serviceAuth ?? "bearer"]}</dd>
+            </div>
+            <div>
+              <dt>Capability document</dt>
+              <dd>{documentText(connection)}</dd>
+            </div>
+          </>
+        )}
       </dl>
       {connection.stateDetail && (
         <p className="muted">{connection.stateDetail}</p>
       )}
+      {notice && (
+        <p className="muted" role="status">
+          {notice}
+        </p>
+      )}
       <div className="actions wrap">
-        {(connection.kind === "chatgpt-plan" ||
-          connection.kind === "claude-plan") &&
+        {connection.kind === "chatgpt-plan" &&
           (signingIn ? (
             <ActionButton
               onClick={() =>
@@ -317,24 +496,9 @@ function ConnectionCard({
             >
               {connection.hasCredential
                 ? "Sign in again"
-                : connection.kind === "claude-plan"
-                  ? "Continue with Claude"
-                  : "Continue with ChatGPT"}
+                : "Continue with ChatGPT"}
             </ActionButton>
           ))}
-        {signingIn && connection.kind === "claude-plan" && (
-          <ActionButton
-            title="If Claude shows a code instead of returning here, copy the complete code and use this button."
-            onClick={() =>
-              void act({
-                type: "connection-sign-in-complete",
-                attemptId: signingIn,
-              })
-            }
-          >
-            Complete sign-in from clipboard
-          </ActionButton>
-        )}
         {connection.authentication === "api-key" && (
           <ActionButton
             className={connection.hasCredential ? "" : "primary"}
@@ -352,20 +516,41 @@ function ConnectionCard({
           </ActionButton>
         )}
         <ActionButton
-          disabled={
-            connection.state !== "ready" &&
-            connection.state !== "paused-usage-limit"
-          }
+          disabled={!usable}
           onClick={async () => {
             const listed = await act({
               type: "connection-models",
               connectionId: connection.id,
-            });
+            }).catch(() => null);
             if (Array.isArray(listed)) setModels(listed);
+            else if (external)
+              setNotice(
+                "The service did not list its models. Enter a model ID below.",
+              );
           }}
         >
           List models
         </ActionButton>
+        {external && (
+          <ActionButton
+            disabled={!usable}
+            title="Reads the service's optional capability document. This is not a model request."
+            onClick={async () => {
+              const read = await act({
+                type: "connection-capabilities",
+                connectionId: connection.id,
+              });
+              if (read?.document)
+                setNotice(
+                  read.changedRoutes?.length
+                    ? `Route revisions changed for ${read.changedRoutes.join(", ")}. Tasks bound to them must start again.`
+                    : null,
+                );
+            }}
+          >
+            Read service capabilities
+          </ActionButton>
+        )}
         <ActionButton
           onClick={async () => {
             const listed = await act({
@@ -415,15 +600,33 @@ function ConnectionCard({
             </tr>
           </thead>
           <tbody>
-            {routes.map((route) => (
+            {routes.flatMap((route) => [
               <tr key={route.id}>
                 <td>
                   <code>{route.alias}</code>
                   {route.disabled ? " (off)" : ""}
                 </td>
-                <td>{route.upstreamModel}</td>
-                <td>{route.protocol}</td>
                 <td>
+                  {route.upstreamModel}
+                  {route.remotePin ? (
+                    <span className="muted tiny">
+                      {" "}
+                      · pinned to service revision{" "}
+                      <code>{route.remotePin.routeRevision}</code>
+                    </span>
+                  ) : null}
+                </td>
+                <td>{protocolText[route.protocol]}</td>
+                <td>
+                  <ActionButton
+                    disabled={!usable || route.disabled}
+                    title="Sends three small, billable requests and records what they show for this configuration."
+                    onClick={() =>
+                      void act({ type: "connection-test", routeId: route.id })
+                    }
+                  >
+                    Test route
+                  </ActionButton>
                   <ActionButton
                     onClick={() =>
                       void act({
@@ -447,13 +650,28 @@ function ConnectionCard({
                     Remove
                   </ActionButton>
                 </td>
-              </tr>
-            ))}
+              </tr>,
+              <tr key={`${route.id}-capabilities`}>
+                <td colSpan={4}>
+                  <p
+                    className="muted tiny"
+                    aria-label={`Capabilities of ${route.alias}`}
+                  >
+                    {(Object.keys(capabilityText) as CapabilityName[])
+                      .map(
+                        (name) =>
+                          `${capabilityText[name]}: ${evidenceText(capabilities[route.id]?.[name])}`,
+                      )
+                      .join(" · ")}
+                  </p>
+                </td>
+              </tr>,
+            ])}
           </tbody>
         </table>
       )}
       <div className="actions wrap">
-        {models ? (
+        {models && models.length ? (
           <select
             aria-label="Model"
             value={model}
@@ -498,29 +716,7 @@ function ConnectionCard({
           Add route
         </ActionButton>
       </div>
-      {receipts && (
-        <>
-          <h3>Recent requests</h3>
-          {receipts.length === 0 ? (
-            <p className="muted">None yet.</p>
-          ) : (
-            <ul className="tiny">
-              {receipts.map((r) => (
-                <li key={r.id}>
-                  {new Date(r.startedAt).toLocaleString()} · {r.requestedModel}{" "}
-                  · {r.outcome}
-                  {r.usage.input !== null
-                    ? ` · ${r.usage.input} in / ${r.usage.output ?? "?"} out`
-                    : " · usage unknown"}
-                  {r.error
-                    ? ` · ${r.error.code ?? r.error.kind}: ${r.error.message}`
-                    : ""}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
+      {receipts && <Receipts receipts={receipts} />}
     </article>
   );
 }

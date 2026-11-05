@@ -214,6 +214,11 @@ export interface NativeRouteFacts {
   connectionState: string;
   connectionDetail: string | null;
   proxyRunning: boolean;
+  /**
+   * Capability evidence this purpose lacks (packages/proxy/capabilities.ts
+   * `memberCapabilityBlockers`), as `code: detail` lines.
+   */
+  capabilityBlockers?: string[];
 }
 export function nativeRouteReadiness(
   route: NativeRouteFacts,
@@ -237,5 +242,8 @@ export function nativeRouteReadiness(
     blockers.push(
       `structured-output-unsupported: ${route.alias} is recorded as unable to enforce a response schema, which ${purpose} turns need.`,
     );
+  for (const blocker of route.capabilityBlockers ?? [])
+    if (!blockers.some((b) => b.split(":")[0] === blocker.split(":")[0]))
+      blockers.push(blocker);
   return { ready: !blockers.length, blockers };
 }

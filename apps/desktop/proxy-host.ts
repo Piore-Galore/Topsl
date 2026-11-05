@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { safeError } from "../../packages/domain/invariants";
 import { proxyDatabaseKey } from "../../packages/proxy/database";
 import type { ProxyStateView } from "../../packages/proxy/service";
+import { connectionTestPlan } from "../../packages/proxy/capabilities";
 import type { Command } from "../../packages/domain/commands";
 
 type ConnectionCommand = Extract<
@@ -11,8 +12,8 @@ type ConnectionCommand = Extract<
   { type: `connection-${string}` | `route-${string}` }
 >;
 
-/** Sign-in pages Topsl opens for a connection; nothing else. */
-const signInOrigins = new Set(["https://auth.openai.com", "https://claude.ai"]);
+/** Sign-in pages Topsl opens for a connection (ChatGPT's only); nothing else. */
+const signInOrigins = new Set(["https://auth.openai.com"]);
 
 export interface ProxyHostDeps {
   directory: string;
@@ -197,15 +198,16 @@ export class ProxyHost {
         return result;
       }
       case "connection-sign-in": {
-        const claude =
+        if (
           this.view?.connections.find((c) => c.id === command.connectionId)
-            ?.kind === "claude-plan";
-        const name = claude ? "Claude" : "ChatGPT";
+            ?.kind !== "chatgpt-plan"
+        )
+          throw new Error("Only a ChatGPT plan connection signs in.");
         if (
           !(await this.deps.confirm(
-            `Continue with ${name}?`,
-            `Your browser opens ${name}'s sign-in page. Topsl's proxy keeps this sign-in encrypted and uses its plan allowance for native tasks you start. You can disconnect at any time.${claude ? " This is an experimental community integration, not an Anthropic-supported application login." : ""}`,
-            `Continue with ${name}`,
+            "Continue with ChatGPT?",
+            "Your browser opens ChatGPT's sign-in page. Topsl's proxy keeps this sign-in encrypted and uses its plan allowance for native tasks you start. You can disconnect at any time.",
+            "Continue with ChatGPT",
           ))
         )
           return null;
@@ -214,16 +216,24 @@ export class ProxyHost {
           connectionId: command.connectionId,
         });
       }
-      case "connection-sign-in-complete": {
-        const callback = (await this.deps.readClipboard()).trim();
-        if (!callback || callback.length > 16_384)
-          throw new Error(
-            "Copy the complete Claude sign-in code or callback URL first.",
-          );
-        const result = await send({ ...command, callback });
-        await this.deps.clearClipboard(callback);
-        return result;
+      case "connection-test": {
+        const route = this.view?.routes.find((r) => r.id === command.routeId);
+        const connection = this.view?.connections.find(
+          (c) => c.id === route?.connectionId,
+        );
+        if (!route || !connection) throw new Error("The route does not exist.");
+        if (
+          !(await this.deps.confirm(
+            `Test ${route.alias}?`,
+            `Topsl sends ${connectionTestPlan.requests} small requests to ${connection.endpoint} for model ${route.upstreamModel}: ${connectionTestPlan.description}, each capped at 64 output tokens. They are billed or counted by ${connection.label} like any other request, and each appears under Recent requests. The results are recorded for this route's current configuration only.`,
+            "Run test",
+          ))
+        )
+          return null;
+        return send({ ...command }, 4 * 60_000);
       }
+      case "connection-capabilities":
+        return send({ ...command }, 30_000);
       case "connection-disconnect":
       case "connection-remove": {
         const remove = command.type === "connection-remove";
