@@ -222,7 +222,10 @@ try {
                       ? "Allow unattended Claude Code"
                       : message === "Continue with ChatGPT?" && policy.chatgpt
                         ? "Continue with ChatGPT"
-                        : null;
+                        : message === "Start a native task?" &&
+                            detail.startsWith("Route: chatgpt/live → ")
+                          ? "Start task"
+                          : null;
         // Anything unexpected is cancelled, never approved.
         const cancel =
           typeof v.cancelId === "number"
@@ -337,6 +340,8 @@ try {
     maxRequests: 12,
   });
   const attemptId = started?.attemptId ?? started?.view?.attemptId;
+  if (!attemptId)
+    log("native", "Topsl started no native task (its confirmation was not approved).");
   const terminal = new Set([
     "completed",
     "failed",
@@ -347,7 +352,7 @@ try {
   ]);
   let native = null;
   const nativeDeadline = Date.now() + 15 * 60_000;
-  for (;;) {
+  for (; attemptId; ) {
     const s = await command({ type: "native-state", projectId });
     native = (s?.attempts ?? s?.items ?? []).find(
       (a) => a.attemptId === attemptId,
@@ -480,7 +485,11 @@ try {
       type: "orchestration-message",
       conversationId: conversation.id,
       text:
-        "Change value.ts so that the exported value is 2. While you plan, use the start_agent_job tool once to ask a researcher (kind information, role researcher) to report in one sentence what README.md says about value.ts; then propose your plan as usual.",
+        // No role names here: Topsl reads team instructions from a goal's
+        // text, and naming a role would set that role to Auto for the goal
+        // (observed in the first live run, 6 November 2026). An information
+        // job goes to the researcher role by default.
+        "Change value.ts so that the exported value is 2. While you plan, call the start_agent_job tool once with kind information, asking for a one-sentence report of what README.md says about value.ts; then propose your plan as usual.",
       goalId: null,
       routing: "auto",
       kind: "code",

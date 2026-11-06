@@ -1,3 +1,4 @@
+import type { SseFrame } from "./sse";
 import type {
   CanonicalEvent,
   CanonicalRequest,
@@ -101,6 +102,57 @@ function requestIdOf(headers: Headers): string | null {
   );
 }
 
+/**
+ * Reads a body until its first non-blank text (at most 4 KB), and returns
+ * that text with the whole body, unchanged, as a chunk stream.
+ */
+async function peekBody(body: ReadableStream<Uint8Array>): Promise<{
+  head: string;
+  chunks: AsyncGenerator<Uint8Array>;
+}> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  const held: Uint8Array[] = [];
+  let text = "";
+  try {
+    while (!/\S/.test(text) && text.length < 4096) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        held.push(value);
+        text += decoder.decode(value, { stream: true });
+      }
+    }
+  } catch (error) {
+    reader.releaseLock();
+    throw error;
+  }
+  async function* chunks(): AsyncGenerator<Uint8Array> {
+    try {
+      yield* held;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        if (value) yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  return { head: text.trimStart(), chunks: chunks() };
+}
+
+async function collectJson(chunks: AsyncIterable<Uint8Array>): Promise<unknown> {
+  const decoder = new TextDecoder("utf-8");
+  let text = "";
+  for await (const chunk of chunks) text += decoder.decode(chunk, { stream: true });
+  try {
+    return JSON.parse(text + decoder.decode());
+  } catch {
+    return null;
+  }
+}
+
 async function* bodyChunks(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<Uint8Array> {
@@ -113,6 +165,46 @@ async function* bodyChunks(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+/**
+ * `npm run debug` with TOPSL_DEBUG_PROXY_TRACE=1: logs each upstream stream's
+ * status, content type and response header names, then each event's type,
+ * and how the stream ended. Never a header value, an event's data or a
+ * credential. Off unless the variable is exactly "1".
+ */
+async function* traceFrames(
+  frames: AsyncIterable<SseFrame>,
+  response: Response,
+  kind: string,
+): AsyncGenerator<SseFrame> {
+  if (process.env.TOPSL_DEBUG_PROXY_TRACE !== "1") return yield* frames;
+  const id = Math.random().toString(36).slice(2, 8);
+  const write = (line: string) => process.stderr.write(`trace ${id} ${line}\n`);
+  write(
+    `${kind} status ${response.status} ${response.headers.get("content-type") ?? "?"} headers: ${[...response.headers.keys()].join(",")}`,
+  );
+  let count = 0,
+    last = "";
+  try {
+    for await (const frame of frames) {
+      count += 1;
+      let type = frame.event ?? "";
+      try {
+        const parsed = JSON.parse(frame.data);
+        if (typeof parsed?.type === "string") type = parsed.type;
+      } catch {
+        type = type || (frame.data === "[DONE]" ? "[DONE]" : "non-json");
+      }
+      if (type !== last || !/delta$/.test(type)) write(`event ${count} ${type || "(none)"}`);
+      last = type;
+      yield frame;
+    }
+    write(`ended after ${count} events`);
+  } catch (error) {
+    write(`stream error after ${count} events: ${error instanceof Error ? error.name : "unknown"}`);
+    throw error;
   }
 }
 
@@ -249,18 +341,34 @@ export async function dispatchUpstream(
         requestId,
       ),
     };
-  if (type.includes("text/event-stream"))
-    return {
-      ok: true,
-      requestId,
-      streamed: true,
-      events: withRequestId(
-        module.readStream(parseSse(bodyChunks(response.body))),
+  // A declared event stream is read as one. So is a body with no or an
+  // unrecognised content type that does not start like JSON: OpenAI's
+  // ChatGPT-plan route answered Topsl's streaming requests with 200 and no
+  // Content-Type at all (observed live on 6 November 2026), and reading that
+  // stream as one JSON document lost every event.
+  const declaredStream = type.includes("text/event-stream");
+  let json: unknown = null;
+  if (declaredStream || !/json/i.test(type)) {
+    const peeked = await peekBody(response.body);
+    if (declaredStream || !/^[{[]/.test(peeked.head))
+      return {
+        ok: true,
         requestId,
-      ),
-    };
+        streamed: true,
+        events: withRequestId(
+          module.readStream(
+            traceFrames(parseSse(peeked.chunks), response, connection.kind),
+          ),
+          requestId,
+        ),
+      };
+    json = await collectJson(peeked.chunks);
+  } else json = await response.json().catch(() => null);
   // Some gateways answer a streaming request with one JSON body.
-  const json = await response.json().catch(() => null);
+  if (process.env.TOPSL_DEBUG_PROXY_TRACE === "1")
+    process.stderr.write(
+      `trace ${connection.kind} status ${response.status} ${type || "no content-type"} JSON body ${json === null || typeof json !== "object" ? "unreadable" : `keys: ${Object.keys(json).join(",")}`}\n`,
+    );
   const events = json === null ? [] : module.readResponse(json);
   return {
     ok: true,
