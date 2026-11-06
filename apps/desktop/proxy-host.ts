@@ -6,6 +6,7 @@ import { proxyDatabaseKey } from "../../packages/proxy/database";
 import type { ProxyStateView } from "../../packages/proxy/service";
 import { connectionTestPlan } from "../../packages/proxy/capabilities";
 import type { Command } from "../../packages/domain/commands";
+import { childOutput, inspectArgs } from "./debug-settings";
 
 type ConnectionCommand = Extract<
   Command,
@@ -19,6 +20,8 @@ export interface ProxyHostDeps {
   directory: string;
   vaultKey: string;
   bundle: string;
+  /** `npm run debug`: print the proxy's output and open its inspector. */
+  debug?: { logs: boolean; inspectPort: number | null };
   onState(view: ProxyStateView | null): void;
   onEndpoint(
     endpoint: { port: number; token: string } | null,
@@ -64,10 +67,10 @@ export class ProxyHost {
       cwd: this.deps.directory,
       serviceName: "Topsl local proxy",
       stdio: "pipe",
+      execArgv: inspectArgs(this.deps.debug?.inspectPort ?? null),
     });
     this.child = child;
-    child.stdout?.resume();
-    child.stderr?.resume();
+    childOutput(child, "proxy", !!this.deps.debug?.logs);
     child.on("message", (message: any) => {
       if (message.event) {
         if (message.event.type === "proxy-state") {
