@@ -194,6 +194,30 @@ const app = await electron.launch({
 });
 const page = await app.firstWindow();
 const command = (value) => page.evaluate((v) => window.topsl.command(v), value);
+/** Each round member's engine and requested-versus-observed funding, for every goal in the project. */
+const memberFunding = async (projectId) => {
+  const view = await command({ type: "orchestration-query", projectId });
+  return (view.goals ?? []).flatMap((g) =>
+    (g.rounds ?? []).flatMap((r) =>
+      r.members.map((m) => ({
+        goalId: g.goal.id,
+        round: `${r.roleId}/${r.kind}`,
+        memberId: m.memberId,
+        engine: m.engine ?? null,
+        model: m.effectiveModel ?? m.requestedModel ?? null,
+        requested: m.requestedFunding ?? null,
+        funding: m.funding
+          ? {
+              observed: m.funding.observed,
+              state: m.funding.state,
+              source: m.funding.source,
+              detail: m.funding.detail,
+            }
+          : null,
+      })),
+    ),
+  );
+};
 const shot = (name) =>
   page
     .screenshot({ path: path.join(output, `${name}.png`), fullPage: true })
@@ -495,6 +519,9 @@ try {
         members: r.members.map((m) => `${m.memberId} ${m.model} ${m.state}`),
       })),
       usage: view.usage,
+      // Every member turn's engine and funding, requested against what its
+      // runtime reported (docs/Subscription_Runtime_Execution.md, Phase 2).
+      funding: await memberFunding(view.run.projectId),
       transitions,
     };
     await shot(`run-${label}`);

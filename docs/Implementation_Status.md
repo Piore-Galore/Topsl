@@ -800,3 +800,26 @@ The main process reads these switches from `TOPSL_DEBUG_*` variables only when `
 - Stopping it removed the throwaway profile and left no Electron process.
 
 **Not established.** Other platforms; attaching a particular editor; a run on the normal profile, which was not opened here to avoid touching the owner's vault.
+
+## Live subscription runtime qualification — 6 November 2026
+
+One live run per stage on the owner's Mac (macOS 27.0.1, arm64), on disposable profiles, with the owner's own sign-ins. The [execution record](Subscription_Runtime_Execution.md#live-qualification--6-november-2026) has every run, including the failed ones, plus commands, versions and redacted reports.
+
+**Established live (this host, these versions, these accounts).**
+
+- ChatGPT plan through Topsl's own sign-in: the connection reached ready and the account's models were listed. A native task on `gpt-6.1-sol` completed with 2 tool calls through Topsl's namespaced tools.
+- Claude Code 2.1.305 (`claude-sonnet-5-5`, Max login): qualified 7 of 7, with Topsl's MCP server reported `connected` and every turn's credential source reported as its own login.
+- Both team directions with agent jobs on:
+  - A GPT coordinator through Topsl requested a job that ran on Claude Code, with a Claude Code implementer and a GPT reviewer. The goal reached awaiting acceptance.
+  - A Claude Code coordinator requested a job that ran on GPT through Topsl, with a GPT implementer and a Claude Code reviewer. The goal blocked on one low-severity review finding for the owner's disposition.
+- Every member's funding recorded as subscription, requested and observed.
+
+**Found and fixed.** OpenAI's ChatGPT-plan route answers streaming requests with no `Content-Type`. Topsl's proxy read those bodies as JSON and failed every plan request ("The model stream ended before a terminal event"). This defect predated this work. The proxy now reads an undeclared body by its content (`tests/proxy-undeclared-body.test.ts`), and `TOPSL_DEBUG_PROXY_TRACE=1` traces upstream event types for diagnosis.
+
+**Not established.**
+
+- Live acceptance or application of a goal.
+- A completed live loop. Stage 1's loop never started: Claude Code's `read-only` probe timed out once, so Topsl correctly refused it as a coordinator.
+- Live job cancellation.
+- Other platforms and packaged builds.
+- OpenAI API, Anthropic API, external services and Ollama.

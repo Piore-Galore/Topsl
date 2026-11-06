@@ -55,17 +55,17 @@ Each claim was checked against the code at `b87f501`, not taken from older docum
 
 ## Phase checklist
 
-Status of each plan phase after both passes on 6 November 2026 (the [first pass](#what-changed) and the [second pass](#second-pass--remaining-phases)). "Existing" means the behavior was already implemented at `b87f501`. "Implemented" means implemented and verified with local, synthetic tests only; no phase is live-verified.
+Status of each plan phase after both passes on 6 November 2026 (the [first pass](#what-changed) and the [second pass](#second-pass--remaining-phases)). "Existing" means the behavior was already implemented at `b87f501`. "Implemented" means implemented and verified with local, synthetic tests. "Live" marks what the [live qualification](#live-qualification--6-november-2026) of 6 November 2026 established, for that host and those accounts only.
 
 | Phase | Status | Notes |
 | --- | --- | --- |
 | 0 Baseline | Done | This document. |
 | 1 Execution boundary | Existing, one field added | `MemberTurn`, `AttemptObservation`, `OrchestrationDriver` and `ExecutionBinding` already carried native, Codex and Claude Code turns. The second pass added only `AttemptObservation.funding`. |
-| 2 Claude connection and funding | Implemented | Required MCP binding at `system/init` (first pass); requested-versus-observed funding on every turn, with `conflict` and `unknown` kept distinct (second pass). Existing: same-environment `auth status`, API-key stop, tool-grant stop, qualification fingerprints. Open: live gate; R12 (an owner decision). |
-| 3 ChatGPT plan path | Implemented | Namespaced tool encoding and adapter revision `chatgpt-plan-responses-v2`. Existing: field refusals, stateless history, error classification, identity-only sign-in. Open: live gate. |
-| 4 Mixed-engine workflows | Implemented | GPT → Claude → GPT and Claude → GPT → Claude through the real service. Open: live pilot. |
+| 2 Claude connection and funding | Implemented; live | Required MCP binding at `system/init` (first pass); requested-versus-observed funding on every turn, with `conflict` and `unknown` kept distinct (second pass). Existing: same-environment `auth status`, API-key stop, tool-grant stop, qualification fingerprints. Open: R12 (an owner decision). |
+| 3 ChatGPT plan path | Implemented; live gate passed | Namespaced tool encoding and adapter revision `chatgpt-plan-responses-v2`. Existing: field refusals, stateless history, error classification, identity-only sign-in. Live: a native task with tool calls completed; the live runs also found and fixed the missing-`Content-Type` stream defect. |
+| 4 Mixed-engine workflows | Implemented; live pilot | GPT → Claude → GPT and Claude → GPT → Claude through the real service, then live in both directions. |
 | 5 Goal/Endless, quotas, recovery | Implemented | A Goal loop and an Endless loop with Stop across Claude Code and native members; a Claude reader defect in later loop iterations and continued sessions fixed. Existing: quota waits, restart recovery. |
-| 6 Tool-driven delegation | Implemented behind an owner gate (off by default) | `start_agent_job`, `get_agent_job`, `cancel_agent_job` for Claude Code and native coordinators; durable, idempotent, attempt-bound; admitted as plan tasks. Not separately qualified for Claude Code. |
+| 6 Tool-driven delegation | Implemented behind an owner gate (off by default); one live job each way | `start_agent_job`, `get_agent_job`, `cancel_agent_job` for Claude Code and native coordinators; durable, idempotent, attempt-bound; admitted as plan tasks. Not separately qualified for Claude Code. |
 | 7 Richer member capabilities | Implemented for native implementers | The goal's plain checks, run contained in the member's copy (macOS). Deferred: a Claude Code check tool (needs a tool profile on edit sessions and requalification), commands, MCP tools, hooks, persistent Claude sessions, native Claude subagents. |
 | 8 UI and usage | Implemented | Member cards show engine and requested-versus-observed funding; the plan shows agent jobs with their requester; Settings has the agent-jobs switch; a native route's readiness button opens Connections. No cost estimate is shown anywhere. |
 | 9 Migration and release | Implemented, release open | No schema change: new record kinds and optional fields; turns recorded earlier read as "not recorded". Release notes wait for a version decision; packaged-platform checks were not run. |
@@ -205,6 +205,14 @@ The desktop journeys show that existing flows still work in Electron with these 
 
 ## Remaining gates and limits
 
+*Updated after the [live qualification](#live-qualification--6-november-2026) later on 6 November 2026.* The first three items below were written before it. For that host and those accounts it closed:
+
+- the Phase 3 live gate;
+- the Phase 2 live gate for Claude Code (binding check, `apiKeySource`);
+- the mixed-engine pilot with one agent job each way.
+
+Still open from those items: live acceptance of a goal, a live loop, live job cancellation, and other platforms and packaged builds.
+
 - **Live ChatGPT plan inference.** Whether the plan route accepts the namespace encoding, `text.format`, `parallel_tool_calls` and `include` is not verified. Phase 3's live gate (an authorized account completing a native task with a Topsl tool call through the public route) is open.
 - **Live Claude Code.** The MCP binding check, the funding observation and the agent-job tools were exercised only with stand-ins. Two behaviors of real Claude Code are unobserved: `mcp_servers` statuses other than `connected` (such as `pending` during a slow start, which would now stop the turn), and `apiKeySource` values other than `none`. Phase 2's live gate is open.
 - **Mixed-engine and delegation evidence is synthetic.** A bounded live pilot with a native ChatGPT plan member and a Claude Code member (plan §9.3), including one agent job each way, is open.
@@ -215,3 +223,69 @@ The desktop journeys show that existing flows still work in Electron with these 
   - Persistent Claude sessions and native Claude subagents.
   - The optional Codex app-server route.
   - Release notes.
+
+## Live qualification — 6 November 2026
+
+At the owner's request, on the owner's Mac, with the owner's accounts. All runs used disposable `topsl-test-*` profiles. The owner signed in to ChatGPT in their own browser; no credential was entered by a script. Redacted reports are in [live-evidence/subscription-runtime-2026-11-06](live-evidence/subscription-runtime-2026-11-06/). Account-identity fields (`accountKey`, `profileId` and similar) are replaced with `<redacted>`.
+
+| Item | Value |
+| --- | --- |
+| Host | macOS 27.0.1, arm64 |
+| Claude Code | 2.1.305, `claude.ai` login (Max), model `claude-sonnet-5-5` |
+| Codex | codex-cli 0.163.0, ChatGPT login, model `gpt-6.1-sol` (stage 1 only) |
+| ChatGPT plan through Topsl | Topsl's own sign-in; route `chatgpt/live` → `gpt-6.1-sol`, adapter revision `chatgpt-plan-responses-v2` |
+| Procedures | Stage 1: [scripts/live-loop.mjs](../scripts/live-loop.mjs) `--mixed-only --no-pin-run`, recording member funding. Stage 2: [scripts/live-subscription.mjs](../scripts/live-subscription.mjs) |
+| Environment | `ANTHROPIC_BASE_URL` removed by both procedures (recorded in each report) |
+
+### Runs
+
+| Run | Topsl | Result |
+| --- | --- | --- |
+| Stage 1, live loop | `9028b1b` | Codex qualified: 8 of 8. Claude Code: 6 of 7. `candidate-reader` passed with Claude Code reporting Topsl's server `connected` and its tools loaded, which is the binding check live. `native-subscription`: 4 of 4 turns reported `apiKeySource` `none`. `read-only` failed only because the turn exceeded 240 s: Claude Code reported no tools and no file was written. Topsl therefore refused the Claude coordinator ("read-only is not qualified"), and the mixed loop waited without starting. No loop iteration ran. |
+| Stage 2, run 1 | `34069d1` | The ChatGPT plan sign-in reached `ready` and the account's models were listed. The native task did not start: the procedure cancelled Topsl's **Start a native task?** dialog, which it had not been told to expect. Claude Code qualified 7 of 7. Both teams blocked on the plan route. Every plan request ended "The model stream ended before a terminal event" after 4–7 s (proxy receipts, outcome `interrupted`), so no native member returned. In team B the Claude Code coordinator called `start_agent_job` and Topsl admitted the job. |
+| Diagnosis | `34069d1` + trace | A copy of run 1's profile was started with `TOPSL_DEBUG_PROXY_TRACE=1`. The route answers **200 with no `Content-Type`**; the proxy read the body as one JSON document and lost every event. With the fix, a native task answered "OK" through `response.completed`. Another request on the route streamed and completed a function call under Topsl's `topsl` namespace. |
+| Stage 2, run 2 | `4b7bdb1` | Stopped after the 15-minute sign-in wait; the connection stayed `signed-out`. Nothing else ran. |
+| Stage 2, run 3 | `4b7bdb1` | **Passed.** Details below. |
+
+### Stage 2, run 3
+
+- **Native task (plan Phase 3 live gate).** Edit mode on `chatgpt/live`: completed in 3 requests with 2 tool calls (`read_file`, `edit_file`). It changed `value.ts` from 1 to 2 as a candidate. Usage was reported as 2,919 input and 129 output tokens; the reported model was `gpt-6.1-sol`. The frozen binding was `chatgpt-plan`, funding `subscription`.
+- **Claude Code qualification:** 7 of 7, 4 turns.
+- **Team A — GPT coordinator → Claude Code implementer → GPT reviewer, Claude Code researcher.**
+  - The GPT coordinator called `start_agent_job` ("Summarize README guidance for value.ts"). Topsl admitted it, and it ran on the Claude Code researcher and completed.
+  - The Claude Code implementer's change was integrated, and the GPT reviewer returned no findings.
+  - The goal reached **awaiting acceptance**.
+- **Team B — Claude Code coordinator → GPT implementer → Claude Code reviewer, GPT researcher.**
+  - The Claude Code coordinator called `start_agent_job` ("Report what README.md says about value.ts"). Topsl admitted it, and it ran on the GPT researcher through Topsl and completed.
+  - The GPT implementer's change was integrated. The Claude Code reviewer, reading the candidate through Topsl's reader, returned one low-severity finding. In substance it said "no defects found; only the current revision was available to compare".
+  - The goal **blocked** for the owner's disposition, as Topsl requires for any finding.
+- **Funding.** Every member of both teams recorded `subscription` requested and observed, `matches`. Claude Code members were observed by their init record and GPT members by the proxy route binding.
+- **Dialogs.** The ten dialogs the procedure expected were approved; nothing else appeared.
+
+### Defects found by the live runs
+
+| Defect | Where | Fix |
+| --- | --- | --- |
+| The ChatGPT plan route sends event streams with no `Content-Type`. The proxy read them as JSON, and every plan request failed. This predates this plan's work. | `packages/proxy/adapters.ts` | A body with no or an unrecognised content type is read by its first non-blank bytes. `tests/proxy-undeclared-body.test.ts` (3); one of them fails on the earlier code. |
+| The live procedure cancelled Topsl's native-task confirmation. | `scripts/live-subscription.mjs` | It approves exactly that dialog for its route. |
+| The live procedure's goal text named "a researcher", which Topsl read as a team instruction and set that role to Auto for the goal (`parseMembership`, intended behaviour). | `scripts/live-subscription.mjs` | The text names no role; information jobs default to the researcher role. |
+
+### What this establishes and what it does not
+
+**Established for this host, these versions and these accounts:**
+
+- The ChatGPT plan sign-in, model catalog and inference through Topsl's own harness and proxy, with Topsl's namespaced tools.
+- Claude Code qualification with the MCP binding check.
+- Requested-versus-observed funding on both engines.
+- Structured teams in both directions, with an agent job each way that ran on the other engine and completed.
+
+**Not established:**
+
+- Acceptance and application of either goal (the procedure stops at awaiting acceptance or blocked).
+- A completed live Goal or Endless loop: stage 1's loop never started, and there was no rerun.
+- Agent-job cancellation or a stop during a live job.
+- Live qualification on other platforms or in a packaged build.
+- OpenAI API, Anthropic API, external service or Ollama routes.
+- A `read-only` timeout of this kind was seen once in three Claude Code qualifications. Its cause is not established.
+
+**Checks after the fix.** `npm run check` on the final tree passed: 106 test files (103 passed, 3 skipped), 1,443 tests passed, 6 skipped, 18 release tests and the build.

@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 1,
+  "kind": "topsl-live-subscription-runtime",
+  "observedAt": "2026-11-06T09:38:36.841Z",
+  "host": "darwin/arm64 27.0.0",
+  "topsl": {
+    "version": "0.1.3",
+    "commit": "4b7bdb194998b0f43bf95d23ffdf65a52b50a9f2",
+    "trackedChanges": false
+  },
+  "removedEnvironment": [
+    "ANTHROPIC_BASE_URL"
+  ],
+  "dialogs": [
+    {
+      "dialog": "Select a trusted project",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Trust this project?",
+      "answer": "Trust project"
+    },
+    {
+      "dialog": "Continue with ChatGPT?",
+      "answer": "Continue with ChatGPT"
+    },
+    {
+      "dialog": "Start a native task?",
+      "answer": "Start task"
+    },
+    {
+      "dialog": "Which runtime are you locating?",
+      "answer": "Claude Code"
+    },
+    {
+      "dialog": "Choose the native executable",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Allow this native executable?",
+      "answer": "Trust executable"
+    },
+    {
+      "dialog": "Let Topsl run Claude Code unattended?",
+      "answer": "Allow unattended Claude Code"
+    },
+    {
+      "dialog": "Connect Claude Code's structured route?",
+      "answer": "Connect"
+    },
+    {
+      "dialog": "Qualify this Claude Code runtime with live model turns?",
+      "answer": "Run qualification"
+    }
+  ],
+  "chatgpt": {
+    "state": "ready",
+    "funding": "subscription",
+    "detail": "",
+    "models": [
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6.1-terra",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-daybreak-blue-latest"
+    ],
+    "route": {
+      "alias": "chatgpt/live",
+      "upstreamModel": "gpt-6.1-sol",
+      "adapterRevision": "chatgpt-plan-responses-v2"
+    }
+  },
+  "nativeTask": {
+    "state": "completed",
+    "stateDetail": "Answered; the workspace changes are a candidate to review.",
+    "requests": 3,
+    "toolCalls": 2,
+    "usage": {
+      "input": 2919,
+      "output": 129,
+      "cachedInput": 0,
+      "reasoning": 0,
+      "unknownRequests": 0
+    },
+    "reportedModel": "gpt-6.1-sol",
+    "summary": "Changed the exported `value` in `value.ts` from `1` to `2`.",
+    "binding": {
+      "connectionKind": "chatgpt-plan",
+      "funding": "subscription",
+      "upstreamModel": "gpt-6.1-sol"
+    }
+  },
+  "claudeQualification": {
+    "version": "2.1.305",
+    "model": "claude-sonnet-5-5",
+    "acceptanceId": "5180a350-81ef-4ecd-87cc-d93350eb11eb",
+    "reportedModel": "claude-sonnet-5-5",
+    "turnsStarted": 4,
+    "observations": [
+      {
+        "capability": "structured-turn",
+        "passed": true,
+        "detail": "Turn completed; the requested marker was returned. Claude Code reported model claude-sonnet-5-5 for the request claude-sonnet-5-5."
+      },
+      {
+        "capability": "read-only",
+        "passed": true,
+        "detail": "A review turn was asked to create <folder>/workspace/readonly-fb7199d8a341.txt. Turn completed. Claude Code reported these tools for it: none. Topsl then found no new file in the workspace or outside it. This is Claude Code's own permission profile (no tools), not operating-system isolation."
+      },
+      {
+        "capability": "workspace-write",
+        "passed": true,
+        "detail": "An edit turn was asked to write <folder>/workspace/inside-fb7199d8a341.txt and <folder>/outside/outside-fb7199d8a341.txt. Turn completed. Claude Code reported these tools: Edit, Glob, Grep, Read, Write. The inside file landed. Claude Code reported these permission denials: Write <folder>/outside/outside-fb7199d8a341.txt; the outside write was attempted and denied, and no file was created outside. This is Claude Code's own permission check, not operating-system isolation."
+      },
+      {
+        "capability": "candidate-reader",
+        "passed": true,
+        "detail": "Turn completed. Claude Code reported Topsl's MCP server as connected and these tools: mcp__topsl_candidate__list, mcp__topsl_candidate__read_range, mcp__topsl_candidate__search. 1 read_range answer under the probe's grant returned the probe file's marker, and the reader refused 0 requests. Tool calls: read_range answered. The reply quoted the marker."
+      },
+      {
+        "capability": "fresh-session",
+        "passed": true,
+        "detail": "4 turns started a session with a new id Topsl chose; 4 reported that id when it started, and 4 ids were distinct."
+      },
+      {
+        "capability": "native-subscription",
+        "passed": true,
+        "detail": "claude auth status reported a claude.ai login (max); billing route native-subscription. 4 of 4 turns reported their API key source, as none."
+      },
+      {
+        "capability": "process-lifecycle",
+        "passed": true,
+        "detail": "4 of 4 turn processes stopped with nothing left running when their connection closed."
+      }
+    ],
+    "error": null
+  },
+  "teams": [
+    {
+      "label": "gpt-coordinates-claude",
+      "goalState": "awaiting-acceptance",
+      "detail": "Review complete: 1 of 1 reviews returned; 0 findings need a disposition. The candidate awaits your acceptance.",
+      "timedOut": false,
+      "rounds": [
+        {
+          "role": "coordinator",
+          "kind": "coordination",
+          "taskKey": null,
+          "stage": "committed",
+          "detail": "Committed: 1 of 1 endorsed (needs 1); 0 challenged, 0 abstained, 0 pending.",
+          "members": [
+            {
+              "memberId": "gpt-coordinator",
+              "engine": "native",
+              "state": "returned",
+              "requestedModel": "gpt-6.1-sol",
+              "effectiveModel": "gpt-6.1-sol",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "proxy route binding",
+                "detail": "Dispatched through ChatGPT (live) (plan allowance) on its frozen route revision."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "implementer",
+          "kind": "work",
+          "taskKey": "set-exported-value",
+          "stage": "completed",
+          "detail": "1 of 1 contributions returned; every required contribution is valid.",
+          "members": [
+            {
+              "memberId": "claude-implementer",
+              "engine": "claude-code",
+              "state": "returned",
+              "requestedModel": "claude-sonnet-5-5",
+              "effectiveModel": "claude-sonnet-5-5",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "Claude Code init record",
+                "detail": "Claude Code reported no API key source for the turn: it ran on its own login."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "researcher",
+          "kind": "information",
+          "taskKey": "job-d4c25e16b1d4",
+          "stage": "completed",
+          "detail": "1 of 1 contributions returned; every required contribution is valid.",
+          "members": [
+            {
+              "memberId": "claude-researcher",
+              "engine": "claude-code",
+              "state": "returned",
+              "requestedModel": "claude-sonnet-5-5",
+              "effectiveModel": "claude-sonnet-5-5",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "Claude Code init record",
+                "detail": "Claude Code reported no API key source for the turn: it ran on its own login."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "reviewer",
+          "kind": "review",
+          "taskKey": null,
+          "stage": "completed",
+          "detail": "1 of 1 reviews returned; 0 findings need a disposition.",
+          "members": [
+            {
+              "memberId": "gpt-reviewer",
+              "engine": "native",
+              "state": "returned",
+              "requestedModel": "gpt-6.1-sol",
+              "effectiveModel": "gpt-6.1-sol",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "proxy route binding",
+                "detail": "Dispatched through ChatGPT (live) (plan allowance) on its frozen route revision."
+              },
+              "detail": ""
+            }
+          ]
+        }
+      ],
+      "agentJobs": [
+        {
+          "title": "Summarize README guidance for value.ts",
+          "kind": "information",
+          "roleId": "researcher",
+          "state": "completed",
+          "parentMemberId": "gpt-coordinator",
+          "detail": "The task completed."
+        }
+      ],
+      "transitions": [
+        {
+          "at": "2026-11-06T09:41:44.911Z",
+          "state": "planning | Forming the coordinator group."
+        },
+        {
+          "at": "2026-11-06T09:41:49.943Z",
+          "state": "planning | The coordinator is preparing proposals."
+        },
+        {
+          "at": "2026-11-06T09:42:15.085Z",
+          "state": "running | Summarize README guidance for value.ts: admitted at a coordinator's request (agent job d4c25e16)."
+        },
+        {
+          "at": "2026-11-06T09:42:45.200Z",
+          "state": "reviewing | Integrated candidate captured; the review group reviews this exact candidate."
+        },
+        {
+          "at": "2026-11-06T09:43:15.279Z",
+          "state": "awaiting-acceptance | Review complete: 1 of 1 reviews returned; 0 findings need a disposition. The candidate awaits your acceptance."
+        }
+      ]
+    },
+    {
+      "label": "claude-coordinates-gpt",
+      "goalState": "blocked",
+      "detail": "1 findings need a disposition or a repair. Clean reports do not resolve a finding by omission.",
+      "timedOut": false,
+      "rounds": [
+        {
+          "role": "coordinator",
+          "kind": "coordination",
+          "taskKey": null,
+          "stage": "committed",
+          "detail": "Committed: 1 of 1 endorsed (needs 1); 0 challenged, 0 abstained, 0 pending.",
+          "members": [
+            {
+              "memberId": "claude-coordinator",
+              "engine": "claude-code",
+              "state": "returned",
+              "requestedModel": "claude-sonnet-5-5",
+              "effectiveModel": "claude-sonnet-5-5",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "Claude Code init record",
+                "detail": "Claude Code reported no API key source for the turn: it ran on its own login."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "implementer",
+          "kind": "work",
+          "taskKey": "set-value-2",
+          "stage": "completed",
+          "detail": "1 of 1 contributions returned; every required contribution is valid.",
+          "members": [
+            {
+              "memberId": "gpt-implementer",
+              "engine": "native",
+              "state": "returned",
+              "requestedModel": "gpt-6.1-sol",
+              "effectiveModel": "gpt-6.1-sol",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "proxy route binding",
+                "detail": "Dispatched through ChatGPT (live) (plan allowance) on its frozen route revision."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "researcher",
+          "kind": "information",
+          "taskKey": "job-fb20488536ed",
+          "stage": "completed",
+          "detail": "1 of 1 contributions returned; every required contribution is valid.",
+          "members": [
+            {
+              "memberId": "gpt-researcher",
+              "engine": "native",
+              "state": "returned",
+              "requestedModel": "gpt-6.1-sol",
+              "effectiveModel": "gpt-6.1-sol",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "proxy route binding",
+                "detail": "Dispatched through ChatGPT (live) (plan allowance) on its frozen route revision."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "reviewer",
+          "kind": "review",
+          "taskKey": null,
+          "stage": "completed",
+          "detail": "1 of 1 reviews returned; 1 findings need a disposition.",
+          "members": [
+            {
+              "memberId": "claude-reviewer",
+              "engine": "claude-code",
+              "state": "returned",
+              "requestedModel": "claude-sonnet-5-5",
+              "effectiveModel": "claude-sonnet-5-5",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "Claude Code init record",
+                "detail": "Claude Code reported no API key source for the turn: it ran on its own login."
+              },
+              "detail": ""
+            }
+          ]
+        }
+      ],
+      "agentJobs": [
+        {
+          "title": "Report what README.md says about value.ts",
+          "kind": "information",
+          "roleId": "researcher",
+          "state": "completed",
+          "parentMemberId": "claude-coordinator",
+          "detail": "The task completed."
+        }
+      ],
+      "transitions": [
+        {
+          "at": "2026-11-06T09:43:15.357Z",
+          "state": "planning | Forming the coordinator group."
+        },
+        {
+          "at": "2026-11-06T09:43:20.374Z",
+          "state": "planning | The coordinator is preparing proposals."
+        },
+        {
+          "at": "2026-11-06T09:43:35.429Z",
+          "state": "running | Report what README.md says about value.ts: admitted at a coordinator's request (agent job fb204885)."
+        },
+        {
+          "at": "2026-11-06T09:44:00.591Z",
+          "state": "reviewing | Integrated candidate captured; the review group reviews this exact candidate."
+        },
+        {
+          "at": "2026-11-06T09:44:15.677Z",
+          "state": "blocked | 1 findings need a disposition or a repair. Clean reports do not resolve a finding by omission."
+        }
+      ]
+    }
+  ],
+  "failure": null,
+  "result": "completed"
+}
