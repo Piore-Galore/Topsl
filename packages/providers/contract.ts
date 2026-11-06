@@ -133,6 +133,11 @@ export type ProviderEvent =
       threadId: string | null;
       turnId: string;
       reportedModel?: string | null;
+      /**
+       * Where the runtime said the turn's credentials came from, when it
+       * says: Claude Code's init `apiKeySource` ("none" is its own login).
+       */
+      credentialSource?: string | null;
     }
   | {
       type: "message-delta";

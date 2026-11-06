@@ -185,6 +185,40 @@ export function SettingsScreen({
             : ""}
         </p>
       </section>
+      <section className="settings-card" aria-label="Agent jobs">
+        <h2>Agent jobs</h2>
+        <p>
+          Whether a coordinator may ask Topsl for child work while it plans:
+          Claude through Claude Code or a model through Topsl, whichever the
+          child's role resolves to. Each job becomes a task of its goal, within
+          the goal's grant, and is reviewed and integrated with it. It gives no
+          member more permissions.
+        </p>
+        <div className="actions">
+          {[
+            { label: "Off", enabled: false },
+            { label: "On", enabled: true },
+          ].map((option) => (
+            <ActionButton
+              key={option.label}
+              className={
+                !!state.agentJobs?.enabled === option.enabled ? "primary" : ""
+              }
+              aria-pressed={!!state.agentJobs?.enabled === option.enabled}
+              onClick={() =>
+                void act({ type: "agent-jobs-set", enabled: option.enabled })
+              }
+            >
+              {option.label}
+            </ActionButton>
+          ))}
+        </div>
+        <p className="tiny" role="note">
+          {state.agentJobs?.enabled
+            ? "Coordinators' planning turns are offered start_agent_job, get_agent_job and cancel_agent_job."
+            : "No turn is offered agent-job tools."}
+        </p>
+      </section>
       <details className="settings-card">
         <summary>Native capabilities</summary>
         <div className="capabilities">

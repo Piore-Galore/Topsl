@@ -14,7 +14,10 @@ const { answer } = require("./orchestration-answers.cjs");
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (input += chunk));
-async function readerTools(config) {
+// --fixture-agent-job <json> --fixture-agent-job-log <file>: on a
+// coordinator proposal turn offered start_agent_job, request that job twice
+// (the retry must return the same job) and append both answers to <file>.
+async function readerTools(config, job) {
   const server = JSON.parse(fs.readFileSync(config, "utf8")).mcpServers
     .topsl_candidate;
   const rpc = async (id, method, params) =>
@@ -30,7 +33,19 @@ async function readerTools(config) {
   const call = await rpc(3, "tools/call", { name: "list", arguments: {} });
   if (call.result.isError)
     throw new Error(`Topsl refused the reader: ${call.result.content[0].text}`);
-  return listed.result.tools.map((t) => `mcp__topsl_candidate__${t.name}`);
+  const names = listed.result.tools.map((t) => t.name);
+  if (job && names.includes("start_agent_job"))
+    for (const id of [4, 5]) {
+      const started = await rpc(id, "tools/call", {
+        name: "start_agent_job",
+        arguments: job.request,
+      });
+      fs.appendFileSync(
+        job.log,
+        JSON.stringify(started.result.content[0].text) + "\n",
+      );
+    }
+  return names.map((name) => `mcp__topsl_candidate__${name}`);
 }
 process.stdin.on("end", async () => {
   const arg = (name, fallback) => {
@@ -42,16 +57,35 @@ process.stdin.on("end", async () => {
   const config = arg("--mcp-config", "{}");
   const event = (v) => process.stdout.write(JSON.stringify(v) + "\n");
   const stallFile = arg("--fixture-stall-once", null);
+  // --fixture-api-key-source <name>: report credentials from <name> instead
+  // of Claude Code's own login ("none").
+  const apiKeySource = arg("--fixture-api-key-source", "none");
   const stall = !!stallFile && !fs.existsSync(stallFile);
   if (stall) fs.writeFileSync(stallFile, sessionId);
   const text = answer(input);
-  const tools = config.trim().startsWith("{") ? [] : await readerTools(config);
+  const jobRequest = arg("--fixture-agent-job", null);
+  const job =
+    jobRequest && /Snapshot digest \(echo it exactly\)/.test(input)
+      ? {
+          request: JSON.parse(jobRequest),
+          log: arg("--fixture-agent-job-log", null),
+        }
+      : null;
+  const tools = config.trim().startsWith("{")
+    ? []
+    : await readerTools(config, job);
   event({
     type: "system",
     subtype: "init",
     session_id: sessionId,
     model,
     tools,
+    // Claude Code reports each --mcp-config server's status at init; Topsl
+    // stops a reader turn whose server is not reported connected.
+    mcp_servers: tools.length
+      ? [{ name: "topsl_candidate", status: "connected" }]
+      : [],
+    apiKeySource,
     uuid: "init-1",
   });
   event({

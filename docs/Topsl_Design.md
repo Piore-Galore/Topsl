@@ -1922,6 +1922,17 @@ An agent may submit a proposed configuration or application-management action fo
 
 ---
 
+### 19.5 Agent jobs (decided 6 November 2026)
+
+The general context MCP endpoint above stays read-only. Delegation is a separate, attempt-bound authority ([subscription runtime plan §7](Subscription_Runtime_Architecture_Plan.md#7-delegated-job-protocol-and-authority)):
+
+- A coordinator's planning turn may request child work while the owner's **Agent jobs** switch is on. The tools are `start_agent_job`, `get_agent_job` and `cancel_agent_job`; Claude Code reaches them through Topsl's per-turn MCP server, native members as core tools.
+- Topsl decides from the authority it recorded for the attempt, never from identifiers the model supplies. Requests are durable and idempotent per attempt and key.
+- Jobs join the goal's plan only after it commits; this is the plan's supervisor continuation. A coordinator never waits on a child inside its own turn, so a capacity of one cannot deadlock.
+- Children are ordinary tasks within the goal's grant, cannot request jobs themselves, and are reviewed and integrated with the goal.
+
+Implemented with synthetic evidence only; see the [execution record](Subscription_Runtime_Execution.md#phase-6-agent-jobs).
+
 ## 20. Interface design: Navigator’s Atlas
 
 ### 20.1 Visual direction

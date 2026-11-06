@@ -124,6 +124,15 @@ export function validateCandidateAccess(
     throw new Error(
       "Candidate grant subject is not an attributed attempt/task/session in this project/workflow.",
     );
+  // A turn may read a candidate another workflow made: a loop iteration's
+  // accepted checkpoint, a continued session's previous work. The driver
+  // records that input for the attempt before it creates the grant
+  // (`candidate-input-binding`); only that candidate is admitted this way.
+  const input = store.get<{ projectId: string; candidateId: string }>(
+      "candidate-input-binding",
+      scope.subject.attemptId,
+    ),
+    boundInput = input?.projectId === scope.projectId ? input.candidateId : null;
   for (const access of scope.candidates) {
     const candidate = store.get<CandidateSnapshot>(
       "candidate",
@@ -132,7 +141,8 @@ export function validateCandidateAccess(
     if (
       !candidate ||
       candidate.projectId !== scope.projectId ||
-      candidate.workflowId !== scope.subject.workflowId ||
+      (candidate.workflowId !== scope.subject.workflowId &&
+        candidate.id !== boundInput) ||
       candidate.revision !== access.revision
     )
       throw new Error(

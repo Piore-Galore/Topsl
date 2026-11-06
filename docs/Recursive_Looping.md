@@ -299,3 +299,8 @@ Loop teams can include members bound to Topsl's native harness on a local proxy 
 - **Stop.** Stopping a run interrupts its native members, which cancels their descendants; nothing further launches.
 
 Evidence: `tests/native-loops.test.ts` (scripted stand-in driver with the harness's real resource ledger and the service's limit check); in `tests/native-members.test.ts`, a service-level Goal loop whose native coordinator and implementer run through the real harness and proxy to a promoted checkpoint, and the harness-level shared-allowance case. See the [native harness record](Native_Harness_Execution.md#phases-6b-and-7--native-members-in-teams-sessions-and-loops).
+
+## Follow-up: loops across Claude Code and native members (6 November 2026)
+
+- A Goal loop with a Claude Code coordinator and native implementer and reviewer completes. An Endless loop mixing both engines improves once and monitors. After Stop, nothing new launches on either engine (`tests/native-members.test.ts`, synthetic).
+- **Fixed:** a Claude Code coordinator's candidate reader was refused from the second iteration on, because the checkpoint it reads was made by an earlier iteration's goal. The run waited with "Required decisions are missing … Candidate grant subject is not an attributed attempt/task/session". The driver now records each turn's input candidate, and the reader admits that one candidate for that attempt ([record](Subscription_Runtime_Execution.md#phase-5-loops-across-engines-and-a-reader-defect)). Before 6 November 2026, any loop whose Claude Code coordinator reached a second iteration was affected.

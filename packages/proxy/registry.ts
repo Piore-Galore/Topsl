@@ -35,7 +35,8 @@ import {
  * connection is converted invalidates every native binding to it.
  */
 export const adapterRevisions: Record<ConnectionKind, string> = {
-  "chatgpt-plan": "chatgpt-plan-responses-v1",
+  // v2 (6 November 2026): function tools grouped in the "topsl" namespace.
+  "chatgpt-plan": "chatgpt-plan-responses-v2",
   "openai-api": "openai-api-responses-v1",
   "anthropic-api": "anthropic-api-messages-v1",
   "openai-compatible": "openai-compatible-chat-v1",

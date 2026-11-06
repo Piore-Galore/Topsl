@@ -89,6 +89,100 @@ export function memberRuntimeId(assignment: {
 export type NativeRouteBinding = NonNullable<ExecutionBinding["native"]>;
 
 /**
+ * Who pays for a member turn, in one vocabulary across engines: a vendor
+ * runtime's billing route or a native route's connection funding. `unknown`
+ * is kept distinct; it is never read as any of the others.
+ */
+export type FundingSource =
+  | "subscription"
+  | "api-billing"
+  | "cloud-provider"
+  | "external-service"
+  | "local"
+  | "unknown";
+
+/** What a runtime reported about the credentials a turn ran with. */
+export interface ObservedFunding {
+  observed: FundingSource;
+  /** Where the observation came from, e.g. Claude Code's init record. */
+  source: string;
+  detail: string;
+}
+
+/**
+ * Requested versus observed funding for one turn (plan §4.3): the funding
+ * the assignment froze, what the runtime reported, and whether they agree.
+ * `unknown` means nothing was reported; it is not a match.
+ */
+export interface FundingObservation extends ObservedFunding {
+  requested: FundingSource;
+  state: "matches" | "unknown" | "conflict";
+}
+
+/** The funding an assignment froze: its native route's or its vendor billing route. */
+export function requestedFunding(
+  assignment: Pick<ResolvedMemberAssignment, "billingRoute"> & {
+    native?: Pick<NativeRouteBinding, "funding"> | null;
+  },
+): FundingSource {
+  if (assignment.native)
+    return assignment.native.funding === "gateway"
+      ? "external-service"
+      : assignment.native.funding;
+  switch (assignment.billingRoute) {
+    case "native-subscription":
+      return "subscription";
+    case "api-key":
+      return "api-billing";
+    case "cloud-provider":
+      return "cloud-provider";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * The funding a member card shows for its latest turn: the recorded
+ * observation; for a turn recorded before 6 November 2026, an explicit
+ * "not recorded" unknown; null when no turn has finished.
+ */
+export function memberFunding(
+  requested: FundingSource,
+  latest: { funding?: FundingObservation | null } | undefined,
+): FundingObservation | null {
+  if (!latest) return null;
+  return (
+    latest.funding ?? {
+      ...fundingObservation(requested, null),
+      source: "not recorded",
+      detail: "This turn was recorded before Topsl observed funding.",
+    }
+  );
+}
+
+/** Combines the frozen request with what the runtime reported. */
+export function fundingObservation(
+  requested: FundingSource,
+  observed: ObservedFunding | null | undefined,
+): FundingObservation {
+  const seen = observed ?? {
+    observed: "unknown" as const,
+    source: "none",
+    detail: "The runtime reported nothing about the credentials it used.",
+  };
+  return {
+    ...seen,
+    requested,
+    state:
+      seen.observed === "unknown" || requested === "unknown"
+        ? "unknown"
+        : seen.observed === requested
+          ? "matches"
+          : "conflict",
+  };
+}
+
+/**
  * The engine a member runs on. Assignments written before 5 November 2026
  * carry no engine and read as their vendor's, as they always ran.
  */
@@ -539,6 +633,11 @@ export interface ParticipantContribution {
   };
   inputDigest: string;
   reportedModel: string | null;
+  /**
+   * Requested versus observed funding for the turn. Absent on contributions
+   * recorded before 6 November 2026, which read as unknown.
+   */
+  funding?: FundingObservation | null;
   provenance: Evidence;
   createdAt: string;
 }

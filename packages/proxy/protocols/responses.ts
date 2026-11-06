@@ -65,6 +65,13 @@ export interface SerializeOptions {
   model: string;
   profile: ConnectionKind;
   defaultMaxOutputTokens?: number;
+  /**
+   * True when the body goes to the upstream itself rather than to Topsl's
+   * local proxy. The harness serializes with its route's profile so route
+   * refusals happen before anything is sent; only the proxy's upstream hop
+   * applies the ChatGPT-plan route's tool namespace.
+   */
+  upstream?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +497,18 @@ const planRefusedFields = [
   ["topP", "top_p"],
 ] as const;
 
+/**
+ * The namespace that groups Topsl's function tools on the ChatGPT-plan
+ * route. The route accepts function and custom tools only grouped in
+ * namespaces or supplied through `additional_tools` input items
+ * (developers.openai.com/siwc/token-sharing-open-source/preview-limitations,
+ * read 6 November 2026); top-level function tools are refused. The Responses
+ * reference gives a namespace tool `type`, `name`, `description` and
+ * `tools`, and a function call an optional `namespace`; the name fits the
+ * `^[a-zA-Z0-9_-]+$`, 64-character pattern the reference gives for it.
+ */
+export const planToolNamespace = "topsl";
+
 /** Builds the upstream Responses body; always streaming and stateless. */
 export function serializeRequest(
   request: CanonicalRequest,
@@ -512,7 +531,10 @@ export function serializeRequest(
           `The ChatGPT-plan route does not accept \`${name}\`.`,
           clientParam(request, field),
         );
-  const input = serializeInput(request);
+  const input = serializeInput(
+    request,
+    options.profile === "chatgpt-plan" && options.upstream === true,
+  );
   const hasReasoning = request.messages.some((message) =>
     message.parts.some((part) => part.type === "reasoning"),
   );
@@ -520,7 +542,7 @@ export function serializeRequest(
   if (request.instructions !== null) body.instructions = request.instructions;
   body.input = input;
   if (request.tools.length > 0) {
-    body.tools = request.tools.map((tool) => ({
+    const functions = request.tools.map((tool) => ({
       type: "function",
       name: tool.name,
       description: tool.description,
@@ -528,6 +550,25 @@ export function serializeRequest(
       // Canonical tools are not strict; Responses would otherwise default to it.
       strict: false,
     }));
+    const plan = options.profile === "chatgpt-plan";
+    const namespaced = plan && options.upstream === true;
+    // How a named choice addresses a namespaced function is not documented
+    // for this route, so it is refused rather than guessed.
+    if (plan && typeof request.toolChoice === "object")
+      reject(
+        "The ChatGPT-plan route groups tools in a namespace; a named `tool_choice` cannot be carried. Use auto, required or none.",
+        clientParam(request, "toolChoice"),
+      );
+    body.tools = namespaced
+      ? [
+          {
+            type: "namespace",
+            name: planToolNamespace,
+            description: "Tools Topsl runs on this computer.",
+            tools: functions,
+          },
+        ]
+      : functions;
     body.tool_choice =
       typeof request.toolChoice === "string"
         ? request.toolChoice
@@ -564,7 +605,10 @@ export function serializeRequest(
   return body;
 }
 
-function serializeInput(request: CanonicalRequest): JsonObject[] {
+function serializeInput(
+  request: CanonicalRequest,
+  namespaced: boolean,
+): JsonObject[] {
   const items: JsonObject[] = [];
   const param = clientParam(request, "messages");
   request.messages.forEach((message, messageIndex) => {
@@ -603,6 +647,8 @@ function serializeInput(request: CanonicalRequest): JsonObject[] {
             type: "function_call",
             call_id: part.id,
             name: part.name,
+            // A call the plan route made named its tool inside Topsl's namespace.
+            ...(namespaced ? { namespace: planToolNamespace } : {}),
             arguments: part.arguments,
           });
           break;
@@ -919,6 +965,14 @@ class StreamReader {
           `The upstream returned a ${String(item.type)} output item, which the proxy cannot carry.`,
         ),
       );
+    // Topsl sends one namespace, and only on the ChatGPT-plan route; a call
+    // into any other would name a tool Topsl never offered.
+    if (isSet(item.namespace) && item.namespace !== planToolNamespace)
+      return this.fail(
+        unsupportedOutput(
+          `The upstream called a tool in the ${JSON.stringify(String(item.namespace)).slice(0, 80)} namespace, which Topsl did not offer.`,
+        ),
+      );
     this.toolCalls = true;
     const record = this.part(`tool:${outputIndex}`, "tool");
     return [
@@ -957,7 +1011,11 @@ class StreamReader {
           events.push(...this.end(record));
     } else if (item.type === "function_call") {
       let record = this.parts.get(`tool:${outputIndex}`);
-      if (!record) events.push(...this.itemAdded(item, outputIndex));
+      if (!record) {
+        events.push(...this.itemAdded(item, outputIndex));
+        // A refused call (another namespace) opens no part.
+        if (this.done) return events;
+      }
       record = this.parts.get(`tool:${outputIndex}`)!;
       events.push(
         ...this.reconcile(record, item.arguments),

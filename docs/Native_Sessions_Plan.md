@@ -110,3 +110,7 @@ Evidence: [validation](UX_Cleanup_Plan.md#validation-30-october-2026).
 ## Follow-up: native coordinators and team members (5 November 2026)
 
 A session's coordinators and team members can be bound to Topsl's [native harness](Native_Harness_Plan.md#teams-and-extensions) on a local proxy route, beside Codex and Claude Code. The coordinator picker lists each route as **Topsl native · alias (connection)**; a session model reference may name `provider: "native"`. A native coordinator answers `session-v1` turns under the same provider-enforced schema, carried through the proxy. Evidence: the session case in `tests/native-members.test.ts`, where a native and a Codex coordinator both answer a discussion intake on a synthetic route ([record](Native_Harness_Execution.md#phases-6b-and-7--native-members-in-teams-sessions-and-loops)). Not covered: a session Electron journey with a native coordinator, and any live model.
+
+## Follow-up: Claude Code reading a continued session's work (6 November 2026)
+
+A continued session's turns read the session's accepted checkpoint, which an earlier goal made. Through the candidate reader, a Claude Code coordinator was refused that candidate for the same reason as in later loop iterations; this is inferred from the shared code path and was not reproduced in a session test. The fix records each turn's input candidate per attempt and is described in the [subscription runtime record](Subscription_Runtime_Execution.md#phase-5-loops-across-engines-and-a-reader-defect).

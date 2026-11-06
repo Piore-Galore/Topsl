@@ -7,7 +7,7 @@ import { advancedSections } from "../../../packages/domain/navigation";
 import type { Project } from "../../../packages/domain/types";
 export type { ProjectView } from "../../../packages/domain/navigation";
 import { CoordinatorView } from "./coordinator";
-import { OpenProviders } from "./coordinator/shared";
+import { OpenConnections, OpenProviders } from "./coordinator/shared";
 import { AllSessions } from "./screens/all-sessions";
 import { ProjectSettings } from "./screens/project-settings";
 import { AdvancedWorkflows } from "./screens/advanced-workflows";
@@ -32,6 +32,7 @@ export function Coordination({
   attachment,
   onAttachment,
   onProviders,
+  onConnections,
 }: {
   project?: Project;
   view: ProjectView;
@@ -50,6 +51,8 @@ export function Coordination({
   onAttachment: (referenceId: string | null) => void;
   /** Opens Providers, where a runtime is connected and qualified. */
   onProviders?: () => void;
+  /** Opens Connections, where a native route's connection is fixed. */
+  onConnections?: () => void;
 }) {
   const projectId = project?.id ?? "";
   const [advancedShown, setAdvancedShown] = useState(view === "advanced");
@@ -72,15 +75,17 @@ export function Coordination({
     <section className="coordination-view" aria-label="Project">
       {view === "coordinator" && (
         <OpenProviders.Provider value={onProviders ?? null}>
-          <CoordinatorView
-            projectId={projectId}
-            projectName={project.name}
-            projectPath={project.path}
-            threadId={threadId}
-            onThread={onThread}
-            attachment={attachment}
-            onAttachment={onAttachment}
-          />
+          <OpenConnections.Provider value={onConnections ?? null}>
+            <CoordinatorView
+              projectId={projectId}
+              projectName={project.name}
+              projectPath={project.path}
+              threadId={threadId}
+              onThread={onThread}
+              attachment={attachment}
+              onAttachment={onAttachment}
+            />
+          </OpenConnections.Provider>
         </OpenProviders.Provider>
       )}
       {view === "all-sessions" && (

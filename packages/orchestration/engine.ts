@@ -43,7 +43,16 @@ import {
   type RoutingMode,
 } from "./routing";
 import { customRoleDefinition } from "./roles";
-import { builtInRoles, memberRuntimeId } from "../domain/role-groups";
+import { AgentJobService, type AgentJob } from "./agent-jobs";
+import {
+  builtInRoles,
+  fundingObservation,
+  memberEngine,
+  memberFunding,
+  memberRuntimeId,
+  requestedFunding,
+  type ObservedFunding,
+} from "../domain/role-groups";
 import {
   effectiveGroup,
   goalComplexity,
@@ -130,6 +139,11 @@ export interface AttemptObservation {
   finalText: string | null;
   reportedModel: string | null;
   reportedEffort: string | null;
+  /**
+   * What the runtime reported about the credentials the turn ran with, if
+   * anything. The engine combines it with the assignment's frozen funding.
+   */
+  funding?: ObservedFunding | null;
   /** Implementation: the candidate captured from the member's workspace. */
   candidateId?: string | null;
   error?: string | null;
@@ -340,7 +354,26 @@ export class Orchestrator {
     private changed: () => void = () => {},
   ) {
     this.repo = new OrchestrationRepository(store);
+    this.jobs = new AgentJobService(store, {
+      goal: (id) => this.repo.get<Goal>(kinds.goal, id),
+      round: (id) => this.repo.get<RoleRound>(kinds.round, id),
+      actions: (goal) => this.actions(goal),
+      rounds: (id) => this.rounds(id),
+      contributions: (roundId, projectId) =>
+        this.contributions(roundId, projectId),
+      roles: (projectId) => this.repo.roles(projectId),
+      admit: (goal, task, actor) => {
+        const plan = this.plan(goal);
+        if (!plan) throw new Error("The goal has no committed plan.");
+        if (plan.tasks.some((t) => t.key === task.key)) return;
+        this.admitTask(goal, plan, task, actor, "job");
+      },
+      cancelQueued: (goal, taskKey) => this.withdrawQueued(goal, taskKey),
+    });
   }
+
+  /** Scoped cross-engine delegation (agent-jobs.ts). */
+  readonly jobs: AgentJobService;
 
   // -------------------------------------------------------------------------
   // Settings, roles and membership
@@ -2077,6 +2110,7 @@ export class Orchestrator {
       validation,
       inputDigest: round.input.digest,
       reportedModel: obs.reportedModel,
+      funding: this.funding(member, obs),
       provenance: obs.evidence,
       createdAt: now(),
     };
@@ -2184,6 +2218,21 @@ export class Orchestrator {
       }
     }
     return changed ? this.repo.saveRound(round, { members }) : round;
+  }
+
+  /** The turn's requested funding (frozen in its assignment) against what the runtime reported. */
+  private funding(
+    member: Pick<RoundMember, "assignmentId" | "assignmentRevision">,
+    obs: AttemptObservation,
+  ) {
+    const assignment = this.repo.assignmentRevision(
+      member.assignmentId,
+      member.assignmentRevision,
+    );
+    return fundingObservation(
+      assignment ? requestedFunding(assignment) : "unknown",
+      obs.funding,
+    );
   }
 
   /** Starts the members the schedule admits now. */
@@ -3736,6 +3785,20 @@ export class Orchestrator {
     task: PlanTaskAction,
     actor: string,
   ) {
+    this.admitTask(goal, plan, task, actor, "repair");
+  }
+
+  /**
+   * Appends one task to the committed plan as a new plan revision. A repair
+   * counts as a repair round; an agent job only as a delegated task.
+   */
+  private admitTask(
+    goal: Goal,
+    plan: CoordinatorPlan,
+    task: PlanTaskAction,
+    actor: string,
+    kind: "repair" | "job",
+  ) {
     this.store.transaction(() => {
       const planId = `plan:${hash(stable([plan.id, task.key])).slice(0, 32)}`;
       const next: CoordinatorPlan = {
@@ -3780,12 +3843,48 @@ export class Orchestrator {
         checkCandidateId: null,
         usage: {
           ...goal.usage,
-          repairRounds: goal.usage.repairRounds + 1,
+          repairRounds: goal.usage.repairRounds + (kind === "repair" ? 1 : 0),
           delegatedTasks: goal.usage.delegatedTasks + 1,
         },
-        detail: `${task.title}: repair ${goal.usage.repairRounds + 1} admitted; a new required review round follows the repaired candidate.`,
+        detail:
+          kind === "repair"
+            ? `${task.title}: repair ${goal.usage.repairRounds + 1} admitted; a new required review round follows the repaired candidate.`
+            : `${task.title}: admitted at a coordinator's request (${actor}).`,
       });
     });
+  }
+
+  /**
+   * Withdraws a queued task no round has started, as a new plan revision
+   * without it, so the plan can still finish. False when it has started.
+   */
+  private withdrawQueued(goal: Goal, taskKey: string): boolean {
+    const plan = this.plan(goal);
+    const action = this.actions(goal).find((a) => a.taskKey === taskKey);
+    if (!plan || !action || action.state !== "queued" || action.roundId)
+      return false;
+    if (plan.tasks.some((t) => t.dependencies.includes(taskKey))) return false;
+    this.store.transaction(() => {
+      const planId = `plan:${hash(stable([plan.id, "withdraw", taskKey])).slice(0, 32)}`;
+      this.repo.immutable(kinds.plan, {
+        ...plan,
+        id: planId,
+        revision: goal.planRevision + 1,
+        tasks: plan.tasks.filter((t) => t.key !== taskKey),
+        supersedesPlanId: plan.id,
+        createdAt: now(),
+      } satisfies CoordinatorPlan);
+      for (const a of this.actions(goal))
+        if (a.taskKey !== taskKey)
+          this.repo.saveRevisioned(kinds.action, {
+            ...a,
+            id: `${planId}:${a.taskKey}`,
+            planId,
+            revision: 1,
+          });
+      this.saveGoal(goal, { planId, planRevision: goal.planRevision + 1 });
+    });
+    return true;
   }
 
   /**
@@ -4344,8 +4443,11 @@ export class Orchestrator {
         "checking",
         "awaiting-acceptance",
       ].includes(goal.state)
-    )
+    ) {
+      // A stop fences jobs that had not started; finished goals settle theirs.
+      this.jobs.settle(goal);
       return;
+    }
     const rounds = this.rounds(goal.id);
     const open = (kind: RoundKind) =>
       rounds.some(
@@ -4373,6 +4475,10 @@ export class Orchestrator {
       return;
     }
     if (goal.state === "running") {
+      // Agent jobs requested during the coordinators' turns join the plan
+      // before anything is dispatched, so they finish with it.
+      this.jobs.settle(goal);
+      goal = this.repo.require<Goal>(kinds.goal, goal.id);
       await this.dispatch(goal);
       await this.finishPlan(this.repo.require<Goal>(kinds.goal, goal.id));
       return;
@@ -4418,6 +4524,7 @@ export class Orchestrator {
         },
         inputDigest: round.input.digest,
         reportedModel: obs.reportedModel,
+        funding: this.funding(m, obs),
         provenance: obs.evidence,
         createdAt: now(),
       } satisfies ParticipantContribution);
@@ -4536,6 +4643,26 @@ export class Orchestrator {
           ? this.acceptanceDigest(goal.id)
           : null,
       review: completion ?? null,
+      // Child work coordinators requested through the job tools, with the
+      // member that asked for it; each is also an ordinary task round.
+      agentJobs: [
+        ...this.store.iterate<AgentJob>("agent-job", {
+          projectId: goal.projectId,
+        }),
+      ]
+        .filter((j) => j.goalId === goal.id)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map((j) => ({
+          id: j.id,
+          title: j.task.title,
+          kind: j.task.kind,
+          roleId: j.task.roleId,
+          taskKey: j.task.key,
+          state: j.state,
+          detail: j.detail,
+          parentMemberId: j.parentMemberId,
+          createdAt: j.createdAt,
+        })),
       rounds: rounds.map((r) => ({
         id: r.id,
         roleId: r.roleId,
@@ -4567,6 +4694,20 @@ export class Orchestrator {
             reason: a?.reason ?? "",
             route: a?.route ?? null,
             latestValidation: latest?.validation ?? null,
+            // Which engine and connection ran the member, and who paid for
+            // its latest turn as requested and as observed.
+            engine: a ? memberEngine(a) : null,
+            connection: a?.native
+              ? {
+                  routeAlias: a.native.routeAlias,
+                  connectionLabel: a.native.connectionLabel,
+                }
+              : null,
+            requestedFunding: a ? requestedFunding(a) : "unknown",
+            funding: memberFunding(
+              a ? requestedFunding(a) : "unknown",
+              latest,
+            ),
           };
         }),
         contributions: this.contributions(r.id, r.projectId).map((c) => ({

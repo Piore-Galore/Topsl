@@ -129,6 +129,7 @@ export async function dispatchUpstream(
       model: route.upstreamModel,
       profile: connection.kind,
       defaultMaxOutputTokens: DEFAULT_ANTHROPIC_MAX_TOKENS,
+      upstream: true,
     });
   } catch (error) {
     if (error instanceof UnsupportedConversion)

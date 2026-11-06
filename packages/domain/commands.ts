@@ -707,6 +707,10 @@ export const commandSchema = z.discriminatedUnion("type", [
     level: z.enum(autoAcceptLevels),
   }),
   z.object({
+    type: z.literal("agent-jobs-set"),
+    enabled: z.boolean(),
+  }),
+  z.object({
     type: z.literal("claude-transcript-read-set"),
     enabled: z.boolean(),
   }),

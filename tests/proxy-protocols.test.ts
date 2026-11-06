@@ -2261,6 +2261,150 @@ describe("rejections", () => {
     expect(plain).toMatchObject({ store: false, stream: true });
   });
 
+  test("ChatGPT-plan route groups function tools in Topsl's namespace", () => {
+    const plan = {
+      model: "gpt-5.1",
+      profile: "chatgpt-plan",
+      upstream: true,
+    } as const;
+    const body = responses.serializeRequest(
+      { ...conversation, temperature: null },
+      plan,
+    );
+    // Top-level function tools are refused on this route; they travel inside
+    // one namespace tool (preview limitations, read 6 November 2026).
+    expect(body.tools).toEqual([
+      {
+        type: "namespace",
+        name: responses.planToolNamespace,
+        description: "Tools Topsl runs on this computer.",
+        tools: [
+          {
+            type: "function",
+            name: "get_weather",
+            description: "Current weather.",
+            parameters: weatherSchema,
+            strict: false,
+          },
+        ],
+      },
+    ]);
+    expect(body.tool_choice).toBe("auto");
+    // Replayed calls name the namespace their tool was offered in.
+    const calls = (body.input as Record<string, unknown>[]).filter(
+      (item) => item.type === "function_call",
+    );
+    expect(calls).toHaveLength(2);
+    for (const call of calls)
+      expect(call.namespace).toBe(responses.planToolNamespace);
+    // No system-role item reaches the route; instructions travel apart.
+    expect(
+      (body.input as Record<string, unknown>[]).some(
+        (item) => item.role === "system",
+      ),
+    ).toBe(false);
+    expect(body.instructions).toBe("You are Topsl's coding agent.");
+    // A named choice has no documented namespaced form: refused, not guessed.
+    expect(
+      rejection(() =>
+        responses.serializeRequest(
+          {
+            ...conversation,
+            temperature: null,
+            toolChoice: { name: "get_weather" },
+          },
+          plan,
+        ),
+      ).param,
+    ).toBe("tool_choice");
+    // The harness's body to the local proxy keeps plain tools for the
+    // proxy's client parser; the proxy adds the namespace upstream.
+    const local = responses.serializeRequest(
+      { ...conversation, temperature: null },
+      { model: "gpt-5.1", profile: "chatgpt-plan" },
+    );
+    expect((local.tools as Record<string, unknown>[])[0].type).toBe(
+      "function",
+    );
+    expect(() => responses.parseRequest(local)).not.toThrow();
+    // API-key routes keep plain top-level function tools.
+    const api = responses.serializeRequest(conversation, {
+      model: "gpt-5.1",
+      profile: "openai-api",
+      upstream: true,
+    });
+    expect((api.tools as Record<string, unknown>[])[0].type).toBe("function");
+    expect(
+      (api.input as Record<string, unknown>[]).find(
+        (item) => item.type === "function_call",
+      ),
+    ).not.toHaveProperty("namespace");
+  });
+
+  test("a call into a namespace Topsl did not offer fails the response", () => {
+    const call = (namespace?: string) =>
+      responses.readResponse({
+        object: "response",
+        id: "resp_1",
+        model: "gpt-5.1",
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call_1",
+            name: "get_weather",
+            ...(namespace === undefined ? {} : { namespace }),
+            arguments: '{"city":"Paris"}',
+          },
+        ],
+      });
+    expect(call(responses.planToolNamespace)).toContainEqual(
+      expect.objectContaining({ type: "tool-call-start", name: "get_weather" }),
+    );
+    expect(call()).toContainEqual(
+      expect.objectContaining({ type: "tool-call-start", name: "get_weather" }),
+    );
+    const foreign = call("browser");
+    expect(foreign.at(-1)).toMatchObject({ type: "error" });
+    expect(foreign.some((event) => event.type === "tool-call-start")).toBe(
+      false,
+    );
+  });
+
+  test("a foreign-namespace call seen only in the final response or its done event fails cleanly", async () => {
+    const item = {
+      type: "function_call",
+      call_id: "call_1",
+      name: "get_weather",
+      namespace: "browser",
+      arguments: "{}",
+    };
+    const read = async (frames: Record<string, unknown>[]) => {
+      const events = [];
+      async function* source() {
+        for (const data of frames)
+          yield { event: null, data: JSON.stringify(data), id: null };
+      }
+      for await (const event of responses.readStream(source())) events.push(event);
+      return events;
+    };
+    // Backfill: the stream delivered no item, the terminal response lists it.
+    const backfilled = await read([
+      { type: "response.created", response: { id: "r", model: "m" } },
+      {
+        type: "response.completed",
+        response: { id: "r", model: "m", output: [item] },
+      },
+    ]);
+    expect(backfilled.at(-1)).toMatchObject({ type: "error" });
+    // A done event without its added event.
+    const doneOnly = await read([
+      { type: "response.created", response: { id: "r", model: "m" } },
+      { type: "response.output_item.done", output_index: 0, item },
+    ]);
+    expect(doneOnly.at(-1)).toMatchObject({ type: "error" });
+  });
+
   test("Messages needs a token limit and has no reasoning effort", () => {
     const options = { model: "claude", profile: "anthropic-api" } as const;
     expect(

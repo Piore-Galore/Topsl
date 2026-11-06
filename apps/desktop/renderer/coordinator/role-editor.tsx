@@ -8,7 +8,12 @@ import type {
   SchedulingKind,
   SelectionForm,
 } from "../../../../packages/domain/role-groups";
-import { label, newCommandId } from "./shared";
+import {
+  engineWords,
+  fundingSentence,
+  label,
+  newCommandId,
+} from "./shared";
 
 /** "Opus + Astra", "Auto", or "Auto (3)": the compact team line for a role. */
 export function teamLine(group: any, assignments: any[] = []): string {
@@ -700,6 +705,15 @@ export function MemberCard({ member }: { member: any }) {
         : member.selection === "fallback"
           ? "Fallback"
           : "Pinned"}
+      <br />
+      Engine: {engineWords(member)}
+      <br />
+      <span
+        role={member.funding?.state === "conflict" ? "alert" : undefined}
+        className={member.funding?.state === "conflict" ? undefined : "muted"}
+      >
+        {fundingSentence(member)}
+      </span>
       <br />
       Effective: {member.effectiveModel ?? "not reported yet"}
       {member.reason && (
