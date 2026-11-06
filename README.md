@@ -15,7 +15,17 @@ npm start
 
 `npm ci` rebuilds SQLite and the terminal module for Electron. `npm start` compiles the app and opens the desktop window. `npx electron .` opens the window from an existing `dist/` without compiling, so it shows your last build.
 
-While editing, run `npm run dev` instead. It runs the same build as `npm start`, opens Topsl, and keeps watching the source: a change to the main process, preload, service or CLI rebuilds that bundle and restarts Topsl, and a renderer change rebuilds the renderer and reloads the window. It uses your normal profile, so the restart closes Topsl's sessions as quitting would. It does not type-check, so run `npm run typecheck` before committing. Closing the window or pressing Ctrl+C stops it. [scripts/dev.mjs](scripts/dev.mjs) has the details. No provider app is installed, updated, trusted, or authenticated by these commands. The first launch discovers the Codex and Claude Code CLIs and checks eligible release metadata.
+While editing, run `npm run dev` instead. It runs the same build as `npm start`, opens Topsl, and keeps watching the source: a change to the main process, preload, service or CLI rebuilds that bundle and restarts Topsl, and a renderer change rebuilds the renderer and reloads the window. It uses your normal profile, so the restart closes Topsl's sessions as quitting would. It does not type-check, so run `npm run typecheck` before committing. Closing the window or pressing Ctrl+C stops it. [scripts/dev.mjs](scripts/dev.mjs) has the details.
+
+To debug, run `npm run debug`. It builds with inline source maps and an unminified renderer, then opens Topsl with debuggers ready on `127.0.0.1`:
+- Node inspectors on the main process (9229), the control service (9230) and the local proxy (9231).
+- Chrome remote debugging on the window (9222), with its DevTools opened.
+
+The control service's and proxy's output is printed in the terminal, labelled `[service]` and `[proxy]`. Attach from `chrome://inspect` or your editor.
+
+It uses your normal profile. Add `-- --temp-profile` to use a throwaway profile that is deleted when Topsl closes; `--keep-profile` keeps it. Like any test profile, it does not search for runtimes, so add one with **Providers → Locate a runtime**. [scripts/debug.mjs](scripts/debug.mjs) lists the options and the port variables. Run `npm run build` before packaging; packaging does this itself.
+
+No provider app is installed, updated, trusted, or authenticated by these commands. The first launch discovers the Codex and Claude Code CLIs and checks eligible release metadata.
 
 History and its search index are encrypted with SQLCipher. The database key uses the OS credential store where it is secure; otherwise Topsl asks for a passphrase of at least 12 characters. Linux's insecure `basic_text` backend is rejected. Keep both the database and `vault.json` when backing up a **closed** Topsl profile; losing the vault key loses access to history. Automatic backup/restore management is a later release gate.
 

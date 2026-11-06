@@ -12,7 +12,7 @@ export const nodeEntries = [
 ];
 
 /** esbuild options for one Node-side bundle. */
-export function nodeBuildOptions(entry, outfile) {
+export function nodeBuildOptions(entry, outfile, { debug = false } = {}) {
   return {
     entryPoints: [entry],
     outfile: `dist/${outfile}`,
@@ -20,7 +20,9 @@ export function nodeBuildOptions(entry, outfile) {
     platform: "node",
     format: "cjs",
     target: "node22",
-    sourcemap: false,
+    // `npm run debug` inlines source maps, so no separate .map file is left
+    // in dist/ for a later package to pick up.
+    sourcemap: debug ? "inline" : false,
     external: [
       "electron",
       "better-sqlite3-multiple-ciphers",
@@ -37,6 +39,12 @@ export const rendererConfig = {
   base: "./",
   build: { outDir: "../../../dist/renderer", emptyOutDir: true },
   logLevel: "warn",
+};
+
+/** The renderer for `npm run debug`: inline source maps, not minified. */
+export const debugRendererConfig = {
+  ...rendererConfig,
+  build: { ...rendererConfig.build, sourcemap: "inline", minify: false },
 };
 
 /** Creates dist/ and copies the window icon into it. */

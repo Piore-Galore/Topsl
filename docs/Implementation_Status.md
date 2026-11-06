@@ -781,3 +781,22 @@ After reviewing the first pass, the owner asked for every phase to be finished. 
 **Verified (local, synthetic).** New tests in `tests/native-members.test.ts`, `tests/agent-jobs.test.ts` and `tests/candidate-input-binding.test.ts`. The desktop coordinator journey also checks the engine and funding lines on member cards in Electron. `npm run check` passed (1,438 tests, 6 skipped; 18 release checks; build), and all eight desktop journeys passed. Commands and results are in the [record](Subscription_Runtime_Execution.md#second-pass-validation).
 
 **Not established.** Any live provider run, including the agent-job tools against a real Claude Code; other platforms and the packaged application; release notes, which wait for a version decision. R12 remains the owner's decision. A Claude Code check tool, native member commands, MCP tools and hooks, persistent Claude sessions and native Claude subagents remain separate, unimplemented capabilities.
+
+## Debug launch — 6 November 2026
+
+**Change.** `npm run debug` ([scripts/debug.mjs](../scripts/debug.mjs)) builds Topsl with inline source maps and an unminified renderer, then opens it with debuggers on `127.0.0.1`:
+
+- Node inspectors on the main process (9229), the control service (9230) and the local proxy (9231).
+- Chrome remote debugging on the window (9222), with detached DevTools.
+- The control service's and proxy's stdout and stderr, printed with `[service]` and `[proxy]` labels; a normal run discards them.
+
+The main process reads these switches from `TOPSL_DEBUG_*` variables only when `app.isPackaged` is false ([apps/desktop/debug-settings.ts](../apps/desktop/debug-settings.ts)). `--temp-profile` runs on a throwaway `topsl-test-debug-*` profile, with a qualification folder under `test-results/`; both are deleted on exit unless `--keep-profile` is given. Inline maps leave no `.map` files in `dist/`, and `npm run build` (which packaging runs) replaces the debug bundles.
+
+**Verified.** `tests/debug-settings.test.ts` (2) checks that packaged runs ignore the switches, that ports are validated and that inspectors bind to loopback. One `npm run debug -- --temp-profile` run on macOS arm64:
+
+- All four endpoints answered (`/json/version` on 9222; `/json/list` on 9229, 9230 and 9231).
+- The service and proxy inspector lines reached the terminal.
+- `main.cjs`, `service.cjs`, `proxy.cjs` and the renderer bundle each carried an inline source map, with no `.map` files.
+- Stopping it removed the throwaway profile and left no Electron process.
+
+**Not established.** Other platforms; attaching a particular editor; a run on the normal profile, which was not opened here to avoid touching the owner's vault.

@@ -45,12 +45,15 @@ import { claudeRouteConfirmation } from "../../packages/domain/claude-route";
 import { isWithin, runFile } from "../../packages/platform/system";
 import type { TrustedInput } from "../service/service";
 import { testProfileSettings } from "./test-profile";
+import { childOutput, debugSettings, inspectArgs } from "./debug-settings";
 import { ProxyHost, proxyBundle } from "./proxy-host";
 import { connectionCommandTypes } from "../../packages/domain/native-commands";
 
 const testProfile = testProfileSettings(process.env, app.isPackaged),
   isolatedTest = !!testProfile;
 if (testProfile) app.setPath("userData", testProfile.profile);
+/** `npm run debug`'s switches; null in a packaged or ordinary run. */
+const debug = debugSettings(process.env, app.isPackaged);
 if (!app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | null = null;
 let worker: UtilityProcess | null = null;
@@ -163,9 +166,9 @@ async function unlock(passphrase?: string): Promise<AppState> {
       cwd: directory,
       serviceName: "Topsl control service",
       stdio: "pipe",
+      execArgv: inspectArgs(debug?.serviceInspectPort ?? null),
     });
-    worker.stdout?.resume();
-    worker.stderr?.resume();
+    childOutput(worker, "service", !!debug?.logs);
     worker.on("message", (message: any) => {
       if (message.event) {
         if (message.event.type === "state") {
@@ -238,6 +241,10 @@ async function unlock(passphrase?: string): Promise<AppState> {
       directory,
       vaultKey: key,
       bundle: proxyBundle(__dirname),
+      debug: {
+        logs: !!debug?.logs,
+        inspectPort: debug?.proxyInspectPort ?? null,
+      },
       onState: (view) => {
         state = { ...state, proxy: view };
         // A separate event: a full state event here could arrive between a
@@ -1141,7 +1148,10 @@ app.whenReady().then(async () => {
       return { error: safeError(error) };
     }
   });
-  window.once("ready-to-show", () => window?.show());
+  window.once("ready-to-show", () => {
+    window?.show();
+    if (debug?.devTools) window?.webContents.openDevTools({ mode: "detach" });
+  });
   // Development only (`npm run dev`): reload the window after scripts/dev.mjs
   // rebuilds the renderer. A packaged app ignores the variable. Reloading keeps
   // the same file URL, so the sender check above still applies.
