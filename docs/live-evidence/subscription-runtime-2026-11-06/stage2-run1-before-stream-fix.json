@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "kind": "topsl-live-subscription-runtime",
+  "observedAt": "2026-11-06T06:31:41.029Z",
+  "host": "darwin/arm64 27.0.0",
+  "topsl": {
+    "version": "0.1.3",
+    "commit": "34069d170395a07e6dbc22a476534659e869ff27",
+    "trackedChanges": false
+  },
+  "removedEnvironment": [
+    "ANTHROPIC_BASE_URL"
+  ],
+  "dialogs": [
+    {
+      "dialog": "Select a trusted project",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Trust this project?",
+      "answer": "Trust project"
+    },
+    {
+      "dialog": "Continue with ChatGPT?",
+      "answer": "Continue with ChatGPT"
+    },
+    {
+      "dialog": "Start a native task?",
+      "answer": "Cancel"
+    },
+    {
+      "dialog": "Which runtime are you locating?",
+      "answer": "Claude Code"
+    },
+    {
+      "dialog": "Choose the native executable",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Allow this native executable?",
+      "answer": "Trust executable"
+    },
+    {
+      "dialog": "Let Topsl run Claude Code unattended?",
+      "answer": "Allow unattended Claude Code"
+    },
+    {
+      "dialog": "Connect Claude Code's structured route?",
+      "answer": "Connect"
+    },
+    {
+      "dialog": "Qualify this Claude Code runtime with live model turns?",
+      "answer": "Run qualification"
+    }
+  ],
+  "chatgpt": {
+    "state": "ready",
+    "funding": "subscription",
+    "detail": "",
+    "models": [
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6.1-terra",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-daybreak-blue-latest"
+    ],
+    "route": {
+      "alias": "chatgpt/live",
+      "upstreamModel": "gpt-6.1-sol",
+      "adapterRevision": "chatgpt-plan-responses-v2"
+    }
+  },
+  "nativeTask": {
+    "state": "not-found"
+  },
+  "claudeQualification": {
+    "version": "2.1.305",
+    "model": "claude-sonnet-5-5",
+    "acceptanceId": "51a74f30-215f-4381-b04c-c7645c218f9b",
+    "reportedModel": "claude-sonnet-5-5",
+    "turnsStarted": 4,
+    "observations": [
+      {
+        "capability": "structured-turn",
+        "passed": true,
+        "detail": "Turn completed; the requested marker was returned. Claude Code reported model claude-sonnet-5-5 for the request claude-sonnet-5-5."
+      },
+      {
+        "capability": "read-only",
+        "passed": true,
+        "detail": "A review turn was asked to create <folder>/workspace/readonly-114439fa877a.txt. Turn completed. Claude Code reported these tools for it: none. Topsl then found no new file in the workspace or outside it. This is Claude Code's own permission profile (no tools), not operating-system isolation."
+      },
+      {
+        "capability": "workspace-write",
+        "passed": true,
+        "detail": "An edit turn was asked to write <folder>/workspace/inside-114439fa877a.txt and <folder>/outside/outside-114439fa877a.txt. Turn completed. Claude Code reported these tools: Edit, Glob, Grep, Read, Write. The inside file landed. Claude Code reported these permission denials: Write <folder>/outside/outside-114439fa877a.txt; the outside write was attempted and denied, and no file was created outside. This is Claude Code's own permission check, not operating-system isolation."
+      },
+      {
+        "capability": "candidate-reader",
+        "passed": true,
+        "detail": "Turn completed. Claude Code reported Topsl's MCP server as connected and these tools: mcp__topsl_candidate__list, mcp__topsl_candidate__read_range, mcp__topsl_candidate__search. 1 read_range answer under the probe's grant returned the probe file's marker, and the reader refused 0 requests. Tool calls: read_range answered. The reply quoted the marker."
+      },
+      {
+        "capability": "fresh-session",
+        "passed": true,
+        "detail": "4 turns started a session with a new id Topsl chose; 4 reported that id when it started, and 4 ids were distinct."
+      },
+      {
+        "capability": "native-subscription",
+        "passed": true,
+        "detail": "claude auth status reported a claude.ai login (max); billing route native-subscription. 4 of 4 turns reported their API key source, as none."
+      },
+      {
+        "capability": "process-lifecycle",
+        "passed": true,
+        "detail": "4 of 4 turn processes stopped with nothing left running when their connection closed."
+      }
+    ],
+    "error": null
+  },
+  "teams": [
+    {
+      "label": "gpt-coordinates-claude",
+      "goalState": "blocked",
+      "detail": "Coordination blocked: 0 of 1 contributions returned; waiting for gpt-coordinator.",
+      "timedOut": false,
+      "rounds": [
+        {
+          "role": "coordinator",
+          "kind": "coordination",
+          "taskKey": null,
+          "stage": "blocked",
+          "detail": "Required participation is missing: 0 of 1 contributions returned; waiting for gpt-coordinator. A quorum cannot waive a required contribution.",
+          "members": [
+            {
+              "memberId": "gpt-coordinator",
+              "engine": "native",
+              "state": "failed",
+              "requestedModel": "gpt-6.1-sol",
+              "effectiveModel": "chatgpt/live",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "proxy route binding",
+                "detail": "Dispatched through ChatGPT (live) (plan allowance) on its frozen route revision."
+              },
+              "detail": "The provider was unavailable after the allowed retries (server_error): The model stream ended before a terminal event."
+            }
+          ]
+        }
+      ],
+      "agentJobs": [],
+      "transitions": [
+        {
+          "at": "2026-11-06T06:55:50.641Z",
+          "state": "planning | Forming the coordinator group."
+        },
+        {
+          "at": "2026-11-06T06:55:55.672Z",
+          "state": "planning | The coordinator is preparing proposals."
+        },
+        {
+          "at": "2026-11-06T06:56:30.797Z",
+          "state": "blocked | Coordination blocked: 0 of 1 contributions returned; waiting for gpt-coordinator."
+        }
+      ]
+    },
+    {
+      "label": "claude-coordinates-gpt",
+      "goalState": "blocked",
+      "detail": "Task set-value-2 is incomplete: 0 of 1 contributions returned; waiting for gpt-implementer.",
+      "timedOut": false,
+      "rounds": [
+        {
+          "role": "coordinator",
+          "kind": "coordination",
+          "taskKey": null,
+          "stage": "committed",
+          "detail": "Committed: 1 of 1 endorsed (needs 1); 0 challenged, 0 abstained, 0 pending.",
+          "members": [
+            {
+              "memberId": "claude-coordinator",
+              "engine": "claude-code",
+              "state": "returned",
+              "requestedModel": "claude-sonnet-5-5",
+              "effectiveModel": "claude-sonnet-5-5",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "Claude Code init record",
+                "detail": "Claude Code reported no API key source for the turn: it ran on its own login."
+              },
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "role": "implementer",
+          "kind": "work",
+          "taskKey": "set-value-2",
+          "stage": "blocked",
+          "detail": "0 of 1 contributions returned; waiting for gpt-implementer.",
+          "members": [
+            {
+              "memberId": "gpt-implementer",
+              "engine": "native",
+              "state": "failed",
+              "requestedModel": "gpt-6.1-sol",
+              "effectiveModel": "chatgpt/live",
+              "requestedFunding": "subscription",
+              "funding": {
+                "observed": "subscription",
+                "state": "matches",
+                "source": "proxy route binding",
+                "detail": "Dispatched through ChatGPT (live) (plan allowance) on its frozen route revision."
+              },
+              "detail": "The provider was unavailable after the allowed retries (server_error): The model stream ended before a terminal event."
+            }
+          ]
+        },
+        {
+          "role": "researcher",
+          "kind": "information",
+          "taskKey": "job-b9854fb76e32",
+          "stage": "collecting",
+          "detail": "Queued because 1 required members need capacity.",
+          "members": [
+            {
+              "memberId": "researcher-auto-1",
+              "engine": "claude-code",
+              "state": "queued",
+              "requestedModel": "claude-sonnet-5-5",
+              "effectiveModel": null,
+              "requestedFunding": "subscription",
+              "funding": null,
+              "detail": ""
+            }
+          ]
+        }
+      ],
+      "agentJobs": [
+        {
+          "title": "Summarize README.md on value.ts",
+          "kind": "information",
+          "roleId": "researcher",
+          "state": "admitted",
+          "parentMemberId": "claude-coordinator",
+          "detail": "Admitted as a task of the goal's plan."
+        }
+      ],
+      "transitions": [
+        {
+          "at": "2026-11-06T06:56:30.868Z",
+          "state": "planning | Forming the coordinator group."
+        },
+        {
+          "at": "2026-11-06T06:56:35.893Z",
+          "state": "planning | The coordinator is preparing proposals."
+        },
+        {
+          "at": "2026-11-06T06:57:01.038Z",
+          "state": "running | Summarize README.md on value.ts: admitted at a coordinator's request (agent job b9854fb7)."
+        },
+        {
+          "at": "2026-11-06T06:57:46.435Z",
+          "state": "blocked | Task set-value-2 is incomplete: 0 of 1 contributions returned; waiting for gpt-implementer."
+        }
+      ]
+    }
+  ],
+  "failure": null,
+  "result": "completed"
+}

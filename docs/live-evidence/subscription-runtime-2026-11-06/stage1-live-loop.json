@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 1,
+  "kind": "topsl-live-loop",
+  "observedAt": "2026-11-06T06:25:01.291Z",
+  "host": "darwin/arm64 27.0.0",
+  "topsl": {
+    "version": "0.1.3",
+    "commit": "9028b1b991225b7f1d408063fdd87b0d46dcb9f1",
+    "trackedChanges": false
+  },
+  "removedEnvironment": [
+    "ANTHROPIC_BASE_URL"
+  ],
+  "executables": {
+    "codex": {
+      "path": "/opt/homebrew/bin/codex",
+      "version": "0.163.0",
+      "owner": "npm"
+    },
+    "claude": {
+      "path": "/opt/homebrew/bin/claude",
+      "version": "2.1.305",
+      "owner": "homebrew"
+    }
+  },
+  "dialogs": [
+    {
+      "dialog": "Select a trusted project",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Trust this project?",
+      "answer": "Trust project"
+    },
+    {
+      "dialog": "Which runtime are you locating?",
+      "answer": "Codex CLI"
+    },
+    {
+      "dialog": "Choose the native executable",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Allow this native executable?",
+      "answer": "Trust executable"
+    },
+    {
+      "dialog": "Connect the experimental Codex integration?",
+      "answer": "Connect"
+    },
+    {
+      "dialog": "Qualify this Codex runtime with live model turns?",
+      "answer": "Run qualification"
+    },
+    {
+      "dialog": "Which runtime are you locating?",
+      "answer": "Claude Code"
+    },
+    {
+      "dialog": "Choose the native executable",
+      "answer": "selected"
+    },
+    {
+      "dialog": "Allow this native executable?",
+      "answer": "Trust executable"
+    },
+    {
+      "dialog": "Let Topsl run Claude Code unattended?",
+      "answer": "Allow unattended Claude Code"
+    },
+    {
+      "dialog": "Connect Claude Code's structured route?",
+      "answer": "Connect"
+    },
+    {
+      "dialog": "Qualify this Claude Code runtime with live model turns?",
+      "answer": "Run qualification"
+    },
+    {
+      "dialog": "Turn on auto-accept for work inside the sandbox?",
+      "answer": "Turn on Sandboxed"
+    },
+    {
+      "dialog": "Start this Goal loop? (Experimental)",
+      "answer": "Start loop"
+    }
+  ],
+  "qualification": {
+    "model": "gpt-6.1-sol",
+    "result": null,
+    "passed": null,
+    "summary": "{\"acceptanceId\":\"ddd5321c-706f-41c6-b680-8d5902e9457e\",\"expiresAt\":\"2026-12-06T06:26:25.732Z\",\"report\":{\"suite\":\"codex-runtime-qualification/v4\",\"installationId\":\"7082cff21488298d2deb643adc85eb4c227eb8c9a09cb1373619fff4e5a3325b\",\"model\":\"gpt-6.1-sol\",\"effort\":null,\"startedAt\":\"2026-11-06T06:25:21.073Z\",\"finishedAt\":\"2026-11-06T06:26:25.732Z\",\"turnsStarted\":3,\"account\":{\"accountKey\":\"<redacted>\",\"profileId\":\"<redacted>\",\"billingRoute\":\"native-subscription\",\"sanitized\":{\"type\":\"chatgpt\",\"email\":null,\"planType\":\"prolite\"}},\"observations\":[{\"capability\":\"native-subscription\",\"meaning\":\"behavior-observed\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:native-subscription:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:25:23.131Z\",\"passed\":true,\"negativeControl\":null,\"detail\":\"Runtime reported a chatgpt account; billing route native-subscription.\"},{\"capability\":\"structured-turn\",\"meaning\":\"behavior-observed\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:structured-turn:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:25:42.180Z\",\"passed\":true,\"negativeControl\":null,\"detail\":\"Turn completed; the requested marker was returned.\"},{\"capability\":\"candidate-reader\",\"meaning\":\"behavior-observed\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:candidate-reader:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:26:09.707Z\",\"passed\":true,\"negativeControl\":null,\"detail\":\"Turn completed. 1 read_range answer under the probe's grant returned the probe file's marker, and the reader refused 0 requests. The reply quoted the marker. Tool calls: read_range answered. Codex reported read_range as completed (success: true) with 1 content item of 688 characters that holds the marker. Items completed: userMessage, reasoning, agentMessage, dynamicToolCall, agentMessage.\"},{\"capability\":\"fresh-session\",\"meaning\":\"behavior-observed\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:fresh-session:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:26:09.709Z\",\"passed\":true,\"negativeControl\":null,\"detail\":\"Two thread/start requests returned distinct native thread identities.\"},{\"capability\":\"read-only\",\"meaning\":\"policy-enforced\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:read-only:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:26:09.735Z\",\"passed\":true,\"negativeControl\":{\"operationAttempted\":true,\"trustedStateChecked\":true,\"denied\":true},\"detail\":\"Topsl ran the commands itself in the runtime's sandbox under the read-only policy, with no model turn. A command printing a word ran. The write to <folder>/workspace/readonly-9b0911ec6576.txt exited with code 1 (\\\"topsl: <folder>/workspace/readonly-9b0911ec6576.txt: Operation not permitted\\\"), and no file was created.\"},{\"capability\":\"workspace-write\",\"meaning\":\"policy-enforced\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:workspace-write:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:26:09.760Z\",\"passed\":true,\"negativeControl\":{\"operationAttempted\":true,\"trustedStateChecked\":true,\"denied\":true},\"detail\":\"Topsl ran the writes itself in the runtime's sandbox under the workspace-write policy, with no model turn. The write inside the workspace exited with code 0 and landed. The write to <folder>/outside/outside-9b0911ec6576.txt exited with code 1 (\\\"topsl: <folder>/outside/outside-9b0911ec6576.txt: Operation not permitted\\\") and was denied.\"},{\"capability\":\"interrupt\",\"meaning\":\"behavior-observed\",\"source\":\"trusted-runtime-validation\",\"operationId\":\"codex-runtime-qualification/v4:interrupt:9b0911ec6576\",\"observedAt\":\"2026-11-06T06:26:25.711Z\",\"passed\":true,\"negativeControl\":null,\"detail\":\"Interrupt requested after the reply's first streamed text; the turn ended interrupted.\"},{\"capability\":\"process-lifecycle\",\"meaning\":\"behavior-obse"
+  },
+  "claudeQualification": {
+    "model": "claude-sonnet-5-5",
+    "routeDecidedAt": "2026-11-06T06:26:26.200Z",
+    "acceptanceId": "baac4df1-1629-4294-9d22-992d42348dc8",
+    "reportedModel": "claude-sonnet-5-5",
+    "turnsStarted": 4,
+    "observations": [
+      {
+        "capability": "structured-turn",
+        "passed": true,
+        "meaning": "behavior-observed",
+        "detail": "Turn completed; the requested marker was returned. Claude Code reported model claude-sonnet-5-5 for the request claude-sonnet-5-5."
+      },
+      {
+        "capability": "read-only",
+        "passed": false,
+        "meaning": "unknown",
+        "detail": "A review turn was asked to create <folder>/workspace/readonly-788f4aef9a0c.txt. Turn failed: read-only turn exceeded 240000 ms.. Claude Code reported these tools for it: none. Topsl then found no new file in the workspace or outside it. This is Claude Code's own permission profile (no tools), not operating-system isolation."
+      },
+      {
+        "capability": "workspace-write",
+        "passed": true,
+        "meaning": "policy-enforced",
+        "detail": "An edit turn was asked to write <folder>/workspace/inside-788f4aef9a0c.txt and <folder>/outside/outside-788f4aef9a0c.txt. Turn completed. Claude Code reported these tools: Edit, Glob, Grep, Read, Write. The inside file landed. Claude Code reported these permission denials: Write <folder>/outside/outside-788f4aef9a0c.txt; the outside write was attempted and denied, and no file was created outside. This is Claude Code's own permission check, not operating-system isolation."
+      },
+      {
+        "capability": "candidate-reader",
+        "passed": true,
+        "meaning": "behavior-observed",
+        "detail": "Turn completed. Claude Code reported Topsl's MCP server as connected and these tools: mcp__topsl_candidate__list, mcp__topsl_candidate__read_range, mcp__topsl_candidate__search. 1 read_range answer under the probe's grant returned the probe file's marker, and the reader refused 0 requests. Tool calls: read_range answered. The reply quoted the marker."
+      },
+      {
+        "capability": "fresh-session",
+        "passed": true,
+        "meaning": "behavior-observed",
+        "detail": "4 turns started a session with a new id Topsl chose; 4 reported that id when it started, and 4 ids were distinct."
+      },
+      {
+        "capability": "native-subscription",
+        "passed": true,
+        "meaning": "behavior-observed",
+        "detail": "claude auth status reported a claude.ai login (max); billing route native-subscription. 4 of 4 turns reported their API key source, as none."
+      },
+      {
+        "capability": "process-lifecycle",
+        "passed": true,
+        "meaning": "behavior-observed",
+        "detail": "4 of 4 turn processes stopped with nothing left running when their connection closed."
+      }
+    ],
+    "notTested": [
+      {
+        "capability": "interrupt",
+        "reason": "No execution purpose requires it, so the Claude suite does not spend a turn on it."
+      }
+    ],
+    "error": null
+  },
+  "ownerChoices": [],
+  "routes": [
+    {
+      "provider": "claude",
+      "route": "managed-structured",
+      "catalogFresh": true,
+      "models": [
+        "claude-sonnet-5-5"
+      ],
+      "ready": {
+        "coordinator-contribution": false,
+        "coordinator-endorsement": false,
+        "information": false,
+        "implementation": true,
+        "candidate-review": false
+      },
+      "blockers": [
+        "permission-profile-unverified: read-only is not qualified for this runtime, account, policy and host."
+      ]
+    },
+    {
+      "provider": "codex",
+      "route": "managed-structured",
+      "catalogFresh": true,
+      "models": [
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5"
+      ],
+      "ready": {
+        "coordinator-contribution": true,
+        "coordinator-endorsement": true,
+        "information": true,
+        "implementation": true,
+        "candidate-review": true
+      },
+      "blockers": []
+    }
+  ],
+  "runs": [
+    {
+      "label": "c-mixed",
+      "runId": "fb886cec-7af7-4ff9-b76a-38bbe1587531",
+      "mode": "goal",
+      "finalState": "waiting",
+      "detail": "Waiting: The coordinator team cannot start: coordinator-claude-0: claude-sonnet-5-5: The route is not qualified for coordinator-contribution: permission-profile-unverified: read-only is not qualified for this runtime, account, policy and host.",
+      "waitReason": {
+        "kind": "pinned-model",
+        "detail": "The coordinator team cannot start: coordinator-claude-0: claude-sonnet-5-5: The route is not qualified for coordinator-contribution: permission-profile-unverified: read-only is not qualified for this runtime, account, policy and host."
+      },
+      "timedOut": false,
+      "checkpoint": {
+        "sequence": 0,
+        "changed": []
+      },
+      "goals": [
+        {
+          "text": "Add a one-line comment at the top of README.md saying the file was edited by a Topsl loop",
+          "status": "unassessed",
+          "criteria": [
+            "README.md starts with a one-line comment saying a Topsl loop edited it [user]"
+          ],
+          "assessment": null
+        }
+      ],
+      "iterations": [
+        {
+          "number": 1,
+          "state": "assessing",
+          "memberTurns": 0,
+          "repairs": 0,
+          "failure": null,
+          "detail": "Assessing the accepted checkpoint."
+        }
+      ],
+      "organization": [
+        {
+          "roleId": "coordinator",
+          "active": true,
+          "functions": [
+            "coordination",
+            "evaluation"
+          ],
+          "members": []
+        },
+        {
+          "roleId": "implementer",
+          "active": true,
+          "functions": [
+            "implementation",
+            "integration"
+          ],
+          "members": []
+        },
+        {
+          "roleId": "reviewer",
+          "active": true,
+          "functions": [
+            "review"
+          ],
+          "members": []
+        },
+        {
+          "roleId": "researcher",
+          "active": true,
+          "functions": [
+            "information"
+          ],
+          "members": []
+        }
+      ],
+      "adaptations": [
+        {
+          "kind": "bootstrap",
+          "actor": "loop-policy",
+          "reason": "Bootstrap with no recorded outcomes: Auto membership uses the cold-start order (explicit preferences, diversity, default model, then stable provider and model order). The first coordinator round may change it.",
+          "rejections": []
+        }
+      ],
+      "rounds": [],
+      "usage": {
+        "id": "fb886cec-7af7-4ff9-b76a-38bbe1587531:usage",
+        "runId": "fb886cec-7af7-4ff9-b76a-38bbe1587531",
+        "projectId": "61ebf8c7-a5e9-4b0b-bd15-47e31c2d0cd3",
+        "memberTurns": 0,
+        "iterations": 0,
+        "promoted": 0,
+        "rejected": 0,
+        "recent": [],
+        "tokens": {
+          "input": null,
+          "output": null,
+          "coveredAttempts": 0,
+          "totalAttempts": 0,
+          "complete": true,
+          "notes": []
+        },
+        "updatedAt": "2026-11-06T06:30:59.609Z"
+      },
+      "funding": [],
+      "transitions": [
+        {
+          "at": "2026-11-06T06:30:59.706Z",
+          "state": "active | - | Started. Assessing the accepted checkpoint."
+        },
+        {
+          "at": "2026-11-06T06:31:04.719Z",
+          "state": "waiting | #1 assessing | Waiting: The coordinator team cannot start: coordinator-claude-0: claude-sonnet-5-5: The route is not qualified for coordinator-contribution: permission-profile-unverified: read-only is not qualified for this runtime, account, policy and host."
+        }
+      ]
+    }
+  ],
+  "failure": null,
+  "result": "completed",
+  "profile": "/var/folders/9l/zqmhmdq90_1_s_prkqtlbxqw0000gn/T/topsl-test-live-loop-WL1LLF",
+  "projectFolder": "~/Library/Caches/topsl-live-loop-4DFm7j",
+  "mixedRoutes": [
+    {
+      "provider": "claude",
+      "models": [
+        "claude-sonnet-5-5"
+      ],
+      "ready": {
+        "coordinator-contribution": false,
+        "coordinator-endorsement": false,
+        "information": false,
+        "implementation": true,
+        "candidate-review": false
+      },
+      "blockers": [
+        "permission-profile-unverified: read-only is not qualified for this runtime, account, policy and host."
+      ]
+    },
+    {
+      "provider": "codex",
+      "models": [
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5"
+      ],
+      "ready": {
+        "coordinator-contribution": true,
+        "coordinator-endorsement": true,
+        "information": true,
+        "implementation": true,
+        "candidate-review": true
+      },
+      "blockers": []
+    }
+  ],
+  "loopContributions": [],
+  "childContributions": [],
+  "profileDeleted": false
+}
