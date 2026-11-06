@@ -111,6 +111,51 @@ export function lastResults(
     }));
 }
 
+/**
+ * The ChatGPT-plan route's documented request restrictions, as the synthetic
+ * upstream applies them (developers.openai.com/siwc/token-sharing-open-source/
+ * preview-limitations, read 6 November 2026): `store` false, `stream` true,
+ * no system-role items, no `previous_response_id`, and function tools only
+ * inside a namespace. A refused body gets the route's error shape.
+ */
+export function planRouteRefusal(body: Record<string, unknown>): unknown {
+  const refuse = (param: string) => ({
+    error: {
+      code: "subscription_sharing_unsupported_capability",
+      message: `Unsupported on this route: ${param}`,
+      param,
+      type: "invalid_request_error",
+    },
+  });
+  if (body.store !== false) return refuse("store");
+  if (body.stream !== true) return refuse("stream");
+  if ("previous_response_id" in body) return refuse("previous_response_id");
+  const input = Array.isArray(body.input) ? body.input : [];
+  if (input.some((item) => item?.type === "message" && item.role === "system"))
+    return refuse("input.role");
+  const tools = Array.isArray(body.tools) ? body.tools : [];
+  if (tools.some((tool) => tool?.type !== "namespace")) return refuse("tools");
+  return null;
+}
+
+/** The body with Topsl's namespace unwrapped, as the proxy's client parser
+ * reads plain function tools and calls. */
+export function withoutPlanNamespace(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const tools = Array.isArray(body.tools)
+    ? body.tools.flatMap((tool: { tools?: unknown[] }) => tool.tools ?? [])
+    : undefined;
+  const input = Array.isArray(body.input)
+    ? body.input.map((item: Record<string, unknown>) => {
+        if (item?.type !== "function_call") return item;
+        const { namespace: _namespace, ...rest } = item;
+        return rest;
+      })
+    : body.input;
+  return { ...body, input, ...(tools ? { tools } : {}) };
+}
+
 export async function startUpstream(script: Script) {
   const calls: UpstreamCall[] = [];
   /** What `GET …/gateway/capabilities` answers; 404 unless a test sets it. */
@@ -151,7 +196,23 @@ export async function startUpstream(script: Script) {
         ? "messages"
         : "chat";
     const body = JSON.parse(text);
-    const request = protocols[protocol].parseRequest(body);
+    // Plan and API-key connections share OpenAI's endpoint; every API key
+    // the tests use starts with `sk-`, and plan credentials never do.
+    const bearer = String(req.headers.authorization ?? "");
+    const plan =
+      protocol === "responses" &&
+      url.pathname.startsWith("/openai/") &&
+      bearer.startsWith("Bearer ") &&
+      !bearer.startsWith("Bearer sk-");
+    const refused = plan ? planRouteRefusal(body) : null;
+    if (refused) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify(refused));
+      return;
+    }
+    const request = protocols[protocol].parseRequest(
+      plan ? withoutPlanNamespace(body) : body,
+    );
     const call = {
       protocol,
       path: url.pathname,

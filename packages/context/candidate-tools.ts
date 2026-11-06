@@ -108,8 +108,12 @@ export function candidateTools(input: {
   grant: ContextGrant;
   attempt: Pick<ExecutionAttempt, "id" | "projectId">;
   candidate: Pick<CandidateSnapshot, "id" | "revision" | "workflowId">;
+  /** The grant subject's workflow, when it is not the candidate's own (a
+   * goal reading its declared baseline from an earlier workflow). */
+  workflowId?: string;
 }): ToolBinding {
   const { context, grant, attempt, candidate } = input;
+  const workflowId = input.workflowId ?? candidate.workflowId;
   return {
     toolset: candidateToolset,
     async call(call) {
@@ -130,7 +134,7 @@ export function candidateTools(input: {
           ...request,
           method: route.method,
           projectId: attempt.projectId,
-          workflowId: candidate.workflowId,
+          workflowId,
           attemptId: attempt.id,
           candidateId: candidate.id,
           candidateRevision: candidate.revision,

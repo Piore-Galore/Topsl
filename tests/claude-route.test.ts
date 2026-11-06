@@ -850,6 +850,84 @@ describe("Topsl's MCP server for Claude Code", () => {
     });
     await connection.close();
   });
+
+  test.each([
+    ["FIXTURE_MCP_STATUS", "failed", "tool server as failed"],
+    ["FIXTURE_MCP_DROP", "1", "did not load Topsl's tools (mcp__topsl_candidate__"],
+  ])(
+    "a turn that needs Topsl's tools is stopped when init reports %s",
+    async (variable, value, message) => {
+      const adapter = new ClaudeAdapter(undefined, undefined, {
+        routeAllowed: () => true,
+        transport: (_executable, args, cwd) =>
+          spawn(process.execPath, [standIn, ...args], {
+            cwd,
+            env: nativeEnvironment({
+              ELECTRON_RUN_AS_NODE: "1",
+              [variable]: value,
+            }),
+          }),
+      });
+      const connection = adapter.connect("claude", process.cwd());
+      const exited = new Promise<string>((resolve) => {
+        connection.onExit = resolve;
+      });
+      let completed = false;
+      connection.onNotification = (_method, params: any) => {
+        if (params.event.type === "completed") completed = true;
+      };
+      // Answer any call, so only the init check can stop the turn.
+      connection.onRequest = (id) =>
+        connection.reply(
+          id,
+          adapter.toolResult({ text: '{"content":"x"}', success: true }),
+        );
+      const prepared = {
+        ...turn("review", 'Call read_range with path "file.txt".'),
+        toolset: candidateToolset,
+      };
+      const session = await adapter.startSession(connection, prepared, null);
+      await adapter.startTurn(connection, prepared, session.nativeSessionId);
+      expect(await exited).toContain(message);
+      expect(completed).toBe(false);
+      await connection.close();
+    },
+  );
+
+  test("a tool-dependent turn whose result arrives without an init record is not accepted", async () => {
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      // A result with no init record before it, then a clean exit.
+      transport: (_executable, args, cwd) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `process.stdout.write(JSON.stringify({type:"result",subtype:"success",is_error:false,session_id:${JSON.stringify(args[args.indexOf("--session-id") + 1])},result:"plausible",usage:{input_tokens:1,output_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0},permission_denials:[],uuid:"r1"})+"\\n")`,
+          ],
+          { cwd, env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }) },
+        ),
+    });
+    const events: any[] = [];
+    const run = adapter.start(
+      {
+        executable: "claude",
+        cwd: process.cwd(),
+        model: "claude-fixture-5",
+        sessionId: "s-1",
+        mode: "review",
+        prompt: "x",
+        tools: {
+          configPath: "/private/topsl/mcp.json",
+          names: ["mcp__topsl_candidate__read_range"],
+          server: "topsl_candidate",
+        },
+      },
+      (event) => events.push(event),
+    );
+    await expect(run.done).rejects.toThrow("without reporting which tools");
+    expect(events.some((e) => e.type === "completed")).toBe(false);
+  });
 });
 
 describe("Claude account read diagnostics", () => {

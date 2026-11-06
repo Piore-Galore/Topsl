@@ -19,7 +19,13 @@ import {
   teamLine,
   type ModelOption,
 } from "./role-editor";
-import { OpenProviders, label, newCommandId, type Run } from "./shared";
+import {
+  OpenConnections,
+  OpenProviders,
+  label,
+  newCommandId,
+  type Run,
+} from "./shared";
 
 /**
  * Native session panes (docs/Native_Sessions_Plan.md): the coordinator
@@ -66,6 +72,7 @@ export function CoordinatorPicker({
 }) {
   const [search, setSearch] = useState("");
   const openProviders = useContext(OpenProviders);
+  const openConnections = useContext(OpenConnections);
   const options = coordinatorOptions(routes);
   const shown = filterModelOptions(options, search) as typeof options;
   const add = (pin: MemberIntent["pin"]) =>
@@ -153,8 +160,8 @@ export function CoordinatorPicker({
       <div className="model-groups">
         {routes.map((route) => {
           const status = routeBlockers(route, "coordinator-contribution");
-          const group = shown.filter(
-            (o) => o.key.startsWith(`${routeOptionKey(route)}:`),
+          const group = shown.filter((o) =>
+            o.key.startsWith(`${routeOptionKey(route)}:`),
           );
           if (search.trim() && !group.length) return null;
           const name = route.native
@@ -173,15 +180,19 @@ export function CoordinatorPicker({
                 ) : (
                   <span className="badge good">Ready</span>
                 )}
-                {status.reasons.length > 0 && openProviders && (
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={openProviders}
-                  >
-                    Open Providers
-                  </button>
-                )}
+                {/* A native route is fixed under Connections, a runtime under Providers. */}
+                {status.reasons.length > 0 &&
+                  (route.native ? openConnections : openProviders) && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={
+                        (route.native ? openConnections : openProviders)!
+                      }
+                    >
+                      {route.native ? "Open Connections" : "Open Providers"}
+                    </button>
+                  )}
               </div>
               {status.reasons.map((reason) => (
                 <p key={reason} className="muted model-group-reason">

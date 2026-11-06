@@ -570,6 +570,21 @@ try {
     const card = reviewCards.filter({ hasText: `${name} (${model})` });
     await expect(card).toContainText("Pinned");
     await expect(card).toContainText(`Effective: ${model}`);
+    // Engine and funding, requested against observed (Subscription runtime
+    // plan, Phase 8): the card shows exactly what the service recorded.
+    await expect(card).toContainText("Engine: Codex");
+    await expect(card).toContainText(/Funding( conflict)?: /);
+  }
+  {
+    const shown = (await query()).goals
+      .find((g) => g.goal.id === goalId)
+      .rounds.filter((r) => r.kind === "review")
+      .at(-1)
+      .members.map((m) => [m.engine, m.funding?.state ?? null]);
+    expect(shown).toEqual([
+      ["codex", expect.any(String)],
+      ["codex", expect.any(String)],
+    ]);
   }
   await expect(reviewRound.locator("p").first()).not.toBeEmpty();
   const view = await query();

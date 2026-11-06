@@ -18,6 +18,7 @@ import type { CanonicalTool } from "../proxy/canonical";
 import { relativePath, resolveInside, PathRejected } from "./paths";
 import { runContained, type ContainmentPolicy } from "./sandbox";
 import type { DelegationMode, ToolEffect, ToolGrants } from "./types";
+import { agentJobTools } from "../domain/agent-job-tools";
 
 /**
  * Native tools (docs/Native_Harness_Plan.md §3, "Tools and isolation"). The
@@ -59,6 +60,8 @@ export interface ToolContext {
   integrate?: (childAttemptId: string) => Promise<ToolOutcome>;
   proposeMemory?: (text: string) => Promise<ToolOutcome>;
   callMcp?: (tool: string, args: unknown) => Promise<ToolOutcome>;
+  /** Answers start_agent_job, get_agent_job and cancel_agent_job through Topsl. */
+  agentJobs?: (tool: string, args: unknown) => Promise<ToolOutcome>;
   onProcess?: (pid: number) => void;
 }
 
@@ -1167,6 +1170,27 @@ const integrateTool = define({
   },
 });
 
+/**
+ * Agent jobs: a coordinator asks Topsl for child work. Topsl's job service
+ * is idempotent per attempt and call, so a call replayed after a restart
+ * returns the same job ("control" effect).
+ */
+const jobTools: NativeTool[] = agentJobTools.map((definition) =>
+  define({
+    name: definition.name,
+    description: definition.description,
+    inputSchema: definition.inputSchema as unknown as Record<string, unknown>,
+    effect: "control",
+    revision: `${definition.name}-v1`,
+    async execute(args, ctx) {
+      if (!ctx.grants.agentJobs || !ctx.agentJobs)
+        throw new ToolInputError("Agent jobs are not granted to this attempt.");
+      return ctx.agentJobs(definition.name, args);
+    },
+  }),
+);
+const jobToolNames = new Set(agentJobTools.map((t) => t.name as string));
+
 export const coreTools: NativeTool[] = [
   readFileTool,
   listDirectoryTool,
@@ -1184,6 +1208,7 @@ export const coreTools: NativeTool[] = [
   memoryTool,
   delegateTool,
   integrateTool,
+  ...jobTools,
 ];
 
 /** An admitted MCP tool, run by the MCP broker under containment. */
@@ -1244,6 +1269,8 @@ export function admitTools(
       case "propose_memory":
         return options.memory && !options.childOf;
       default:
+        if (jobToolNames.has(tool.name))
+          return !!grants.agentJobs && !options.childOf;
         return true;
     }
   });

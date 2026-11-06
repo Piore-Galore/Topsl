@@ -746,3 +746,38 @@ The owner's implementation brief ([plan §1.3](Native_Harness_Plan.md#13-follow-
 **Verified (local, synthetic).** `tests/proxy-retirement.test.ts` (7) and `tests/external-service.test.ts` (13), one new disconnect race in `tests/proxy-service.test.ts`, and the native Electron journey from a seeded schema 1 profile. `npm run check` passed (1,413 tests, 6 skipped; 18 release checks; build), and all eight desktop journeys passed. Commands and scope are in the [execution record](Native_Harness_Execution.md#validation).
 
 **Not established.** Live qualification of any external service; live ChatGPT-plan sign-in and inference; an upgrade from a profile that held a real Claude sign-in; revocation at Anthropic or removal from earlier backups; an Electron journey that pins a native member or runs **Test route**. Review item R12 (Claude Code billing-override filtering) is open with behavior unchanged.
+
+## Subscription runtime architecture — 6 November 2026
+
+The owner's [subscription runtime architecture plan](Subscription_Runtime_Architecture_Plan.md) makes Topsl the supervisor over the official Claude Code runtime and Topsl's native GPT runtime. Its Phase 0 baseline found most of the core already in place at `b87f501`; the [execution record](Subscription_Runtime_Execution.md) has the baseline, the phase checklist, files, commands and limits.
+
+**Implemented.**
+
+- **ChatGPT plan tool encoding.** On the proxy's upstream hop to a ChatGPT plan connection, function tools travel inside one `topsl` namespace tool and replayed calls carry `namespace: "topsl"`, as OpenAI's preview limitations require (re-read 6 November 2026; top-level function tools are not supported on that route). A named `tool_choice` is refused on that route. A response calling a tool in another namespace fails. The plan adapter revision is now `chatgpt-plan-responses-v2`, so native tasks bound to a plan route before this change are refused on their next request.
+- **Claude Code tool binding.** A Claude turn that depends on Topsl's MCP tools is stopped at `system/init` unless Claude Code reports Topsl's server `connected` and every granted tool loaded; a result without an init record is not accepted. Launch arguments and qualification fingerprints are unchanged.
+- **Mixed-engine fixture coverage.** Two service-level tests run a native GPT coordinator with a Claude Code implementer and native reviewer, and the reverse.
+
+**Verified (local, synthetic).** New tests in `tests/proxy-protocols.test.ts`, `tests/claude-route.test.ts` and `tests/native-members.test.ts`; the synthetic upstream now enforces the plan route's documented request restrictions. `npm run check` passed (1,421 tests, 6 skipped; 18 release checks; build). Desktop journeys were not run. Commands and results are in the [record](Subscription_Runtime_Execution.md#validation).
+
+**Not established.** Whether the live ChatGPT plan route accepts the namespace encoding; live Claude Code reporting non-`connected` MCP statuses; any live mixed-engine pilot. Requested-versus-observed funding records, R12, tool-driven delegation, richer member tools, UI and release work remain open ([checklist](Subscription_Runtime_Execution.md#phase-checklist)).
+
+### Follow-up: remaining phases — 6 November 2026
+
+After reviewing the first pass, the owner asked for every phase to be finished. The [execution record](Subscription_Runtime_Execution.md#second-pass--remaining-phases) has the files, decisions and tests; the [phase checklist](Subscription_Runtime_Execution.md#phase-checklist) has the status of each phase. The first pass's "Not established" list above was accurate when written; this follow-up closes some of its items.
+
+**Implemented.**
+
+- **Funding, requested and observed.** Each member turn records the funding its assignment asked for against what its runtime reported, as matches, unknown or conflict:
+  - Claude Code: its init `apiKeySource`.
+  - Codex: the account status read before launch.
+  - Native: the frozen proxy route.
+
+  A Claude turn reporting API-key credentials is never labelled subscription; a live one is still stopped at init.
+- **Agent jobs (off by default).** With **Settings → Agent jobs** on, a coordinator's planning turn (Claude Code through Topsl's MCP server, or a native member) can call `start_agent_job`, `get_agent_job` and `cancel_agent_job`. The request is checked like a coordinator-proposed task and recorded idempotently per attempt. Topsl admits it to the goal's plan once the plan commits, runs it on the engine its role resolves to, and integrates and reviews it with the goal. A stop cancels jobs that had not started.
+- **Loops across engines.** Goal and Endless loops run with Claude Code and native members together, and Stop fences both engines. Fixed: Claude Code members could not read a loop's later-iteration checkpoint, or (by the same code path) a continued session's previous work, through the candidate reader. The driver now records each turn's input candidate, and the reader admits that one.
+- **Native implementer checks.** A native implementer may run the goal's plain checks contained in its own copy (macOS); Topsl's required checks still decide acceptance.
+- **Interface.** Member cards show the engine and the funding line, as an alert on a conflict. The plan pane lists agent jobs and who requested them. A native route's readiness button opens Connections.
+
+**Verified (local, synthetic).** New tests in `tests/native-members.test.ts`, `tests/agent-jobs.test.ts` and `tests/candidate-input-binding.test.ts`. The desktop coordinator journey also checks the engine and funding lines on member cards in Electron. `npm run check` passed (1,438 tests, 6 skipped; 18 release checks; build), and all eight desktop journeys passed. Commands and results are in the [record](Subscription_Runtime_Execution.md#second-pass-validation).
+
+**Not established.** Any live provider run, including the agent-job tools against a real Claude Code; other platforms and the packaged application; release notes, which wait for a version decision. R12 remains the owner's decision. A Claude Code check tool, native member commands, MCP tools and hooks, persistent Claude sessions and native Claude subagents remain separate, unimplemented capabilities.

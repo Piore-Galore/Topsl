@@ -413,3 +413,11 @@ The owner ran Claude builds · Claude reviews again at `0dc4baa`, after its stan
 - **The build left two new files.** Besides `src/order.mjs`, the folder had `.serena/.gitignore` and `.serena/project.yml`. They come from a tool in the owner's Claude Code setup that keeps its project settings in that folder (inferred from the names), not from Claude's change. The workflow approves no new files, so Topsl held both for an exact-hash review before the review turn, as it does for any new file, and stopped at **ready review**. The script approves no file, so the run ended there.
 
 **Not established:** that a live Claude review runs and the workflow reaches acceptance. Running the team again would need 2 sessions, one more than the run table has left, and the owner chose to stop the live runs here.
+
+## Follow-up: Topsl's tools must load; funding observation (6 November 2026)
+
+- A Claude Code turn that depends on Topsl's MCP tools is stopped unless its `system/init` reports Topsl's server `connected` and every granted tool loaded. A result arriving without an init record is not accepted.
+- The init `apiKeySource` is recorded as the turn's observed funding.
+- Coordinator turns that get the candidate reader also get the agent-job tools while the owner's switch is on. Those tools are not separately qualified.
+
+Details and limits: [subscription runtime record](Subscription_Runtime_Execution.md).

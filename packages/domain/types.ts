@@ -175,6 +175,11 @@ export interface Run {
   createdAt: string;
   nativePid?: number;
   nativeAccountKey?: string;
+  /**
+   * Where the runtime said this turn's credentials came from, as it reported
+   * it (Claude Code's init `apiKeySource`). Absent when it reported nothing.
+   */
+  credentialSource?: string | null;
   managementUnitId?: string;
   /** A native terminal's permission mode, and exactly the arguments Topsl passed for it. */
   permissionMode?: TerminalModeId;
@@ -328,6 +333,8 @@ export interface AppState {
   claudeTranscriptRead: boolean;
   /** The owner's decision on Claude Code's structured route, off until they turn it on. */
   claudeStructuredRoute: ClaudeRouteDecision;
+  /** Whether coordinators may request agent jobs (off unless the owner turned it on). */
+  agentJobs?: { enabled: boolean };
   /** The latest subscription allowance each runtime reported, per account. */
   allowances: AllowanceSnapshot[];
   /** The owner's own token budgets, each with what Topsl observed against it. */

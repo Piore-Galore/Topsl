@@ -456,6 +456,13 @@ export const claudeEditPermissions = ["Read", "Glob", "Grep", "Edit(./**)"];
 export interface ClaudeTurnTools {
   configPath: string;
   names: string[];
+  /**
+   * The MCP server name the configuration gives Topsl's tools. When set, a
+   * turn whose `system/init` does not report that server connected and every
+   * name in `names` is stopped before its result can be accepted. It is not
+   * an argument, so it is not part of the fingerprinted launch profile.
+   */
+  server?: string;
 }
 
 /**
@@ -801,6 +808,7 @@ export class ClaudeAdapter implements ProviderAdapter {
               tools: {
                 configPath: client.tools.configPath,
                 names: client.tools.allowedTools,
+                server: client.tools.toolset.namespace,
               },
             }
           : {}),
@@ -844,6 +852,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         type: "turn-started",
         ...ids,
         reportedModel: event.reportedModel,
+        credentialSource: event.apiKeySource,
       };
     if (event.type === "delta")
       return {
@@ -975,9 +984,19 @@ export class ClaudeAdapter implements ProviderAdapter {
       );
     // Claude Code reports the tools and credentials a turn runs with before
     // it calls a model. A turn with more than Topsl granted, or with an API
-    // key, is stopped there.
+    // key, is stopped there. A turn that depends on Topsl's tools is also
+    // stopped when Claude Code did not load them: an MCP configuration it
+    // rejected can still end in a clean exit and a plausible answer.
+    const required = input.tools?.server ? input.tools : null;
+    let reported = false;
     const checked = (event: ClaudeStreamEvent) => {
+      if (event.type === "completed" && !event.failed && required && !reported)
+        throw new Error(
+          "Claude Code ended the turn without reporting which tools it loaded, so Topsl cannot accept an answer that depends on its tools.",
+        );
+      let unbound: string | null = null;
       if (event.type === "session") {
+        reported = true;
         const extra = event.tools.filter((tool) => !granted.has(tool));
         if (extra.length)
           throw new Error(
@@ -987,8 +1006,24 @@ export class ClaudeAdapter implements ProviderAdapter {
           throw new Error(
             `Claude Code reported credentials from ${safeError(event.apiKeySource)}, not your Claude login. Topsl stopped the turn.`,
           );
+        if (required) {
+          const server = event.mcpServers.find(
+              (s) => s.name === required.server,
+            ),
+            missing = required.names.filter(
+              (name) => !event.tools.includes(name),
+            );
+          if (server?.status !== "connected")
+            unbound = `Claude Code reported Topsl's tool server as ${server ? safeError(server.status) : "not loaded"}. Topsl stopped the turn.`;
+          else if (missing.length)
+            unbound = `Claude Code did not load Topsl's tools (${missing.slice(0, 10).join(", ")}). Topsl stopped the turn.`;
+        }
       }
       emit(event);
+      // The session record is passed on first, so what Claude Code reported
+      // (its session, tools and servers) stays observable; the turn is then
+      // stopped before any answer can be accepted.
+      if (unbound) throw new Error(unbound);
     };
     // Stall watch: when the last model message ended, and when anything
     // was last written.

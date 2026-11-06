@@ -60,6 +60,8 @@ export interface SerializeOptions {
   model: string;
   profile: ConnectionKind;
   defaultMaxOutputTokens?: number;
+  /** True on the proxy's upstream hop; this protocol encodes both alike. */
+  upstream?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -313,3 +313,11 @@ Commands ran from the repository root on the uncommitted change over `837a1f7`. 
 - Deleting the credential does not revoke it at Anthropic or remove it from earlier backups and filesystem snapshots.
 - No test restarts Topsl while a member waits on its allowance; no Electron journey pins a native member or runs **Test route**.
 - Review item R12 (billing-override filtering for Claude Code) is open; behavior is unchanged.
+
+## Follow-up: plan-route tools, member checks and agent jobs — 6 November 2026
+
+Recorded in the [subscription runtime execution record](Subscription_Runtime_Execution.md):
+
+- The ChatGPT plan route's upstream requests carry function tools inside a `topsl` namespace; adapter revision `chatgpt-plan-responses-v2` refuses earlier route bindings ([details](Subscription_Runtime_Execution.md#chatgpt-plan-route-tools-in-a-namespace)).
+- Native implementer members may run the goal's plain checks with `run_check` (contained, macOS) ([details](Subscription_Runtime_Execution.md#phase-7-checks-for-native-implementers)). The member limits listed above otherwise stand.
+- Native coordinator members may use the agent-job tools (`ToolGrants.agentJobs`) while the owner's switch is on ([details](Subscription_Runtime_Execution.md#phase-6-agent-jobs)).

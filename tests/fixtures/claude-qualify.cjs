@@ -118,7 +118,8 @@ process.stdin.on("end", async () => {
   const mcp = await servers();
   const tools = [
     ...builtIn,
-    ...mcp.flatMap((s) => s.tools),
+    // FIXTURE_MCP_DROP: Claude Code connected the server but loaded none of its tools.
+    ...(process.env.FIXTURE_MCP_DROP ? [] : mcp.flatMap((s) => s.tools)),
     ...(process.env.FIXTURE_EXTRA_TOOL ? ["Bash"] : []),
   ];
   event({
@@ -127,7 +128,11 @@ process.stdin.on("end", async () => {
     session_id: sessionId,
     model,
     tools,
-    mcp_servers: mcp.map((s) => ({ name: s.name, status: "connected" })),
+    // FIXTURE_MCP_STATUS: the status Claude Code reports, such as "failed".
+    mcp_servers: mcp.map((s) => ({
+      name: s.name,
+      status: process.env.FIXTURE_MCP_STATUS || "connected",
+    })),
     apiKeySource: process.env.FIXTURE_API_KEY ? "ANTHROPIC_API_KEY" : "none",
     uuid: "init-1",
   });

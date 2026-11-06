@@ -6,15 +6,22 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vitest";
 import { Service } from "../apps/service/service";
 import { CodexAdapter } from "../packages/providers/codex";
+import {
+  ClaudeAdapter,
+  claudeFixtureTransport,
+} from "../packages/providers/claude";
 import { RpcPeer } from "../packages/runtime/rpc";
 import { nativeEnvironment } from "../packages/platform/system";
 import { hash, now, uid } from "../packages/domain/invariants";
 import type { Installation } from "../packages/domain/types";
-import type {
-  Goal,
-  MemberIntent,
-  ParticipantContribution,
-  RoleRound,
+import {
+  fundingObservation,
+  memberFunding,
+  requestedFunding,
+  type Goal,
+  type MemberIntent,
+  type ParticipantContribution,
+  type RoleRound,
 } from "../packages/domain/role-groups";
 import {
   candidateFileBytes,
@@ -167,10 +174,21 @@ function seedCatalog(
   });
 }
 
-async function setup(script?: (scratch: string) => Script) {
+async function setup(
+  script?: (scratch: string) => Script,
+  claudeArgs: string[] = [],
+) {
   const f = await fixture();
   f.store.close();
   const service = new Service(f.directory, f.key, () => {}, true, {
+    // Claude Code's stand-in answers each purpose's contract from the
+    // prompt; no model is contacted (tests/fixtures/claude-orchestration.cjs).
+    claude: new ClaudeAdapter(
+      claudeFixtureTransport(process.execPath, [
+        path.resolve("tests/fixtures/claude-orchestration.cjs"),
+        ...claudeArgs,
+      ]),
+    ),
     codex: new FixtureCodex(
       (_executable, cwd) =>
         new RpcPeer(
@@ -218,6 +236,13 @@ async function setup(script?: (scratch: string) => Script) {
     ["fixture-astra", "Astra"],
     ["fixture-sol", "Sol"],
   ]);
+  const claude = {
+    ...f.installation,
+    id: "claude",
+    appId: "anthropic.claude-code-cli",
+  } satisfies Installation;
+  service.store.put("installation", claude);
+  seedCatalog(service, claude, [["claude-opus-fixture", "Opus"]]);
   const scratch = await mkdtemp(path.join(os.tmpdir(), "topsl-test-scratch-"));
   cleanups.push(() => rm(scratch, { recursive: true, force: true }));
   const native = await nativeProxy((script ?? memberScript)(scratch));
@@ -238,6 +263,14 @@ const vendor = (memberId: string, model: string): MemberIntent => ({
   memberId,
   required: true,
   pin: { provider: "codex", model },
+  fallbacks: [],
+  preferences: { providers: [], models: [] },
+  source: { kind: "ui", reference: null, provenance: "explicit" },
+});
+const claudeMember = (memberId: string): MemberIntent => ({
+  memberId,
+  required: true,
+  pin: { provider: "claude", model: "claude-opus-fixture" },
   fallbacks: [],
   preferences: { providers: [], models: [] },
   source: { kind: "ui", reference: null, provenance: "explicit" },
@@ -324,6 +357,135 @@ async function post(service: Service, text: string) {
     commandId: `c-${uid()}`,
   });
 }
+
+test("a native GPT coordinator assigns Claude Code work and a native reviewer reviews it, through Topsl", async () => {
+  // Plan §9: GPT coordinator → Claude worker → GPT reviewer, on the existing
+  // structured protocol. The native members' upstream is synthetic and the
+  // Claude member is the Claude Code stand-in: this shows Topsl's dispatch
+  // across engines, not any live provider.
+  const f = await setup();
+  await group(f.service, "coordinator", [
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  await group(f.service, "implementer", [claudeMember("claude-implementer")]);
+  await group(f.service, "reviewer", [
+    nativeMember("native-reviewer", f.route.id),
+  ]);
+  const view = f.service.orchestration.view("p");
+  const claudeRoute: any = view.routes.find(
+    (r: any) => r.provider === "claude",
+  );
+  expect(claudeRoute.purposes.implementation.ready).toBe(true);
+
+  const posted = await post(f.service, "Change the value to two.");
+  const goal = await untilGoal(f.service, posted.goal.id, [
+    "awaiting-acceptance",
+    "blocked",
+  ]);
+  expect(goal.state).toBe("awaiting-acceptance");
+  const rounds = f.service.orchestration.rounds(goal.id) as RoleRound[];
+  const engines = (kind: string) =>
+    rounds
+      .find((r) => r.kind === kind)!
+      .members.filter((m) => m.phase === "initial")
+      .map((m) => [m.memberId, m.provider, m.state]);
+  expect(engines("coordination")).toEqual([
+    ["native-coordinator", "native", "returned"],
+  ]);
+  expect(engines("work")).toEqual([
+    ["claude-implementer", "claude", "returned"],
+  ]);
+  expect(engines("review")).toEqual([
+    ["native-reviewer", "native", "returned"],
+  ]);
+  // Each member shows its engine and its turn's funding, requested and as
+  // observed: Claude Code's init record named its own login; the native
+  // turn went through the frozen proxy route.
+  const shown = f.service.orchestration.goalView(goal.id).rounds.flatMap(
+    (r: any) => r.members,
+  );
+  expect(
+    shown.find((m: any) => m.memberId === "claude-implementer"),
+  ).toMatchObject({
+    engine: "claude-code",
+    connection: null,
+    requestedFunding: "subscription",
+    funding: {
+      requested: "subscription",
+      observed: "subscription",
+      state: "matches",
+      source: "Claude Code init record",
+    },
+  });
+  expect(
+    shown.find((m: any) => m.memberId === "native-reviewer"),
+  ).toMatchObject({
+    engine: "native",
+    connection: {
+      routeAlias: "native/coder",
+      connectionLabel: "Synthetic OpenAI API",
+    },
+    funding: {
+      requested: "api-billing",
+      observed: "api-billing",
+      state: "matches",
+      source: "proxy route binding",
+    },
+  });
+  // Claude Code's edit, captured from its own copy, is the goal's candidate
+  // that the native reviewer reviewed; the folder is untouched.
+  const candidate = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    goal.candidateId!,
+  )!;
+  const file = candidate.files.find((x) => x.path === "file.ts")!;
+  expect(
+    candidateFileBytes(candidate, file, f.service.store)!.toString(),
+  ).toBe("export const value = 2;\n");
+  expect(await readFile(path.join(f.project, "file.ts"), "utf8")).toBe(
+    "export const value = 1;\n",
+  );
+});
+
+test("a Claude Code coordinator assigns native GPT work and a Claude Code reviewer reviews it, through Topsl", async () => {
+  // Plan §9: Claude coordinator → GPT worker, the reverse direction. Same
+  // fixture limits as above.
+  const f = await setup();
+  await group(f.service, "coordinator", [claudeMember("claude-coordinator")]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [claudeMember("claude-reviewer")]);
+  const posted = await post(f.service, "Change the value to two.");
+  const goal = await untilGoal(f.service, posted.goal.id, [
+    "awaiting-acceptance",
+    "blocked",
+  ]);
+  expect(goal.state).toBe("awaiting-acceptance");
+  const rounds = f.service.orchestration.rounds(goal.id) as RoleRound[];
+  const engines = (kind: string) =>
+    rounds
+      .find((r) => r.kind === kind)!
+      .members.filter((m) => m.phase === "initial")
+      .map((m) => [m.memberId, m.provider, m.state]);
+  expect(engines("coordination")).toEqual([
+    ["claude-coordinator", "claude", "returned"],
+  ]);
+  expect(engines("work")).toEqual([
+    ["native-implementer", "native", "returned"],
+  ]);
+  expect(engines("review")).toEqual([
+    ["claude-reviewer", "claude", "returned"],
+  ]);
+  const candidate = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    goal.candidateId!,
+  )!;
+  const file = candidate.files.find((x) => x.path === "file.ts")!;
+  expect(
+    candidateFileBytes(candidate, file, f.service.store)!.toString(),
+  ).toBe("export const value = 2;\n");
+});
 
 test("a coordinator team with a native coordinator and a native implementer on a synthetic route runs a goal to acceptance", async () => {
   const f = await setup();
@@ -982,3 +1144,465 @@ test("a Goal loop with a native coordinator and implementer answers recursive-lo
     "export const value = 1;\n",
   );
 }, 180_000);
+
+/** Starts a loop run in `mode` with the loop feature on and its authority confirmed. */
+async function startLoop(
+  f: Awaited<ReturnType<typeof setup>>,
+  mode: "goal" | "endless",
+) {
+  await f.service.command({ type: "loop-feature-set", enabled: true });
+  const created = await f.service.command({
+    type: "loop-create",
+    projectId: "p",
+    conversationId: null,
+    mode,
+    text: "Change the value to two.",
+    policy: { scheduling: { reserveForDirectWork: 0 } },
+    commandId: `c-${uid()}`,
+  });
+  const runId = created.run.id as string;
+  const authority = f.service.review("loop-authority", runId) as {
+    digest: string;
+  };
+  await f.service.command(
+    { type: "loop-start", runId, commandId: `c-${uid()}` },
+    { digest: authority.digest },
+  );
+  return runId;
+}
+
+test("a Goal loop with a Claude Code coordinator, a native GPT implementer and a native reviewer completes through the existing acceptance protocol", async () => {
+  // Plan Phase 5: loop control stays in the loop engine; execution beneath it
+  // spans Claude Code and the native harness. Stand-ins and a synthetic
+  // upstream only.
+  const f = await setup(loopScript);
+  await group(f.service, "coordinator", [claudeMember("claude-coordinator")]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [
+    nativeMember("native-reviewer", f.route.id),
+  ]);
+  const runId = await startLoop(f, "goal");
+  await vi.waitFor(
+    async () => {
+      await f.service.orchestration.tick();
+      await f.service.loops.tick();
+      expect(
+        ["completed", "waiting", "stopped"].includes(
+          f.service.loops.view(runId).run.state,
+        ),
+      ).toBe(true);
+    },
+    { timeout: 120_000, interval: 100 },
+  );
+  const view = f.service.loops.view(runId);
+  expect(view.run.state).toBe("completed");
+  const head = f.service.store.get<CandidateSnapshot>(
+    "candidate",
+    view.checkpoint!.candidateId,
+  )!;
+  expect(
+    candidateFileBytes(
+      head,
+      head.files.find((x) => x.path === "file.ts")!,
+      f.service.store,
+    )!.toString(),
+  ).toBe("export const value = 2;\n");
+  // Both engines took turns: Claude Code sessions and native harness turns.
+  const engines = new Set(
+    f.service.orchestration.repo
+      .all<{ provider: string }>("member-session", "p")
+      .map((s) => s.provider),
+  );
+  expect([...engines].sort()).toEqual(["claude", "native"]);
+  expect(await readFile(path.join(f.project, "file.ts"), "utf8")).toBe(
+    "export const value = 1;\n",
+  );
+}, 180_000);
+
+test("an Endless loop across Claude Code and native members improves once, monitors, and Stop fences every engine", async () => {
+  // Plan Phase 5: Endless continues until stopped; each attempt stays
+  // bounded; after Stop nothing new launches on either engine.
+  const f = await setup(loopScript);
+  await group(f.service, "coordinator", [
+    claudeMember("claude-coordinator"),
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [claudeMember("claude-reviewer")]);
+  const runId = await startLoop(f, "endless");
+  const settle = async () => {
+    await f.service.orchestration.tick();
+    await f.service.loops.tick();
+  };
+  await vi.waitFor(
+    async () => {
+      await settle();
+      expect(f.service.loops.view(runId).run.state).toBe("monitoring");
+    },
+    { timeout: 120_000, interval: 100 },
+  );
+  expect(f.service.loops.view(runId).checkpoint!.sequence).toBe(1);
+  await f.service.command({
+    type: "loop-control",
+    runId,
+    action: "stop",
+    commandId: `c-${uid()}`,
+  });
+  await vi.waitFor(
+    async () => {
+      await settle();
+      expect(f.service.loops.view(runId).run.state).toBe("stopped");
+    },
+    { timeout: 60_000, interval: 100 },
+  );
+  const attempts = () =>
+    [...f.service.store.iterate<{ state: string }>("attempt")].length;
+  const before = { attempts: attempts(), upstream: f.native.upstream.calls.length };
+  for (let i = 0; i < 20; i++) await settle();
+  expect(attempts()).toBe(before.attempts);
+  expect(f.native.upstream.calls.length).toBe(before.upstream);
+  // No member turn of either engine is still running.
+  expect(
+    [...f.service.store.iterate<{ state: string }>("attempt")].filter(
+      (a) => a.state === "running" || a.state === "starting",
+    ),
+  ).toEqual([]);
+  // Nor is any native harness turn still running in its kernel.
+  const native = f.service.native.harness
+    .list("p", null, 200)
+    .items.map((v) => v.attemptId);
+  expect(native.length).toBeGreaterThan(0);
+  expect(
+    native.filter((id) => f.service.native.harness.kernel.isRunning(id)),
+  ).toEqual([]);
+}, 180_000);
+
+test("a Claude Code turn that reports API-key credentials is recorded as a funding conflict, never as a subscription turn", async () => {
+  // Plan §9: conflicting Claude API credential. The fixture route is not
+  // live, so the turn is not stopped at init (a live turn is); what it ran
+  // on is still recorded against what its assignment asked for.
+  const f = await setup(undefined, [
+    "--fixture-api-key-source",
+    "ANTHROPIC_API_KEY",
+  ]);
+  await group(f.service, "coordinator", [
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  await group(f.service, "implementer", [claudeMember("claude-implementer")]);
+  await group(f.service, "reviewer", [
+    nativeMember("native-reviewer", f.route.id),
+  ]);
+  const posted = await post(f.service, "Change the value to two.");
+  const goal = await untilGoal(f.service, posted.goal.id, [
+    "awaiting-acceptance",
+    "blocked",
+  ]);
+  const member = f.service.orchestration
+    .goalView(goal.id)
+    .rounds.flatMap((r: any) => r.members)
+    .find((m: any) => m.memberId === "claude-implementer");
+  expect(member.funding).toMatchObject({
+    requested: "subscription",
+    observed: "api-billing",
+    state: "conflict",
+    source: "Claude Code init record",
+  });
+  expect(member.funding.detail).toContain("ANTHROPIC_API_KEY");
+});
+
+test("funding observations: unknown is never a match, and a differing report is a conflict", () => {
+  expect(requestedFunding({ billingRoute: "native-subscription" })).toBe(
+    "subscription",
+  );
+  expect(requestedFunding({ billingRoute: null })).toBe("unknown");
+  expect(
+    requestedFunding({ billingRoute: null, native: { funding: "gateway" } }),
+  ).toBe("external-service");
+  expect(fundingObservation("subscription", null)).toMatchObject({
+    observed: "unknown",
+    state: "unknown",
+  });
+  expect(
+    fundingObservation("unknown", {
+      observed: "subscription",
+      source: "s",
+      detail: "d",
+    }).state,
+  ).toBe("unknown");
+  expect(
+    fundingObservation("subscription", {
+      observed: "api-billing",
+      source: "s",
+      detail: "d",
+    }).state,
+  ).toBe("conflict");
+  expect(
+    fundingObservation("local", { observed: "local", source: "s", detail: "d" })
+      .state,
+  ).toBe("matches");
+});
+
+/** A job request a coordinator makes in the delegation tests. */
+const surveyJob = {
+  title: "Survey file.ts",
+  brief: "Report what file.ts exports and its current value.",
+  kind: "information",
+  role: "researcher",
+  idempotency_key: "survey-1",
+};
+
+test("agent jobs: a native GPT coordinator requests a Claude Code child; Topsl records it once, admits it after the plan commits and runs it", async () => {
+  // Plan Phase 6 and §7: an attempt-bound job tool, idempotent per key; the
+  // same key with different arguments is a conflict; the child runs on the
+  // engine its role resolves to. Stand-ins and a synthetic upstream only.
+  const answers: string[] = [];
+  const script = (scratch: string): Script => {
+    const base = memberScript(scratch);
+    return (call, index) => {
+      const prompt = promptOf(call);
+      if (!/Snapshot digest \(echo it exactly\)/.test(prompt))
+        return base(call, index);
+      const turn = call.request.messages.filter(
+        (m) => m.role === "assistant",
+      ).length;
+      if (turn > 0) answers.push(lastResults(call.request)[0].output);
+      if (turn === 0 || turn === 1)
+        return { events: reply([{ tool: "start_agent_job", args: surveyJob }]) };
+      if (turn === 2)
+        return {
+          events: reply([
+            {
+              tool: "start_agent_job",
+              args: { ...surveyJob, title: "A different survey" },
+            },
+          ]),
+        };
+      return base(call, index);
+    };
+  };
+  const f = await setup(script);
+  await f.service.command({ type: "agent-jobs-set", enabled: true });
+  await group(f.service, "coordinator", [
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [
+    nativeMember("native-reviewer", f.route.id),
+  ]);
+  await group(f.service, "researcher", [claudeMember("claude-researcher")]);
+  const posted = await post(f.service, "Change the value to two.");
+  const goal = await untilGoal(f.service, posted.goal.id, [
+    "awaiting-acceptance",
+    "blocked",
+  ]);
+  expect(goal.state).toBe("awaiting-acceptance");
+
+  // The retry returned the same job; the changed request was refused.
+  const first = JSON.parse(answers[0]),
+    retry = JSON.parse(answers[1]);
+  expect(first.job_id).toMatch(/^[a-f0-9]{32}$/);
+  expect(retry.job_id).toBe(first.job_id);
+  expect(answers[2]).toContain("already names a different job request");
+  const jobs = [...f.service.store.iterate<any>("agent-job")];
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]).toMatchObject({
+    state: "completed",
+    goalId: goal.id,
+    parentMemberId: "native-coordinator",
+  });
+  expect(f.service.orchestration.goalView(goal.id).agentJobs).toEqual([
+    expect.objectContaining({
+      id: jobs[0].id,
+      title: "Survey file.ts",
+      roleId: "researcher",
+      state: "completed",
+      parentMemberId: "native-coordinator",
+    }),
+  ]);
+  // The child ran as an ordinary round on Claude Code.
+  const child = (f.service.orchestration.rounds(goal.id) as RoleRound[]).find(
+    (r) => r.taskKey === jobs[0].task.key,
+  )!;
+  expect(child.members.map((m) => [m.memberId, m.provider, m.state])).toEqual([
+    ["claude-researcher", "claude", "returned"],
+  ]);
+  // Only the coordinator's turn was offered the job tools.
+  const toolNames = (call: (typeof f.native.upstream.calls)[number]) =>
+    ((call.body.tools ?? []) as Array<{ name?: string }>).map((t) => t.name);
+  const offered = f.native.upstream.calls.filter((c) =>
+    toolNames(c).includes("start_agent_job"),
+  );
+  expect(offered.length).toBeGreaterThan(0);
+  expect(
+    offered.every((c) => /Snapshot digest \(echo it exactly\)/.test(promptOf(c))),
+  ).toBe(true);
+});
+
+test("agent jobs: with the owner's gate off, no turn is offered the job tools", async () => {
+  const f = await setup();
+  await group(f.service, "coordinator", [
+    nativeMember("native-coordinator", f.route.id),
+  ]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [vendor("sol", "fixture-sol")]);
+  const posted = await post(f.service, "Change the value to two.");
+  await untilGoal(f.service, posted.goal.id, ["awaiting-acceptance", "blocked"]);
+  expect(
+    f.native.upstream.calls.some((c) =>
+      ((c.body.tools ?? []) as Array<{ name?: string }>).some(
+        (t) => t.name === "start_agent_job",
+      ),
+    ),
+  ).toBe(false);
+  expect([...f.service.store.iterate("agent-job-authority")]).toEqual([]);
+});
+
+test("agent jobs: a Claude Code coordinator requests a native GPT child through Topsl's MCP server", async () => {
+  const log = path.join(
+    await mkdtemp(path.join(os.tmpdir(), "topsl-job-log-")),
+    "answers.jsonl",
+  );
+  cleanups.push(() => rm(path.dirname(log), { recursive: true, force: true }));
+  const f = await setup(undefined, [
+    "--fixture-agent-job",
+    JSON.stringify(surveyJob),
+    "--fixture-agent-job-log",
+    log,
+  ]);
+  await f.service.command({ type: "agent-jobs-set", enabled: true });
+  await group(f.service, "coordinator", [claudeMember("claude-coordinator")]);
+  await group(f.service, "implementer", [
+    nativeMember("native-implementer", f.route.id),
+  ]);
+  await group(f.service, "reviewer", [claudeMember("claude-reviewer")]);
+  await group(f.service, "researcher", [
+    nativeMember("native-researcher", f.route.id),
+  ]);
+  const posted = await post(f.service, "Change the value to two.");
+  const goal = await untilGoal(f.service, posted.goal.id, [
+    "awaiting-acceptance",
+    "blocked",
+  ]);
+  expect(goal.state).toBe("awaiting-acceptance");
+  const answers = (await readFile(log, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(JSON.parse(line)));
+  expect(answers).toHaveLength(2);
+  expect(answers[1].job_id).toBe(answers[0].job_id);
+  const jobs = [...f.service.store.iterate<any>("agent-job")];
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]).toMatchObject({
+    state: "completed",
+    parentMemberId: "claude-coordinator",
+  });
+  const child = (f.service.orchestration.rounds(goal.id) as RoleRound[]).find(
+    (r) => r.taskKey === jobs[0].task.key,
+  )!;
+  expect(child.members.map((m) => [m.memberId, m.provider, m.state])).toEqual([
+    ["native-researcher", "native", "returned"],
+  ]);
+});
+
+test.skipIf(process.platform !== "darwin")(
+  "a native implementer runs the goal's configured check in its own copy before it submits; other members get no check tool",
+  async () => {
+    // Plan Phase 7: a member capability added for a purpose, not a role
+    // name. The check runs contained in the member's copy; Topsl still runs
+    // the required check on the integrated candidate.
+    const checkResults: string[] = [];
+    const script = (scratch: string): Script => {
+      const base = memberScript(scratch);
+      return (call, index) => {
+        const prompt = promptOf(call);
+        if (!/When done, reply/.test(prompt)) return base(call, index);
+        const turn = call.request.messages.filter(
+          (m) => m.role === "assistant",
+        ).length;
+        if (turn === 2)
+          return {
+            events: reply([{ tool: "run_check", args: { name: "value-check" } }]),
+          };
+        if (turn === 3) checkResults.push(lastResults(call.request)[0].output);
+        return base(call, index);
+      };
+    };
+    const f = await setup(script);
+    await group(f.service, "coordinator", [
+      nativeMember("native-coordinator", f.route.id),
+    ]);
+    await group(f.service, "implementer", [
+      nativeMember("native-implementer", f.route.id),
+    ]);
+    await group(f.service, "reviewer", [
+      nativeMember("native-reviewer", f.route.id),
+    ]);
+    const conversation = await f.service.command({
+      type: "orchestration-conversation-create",
+      projectId: "p",
+      title: "",
+      commandId: `c-${uid()}`,
+    });
+    const posted = await f.service.command({
+      type: "orchestration-message",
+      conversationId: conversation.id,
+      text: "Change the value to two.",
+      goalId: null,
+      routing: "auto",
+      kind: "code",
+      checks: [
+        {
+          id: "value-check",
+          label: "value is two",
+          executable: "/bin/sh",
+          args: ["-c", "grep -q 'value = 2' file.ts"],
+          timeoutMs: 20_000,
+        },
+      ],
+      commandId: `c-${uid()}`,
+    } as any);
+    // The member's own check does not replace Topsl's: the goal waits for
+    // the owner to run the required check on the integrated candidate.
+    const goal = await untilGoal(f.service, posted.goal.id, [
+      "checking",
+      "blocked",
+    ]);
+    expect(goal.state).toBe("checking");
+    expect(checkResults).toHaveLength(1);
+    expect(checkResults[0]).toMatch(/Check value-check/);
+    expect(checkResults[0]).toMatch(/exited with code 0/);
+    const names = (call: (typeof f.native.upstream.calls)[number]) =>
+      ((call.body.tools ?? []) as Array<{ name?: string }>).map((t) => t.name);
+    for (const call of f.native.upstream.calls)
+      expect(names(call).includes("run_check")).toBe(
+        /When done, reply/.test(promptOf(call)),
+      );
+  },
+  180_000,
+);
+
+test("a turn recorded before funding was observed reads as not recorded, never as a match", () => {
+  // Plan Phase 9: new fields are added conservatively; missing historical
+  // evidence stays unknown.
+  expect(memberFunding("subscription", undefined)).toBeNull();
+  expect(memberFunding("subscription", {})).toMatchObject({
+    requested: "subscription",
+    observed: "unknown",
+    state: "unknown",
+    source: "not recorded",
+  });
+  const recorded = fundingObservation("api-billing", {
+    observed: "api-billing",
+    source: "proxy route binding",
+    detail: "d",
+  });
+  expect(memberFunding("api-billing", { funding: recorded })).toBe(recorded);
+});

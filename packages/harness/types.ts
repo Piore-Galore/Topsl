@@ -120,6 +120,12 @@ export interface ToolGrants {
   mcpTools: string[];
   /** Candidate IDs the attempt may read besides its own workspace. */
   candidates: string[];
+  /**
+   * Whether the attempt may request agent jobs from Topsl (a coordinator's
+   * turn while the owner's gate is on). Absent in specs written before
+   * 6 November 2026, which read as false.
+   */
+  agentJobs?: boolean;
 }
 
 export type NativeAttemptState =

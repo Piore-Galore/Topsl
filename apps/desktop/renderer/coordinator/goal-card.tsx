@@ -468,6 +468,15 @@ export function TeamPane({
 }
 
 /** The plan and the rounds that produced and worked it. */
+/** An agent job's state, in the owner's words. */
+const jobStateWords: Record<string, string> = {
+  requested: "waiting for the plan to be agreed",
+  admitted: "in the plan",
+  completed: "completed",
+  blocked: "blocked",
+  cancelled: "cancelled",
+};
+
 export function PlanPane({ view }: { view: any }) {
   const rounds = view.rounds
     .filter(
@@ -500,6 +509,24 @@ export function PlanPane({ view }: { view: any }) {
         </section>
       ) : (
         <p className="muted">No plan is agreed yet.</p>
+      )}
+      {view.agentJobs?.length > 0 && (
+        <section aria-label="Agent jobs">
+          <h3>Agent jobs</h3>
+          <ul>
+            {view.agentJobs.map((j: any) => (
+              <li key={j.id}>
+                {j.title} · {label(j.kind)} for {j.roleId} ·{" "}
+                {jobStateWords[j.state] ?? j.state}
+                <div className="muted">
+                  Requested by {j.parentMemberId}
+                  {j.state === "requested" ? "" : ` · task ${j.taskKey}`}
+                  {j.detail ? ` · ${j.detail}` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       {rounds.map((r: any) => (
         <section key={r.id} aria-label={`${r.roleId} round`}>

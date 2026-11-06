@@ -36,6 +36,8 @@ export type Run = (key: string, command: Command) => Promise<any>;
 /** Opens Providers, where runtimes are connected and qualified; null where
  * the screen has no way there. */
 export const OpenProviders = createContext<(() => void) | null>(null);
+/** Opens Connections, where a native route's connection is fixed. */
+export const OpenConnections = createContext<(() => void) | null>(null);
 
 /**
  * Re-reads a screen when the application state changes, at most every two
@@ -201,4 +203,58 @@ export function CheckFields({
       </label>
     </div>
   );
+}
+
+/** Who pays, in the owner's words; "unknown" is never shown as any other. */
+export const fundingWords: Record<string, string> = {
+  subscription: "subscription allowance",
+  "api-billing": "API billing",
+  "cloud-provider": "cloud provider billing",
+  "external-service": "managed by the external service",
+  local: "local model",
+  unknown: "unknown",
+};
+
+/** The engine a member runs on: Claude through Claude Code, a model through Topsl, or Codex. */
+export function engineWords(member: {
+  engine?: string | null;
+  provider?: string | null;
+  connection?: { routeAlias: string; connectionLabel: string } | null;
+}): string {
+  const engine =
+    member.engine ??
+    (member.provider === "claude"
+      ? "claude-code"
+      : member.provider === "codex"
+        ? "codex"
+        : member.provider);
+  if (engine === "claude-code") return "Claude through Claude Code";
+  if (engine === "codex") return "Codex";
+  if (engine === "native")
+    return member.connection
+      ? `Through Topsl · ${member.connection.routeAlias} (${member.connection.connectionLabel})`
+      : "Through Topsl";
+  return engine ?? "Not resolved";
+}
+
+/** Requested against observed funding for a member's latest turn. */
+export function fundingSentence(member: {
+  requestedFunding?: string | null;
+  funding?: {
+    requested: string;
+    observed: string;
+    state: "matches" | "unknown" | "conflict";
+    source: string;
+  } | null;
+}): string {
+  const words = (k: string | null | undefined) =>
+    fundingWords[k ?? "unknown"] ?? k ?? "unknown";
+  const f = member.funding;
+  if (!f)
+    return `Funding: ${words(member.requestedFunding)} requested; no turn has finished yet.`;
+  if (f.state === "conflict")
+    return `Funding conflict: ${words(f.requested)} requested, ${words(f.observed)} observed (${f.source}).`;
+  if (f.state === "unknown")
+    return `Funding: ${words(f.requested)} requested; not observed (${f.source}).`;
+  return `Funding: ${words(f.observed)}, as requested (observed by ${f.source}).`;
 }

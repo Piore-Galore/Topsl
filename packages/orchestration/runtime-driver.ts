@@ -11,11 +11,18 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { hash, now, safeError, stable, uid } from "../domain/invariants";
+import {
+  agentJobsEnabled,
+  withAgentJobTools,
+  type AgentJobAuthority,
+  type AgentJobService,
+} from "./agent-jobs";
 import type {
   Conversation,
   Installation,
   Message,
   Project,
+  Run,
 } from "../domain/types";
 import type {
   ContextPackage,
@@ -27,7 +34,11 @@ import type {
 } from "../domain/workflow";
 import {
   memberEngine,
+  requestedFunding,
   type ExecutionPurpose,
+  type Goal,
+  type ObservedFunding,
+  type ResolvedMemberAssignment,
   type GoalApplication,
   type GoalCheckDefinition,
   type NativeRouteBinding,
@@ -121,6 +132,11 @@ export interface RuntimeDriverDeps {
    * routes are offered.
    */
   native?: NativeMemberHost;
+  /**
+   * The orchestrator's agent-job service, read at launch (the orchestrator
+   * is built after the driver). Absent or null: no turn gets job tools.
+   */
+  agentJobs?: () => AgentJobService | null;
 }
 
 /** The native harness and the proxy routes the control service can see. */
@@ -656,6 +672,14 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
           ).blockers.length);
       if (reads && source) {
         const candidate = this.snapshot(source);
+        // The engine chose this candidate for the turn; it may come from an
+        // earlier workflow (a loop checkpoint, a continued session's work).
+        this.store.immutable("candidate-input-binding", {
+          id: attempt.id,
+          projectId: project.id,
+          goalId: turn.goalId,
+          candidateId: candidate.id,
+        });
         const grant = this.deps.context.grant(project, {
           visibility: { messageIds: [] },
           candidates: [
@@ -665,7 +689,9 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
           subject: {
             attemptId: attempt.id,
             agentSessionId: attempt.sessionId,
-            workflowId: candidate.workflowId,
+            // The reading goal; its candidate may be its declared baseline
+            // from an earlier workflow (validateCandidateAccess).
+            workflowId: turn.goalId,
             taskId: task.id,
           },
         });
@@ -674,7 +700,10 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
           grant,
           attempt,
           candidate,
+          workflowId: turn.goalId,
         });
+        const jobs = this.jobAuthority(turn, attempt.id);
+        if (jobs) tools = withAgentJobTools(tools, jobs, attempt.id);
       }
       const conversation: Conversation = {
         id: uid(),
@@ -849,8 +878,23 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
     });
     this.store.put("orchestration-copy", { ...copyRecord, attemptId });
     this.starting.add(attemptId);
+    const jobs = this.jobAuthority(turn, attemptId);
+    // An implementer may run the goal's plain checks (no environment recipe)
+    // in its own copy before it submits; Topsl still runs the required checks
+    // on the integrated candidate.
+    const goalChecks = edit
+      ? (this.store.get<Goal>("goal", turn.goalId)?.checks ?? [])
+          .filter((c) => !c.environmentRecipeId)
+          .map((c) => ({
+            name: c.id,
+            argv: [c.executable, ...c.args],
+            timeoutMs: c.timeoutMs,
+          }))
+      : [];
     try {
       const view = await host.harness.startMember({
+        ...(jobs ? { agentJobs: true } : {}),
+        ...(goalChecks.length ? { checks: goalChecks } : {}),
         attemptId,
         projectId: project.id,
         routeAlias: frozen.routeAlias,
@@ -906,6 +950,35 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
 
   private terminal(attempt: ExecutionAttempt) {
     return ["completed", "failed", "interrupted"].includes(attempt.state);
+  }
+
+  /**
+   * Records an agent-job authority for a coordinator's contribution turn on
+   * an engine goal while the owner's gate is on, and returns the service
+   * that answers its job tools. Loops, sessions and every other purpose get
+   * none, so a child never holds the authority to start more children.
+   */
+  private jobAuthority(turn: MemberTurn, attemptId: string) {
+    const jobs = this.deps.agentJobs?.() ?? null;
+    if (
+      !jobs ||
+      turn.purpose !== "coordinator-contribution" ||
+      turn.phase !== "initial" ||
+      !agentJobsEnabled(this.store)
+    )
+      return null;
+    const goal = this.store.get<Goal>("goal", turn.goalId);
+    if (!goal || goal.projectId !== turn.projectId || goal.loop) return null;
+    this.store.immutable("agent-job-authority", {
+      id: attemptId,
+      projectId: turn.projectId,
+      goalId: goal.id,
+      roundId: turn.roundId,
+      memberId: turn.memberId,
+      controlGeneration: goal.controlGeneration,
+      createdAt: now(),
+    } satisfies AgentJobAuthority);
+    return jobs;
   }
 
   observe(attemptId: string): AttemptObservation {
@@ -971,9 +1044,45 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       finalText,
       reportedModel: attempt.reportedModel ?? metadata?.reported.model ?? null,
       reportedEffort: metadata?.reported.effort ?? null,
+      funding: this.vendorFunding(attempt.legacyRunId),
       candidateId: capture?.candidateId ?? null,
       error: capture?.error ?? attempt.error,
       evidence,
+    };
+  }
+
+  /**
+   * What a vendor runtime reported about a turn's credentials. Claude Code
+   * reports its credential source in its init record (`apiKeySource`, "none"
+   * for its own login); otherwise the only evidence is the account status
+   * Topsl read before launch, labelled as such.
+   */
+  private vendorFunding(runId: string | null): ObservedFunding | null {
+    const run = runId ? this.store.get<Run>("run", runId) : undefined;
+    if (!run) return null;
+    if (run.provider === "claude" && typeof run.credentialSource === "string")
+      return run.credentialSource === "none"
+        ? {
+            observed: "subscription",
+            source: "Claude Code init record",
+            detail:
+              "Claude Code reported no API key source for the turn: it ran on its own login.",
+          }
+        : {
+            observed: "api-billing",
+            source: "Claude Code init record",
+            detail: `Claude Code reported credentials from ${run.credentialSource.slice(0, 80)}.`,
+          };
+    const route = this.store.get<{
+      account: { billingRoute: ResolvedMemberAssignment["billingRoute"] };
+      observedAt?: string;
+    }>("runtime-account-observation", run.installationId)?.account
+      .billingRoute;
+    if (!route) return null;
+    return {
+      observed: requestedFunding({ billingRoute: route }),
+      source: "account status before launch",
+      detail: `The runtime reported nothing for the turn itself; its account status before launch named the ${route} billing route.`,
     };
   }
 
@@ -1004,7 +1113,20 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
         ? `Topsl's native harness on ${route.routeAlias} (${route.connectionLabel}, ${fundingLabels[route.funding]}): ${view!.requests} model requests; the model is as the upstream reported it.`
         : "The native turn did not start.",
     };
-    const base = { reportedEffort: null, evidence, runId: null };
+    const base = {
+      reportedEffort: null,
+      evidence,
+      runId: null,
+      // The proxy dispatches only on the route revision the attempt froze
+      // and refuses a changed one, so the connection's funding is the turn's.
+      funding: route
+        ? {
+            observed: requestedFunding({ billingRoute: null, native: route }),
+            source: "proxy route binding",
+            detail: `Dispatched through ${route.connectionLabel} (${fundingLabels[route.funding]}) on its frozen route revision.`,
+          }
+        : null,
+    };
     const processed = !copy || copy.state === "processed";
     if (!view)
       return {

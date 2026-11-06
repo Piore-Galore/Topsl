@@ -481,6 +481,10 @@ function App() {
     setNavOpen(false);
     setPage("providers");
   }, []);
+  const openConnections = useCallback(() => {
+    setNavOpen(false);
+    setPage("connections");
+  }, []);
   async function connect(i: Installation) {
     const result = await act({ type: "runtime-connect", id: i.id });
     if (result) {
@@ -691,6 +695,7 @@ function App() {
               <Coordination
                 key={projectId}
                 onProviders={openProviders}
+                onConnections={openConnections}
                 project={project}
                 view={projectView}
                 section={section}
@@ -1327,6 +1332,7 @@ function App() {
 /** What an operation still waiting for its reply is doing, in plain words. */
 const pendingLabels: Record<string, string> = {
   "approval-decide": "Sending your answer",
+  "agent-jobs-set": "Changing agent jobs",
   "auto-accept-set": "Changing auto-accept",
   "check-updates": "Checking for updates",
   "claude-structured-route-set": "Changing Claude Code's structured route",

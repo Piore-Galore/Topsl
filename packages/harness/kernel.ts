@@ -119,6 +119,12 @@ export interface KernelDeps {
     args: unknown,
     signal: AbortSignal,
   ): Promise<ToolOutcome>;
+  agentJobs?(
+    spec: AttemptSpec,
+    callId: string,
+    tool: string,
+    args: unknown,
+  ): Promise<ToolOutcome>;
   /** Pre/post hooks, run contained; a pre hook can refuse a call. */
   hooks?: {
     before(
@@ -907,6 +913,9 @@ export class NativeKernel {
       callMcp: this.deps.callMcp
         ? (tool, args) =>
             this.deps.callMcp!(spec, tool, args, rt.controller.signal)
+        : undefined,
+      agentJobs: this.deps.agentJobs
+        ? (tool, args) => this.deps.agentJobs!(spec, callId, tool, args)
         : undefined,
       onProcess: (pid) =>
         this.deps.recordProcess?.(spec.attemptId, callId, pid),

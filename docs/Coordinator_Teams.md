@@ -312,3 +312,12 @@ A member's engine can now be Topsl's [native harness](Native_Harness_Plan.md#tea
 - **Waits.** A native member waiting on its account's allowance, paused for no progress or paused by its owner is shown as waiting on its round and is never replaced. An executing native member holds one slot of the shared capacity; a waiting one holds none.
 
 Evidence: `tests/native-members.test.ts`, a service-level team with Codex and native coordinators, a native implementer and a Codex reviewer, run to acceptance against a synthetic route, plus the cases in the [native harness record](Native_Harness_Execution.md#phases-6b-and-7--native-members-in-teams-sessions-and-loops). No Electron journey pins a native member yet, and no live model has been used.
+
+## Follow-up: engines, funding and agent jobs (6 November 2026)
+
+From the [subscription runtime plan](Subscription_Runtime_Architecture_Plan.md); details and limits are in its [execution record](Subscription_Runtime_Execution.md#second-pass--remaining-phases).
+
+- **Mixed engines.** A team can mix Claude Code and native members in any role: a native coordinator with a Claude Code implementer and native reviewer, and the reverse, run to acceptance through the real service (synthetic stand-ins).
+- **Member cards** show each member's engine and its latest turn's funding as requested and as observed: matches, not observed, or a conflict, which is shown as an alert.
+- **Agent jobs** (owner switch, off by default). A coordinator's planning turn may request child work with `start_agent_job`. The request is checked like a proposed task and joins the plan as an ordinary task once the plan commits. The child runs on the engine its role resolves to and is reviewed and integrated with the goal. The plan pane lists jobs with their requester. Children cannot request jobs.
+- **Native implementers** may run the goal's plain checks contained in their copy (macOS) before they submit; the goal's required checks still decide acceptance.

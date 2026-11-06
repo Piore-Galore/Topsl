@@ -1161,7 +1161,10 @@ for line in sys.stdin:
       expect(f.upstream.calls.length).toBeGreaterThanOrEqual(0);
       const view = await f.settle(started.attemptId);
       expect(view.summary).toBe("MCP said QUIET");
-      expect(f.upstream.calls[0].body.tools.map((t: any) => t.name)).toContain(
+      // The plan route carries every tool inside Topsl's one namespace.
+      const [namespace] = f.upstream.calls[0].body.tools;
+      expect(namespace).toMatchObject({ type: "namespace", name: "topsl" });
+      expect(namespace.tools.map((t: any) => t.name)).toContain(
         "mcp__fixture__shout",
       );
     },

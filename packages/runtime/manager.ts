@@ -1578,6 +1578,8 @@ export class RuntimeManager {
       return;
     if (event.type === "turn-started") {
       run.nativeTurnId = event.turnId;
+      if (event.credentialSource !== undefined)
+        run.credentialSource = event.credentialSource;
       this.store.save("run", run);
       this.coordinator.acknowledge(run, event.reportedModel ?? null);
     }

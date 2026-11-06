@@ -138,6 +138,10 @@ import {
 } from "../../packages/workspace/projects";
 import { retireNativeIntegration } from "../../packages/persistence/migrations/native-retirement";
 import { Orchestrator } from "../../packages/orchestration/engine";
+import {
+  agentJobsEnabled,
+  agentJobsPreferenceId,
+} from "../../packages/orchestration/agent-jobs";
 import { RuntimeOrchestrationDriver } from "../../packages/orchestration/runtime-driver";
 import { SessionSupervisor } from "../../packages/orchestration/session-engine";
 import { LoopSupervisor } from "../../packages/orchestration/loop-engine";
@@ -465,10 +469,16 @@ export class Service {
         this.replication.assertLocalOwner(projectId),
       integrationRoot: path.join(directory, "orchestration-integrations"),
       native: this.native.memberHost(),
+      agentJobs: () => this.orchestration?.jobs ?? null,
     });
     this.orchestration = new Orchestrator(this.store, orchestrationDriver, () =>
       this.changed(),
     );
+    // Native members answer their agent-job tools through the orchestrator.
+    const memberHarness = this.native.memberHost()?.harness;
+    if (memberHarness)
+      memberHarness.agentJobs = (attemptId, callId, tool, args) =>
+        this.orchestration.jobs.call(attemptId, callId, tool, args);
     this.loops = new LoopSupervisor(
       this.store,
       this.orchestration,
@@ -746,6 +756,7 @@ export class Service {
       testProfile: this.isolatedTest,
       claudeTranscriptRead: this.claudeTranscriptRead(),
       claudeStructuredRoute: this.runtime.claudeRoute(),
+      agentJobs: { enabled: agentJobsEnabled(this.store) },
       allowances: this.store.list<AllowanceSnapshot>("allowance-snapshot"),
       providerBudgets: this.providerBudgets(),
     };
@@ -3062,6 +3073,20 @@ export class Service {
         this.store.put("preference", { id: "theme", value: command.theme });
         this.changed();
         return;
+      case "agent-jobs-set":
+        // Agent jobs widen no member's permissions: a child is an ordinary
+        // task of its goal, within the goal's grant, reviewed and
+        // integrated with it. Off stops new requests at once; jobs already
+        // recorded follow their goal.
+        this.store.transaction(() => {
+          this.store.put("preference", {
+            id: agentJobsPreferenceId,
+            value: command.enabled,
+          });
+          this.store.event("agent-jobs.set", { enabled: command.enabled });
+        });
+        this.changed();
+        return { enabled: command.enabled };
       case "auto-accept-set":
         // Turning it on takes the owner's confirmation in Topsl's own dialog,
         // which the window cannot answer; turning it off takes none.

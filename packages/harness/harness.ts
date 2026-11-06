@@ -58,7 +58,7 @@ import {
   schemaHash,
   type McpServerDefinition,
 } from "./mcp";
-import { runContained } from "./sandbox";
+import { containmentStatus, runContained } from "./sandbox";
 import {
   defaultLimits,
   delegationLimits,
@@ -124,6 +124,14 @@ export interface NativeMemberStartInput {
   reasoningEffort: string | null;
   /** The episode's request budget; null keeps the default. */
   maxRequests: number | null;
+  /** Whether the turn may request agent jobs (the driver recorded its authority). */
+  agentJobs?: boolean;
+  /**
+   * The goal's owner-configured checks an implementation member may run
+   * inside the sandbox before it submits (plan Phase 7). Ignored for a
+   * read-only member and where containment is unavailable.
+   */
+  checks?: Array<{ name: string; argv: string[]; timeoutMs: number }>;
 }
 
 export interface NativeHookDefinition {
@@ -213,6 +221,18 @@ export class RouteRetiredError extends Error {
 }
 
 export class NativeHarness {
+  /**
+   * Answers a member's agent-job tools; set by the control service once its
+   * orchestrator exists. Null: the tools answer that jobs are unavailable.
+   */
+  agentJobs:
+    | ((
+        attemptId: string,
+        callId: string,
+        tool: string,
+        args: unknown,
+      ) => { ok: boolean; text: string })
+    | null = null;
   readonly journal: NativeJournal;
   readonly kernel: NativeKernel;
   readonly resources: ResourceLedger;
@@ -244,6 +264,12 @@ export class NativeHarness {
       integrate: (parent, child) => this.integrate(parent, child),
       proposeMemory: (spec, text) => this.proposeMemory(spec, text),
       callMcp: (spec, tool, args) => this.callMcp(spec, tool, args),
+      agentJobs: async (spec, callId, tool, args) => {
+        if (!this.agentJobs)
+          return { ok: false, output: "Agent jobs are not available here." };
+        const answer = this.agentJobs(spec.attemptId, callId, tool, args);
+        return { ok: answer.ok, output: answer.text };
+      },
       hooks: {
         before: (spec, call) => this.runHooks(spec, "before-tool", call, null),
         after: async (spec, call, outcome) => {
@@ -530,14 +556,21 @@ export class NativeHarness {
     if (!existsSync(input.workspace.root))
       throw new Error("The member's workspace copy does not exist.");
     const attemptId = input.attemptId ?? randomUUID();
+    const checks =
+      input.workspace.writable && input.checks?.length
+        ? (await containmentStatus()).available
+          ? input.checks
+          : []
+        : [];
     const grants: ToolGrants = {
       write: input.workspace.writable,
       processes: false,
       networkDomains: [],
-      checks: [],
+      checks,
       delegation: false,
       mcpTools: [],
       candidates: [],
+      ...(input.agentJobs ? { agentJobs: true } : {}),
     };
     const limits = {
       ...defaultLimits,
