@@ -10,6 +10,7 @@ import { ActionButton } from "../components/action-button";
 import { Badge } from "../components/atlas";
 import { ProviderUsage } from "../components/allowance";
 import { useRuntimeRefresh } from "../coordinator/shared";
+import { suggestedClaudeModels } from "../../../../packages/domain/claude-route";
 
 type Props = {
   state: AppState;
@@ -372,6 +373,8 @@ interface QualificationStatus {
   state: "current" | "missing" | "stale";
   running: boolean;
   models: ProviderModel[];
+  /** For a stale qualification, what differs from the last one recorded. */
+  staleBecause?: string[];
   reports: Array<{
     acceptanceId: string | null;
     expiresAt: string;
@@ -382,6 +385,11 @@ interface QualificationStatus {
       observations: Array<{ capability: string; passed: boolean }>;
     };
   }>;
+}
+
+/** Model ids typed into the "other models" field: split on commas and spaces. */
+function typedModels(text: string): string[] {
+  return text.split(/[\s,]+/).filter(Boolean);
 }
 
 /** What one qualification run passed and missed, in a sentence or two. */
@@ -401,6 +409,11 @@ function qualificationSummary(result: any): string {
     result.report?.reportedModel !== undefined
       ? `Claude Code reported model ${result.report.reportedModel ?? "none"}.`
       : "",
+    ...(result.report?.modelChecks ?? []).map((check: any) =>
+      check.passed
+        ? `Added ${check.model}.`
+        : `Did not add ${check.model}: ${check.detail}`,
+    ),
     result.report?.error ? `Stopped: ${result.report.error}` : "",
   ]
     .filter(Boolean)
@@ -409,9 +422,11 @@ function qualificationSummary(result: any): string {
 
 /**
  * Qualifies a trusted runtime for coordinators and teams, and says whether
- * its current qualification still holds. Codex lists its models after
- * Connect / test; Claude Code has no model list, so the owner names the
- * model. Topsl's own dialog lists the live turns before any start.
+ * its current qualification still holds, what voided it, and which checks it
+ * missed. A qualification covers the runtime, not one model: Codex lists its
+ * models after Connect / test and one run covers them all. Claude Code has no
+ * model list, so the owner picks the models to add, and one run checks them
+ * all. Topsl's own dialog lists the live turns before any start.
  */
 function RuntimeQualification({
   installation,
@@ -426,6 +441,10 @@ function RuntimeQualification({
   const name = claude ? "Claude" : "Codex";
   const [status, setStatus] = useState<QualificationStatus | null>(null);
   const [model, setModel] = useState("");
+  // Claude: the suggested models picked, or null for the default (each one
+  // not yet qualified), and any other ids typed.
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const [otherModels, setOtherModels] = useState("");
   const [effort, setEffort] = useState("");
   const [summary, setSummary] = useState("");
   // A failed read keeps the last status it had and says so (W3-4).
@@ -459,10 +478,25 @@ function RuntimeQualification({
     models.find((m) => m.isDefault) ??
     models[0];
   const efforts = codexModel?.supportedReasoningEfforts ?? [];
+  const qualifiedIds = models.map((m) => m.model);
+  const chosenSuggestions =
+    picked ??
+    suggestedClaudeModels
+      .map((m) => m.model)
+      .filter((m) => !qualifiedIds.includes(m));
+  const claudeModels = [
+    ...new Set([...chosenSuggestions, ...typedModels(otherModels)]),
+  ];
   const recorded = status?.reports.find(
     (r) => r.acceptanceId && Date.parse(r.expiresAt) > Date.now(),
   );
   const last = status?.reports[0];
+  const missed =
+    status?.state === "current" && recorded
+      ? recorded.report.observations
+          .filter((o) => !o.passed)
+          .map((o) => o.capability)
+      : [];
   const blocked =
     claude && !routeEnabled
       ? "route"
@@ -474,12 +508,15 @@ function RuntimeQualification({
             ? "models"
             : null;
   async function qualify() {
-    const chosen = claude ? model : (codexModel?.model ?? "");
+    const chosen = claude ? claudeModels[0] : (codexModel?.model ?? "");
     if (!chosen) return;
     const result = await act({
       type: "runtime-qualify",
       id: installation.id,
       model: chosen,
+      ...(claude && claudeModels.length > 1
+        ? { additionalModels: claudeModels.slice(1, 9) }
+        : {}),
       ...(!claude && effort && efforts.includes(effort) ? { effort } : {}),
     });
     if (result) setSummary(qualificationSummary(result));
@@ -522,12 +559,25 @@ function RuntimeQualification({
                 : ""
             }. Next: start work with + New session.`
           : status?.state === "stale"
-            ? "The last qualification no longer matches this executable, account or host. Coordinators and teams can use this runtime again after a new one passes."
+            ? `The last qualification no longer applies${
+                status.staleBecause?.length
+                  ? `: ${status.staleBecause.join(", ")}`
+                  : ""
+              }. Coordinators and teams can use this runtime again after a new one passes.`
             : "Coordinators and teams can use this runtime only after a qualification passes: a few live turns that check its permissions, recorded for 30 days."}
-        {claude && models.length > 0
-          ? ` Qualified Claude models: ${models.map((m) => m.model).join(", ")}.`
-          : ""}
+        {claude
+          ? models.length > 0
+            ? ` Qualified Claude models: ${models.map((m) => m.model).join(", ")}.`
+            : ""
+          : " One qualification covers every model Codex lists, at every effort."}
       </p>
+      {missed.length > 0 && (
+        <p className="muted">
+          The last run did not pass {missed.join(", ")}. Work that needs{" "}
+          {missed.length === 1 ? "it" : "them"} stays unavailable until a run
+          passes {missed.length === 1 ? "it" : "them"}; other work can start.
+        </p>
+      )}
       {readError && (
         <div className="actions wrap" role="alert">
           <p>
@@ -572,18 +622,38 @@ function RuntimeQualification({
       ) : (
         <div className="qualification-form">
           {claude ? (
-            <label>
-              Claude model to qualify
-              <input
-                value={model}
-                placeholder="claude-opus-5-5"
-                onChange={(event) => setModel(event.target.value.trim())}
-              />
-            </label>
+            <fieldset className="qualification-models">
+              <legend>Claude models to qualify</legend>
+              {suggestedClaudeModels.map((m) => (
+                <label key={m.model} className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={chosenSuggestions.includes(m.model)}
+                    onChange={(event) =>
+                      setPicked(
+                        event.target.checked
+                          ? [...chosenSuggestions, m.model]
+                          : chosenSuggestions.filter((c) => c !== m.model),
+                      )
+                    }
+                  />
+                  {m.name} <code>{m.model}</code>
+                  {qualifiedIds.includes(m.model) ? " (qualified)" : ""}
+                </label>
+              ))}
+              <label>
+                Other model ids
+                <input
+                  value={otherModels}
+                  placeholder="Optional, separated by commas"
+                  onChange={(event) => setOtherModels(event.target.value)}
+                />
+              </label>
+            </fieldset>
           ) : (
             <>
               <label>
-                Codex model to qualify
+                Codex model for the check turns
                 <select
                   value={codexModel?.model ?? ""}
                   onChange={(event) => {
@@ -619,15 +689,27 @@ function RuntimeQualification({
           )}
           <ActionButton
             className="primary"
-            disabled={(claude ? !model : !codexModel) || !!status?.running}
+            disabled={
+              (claude
+                ? !claudeModels.length || claudeModels.length > 9
+                : !codexModel) || !!status?.running
+            }
             title={
               claude
-                ? "Runs 4 live Claude Code turns after you review them"
+                ? claudeModels.length > 9
+                  ? "One run qualifies at most 9 Claude models"
+                  : `Runs ${3 + Math.max(claudeModels.length, 1)} live Claude Code turns after you review them`
                 : "Runs up to 3 live model turns after you review them"
             }
             onClick={() => void qualify()}
           >
-            Qualify {name} runtime
+            {!claude
+              ? "Qualify Codex runtime"
+              : claudeModels.length === 1
+                ? "Qualify 1 Claude model"
+                : claudeModels.length
+                  ? `Qualify ${claudeModels.length} Claude models`
+                  : "Qualify Claude models"}
           </ActionButton>
         </div>
       )}

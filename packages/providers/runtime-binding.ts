@@ -92,22 +92,50 @@ export function runtimeBinding(
   };
 }
 /**
- * Codex adds an entry under `projects` to its own config.toml the first time it
- * works in a folder, which would void a qualification on every new project.
- * Those entries are left out; every other setting stays in the digest with its
+ * Settings that cannot change what a qualification checked, left out of the
+ * policy digest so writing them does not void a qualification.
+ *
+ * - Codex adds an entry under `projects` the first time it works in a folder.
+ * - The ChatGPT desktop app keeps its own interface state in `desktop`, `tui`
+ *   and `notice`, and writes the owner's default `model` and
+ *   `model_reasoning_effort` whenever they pick one there.
+ * - Claude Code's `/model` writes the default `model` to `settings.json`.
+ *
+ * Topsl names the model (and any effort) for every turn it starts and sets
+ * each turn's sandbox and approval policy itself, so none of these reach a
+ * Topsl turn's permissions. Every other setting stays in the digest with its
  * type, and a file that does not parse is digested byte for byte.
  */
+export const policyIgnoredSettings = {
+  codex: [
+    "projects",
+    "desktop",
+    "tui",
+    "notice",
+    "model",
+    "model_reasoning_effort",
+  ],
+  claude: ["model"],
+} as const;
 function policyDigest(provider: "claude" | "codex", bytes: Buffer) {
-  if (provider === "codex")
-    try {
-      const { projects, ...settings } = parseToml(
-        new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-        { integersAsBigInt: true },
-      );
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      parsed: unknown =
+        provider === "codex"
+          ? parseToml(text, { integersAsBigInt: true })
+          : JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const settings: Record<string, unknown> = { ...parsed };
+      for (const key of policyIgnoredSettings[provider]) delete settings[key];
       return hash(
-        stable({ codexConfigWithoutProjects: 1, settings: typed(settings) }),
+        stable(
+          provider === "codex"
+            ? { codexConfigPolicy: 2, settings: typed(settings) }
+            : { claudeSettingsPolicy: 1, settings },
+        ),
       );
-    } catch {}
+    }
+  } catch {}
   return hash(bytes);
 }
 const typed = (value: unknown): unknown =>

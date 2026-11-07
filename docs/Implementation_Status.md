@@ -647,7 +647,7 @@ The package was built offline with `npm run package -- --mac --arm64 -c.electron
 
 **Change.** The owner reported that no provider could be qualified, that New session's coordinator list showed only Codex models that could not be added, overflowed its box and squeezed its **Add** buttons, and that a **Custom** team took only listed roles. The causes and fixes are recorded in the [cleanup plan's follow-up](UX_Cleanup_Plan.md#follow-up-provider-qualification-and-new-session-3-november-2026). In short:
 
-- **Providers** has a **Qualification** block for each trusted CLI: state, last recorded model and expiry, the last failed attempt, and the controls (**Qualify Codex runtime** with a reported model and effort; **Turn on structured route…**, then **Qualify Claude runtime** with a model id).
+- **Providers** has a **Qualification** block for each trusted CLI: state, last recorded model and expiry, the last failed attempt, and the controls (**Qualify Codex runtime** with a reported model and effort; **Turn on structured route…**, then **Qualify Claude runtime** with a model id). *Superseded 8 November 2026:* Claude models are now ticked from a list ([qualification per runtime](#qualification-per-runtime-not-per-model--8-november-2026)).
 - The shell no longer discards the result or error of a runtime command issued from Providers when Provider tools has another runtime, or none, selected.
 - **New session** groups coordinator models by runtime, marks a runtime that cannot coordinate **Not ready** with one line per cause and **Open Providers**, keeps its buttons whole and never scrolls sideways, and reads the routes again when opened. **Add your own role** defines a session-owned role in a **Custom** team.
 - Checkboxes and radios sit beside their labels everywhere; **Connect / test** summarizes before the raw answer; the Team pane's roles are one row each.
@@ -846,3 +846,41 @@ From an empty folder, `--no-build` exited 1 naming the missing `dist/main.cjs`. 
 - It passes extra arguments on, and waits for a key press at the end.
 - Run from a shell with `--temp-profile`, all four debugger ports answered, the session ended with exit 0 and the throwaway profile was removed.
 - Not tested: an actual double-click in Finder; Windows and Linux have no launcher.
+
+## Qualification per runtime, not per model — 8 November 2026
+
+**Reported by the owner.** A Codex qualification of `gpt-6.1-sol` at `xhigh` had to be repeated before the first session could start. The owner asked to qualify every model at once, or better not per model at all. They also found the Claude qualification's Opus 5.5 greyed out.
+
+**Causes.**
+
+- **Requalifying Codex.** The qualification's settings digest covered all of `~/.codex/config.toml` except `projects`. The ChatGPT app keeps its interface state in that file (`[desktop]`, `[tui]`, `[notice]`) and writes the owner's default `model` and `model_reasoning_effort` there. On the owner's Mac the file was rewritten at 00:13, four minutes after Topsl's qualification folder last changed at 00:09. That is inferred from modification times: Topsl keeps only a digest, so which key changed was not established. Any later account read then recorded the new binding and withdrew the old qualification ([manager.ts](../packages/runtime/manager.ts) `observeAccount`).
+- **Opus 5.5 greyed out.** The Claude form was an empty text box whose grey `claude-opus-5-5` was placeholder text, so **Qualify Claude runtime** stayed disabled until an id was typed.
+- **Per-model feel.** A Codex qualification already covered every model Codex lists, but Providers labelled its picker "Codex model to qualify". A Claude qualification checked one model per 4-turn run.
+
+**Change** ([decision](Topsl_Design.md)):
+
+- [runtime-binding.ts](../packages/providers/runtime-binding.ts) leaves out of the settings digest the keys that cannot change a Topsl turn's permissions. For Codex these are `projects`, `desktop`, `tui`, `notice`, `model` and `model_reasoning_effort`. For Claude Code it is `model` in `settings.json`, which is now parsed (a file that does not parse is still digested byte for byte). Every other setting still counts.
+- **Providers** says which part of a stale qualification changed: the executable, the account, the settings file, Topsl's permission arguments, the host, or expiry ([manager.ts](../packages/runtime/manager.ts) `staleReasons`). A current qualification that missed a check names it, because only work that needs the check stays blocked.
+- Codex's picker is **Codex model for the check turns**, with the line "One qualification covers every model Codex lists, at every effort." The consent dialog says the same.
+- Claude Code: **Claude models to qualify** lists Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1 as checkboxes. Every one not yet qualified starts ticked, and an **Other model ids** field takes more. One run takes up to 9 models. The 4 probe turns run with the first model, then [claude-qualification.ts](../packages/providers/claude-qualification.ts) runs one marker turn per further model. A further model is added only on the marker, the exact reported id, no API key source and a stopped process. It is judged apart from the probes, so a model the account cannot run is left out and the probes' observations are unchanged. The consent dialog lists the models and the turn count (3 + the number of models).
+- **One more run needed.** Qualifications recorded before this change digested the old settings, so they show **Needs qualifying again** once, naming the settings file.
+
+**Verification** (macOS arm64, this working tree):
+
+- `npm run typecheck`: passed.
+- `npm test -- tests/campaign-claude-codex.test.ts tests/provider-readiness.test.ts`: 39 passed. New or changed tests:
+  - The Codex digest ignores `projects`, `desktop`, `tui`, `notice` and the default model/effort, and changes with the approval policy, sandbox mode, an MCP server or a feature.
+  - The Claude digest ignores `model` and changes with permissions.
+  - One Claude qualification of three models through the runtime manager and the Claude stand-in takes 6 turns. It adds the two the stand-in runs and leaves out the one it refuses, with every probe passing.
+  - Writing `model` to `settings.json` keeps the qualification; changing its permissions stales it with the reason "Claude Code's settings changed".
+  - A Codex qualification with further models is refused.
+- `npm run build`, then `npm run test:desktop -- scripts/desktop-providers-test.mjs`: passed. Providers showed all four Claude models ticked. With Haiku and Fable unticked, **Qualify 2 Claude models** recorded Opus 5.5 and Sonnet 5.5 in 5 turns (4 probes with Opus, then 1 with Sonnet), and a session then started with a Claude and a Codex coordinator.
+- Full `npm test`: 103 files passed and 3 skipped; 1,445 tests passed and 6 skipped.
+- `npm run test:desktop -- scripts/desktop-session-test.mjs` (renamed Codex picker): passed.
+
+**Not established.**
+
+- No live Codex or Claude Code qualification ran with this change; the stand-ins answer as scripted.
+- Whether every Claude id offered is available on a given plan is not checked until its turn runs.
+- Which other keys the vendor apps rewrite in normal use is not known.
+- Packaged builds, remote CI, Linux and Windows did not run it.

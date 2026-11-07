@@ -1831,6 +1831,25 @@ button.link {
 .qualification-form select {
   width: 100%;
 }
+.qualification-models {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.qualification-models legend {
+  padding: 0;
+  font-weight: 600;
+}
+.qualification-models label.checkbox {
+  margin: 6px 0;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.qualification-form .qualification-models input[type="checkbox"] {
+  width: auto;
+}
 .terminal-leave {
   margin: 4px 2px 0;
 }

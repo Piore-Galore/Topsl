@@ -795,6 +795,8 @@ export const commandSchema = z.discriminatedUnion("type", [
     id,
     model: z.string().min(1).max(200),
     effort: z.string().min(1).max(100).optional(),
+    /** Claude only: more models to check in the same run, one turn each. */
+    additionalModels: z.array(z.string().min(1).max(200)).max(8).optional(),
   }),
   z.object({ type: z.literal("runtime-qualification-query"), id }),
   z.object({

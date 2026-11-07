@@ -29,8 +29,18 @@ import type { ProcessEvidence } from "../runtime/process-lifecycle";
 import { answerToolCall } from "./tool-calls";
 
 export const claudeQualificationSuite = "claude-runtime-qualification/v1";
-/** Model turns the suite starts: one per probe. */
+/** Model turns the suite starts: one per probe, before any model checks. */
 export const claudeQualificationTurnBudget = 4;
+/** More models one qualification can check, one turn each. */
+export const claudeAdditionalModelLimit = 8;
+
+/** Whether Claude Code ran one more model the owner asked to add. */
+export interface ClaudeModelCheck {
+  model: string;
+  reportedModel: string | null;
+  passed: boolean;
+  detail: string;
+}
 const turnTimeoutMs = 240_000;
 
 /** What one probe's turn showed. Reply text stays in memory. */
@@ -69,6 +79,13 @@ interface ProbeResult {
  *   every turn reported no API key source.
  * - fresh-session and process-lifecycle: across all probes, distinct
  *   acknowledged session ids, and every process stopped.
+ * - model checks: after the probes, one review turn per additional model asks
+ *   for a marker. A model passes only when the turn completed with the marker,
+ *   Claude Code reported running exactly that model under the claude.ai
+ *   login with no API key, and its process stopped. The permission profile
+ *   is the same for every model (`--model` is its only difference), so a
+ *   model check adds a model to the catalog without repeating the probes, and
+ *   a failed check leaves the probes' observations as they were.
  *
  * Claude Code's permission lists are not operating-system isolation, so
  * read-only and workspace-write record what Claude Code's own permission
@@ -78,10 +95,19 @@ export async function runClaudeQualification(input: {
   adapter: ProviderAdapter;
   installation: Installation;
   model: string;
+  /** More models to check after the probes, one turn each. */
+  additionalModels?: string[];
   parent: string;
   timeoutMs?: number;
   readerProbe?: (directory: string) => Promise<ReaderProbe>;
 }): Promise<QualificationReport> {
+  const additionalModels = [
+    ...new Set(input.additionalModels ?? []),
+  ].filter((model) => model !== input.model);
+  if (additionalModels.length > claudeAdditionalModelLimit)
+    throw new Error(
+      `One qualification checks at most ${claudeAdditionalModelLimit} more models.`,
+    );
   await assertQualificationParent(input.parent);
   const startedAt = now(),
     timeout = input.timeoutMs ?? turnTimeoutMs,
@@ -130,7 +156,9 @@ export async function runClaudeQualification(input: {
     account: ProviderAccount | null = null,
     error: string | null = null,
     reportedModel: string | null = null;
-  const results: ProbeResult[] = [];
+  const results: ProbeResult[] = [],
+    modelChecks: ClaudeModelCheck[] = [],
+    turnBudget = claudeQualificationTurnBudget + additionalModels.length;
 
   /** One probe: a new connection, a fresh session and one turn, then close. */
   async function probe(
@@ -138,13 +166,14 @@ export async function runClaudeQualification(input: {
     mode: "review" | "edit",
     prompt: string,
     tools?: ToolBinding,
+    options: { model?: string; record?: boolean } = {},
   ): Promise<ProbeResult> {
-    if (turnsStarted >= claudeQualificationTurnBudget)
+    if (turnsStarted >= turnBudget)
       throw new Error("The qualification turn budget is exhausted.");
     const prepared: PreparedTurn = {
       prompt,
       cwd: workspace,
-      requestedModel: input.model,
+      requestedModel: options.model ?? input.model,
       ...(tools ? { toolset: tools.toolset } : {}),
       mode,
       contextPackageId: null,
@@ -249,7 +278,9 @@ export async function runClaudeQualification(input: {
       } catch (e) {
         result.lifecycleError = safeError(e);
       }
-      results.push(result);
+      // A model check is judged on its own, so a model Claude Code cannot
+      // run leaves the probes' session and process observations as they were.
+      if (options.record !== false) results.push(result);
     }
     return result;
   }
@@ -416,6 +447,38 @@ export async function runClaudeQualification(input: {
         false,
         readerFailure ?? "The reader probe was not prepared.",
       );
+
+    // One more turn for each additional model, after every probe.
+    for (const model of additionalModels) {
+      const result = await probe(
+          `model-check-${modelChecks.length + 1}`,
+          "review",
+          `This is an automated Topsl runtime qualification. Do not use any tools. Reply with exactly this text and nothing else: ${marker}`,
+          undefined,
+          { model, record: false },
+        ),
+        reported = result.completed?.reportedModel ?? null,
+        returned = result.text.includes(marker),
+        completed = !!result.completed && !result.completed.failed,
+        acknowledged =
+          !!result.session && result.session.sessionId === result.sessionId,
+        keySource = result.session?.apiKeySource ?? null,
+        stopped = result.lifecycle?.state === "quiescent";
+      modelChecks.push({
+        model,
+        reportedModel: reported,
+        passed:
+          completed &&
+          returned &&
+          reported === model &&
+          acknowledged &&
+          keySource === "none" &&
+          stopped,
+        detail: shorten(
+          `Turn ${ended(result)}; the marker was ${returned ? "" : "not "}returned. Claude Code reported model ${reported ?? "none"}, API key source ${keySource ?? "not reported"}, and its process ${stopped ? "stopped" : "did not stop cleanly"}.${returned ? "" : replyStart(result.text)}`,
+        ).slice(0, 1000),
+      });
+    }
   } catch (e) {
     error = safeError(e);
     for (const capability of [
@@ -493,5 +556,6 @@ export async function runClaudeQualification(input: {
     approvals: [],
     error,
     reportedModel,
+    ...(additionalModels.length ? { modelChecks } : {}),
   };
 }

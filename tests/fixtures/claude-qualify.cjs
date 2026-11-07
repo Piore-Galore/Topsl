@@ -13,6 +13,9 @@
 // FIXTURE_API_KEY=1         init reports an API key source
 // FIXTURE_EXTRA_TOOL=1      init reports a Bash tool nobody granted
 // FIXTURE_MODEL=<id>        the model Claude Code reports instead of --model
+// FIXTURE_UNAVAILABLE_MODEL=<id> a turn asked for this model ends as an
+//                           error result with no reply, as Claude Code's
+//                           turn does for a model the account cannot use
 // FIXTURE_LOG=<file>        appends each run's arguments as a JSON line
 // FIXTURE_NO_EFFORT=1       `--help` lists no --effort option (an older
 //                           Claude Code)
@@ -143,6 +146,21 @@ process.stdin.on("end", async () => {
     return hang();
   };
   if (process.env.FIXTURE_STALL === "silent") return hang();
+  if (
+    process.env.FIXTURE_UNAVAILABLE_MODEL &&
+    process.env.FIXTURE_UNAVAILABLE_MODEL === model
+  ) {
+    event({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      session_id: sessionId,
+      result: `There's an issue with the selected model (${model}).`,
+      permission_denials: [],
+      uuid: "result-1",
+    });
+    return;
+  }
   const denials = [];
   let text = "fixture reply";
   const marker = /nothing else: (\S+)$/m.exec(input);

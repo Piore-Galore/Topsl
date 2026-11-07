@@ -3459,6 +3459,9 @@ export class Service {
           {
             model: command.model,
             ...(command.effort ? { effort: command.effort } : {}),
+            ...(command.additionalModels?.length
+              ? { additionalModels: command.additionalModels }
+              : {}),
           },
           this.qualificationDirectory ??
             path.join(this.directory, "runtime-qualification"),

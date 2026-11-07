@@ -232,7 +232,7 @@ try {
     "Not qualified",
   );
   await codexQualification
-    .getByRole("combobox", { name: "Codex model to qualify" })
+    .getByRole("combobox", { name: "Codex model for the check turns" })
     .selectOption("fixture-model");
   await codexQualification
     .getByRole("button", { name: "Qualify Codex runtime" })
@@ -264,22 +264,27 @@ try {
   );
   await expect(connection).toContainText("Claude Code has no model list.");
   await connection.getByRole("button", { name: "Close dialog" }).click();
-  const claudeModel = claudeQualification.getByRole("textbox", {
-    name: "Claude model to qualify",
+  // Every suggested model starts checked; one run qualifies Opus 5.5 and
+  // Sonnet 5.5 together.
+  const models = claudeQualification.getByRole("group", {
+    name: "Claude models to qualify",
   });
-  await claudeModel.fill("claude-opus-5-5");
+  for (const name of ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1"])
+    await expect(models.getByRole("checkbox", { name })).toBeChecked();
+  await models.getByRole("checkbox", { name: "Haiku 5.5" }).uncheck();
+  await models.getByRole("checkbox", { name: "Fable 5.1" }).uncheck();
   await claudeQualification
-    .getByRole("button", { name: "Qualify Claude runtime" })
+    .getByRole("button", { name: "Qualify 2 Claude models" })
     .click();
   await expect(claudeQualification.getByRole("status")).toContainText(
-    "Claude Code reported model claude-opus-5-5.",
+    "Claude Code reported model claude-opus-5-5. Added claude-sonnet-5-5.",
     { timeout: 60000 },
   );
   await expect(claudeQualification.locator(".badge")).toHaveText("Qualified", {
     timeout: 10000,
   });
   await expect(claudeQualification).toContainText(
-    "Qualified Claude models: claude-opus-5-5.",
+    "Qualified Claude models: claude-opus-5-5, claude-sonnet-5-5.",
   );
   expect((await fits(page)).page).toBe(true);
   await shot(page, "providers-qualified");
@@ -360,7 +365,7 @@ try {
     ["codex", "fixture-opus", undefined],
   ]);
   // The Claude coordinator's turns ran with --effort high; the qualification
-  // turns before them ran with none.
+  // turns before them (4 probes and 1 check for Sonnet 5.5) ran with none.
   const { readFileSync } = await import("node:fs");
   const prints = readFileSync(claudeLog, "utf8")
     .trim()
@@ -370,9 +375,14 @@ try {
   const efforts = prints.map((args) =>
     args.includes("--effort") ? args[args.indexOf("--effort") + 1] : null,
   );
-  expect(efforts.slice(0, 4)).toEqual([null, null, null, null]);
-  expect(efforts.slice(4).length).toBeGreaterThan(0);
-  expect(new Set(efforts.slice(4))).toEqual(new Set(["high"]));
+  expect(efforts.slice(0, 5)).toEqual([null, null, null, null, null]);
+  const requested = prints.map((args) => args[args.indexOf("--model") + 1]);
+  expect(requested.slice(0, 5)).toEqual([
+    ...Array(4).fill("claude-opus-5-5"),
+    "claude-sonnet-5-5",
+  ]);
+  expect(efforts.slice(5).length).toBeGreaterThan(0);
+  expect(new Set(efforts.slice(5))).toEqual(new Set(["high"]));
   expect(team).toBe("custom");
   const ownId = Object.keys(roles).find((id) => id.startsWith("api-writer-"));
   expect(Object.keys(roles).sort()).toEqual([ownId, "implementer"].sort());

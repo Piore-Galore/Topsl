@@ -50,6 +50,14 @@ export interface QualificationReport {
   /** The model the runtime reported for the structured turn, when the suite
    * records it (the Claude suite does). */
   reportedModel?: string | null;
+  /** Further Claude models one run checked after its probes, one turn each
+   * (see `runClaudeQualification`). */
+  modelChecks?: Array<{
+    model: string;
+    reportedModel: string | null;
+    passed: boolean;
+    detail: string;
+  }>;
 }
 interface TurnWatch {
   probe: string;

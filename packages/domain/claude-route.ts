@@ -68,3 +68,16 @@ export function claudeRouteConfirmation(): {
     affirmative: "Allow unattended Claude Code",
   };
 }
+
+/**
+ * Claude model ids Providers offers to qualify, newest family first. Claude
+ * Code has no model list, so these are suggestions only: a model enters a
+ * runtime's catalog only when a qualification turn saw Claude Code report
+ * running exactly that id, and the owner can name any other id.
+ */
+export const suggestedClaudeModels = [
+  { model: "claude-opus-5-5", name: "Opus 5.5" },
+  { model: "claude-sonnet-5-5", name: "Sonnet 5.5" },
+  { model: "claude-haiku-5-5", name: "Haiku 5.5" },
+  { model: "claude-fable-5-1", name: "Fable 5.1" },
+] as const;

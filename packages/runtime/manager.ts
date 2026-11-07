@@ -7,6 +7,7 @@ import os from "node:os";
 import {
   RuntimeAcceptanceRegistry,
   runtimeBindingId,
+  type RuntimeBinding,
 } from "../providers/acceptance";
 import { runtimeBinding } from "../providers/runtime-binding";
 import {
@@ -646,7 +647,7 @@ export class RuntimeManager {
    * user's explicit consent through a trusted dialog. */
   qualify(
     installation: Installation,
-    selection: { model: string; effort?: string },
+    selection: { model: string; effort?: string; additionalModels?: string[] },
     parent: string,
   ): Promise<{
     acceptanceId: string | null;
@@ -667,7 +668,7 @@ export class RuntimeManager {
   }
   private async qualifyOwned(
     installation: Installation,
-    selection: { model: string; effort?: string },
+    selection: { model: string; effort?: string; additionalModels?: string[] },
     parent: string,
   ) {
     if (this.fixtureMode)
@@ -697,20 +698,28 @@ export class RuntimeManager {
         catalog.executableIdentity === installation.identity
           ? catalog.models.find((m) => m.model === selection.model)
           : undefined;
-    // Claude Code has no model list: the owner names a model, and the
-    // qualification adds it to the catalog only if Claude Code reports
+    // Claude Code has no model list: the owner names one or more models, and
+    // the qualification adds each to the catalog only if Claude Code reports
     // running that exact model. Its turns run with no effort: effort is not
     // part of the permission profile, so it is chosen per member instead.
+    // Codex's catalog lists every model, and one qualification covers them
+    // all, so a Codex qualification names only the model its turns use.
+    const additionalModels = [...new Set(selection.additionalModels ?? [])];
     if (claude) {
       if (selection.effort)
         throw new Error(
           "A Claude qualification takes no reasoning effort; qualify a Claude runtime with a model only, and choose effort per coordinator or member.",
         );
-      if (!/^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,199}$/.test(selection.model))
-        throw new Error(
-          "Name the Claude model by its full id, such as one Claude Code reports.",
-        );
-    } else if (
+      for (const each of [selection.model, ...additionalModels])
+        if (!/^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,199}$/.test(each))
+          throw new Error(
+            "Name each Claude model by its full id, such as one Claude Code reports.",
+          );
+    } else if (additionalModels.length)
+      throw new Error(
+        "One Codex qualification covers every model Codex lists; name only the model its turns use.",
+      );
+    else if (
       !model ||
       (selection.effort &&
         !model.supportedReasoningEfforts?.includes(selection.effort))
@@ -739,6 +748,7 @@ export class RuntimeManager {
               adapter: tracked,
               installation,
               model: selection.model,
+              additionalModels,
               parent,
             })
           : await runCodexQualification({
@@ -796,21 +806,25 @@ export class RuntimeManager {
       this.qualifying.delete(installation.id);
     }
   }
-  /** Adds the qualified model to a Claude runtime's catalog when its
-   * structured turn passed and Claude Code reported that exact model. */
+  /** Adds each qualified model to a Claude runtime's catalog: the probes'
+   * model when its structured turn passed, and each further model whose
+   * check passed, when Claude Code reported running that exact model. */
   private recordClaudeModel(
     installation: Installation,
     report: QualificationReport,
   ) {
     const turn = report.observations.find(
-      (o) => o.capability === "structured-turn",
-    );
-    if (
-      !turn?.passed ||
-      report.reportedModel !== report.model ||
-      !report.account
-    )
-      return;
+        (o) => o.capability === "structured-turn",
+      ),
+      observed = [
+        ...(turn?.passed && report.reportedModel === report.model
+          ? [report.model]
+          : []),
+        ...(report.modelChecks ?? [])
+          .filter((check) => check.passed && check.reportedModel === check.model)
+          .map((check) => check.model),
+      ];
+    if (!observed.length || !report.account) return;
     const catalog = this.store.get<{
         models: ProviderModel[];
         runtimeRevision: string;
@@ -825,7 +839,7 @@ export class RuntimeManager {
       efforts = current ? (catalog.efforts ?? []) : [];
     const observedAt = now(),
       models = (current ? catalog.models : []).filter(
-        (m) => m.model !== report.model,
+        (m) => !observed.includes(m.model),
       );
     this.store.put("runtime-model-catalog", {
       id: installation.id,
@@ -835,17 +849,20 @@ export class RuntimeManager {
       profileId: report.account.profileId,
       models: [
         ...models,
-        {
-          id: report.model,
-          model: report.model,
-          name: report.model,
-          description:
-            "Claude Code reported this model in a qualification turn.",
-          isDefault: false,
-          supportedReasoningEfforts: efforts,
-          metadataSource: "runtime",
-          observedAt,
-        } satisfies ProviderModel,
+        ...observed.map(
+          (model) =>
+            ({
+              id: model,
+              model,
+              name: model,
+              description:
+                "Claude Code reported this model in a qualification turn.",
+              isDefault: false,
+              supportedReasoningEfforts: efforts,
+              metadataSource: "runtime",
+              observedAt,
+            }) satisfies ProviderModel,
+        ),
       ],
       efforts,
       observedAt,
@@ -874,15 +891,20 @@ export class RuntimeManager {
     state: "current" | "missing" | "stale";
     running: boolean;
     models: ProviderModel[];
+    /** For a stale qualification, what differs from the last one recorded. */
+    staleBecause: string[];
   } {
     const catalog = this.store.get<{
-      models: ProviderModel[];
-      runtimeRevision: string;
-      executableIdentity: string;
-    }>("runtime-model-catalog", installation.id);
+        models: ProviderModel[];
+        runtimeRevision: string;
+        executableIdentity: string;
+      }>("runtime-model-catalog", installation.id),
+      binding = this.binding(installation),
+      state = this.acceptance.resolve(binding, installation).freshness.state;
     return {
-      state: this.acceptance.resolve(this.binding(installation), installation)
-        .freshness.state,
+      state,
+      staleBecause:
+        state === "stale" ? this.staleReasons(installation, binding) : [],
       running: this.qualifying.has(installation.id),
       models:
         catalog?.runtimeRevision === installation.revisionId &&
@@ -890,6 +912,53 @@ export class RuntimeManager {
           ? catalog.models
           : [],
     };
+  }
+  /**
+   * Which parts of the binding differ from the last qualification recorded,
+   * in the owner's words. Only digests are kept, so a changed settings file
+   * is named, never what in it changed.
+   */
+  private staleReasons(
+    installation: Installation,
+    binding: RuntimeBinding | null,
+  ): string[] {
+    const last = this.acceptance
+      .history(installation.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (!last) return [];
+    if (!binding) return ["the signed-in account has not been read again"];
+    const parts: Array<[string, Array<keyof RuntimeBinding>]> = [
+        [
+          "the executable changed",
+          ["executableIdentity", "runtimeRevision", "runtimeVersion"],
+        ],
+        ["the signed-in account changed", ["accountKey", "profileId"]],
+        [
+          installation.appId === "anthropic.claude-code-cli"
+            ? "Claude Code's settings changed"
+            : "Codex's config.toml changed",
+          ["policyHash"],
+        ],
+        [
+          "Topsl's permission arguments for the runtime changed",
+          ["sandboxHash", "adapterProtocol", "schemaVersion"],
+        ],
+        ["the host changed", ["hostId", "platform", "arch"]],
+      ],
+      reasons = parts
+        .filter(([, keys]) =>
+          keys.some(
+            (key) => stable(binding[key]) !== stable(last.binding[key]),
+          ),
+        )
+        .map(([reason]) => reason);
+    if (!reasons.length)
+      reasons.push(
+        Date.parse(last.expiresAt) <= Date.now()
+          ? "the last qualification expired"
+          : "the last qualification was withdrawn",
+      );
+    return reasons;
   }
   isProjectBusy(id: string): boolean {
     return (

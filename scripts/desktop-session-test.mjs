@@ -250,7 +250,7 @@ try {
   });
   await expect(qualification.locator(".badge")).toHaveText("Not qualified");
   await qualification
-    .getByRole("combobox", { name: "Codex model to qualify" })
+    .getByRole("combobox", { name: "Codex model for the check turns" })
     .selectOption("fixture-model");
   await qualification
     .getByRole("button", { name: "Qualify Codex runtime" })

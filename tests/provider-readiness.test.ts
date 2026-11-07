@@ -199,7 +199,7 @@ describe("R2-AT-09/10/11: trusted role readiness", () => {
     expect(f.registry.history(f.installation.id)).toHaveLength(2);
     expect(runtimeBindingId(f.binding)).toBe(record.bindingId);
   });
-  test("Codex's own folder entries leave the policy fingerprint unchanged; any other setting changes it", async () => {
+  test("Codex's folder entries, interface state and default model leave the policy fingerprint unchanged; any other setting changes it", async () => {
     const f = await setup(),
       home = path.join(f.directory, "codex-home"),
       policy = async (text: string) => {
@@ -220,10 +220,20 @@ describe("R2-AT-09/10/11: trusted role readiness", () => {
       entry = '\n[projects."/work/new-project"]\ntrust_level = "trusted"\n',
       before = await policy(settings);
     expect(await policy(settings + entry)).toBe(before);
+    // The ChatGPT app writes these whenever the owner uses it.
+    for (const unchanged of [
+      'model = "other"\nmodel_reasoning_effort = "xhigh"\napproval_policy = "untrusted"\n',
+      settings +
+        '\n[desktop]\nconversationDetailMode = "STEPS_PROSE"\n\n[desktop.open-in-target-preferences.perPath]\n"/work/a" = "terminal"\n',
+      settings + "\n[tui]\nscreen_reader_detection_done = true\n",
+      settings + "\n[notice]\nhide_full_access_warning = true\n",
+    ])
+      expect(await policy(unchanged + entry)).toBe(before);
     for (const changed of [
-      'model = "other"\napproval_policy = "untrusted"\n',
       'model = "chosen"\napproval_policy = "never"\n',
       settings + 'sandbox_mode = "danger-full-access"\n',
+      settings + '\n[mcp_servers.tool]\ncommand = "/bin/tool"\n',
+      settings + '\n[features]\nweb_search = true\n',
     ])
       expect(await policy(changed + entry)).not.toBe(before);
     expect(await policy(settings + "model_context_window = 1\n")).not.toBe(
@@ -232,6 +242,37 @@ describe("R2-AT-09/10/11: trusted role readiness", () => {
     // A file that does not parse is compared byte for byte.
     const broken = await policy(settings + "[projects\n");
     expect(await policy(settings + "[projects\n\n")).not.toBe(broken);
+  });
+  test("Claude Code's default model leaves the policy fingerprint unchanged; its permissions change it", async () => {
+    const f = await setup(),
+      home = path.join(f.directory, "claude-home"),
+      installation = {
+        ...f.installation,
+        appId: "anthropic.claude-code-cli" as const,
+      },
+      policy = async (settings: object) => {
+        await writeFile(
+          path.join(home, "settings.json"),
+          JSON.stringify(settings),
+        );
+        return runtimeBinding(installation, {
+          accountKey: "account",
+          profileId: "profile",
+          billingRoute: "native-subscription",
+        }).policyHash;
+      };
+    await mkdir(home);
+    vi.stubEnv("CLAUDE_CONFIG_DIR", home);
+    cleanup.push(async () => {
+      vi.unstubAllEnvs();
+    });
+    const before = await policy({ permissions: { allow: [] } });
+    expect(
+      await policy({ model: "claude-opus-5-5", permissions: { allow: [] } }),
+    ).toBe(before);
+    expect(await policy({ permissions: { allow: ["Bash"] } })).not.toBe(
+      before,
+    );
   });
   test("trusted executable alone remains blocked, unsupported effort blocks broker readiness, and rollout disable cannot promote a route", async () => {
     const f = await setup(),

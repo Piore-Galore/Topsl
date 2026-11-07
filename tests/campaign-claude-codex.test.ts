@@ -1035,6 +1035,71 @@ describe.skipIf(!posix)("CL-02/CL-06/CL-07 Claude qualification through the runt
     f.route(true);
     for (const purpose of purposes) expect(f.codes(purpose, exact), purpose).toEqual([]);
   });
+
+  test("one qualification adds several Claude models: one probe run, one turn per further model, and a model Claude Code cannot run stays out without failing the probes", async () => {
+    const f = await launched("FIXTURE_UNAVAILABLE_MODEL=claude-fixture-missing ");
+    const home = await scratch("campaign-claude-home-");
+    vi.stubEnv("CLAUDE_CONFIG_DIR", home);
+    cleanup.push(async () => {
+      vi.unstubAllEnvs();
+    });
+    await writeFile(path.join(home, "settings.json"), '{"permissions":{"allow":[]}}');
+    f.route(true);
+    await f.runtime.inspect(f.installation);
+    f.store.put("installation", { ...f.installation, compatibility: "compatible" });
+    const result = await f.runtime.qualify(
+      f.installation,
+      {
+        model: "claude-fixture-5",
+        additionalModels: ["claude-fixture-6", "claude-fixture-missing", "claude-fixture-5"],
+      },
+      await qualificationParent(),
+    );
+    // Four probe turns, then one for each further model (the repeat is dropped).
+    expect(result.report.turnsStarted).toBe(6);
+    for (const observation of result.report.observations)
+      expect(observation.passed, observation.capability).toBe(true);
+    expect(result.report.modelChecks?.map((c) => [c.model, c.passed])).toEqual([
+      ["claude-fixture-6", true],
+      ["claude-fixture-missing", false],
+    ]);
+    for (const purpose of purposes) {
+      expect(f.codes(purpose, "claude-fixture-5"), purpose).toEqual([]);
+      expect(f.codes(purpose, "claude-fixture-6"), purpose).toEqual([]);
+      expect(f.codes(purpose, "claude-fixture-missing"), purpose).toContain(
+        "unsupported-model-setting",
+      );
+    }
+    expect(
+      f.runtime.qualificationStatus(f.installation).models.map((m) => m.model).sort(),
+    ).toEqual(["claude-fixture-5", "claude-fixture-6"]);
+    // Claude Code's /model writes the default model: the qualification holds.
+    await writeFile(
+      path.join(home, "settings.json"),
+      '{"model":"claude-fixture-6","permissions":{"allow":[]}}',
+    );
+    expect(f.runtime.qualificationStatus(f.installation)).toMatchObject({
+      state: "current",
+      staleBecause: [],
+    });
+    // A permission change voids it, and Providers is told which part changed.
+    await writeFile(
+      path.join(home, "settings.json"),
+      '{"permissions":{"allow":["Bash"]}}',
+    );
+    expect(f.runtime.qualificationStatus(f.installation)).toMatchObject({
+      state: "stale",
+      staleBecause: ["Claude Code's settings changed"],
+    });
+    // A Codex qualification covers every listed model, so it names only one.
+    await expect(
+      f.runtime.qualify(
+        { ...f.installation, appId: "openai.codex-cli" },
+        { model: "gpt", additionalModels: ["other"] },
+        await qualificationParent(),
+      ),
+    ).rejects.toThrow("covers every model Codex lists");
+  });
 });
 
 // A scripted Claude Code for direct runClaudeQualification runs: CAMPAIGN_MODE
