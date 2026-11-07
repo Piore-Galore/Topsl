@@ -23,7 +23,7 @@ To debug, run `npm run debug`. It builds with inline source maps and an unminifi
 
 The control service's and proxy's output is printed in the terminal, labelled `[service]` and `[proxy]`. Attach from `chrome://inspect` or your editor.
 
-It uses your normal profile. Add `-- --temp-profile` to use a throwaway profile that is deleted when Topsl closes; `--keep-profile` keeps it. Like any test profile, it does not search for runtimes, so add one with **Providers → Locate a runtime**. [scripts/debug.mjs](scripts/debug.mjs) lists the options and the port variables. Run `npm run build` before packaging; packaging does this itself.
+It uses your normal profile. Add `-- --temp-profile` to use a throwaway profile that is deleted when Topsl closes; `--keep-profile` keeps it. Like any test profile, it does not search for runtimes, so add one with **Providers → Locate a runtime**. [scripts/debug.mjs](scripts/debug.mjs) lists the options and the port variables. To start the same debug session without compiling, run `npm run debug:run`, or on macOS double-click **Debug Topsl.command** in the repository folder. It opens Terminal and waits for a key press when the session ends. It runs whatever `dist/` holds. It says whether that build has source maps and notes source files with newer timestamps than it, which are not in the run. It accepts the same options. Run `npm run build` before packaging; packaging does this itself.
 
 No provider app is installed, updated, trusted, or authenticated by these commands. The first launch discovers the Codex and Claude Code CLIs and checks eligible release metadata.
 

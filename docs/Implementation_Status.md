@@ -823,3 +823,26 @@ One live run per stage on the owner's Mac (macOS 27.0.1, arm64), on disposable p
 - Live job cancellation.
 - Other platforms and packaged builds.
 - OpenAI API, Anthropic API, external services and Ollama.
+
+### Follow-up: debug launch without building — 8 November 2026
+
+`npm run debug:run` (`scripts/debug.mjs --no-build`) starts the same debug session from the existing `dist/` without compiling.
+
+- It stops with a message if any bundle or the renderer is missing.
+- It reports whether the build has inline source maps (a debug build) or not (a plain `npm run build`).
+- It notes source files whose timestamps are newer than the build. Those may be edits, or files a git checkout or pull touched without changing them. Either way the run uses the build as it is.
+
+**Verified** on macOS arm64 with `npm run debug:run -- --temp-profile`, starting from a plain build:
+
+- It did not build, and reported no source maps and 32 newer files (touched by switching to and pulling `main`).
+- All four debugger endpoints answered.
+- Stopping it removed the throwaway profile.
+
+From an empty folder, `--no-build` exited 1 naming the missing `dist/main.cjs`. An unknown option exited 2.
+
+**Launcher.** On macOS, [Debug Topsl.command](../Debug%20Topsl.command) can be double-clicked in Finder.
+
+- It runs `npm run debug:run` from the repository folder, adding Homebrew's and `~/.local/bin` to `PATH` because Finder does not load the shell's settings.
+- It passes extra arguments on, and waits for a key press at the end.
+- Run from a shell with `--temp-profile`, all four debugger ports answered, the session ended with exit 0 and the throwaway profile was removed.
+- Not tested: an actual double-click in Finder; Windows and Linux have no launcher.

@@ -5,6 +5,9 @@
 //   npm run debug -- --temp-profile  a throwaway profile (see below)
 //   npm run debug -- --keep-profile  with --temp-profile: keep it afterwards
 //   npm run debug -- --no-devtools   do not open the window's DevTools
+//   npm run debug:run                the same, without building: runs the
+//                                    bundles already in dist/ (also
+//                                    `npm run debug -- --no-build`)
 //
 // What it opens, all on 127.0.0.1:
 //   main process      Node inspector on 9229 (chrome://inspect, or VS Code "Attach")
@@ -22,13 +25,18 @@
 // with Providers → Locate a runtime), and runtime qualification runs in a
 // topsl-qualify-* folder under test-results/.
 //
+// --no-build starts from whatever dist/ holds: a debug build has inline
+// source maps, a plain `npm run build` does not, and the script says which.
+// It notes, but still starts, when source files have newer timestamps than
+// that build (an edit, or a git checkout or pull that touched them).
+//
 // The normal profile is the one `npm start` and `npm run dev` use. A build
 // from this checkout may upgrade that profile's stores past what an older
 // installed Topsl can open; use --temp-profile when that matters.
 import { build } from "esbuild";
 import { build as buildVite } from "vite";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import electron from "electron";
@@ -41,7 +49,11 @@ import {
 
 const args = new Set(process.argv.slice(2));
 for (const arg of args)
-  if (!["--temp-profile", "--keep-profile", "--no-devtools"].includes(arg)) {
+  if (
+    !["--temp-profile", "--keep-profile", "--no-devtools", "--no-build"].includes(
+      arg,
+    )
+  ) {
     console.error(`Unknown option ${arg}. See scripts/debug.mjs.`);
     process.exit(2);
   }
@@ -61,11 +73,54 @@ const ports = {
 };
 const log = (message) => console.log(`[debug] ${message}`);
 
-log("Building with inline source maps.");
-await prepareDist();
-for (const [entry, outfile] of nodeEntries)
-  await build(nodeBuildOptions(entry, outfile, { debug: true }));
-await buildVite(debugRendererConfig);
+if (args.has("--no-build")) await useExistingBuild();
+else {
+  log("Building with inline source maps.");
+  await prepareDist();
+  for (const [entry, outfile] of nodeEntries)
+    await build(nodeBuildOptions(entry, outfile, { debug: true }));
+  await buildVite(debugRendererConfig);
+}
+
+/** Checks dist/ for a complete build and says what kind it is. */
+async function useExistingBuild() {
+  const bundles = [
+    ...nodeEntries.map(([, outfile]) => path.join("dist", outfile)),
+    path.join("dist", "renderer", "index.html"),
+  ];
+  const built = [];
+  for (const file of bundles) {
+    const info = await stat(file).catch(() => null);
+    if (!info) {
+      console.error(
+        `[debug] ${file} is missing. Run \`npm run debug\` (or \`npm run build\`) once first.`,
+      );
+      process.exit(1);
+    }
+    built.push(info.mtimeMs);
+  }
+  const oldest = Math.min(...built);
+  const maps = (await readFile(path.join("dist", "main.cjs"), "utf8")).includes(
+    "sourceMappingURL=data:application/json",
+  );
+  log(
+    `Not building: running dist/ as built ${new Date(oldest).toLocaleString()}, ${maps ? "with inline source maps" : "without source maps (a plain build; run `npm run debug` once to rebuild with them)"}.`,
+  );
+  const changed = [];
+  for (const root of ["apps", "packages"])
+    for (const entry of await readdir(root, {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (!entry.isFile() || !/\.(ts|tsx|css|html)$/.test(entry.name)) continue;
+      const file = path.join(entry.parentPath ?? entry.path, entry.name);
+      if ((await stat(file)).mtimeMs > oldest) changed.push(file);
+    }
+  if (changed.length)
+    log(
+      `Note: ${changed.length} source file${changed.length === 1 ? " is" : "s are"} newer than that build (${changed.slice(0, 3).join(", ")}${changed.length > 3 ? ", …" : ""}), by timestamp: edits, or a git checkout or pull. Any change in them is not in this run; \`npm run debug\` rebuilds.`,
+    );
+}
 
 const env = {
   ...process.env,

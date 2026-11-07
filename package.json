@@ -16,6 +16,7 @@
     "start": "npm run build && electron .",
     "dev": "node scripts/dev.mjs",
     "debug": "node scripts/debug.mjs",
+    "debug:run": "node scripts/debug.mjs --no-build",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "test:release": "node --test tests/release.test.mjs tests/release-packaging.test.mjs tests/mac-package.test.mjs",
