@@ -29,7 +29,6 @@ import {
   chatGptAuthorizeUrl,
   pkceChallenge,
   refreshChatGpt,
-  refreshStoredChatGpt,
   revokeChatGpt,
   type ChatGptAuthConfig,
   type SignInAttempt,
@@ -976,36 +975,6 @@ describe("ChatGPT refresh", () => {
     await expect(first).rejects.toThrow("first failed");
     expect(await second).toBe(2);
     expect(order).toEqual(["first:start", "other", "first:end", "second"]);
-  });
-
-  it("never races a rotating refresh token between concurrent refreshes", async () => {
-    const credential = await firstSignIn();
-    const revision = store.put("conn-1", credential, null);
-    const before = fake.tokenRequests.length;
-
-    // Two callers saw the same expiring revision: only one refresh is sent.
-    const [a, b] = await Promise.all([
-      refreshStoredChatGpt(config, store, "conn-1", { seenRevision: revision }),
-      refreshStoredChatGpt(config, store, "conn-1", { seenRevision: revision }),
-    ]);
-    expect(fake.tokenRequests.length - before).toBe(1);
-    expect(a).toEqual(b);
-    expect(a.revision).toBe(revision + 1);
-
-    // Unconditional refreshes queue; the second spends the rotated token.
-    const [c, d] = await Promise.all([
-      refreshStoredChatGpt(config, store, "conn-1"),
-      refreshStoredChatGpt(config, store, "conn-1"),
-    ]);
-    const spent = fake.tokenRequests
-      .slice(-2)
-      .map((request) => request.get("refresh_token"));
-    expect(spent).toEqual([
-      a.credential.refreshToken,
-      c.credential.refreshToken,
-    ]);
-    expect(d.revision).toBe(c.revision + 1);
-    expect(store.get("conn-1")).toEqual(d);
   });
 });
 

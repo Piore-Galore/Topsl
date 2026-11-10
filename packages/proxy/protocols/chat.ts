@@ -564,6 +564,12 @@ const finishReasons: Readonly<Record<string, FinishReason>> = {
   content_filter: "content-filter",
 };
 
+/** An upstream's `error` member: an object, or on some gateways bare text. */
+function errorObject(value: unknown): JsonObject | null {
+  if (isObject(value)) return value;
+  return typeof value === "string" && value.trim() ? { message: value } : null;
+}
+
 function usageEvent(value: unknown): CanonicalEvent[] {
   if (!isObject(value)) return [];
   const prompt = isObject(value.prompt_tokens_details)
@@ -606,6 +612,8 @@ class StreamReader {
   private text: number | null = null;
   private reasoning: number | null = null;
   private readonly tools = new Map<number, ToolState>();
+  /** Chunk position to the key of the latest call sent there with no index. */
+  private readonly unindexed = new Map<number, number>();
   private readonly ended = new Set<number>();
   private finish: { reason: FinishReason; rawReason: string | null } | null =
     null;
@@ -617,8 +625,8 @@ class StreamReader {
     const data = frameJson(frame);
     if (!data)
       return this.fail(malformedEvent("A Chat Completions chunk is not JSON."));
-    if (isObject(data.error))
-      return this.fail(errorEvent(openAiError(data.error)));
+    const failed = errorObject(data.error);
+    if (failed) return this.fail(errorEvent(openAiError(failed)));
     const events: CanonicalEvent[] = [];
     if (!this.started) {
       this.started = true;
@@ -708,9 +716,29 @@ class StreamReader {
     return events;
   }
 
+  /**
+   * The key for a call fragment that carries no `index`: its position in the
+   * chunk, unless it names another call ID than the call already there. Some
+   * gateways send each parallel call in its own chunk with no index, and
+   * those are separate calls, not one call with joined arguments.
+   */
+  private unindexedKey(call: JsonObject, position: number): number {
+    const key = this.unindexed.get(position) ?? position;
+    const id = typeof call.id === "string" && call.id ? call.id : null;
+    const known = this.tools.get(key)?.id ?? null;
+    if (id === null || known === null || known === id) return key;
+    let next = this.tools.size;
+    while (this.tools.has(next)) next += 1;
+    this.unindexed.set(position, next);
+    return next;
+  }
+
   private toolDelta(value: unknown, position: number): CanonicalEvent[] {
     const call = isObject(value) ? value : {};
-    const key = typeof call.index === "number" ? call.index : position;
+    const key =
+      typeof call.index === "number"
+        ? call.index
+        : this.unindexedKey(call, position);
     let state = this.tools.get(key);
     const events: CanonicalEvent[] = [
       ...this.endText(),
@@ -809,7 +837,8 @@ export async function* readStream(
 /** Reads a non-streaming Chat Completions body (or error body). */
 export function readResponse(body: unknown): CanonicalEvent[] {
   const object = isObject(body) ? body : {};
-  if (isObject(object.error)) return [errorEvent(openAiError(object.error))];
+  const failed = errorObject(object.error);
+  if (failed) return [errorEvent(openAiError(failed))];
   const reader = new StreamReader();
   const choices = Array.isArray(object.choices) ? object.choices : [];
   const events = reader.read({

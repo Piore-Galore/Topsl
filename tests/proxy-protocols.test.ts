@@ -1607,6 +1607,64 @@ describe("reading upstream streams", () => {
     ]);
   });
 
+  test("Chat: parallel calls sent without an index stay separate calls", async () => {
+    const response = collectResponse(
+      await readText(
+        "chat",
+        chatSse(
+          chunk({ role: "assistant", content: null }),
+          chunk({
+            tool_calls: [
+              {
+                id: "call_paris",
+                type: "function",
+                function: { name: "get_weather", arguments: '{"city":' },
+              },
+            ],
+          }),
+          chunk({ tool_calls: [{ function: { arguments: '"Paris"}' } }] }),
+          chunk({
+            tool_calls: [
+              {
+                id: "call_tokyo",
+                type: "function",
+                function: { name: "get_weather", arguments: '{"city":' },
+              },
+            ],
+          }),
+          chunk({ tool_calls: [{ function: { arguments: '"Tokyo"}' } }] }),
+          chunk({}, "tool_calls"),
+          "[DONE]",
+        ),
+      ),
+    );
+    expect(response.output).toEqual([
+      {
+        type: "tool-call",
+        id: "call_paris",
+        name: "get_weather",
+        arguments: '{"city":"Paris"}',
+      },
+      {
+        type: "tool-call",
+        id: "call_tokyo",
+        name: "get_weather",
+        arguments: '{"city":"Tokyo"}',
+      },
+    ]);
+  });
+
+  test("Chat: an error sent as bare text keeps its message", async () => {
+    const streamed = collectResponse(
+      await readText("chat", chatSse({ error: "model not loaded" })),
+    );
+    expect(streamed.error?.message).toBe("model not loaded");
+    const whole = collectResponse(
+      converters.chat.readResponse({ error: "model not loaded" }),
+    );
+    expect(whole.error?.message).toBe("model not loaded");
+  });
+
   test("Chat: a truncated stream is never reported complete", async () => {
     const events = await readText(
       "chat",

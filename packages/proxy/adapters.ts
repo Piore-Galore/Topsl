@@ -348,22 +348,29 @@ export async function dispatchUpstream(
   // stream as one JSON document lost every event.
   const declaredStream = type.includes("text/event-stream");
   let json: unknown = null;
-  if (declaredStream || !/json/i.test(type)) {
-    const peeked = await peekBody(response.body);
-    if (declaredStream || !/^[{[]/.test(peeked.head))
-      return {
-        ok: true,
-        requestId,
-        streamed: true,
-        events: withRequestId(
-          module.readStream(
-            traceFrames(parseSse(peeked.chunks), response, connection.kind),
-          ),
+  try {
+    if (declaredStream || !/json/i.test(type)) {
+      const peeked = await peekBody(response.body);
+      if (declaredStream || !/^[{[]/.test(peeked.head))
+        return {
+          ok: true,
           requestId,
-        ),
-      };
-    json = await collectJson(peeked.chunks);
-  } else json = await response.json().catch(() => null);
+          streamed: true,
+          events: withRequestId(
+            module.readStream(
+              traceFrames(parseSse(peeked.chunks), response, connection.kind),
+            ),
+            requestId,
+            call.signal,
+          ),
+        };
+      json = await collectJson(peeked.chunks);
+    } else json = await response.json().catch(() => null);
+  } catch (error) {
+    // The headers arrived but the body could not be read: a cancel, or an
+    // upstream that dropped the connection.
+    return { ok: false, error: readFailure(call.signal, error, requestId) };
+  }
   // Some gateways answer a streaming request with one JSON body.
   if (process.env.TOPSL_DEBUG_PROXY_TRACE === "1")
     process.stderr.write(
@@ -379,18 +386,57 @@ export async function dispatchUpstream(
         yield* events;
       })(),
       requestId,
+      call.signal,
     ),
   };
 }
 
+/** A response body that could not be read to its end. */
+function readFailure(
+  signal: AbortSignal,
+  error: unknown,
+  requestId: string | null,
+): ProxyErrorInfo {
+  return signal.aborted
+    ? failure(
+        "interrupted",
+        null,
+        null,
+        null,
+        "The request was cancelled.",
+        false,
+        requestId,
+      )
+    : failure(
+        "interrupted",
+        null,
+        null,
+        null,
+        `The upstream response stopped before it finished: ${message(error)}`,
+        true,
+        requestId,
+      );
+}
+
+/**
+ * Stamps the upstream request ID on error events. A body read that fails in
+ * the middle of a stream (a reset socket, a body timeout, a cancelled
+ * request) becomes the stream's terminal error event, so every client
+ * protocol ends the response as failed and not as a silently cut-off answer.
+ */
 async function* withRequestId(
   events: AsyncGenerator<CanonicalEvent>,
   requestId: string | null,
+  signal: AbortSignal,
 ): AsyncGenerator<CanonicalEvent> {
-  for await (const event of events)
-    yield event.type === "error" && !event.error.requestId
-      ? { ...event, error: { ...event.error, requestId } }
-      : event;
+  try {
+    for await (const event of events)
+      yield event.type === "error" && !event.error.requestId
+        ? { ...event, error: { ...event.error, requestId } }
+        : event;
+  } catch (error) {
+    yield { type: "error", error: readFailure(signal, error, requestId) };
+  }
 }
 
 /** Lists the models a connection's own account can use. */

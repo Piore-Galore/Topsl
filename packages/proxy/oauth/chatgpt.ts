@@ -11,7 +11,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { ChatGptCredential, CredentialStore } from "../credentials";
+import type { ChatGptCredential } from "../credentials";
 import { JwtError, OidcProvider, decodeJwt, type JwtClaims } from "../jwt";
 
 /**
@@ -659,7 +659,13 @@ export async function beginChatGptSignIn(
     // A page on another origin can reach a loopback port through DNS
     // rebinding; such requests carry a different Host header.
     if (req.headers.host !== host) return respond(res, "not-found");
-    const url = new URL(req.url ?? "/", redirectUri);
+    // A target such as "//" is not a URL; without this it would throw.
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", redirectUri);
+    } catch {
+      return respond(res, "not-found");
+    }
     if (url.pathname !== "/auth/callback") return respond(res, "not-found");
     if (req.method !== "GET") return respond(res, "method");
     if (settled || accepted) return respond(res, "finished");
@@ -684,7 +690,9 @@ export async function beginChatGptSignIn(
     respond(res, outcome.outcome);
     shutdown();
   };
-  server.on("request", (req, res) => void handle(req, res));
+  server.on("request", (req, res) => {
+    handle(req, res).catch(() => res.destroy());
+  });
   server.on("error", () => {
     finish(failed("The sign-in listener stopped unexpectedly."));
     shutdown();
@@ -803,8 +811,9 @@ async function verifyRefreshedIdToken(
  * Exchanges the refresh token for a new access token. The access token,
  * expiry, granted scopes and rotating refresh token are replaced together;
  * `scope` is not sent, so the grant stays as it was. The caller must hold
- * the connection's refresh lock (see {@link refreshStoredChatGpt}) so two
- * refreshes never spend the same rotating token.
+ * the connection's refresh lock (`CredentialStore.withLock`, as
+ * `ProxyService.headers` does) so two refreshes never spend the same
+ * rotating token.
  */
 export async function refreshChatGpt(
   config: ChatGptAuthConfig,
@@ -898,39 +907,6 @@ export async function refreshChatGpt(
     scopes: tokens.scopes ?? credential.scopes,
     savedAt: new Date(now).toISOString(),
   };
-}
-
-/**
- * Refreshes a stored ChatGPT credential with the connection's lock held and
- * saves the result with a compare-and-swap. Pass the revision whose access
- * token was rejected or is expiring as `seenRevision`: when another caller
- * has already replaced it, that newer credential is returned without a
- * second refresh. Errors (including {@link RefreshError}) are rethrown; the
- * caller decides what a terminal error clears.
- */
-export async function refreshStoredChatGpt(
-  config: ChatGptAuthConfig,
-  store: CredentialStore,
-  connectionId: string,
-  options: { seenRevision?: number } = {},
-): Promise<{ revision: number; credential: ChatGptCredential }> {
-  return store.withLock(connectionId, async () => {
-    const current = store.get(connectionId);
-    if (!current || current.credential.kind !== "oauth-chatgpt")
-      throw new RefreshError(
-        "This connection has no ChatGPT sign-in. Sign in again.",
-        { kind: "sign-in-required", code: "no_credential", status: null },
-      );
-    const stored = current.credential;
-    if (
-      options.seenRevision !== undefined &&
-      current.revision !== options.seenRevision
-    )
-      return { revision: current.revision, credential: stored };
-    const next = await refreshChatGpt(config, stored);
-    const revision = store.put(connectionId, next, current.revision);
-    return { revision, credential: next };
-  });
 }
 
 /**
