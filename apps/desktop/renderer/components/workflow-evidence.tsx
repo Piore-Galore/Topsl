@@ -163,6 +163,8 @@ export function WorkflowEvidence({
         !diff?.files.some((file: any) => file.path === item.file))
     )
       void perform("diff", () => loadDiff(item.file, item.candidateId));
+    // The shown diff already has this file; drop any load still in flight.
+    else diffSelection.current = "";
   }
   function diffLines(
     lines: Array<{ line: number; text: string }>,
@@ -488,25 +490,46 @@ export function WorkflowEvidence({
             Cleanup: {check.cleanup?.state ?? "Not recorded"}
             {check.cleanup?.error && ` · ${check.cleanup.error}`}
           </p>
-          {check.execution.state === "uncertain" && (
-            <button
-              disabled={!!pending}
-              onClick={() =>
-                void perform("reconcile", async () => {
-                  await window.topsl.command({
-                    type: "check-execution-reconcile",
-                    requestId: crypto.randomUUID(),
-                    projectId,
-                    id: check.execution.id,
-                  });
-                  await inspectCheck(check.execution.id);
-                  await refresh();
-                })
-              }
-            >
-              Reconcile original check lifecycle
-            </button>
-          )}
+          {check.execution.state === "uncertain" &&
+            check.processIdRecorded === false && (
+              <button
+                disabled={!!pending}
+                onClick={() =>
+                  void perform("mark-not-running", async () => {
+                    await window.topsl.command({
+                      type: "check-execution-mark-not-running",
+                      requestId: crypto.randomUUID(),
+                      projectId,
+                      id: check.execution.id,
+                    });
+                    await inspectCheck(check.execution.id);
+                    await refresh();
+                  })
+                }
+              >
+                Mark as not running
+              </button>
+            )}
+          {check.execution.state === "uncertain" &&
+            check.processIdRecorded !== false && (
+              <button
+                disabled={!!pending}
+                onClick={() =>
+                  void perform("reconcile", async () => {
+                    await window.topsl.command({
+                      type: "check-execution-reconcile",
+                      requestId: crypto.randomUUID(),
+                      projectId,
+                      id: check.execution.id,
+                    });
+                    await inspectCheck(check.execution.id);
+                    await refresh();
+                  })
+                }
+              >
+                Reconcile original check lifecycle
+              </button>
+            )}
           {check.cleanup &&
             ["failed", "pending"].includes(check.cleanup.state) && (
               <button

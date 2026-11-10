@@ -58,6 +58,8 @@ export function ImportsSection({
   } | null>(null);
   const [deleted, setDeleted] = useState("");
   const listTicket = useRef(0);
+  /** The query the listed items and cursor belong to. */
+  const applied = useRef("");
   const [error, setError] = useState("");
   /** Whether the latest read of the import list failed, so it can be retried. */
   const [listFailed, setListFailed] = useState(false);
@@ -80,16 +82,19 @@ export function ImportsSection({
   async function load(more = false) {
     if (!projectId) return;
     const ticket = ++listTicket.current;
+    // Paging continues the submitted search, not text typed since.
+    const text = more ? applied.current : query.trim();
     const page = await act({
       type: "history-imports",
       projectId,
-      query: query.trim() || undefined,
+      query: text || undefined,
       cursor: more ? cursor : null,
       limit: 25,
     });
     if (ticket !== listTicket.current) return;
     setListFailed(!page);
     if (!page) return;
+    applied.current = text;
     setItems((current) => (more ? [...current, ...page.items] : page.items));
     setTotal(page.total);
     setCursor(page.nextCursor);

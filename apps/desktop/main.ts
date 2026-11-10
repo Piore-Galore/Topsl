@@ -54,7 +54,10 @@ const testProfile = testProfileSettings(process.env, app.isPackaged),
 if (testProfile) app.setPath("userData", testProfile.profile);
 /** `npm run debug`'s switches; null in a packaged or ordinary run. */
 const debug = debugSettings(process.env, app.isPackaged);
-if (!app.requestSingleInstanceLock()) app.quit();
+// A second instance leaves at once. `app.quit()` would let this module go on
+// to register its start-up, which could open a window on the same profile.
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.exit(0);
 let window: BrowserWindow | null = null;
 let worker: UtilityProcess | null = null;
 /** The local model proxy (docs/Native_Harness_Plan.md §2), started after the vault opens. */
@@ -156,20 +159,28 @@ async function unlock(passphrase?: string): Promise<AppState> {
   if (unlocking) throw new Error("The vault is already opening.");
   if (!state.locked) return state;
   unlocking = true;
+  let child: UtilityProcess | null = null;
   try {
     const directory = app.getPath("userData");
     const key = await openVault(
       directory,
       isolatedTest ? "Topsl isolated test passphrase" : passphrase,
     );
-    worker = utilityProcess.fork(path.join(__dirname, "service.cjs"), [], {
-      cwd: directory,
-      serviceName: "Topsl control service",
-      stdio: "pipe",
-      execArgv: inspectArgs(debug?.serviceInspectPort ?? null),
-    });
-    childOutput(worker, "service", !!debug?.logs);
-    worker.on("message", (message: any) => {
+    const forked = utilityProcess.fork(
+      path.join(__dirname, "service.cjs"),
+      [],
+      {
+        cwd: directory,
+        serviceName: "Topsl control service",
+        stdio: "pipe",
+        execArgv: inspectArgs(debug?.serviceInspectPort ?? null),
+      },
+    );
+    child = worker = forked;
+    childOutput(forked, "service", !!debug?.logs);
+    forked.on("message", (message: any) => {
+      // A worker replaced after a failed start no longer speaks for Topsl.
+      if (worker !== forked) return;
       if (message.event) {
         if (message.event.type === "state") {
           state = { ...message.event.data, proxy: proxyHost?.view ?? null };
@@ -206,7 +217,10 @@ async function unlock(passphrase?: string): Promise<AppState> {
           : task.resolve(message.value);
       }
     });
-    worker.on("exit", () => {
+    forked.on("exit", () => {
+      // Only the current worker's exit ends the pending requests; an earlier
+      // worker stopped after a failed start must not take its successor down.
+      if (worker !== forked) return;
       worker = null;
       for (const p of pending.values()) {
         clearTimeout(p.timer);
@@ -278,6 +292,12 @@ async function unlock(passphrase?: string): Promise<AppState> {
     );
     return state;
   } catch (e) {
+    // Stop the service that did not start, so a retry never runs a second
+    // one on the same profile and database.
+    if (child) {
+      if (worker === child) worker = null;
+      child.kill();
+    }
     state = { ...state, locked: true, lockReason: safeError(e) };
     publish({ type: "state", data: state });
     throw e;
@@ -293,6 +313,35 @@ function changedFilesText(
   if (!files.length) return "Changed files: none.";
   const shown = files.slice(0, 25).map((f) => `• ${f.path} (${f.change})`);
   return `Changed files (${files.length}):\n${shown.join("\n")}${files.length > shown.length ? `\n…and ${files.length - shown.length} more; see Results → Changes.` : ""}`;
+}
+function workIsActive(): boolean {
+  return (
+    activeControl ||
+    state.runs.some((r) =>
+      ["starting", "running", "awaiting-approval"].includes(r.status),
+    ) ||
+    state.jobs.some((j) =>
+      ["downloading", "verifying", "applying"].includes(j.state),
+    )
+  );
+}
+/**
+ * Whether Topsl may close now. The owner is asked once while work is active;
+ * closing the window and the Quit menu item share the question and its answer.
+ * Programmatic quits and signals do not come through here.
+ */
+async function approveClose(): Promise<boolean> {
+  if (closeApproved || !workIsActive()) return true;
+  if (closeReview) return false;
+  closeReview = true;
+  const approved = await confirm(
+    "Close Topsl while work is active?",
+    "Topsl-owned native sessions will stop. An external installer may continue. Durable records will require reconciliation on restart; approved commands will not be replayed.",
+    "Close Topsl",
+  );
+  closeReview = false;
+  if (approved) closeApproved = true;
+  return approved;
 }
 async function confirm(
   title: string,
@@ -464,6 +513,15 @@ async function dispatch(command: Command): Promise<any> {
         : "Revoke this approved peer device?",
       `Selected record: ${command.type === "replication-delete" ? command.recordId : command.deviceId}\n\nDeletion boundaries propagate through explicitly exchanged encrypted metadata. Native folders, history and credentials remain with their owners.`,
       "Confirm change",
+    );
+    if (!trusted.approved) return null;
+  }
+  if (command.type === "check-execution-mark-not-running") {
+    trusted.approved = await confirm(
+      "Mark this check as not running?",
+      "Topsl has no process ID for this check, so it cannot verify that it stopped. Confirm only if no process from this check is still running. The check will be recorded as an error, it cannot count toward acceptance, and the workspace's check lock is released.",
+      "Mark as not running",
+      "warning",
     );
     if (!trusted.approved) return null;
   }
@@ -1064,6 +1122,7 @@ app.on("second-instance", () => {
   window?.focus();
 });
 app.whenReady().then(async () => {
+  if (!primaryInstance) return;
   const iconPath = path.join(__dirname, "icon.png");
   app.setAboutPanelOptions({
     applicationName: "Topsl",
@@ -1079,7 +1138,15 @@ app.whenReady().then(async () => {
         submenu: [
           { label: "About Topsl", role: "about" },
           { type: "separator" },
-          { label: "Quit Topsl", role: "quit" },
+          {
+            // Not `role: "quit"`: that quits without asking about active work.
+            label: "Quit Topsl",
+            accelerator: "CmdOrCtrl+Q",
+            click: () =>
+              void approveClose().then((approved) => {
+                if (approved) app.quit();
+              }),
+          },
         ],
       },
       { role: "editMenu" },
@@ -1114,28 +1181,10 @@ app.whenReady().then(async () => {
   );
   window.webContents.session.setPermissionCheckHandler(() => false);
   window.on("close", (event) => {
-    const active =
-      activeControl ||
-      state.runs.some((r) =>
-        ["starting", "running", "awaiting-approval"].includes(r.status),
-      ) ||
-      state.jobs.some((j) =>
-        ["downloading", "verifying", "applying"].includes(j.state),
-      );
-    if (!active || closeApproved || quitting) return;
+    if (quitting || closeApproved || !workIsActive()) return;
     event.preventDefault();
-    if (closeReview) return;
-    closeReview = true;
-    void confirm(
-      "Close Topsl while work is active?",
-      "Topsl-owned native sessions will stop. An external installer may continue. Durable records will require reconciliation on restart; approved commands will not be replayed.",
-      "Close Topsl",
-    ).then((approved) => {
-      closeReview = false;
-      if (approved) {
-        closeApproved = true;
-        window?.close();
-      }
+    void approveClose().then((approved) => {
+      if (approved) window?.close();
     });
   });
   ipcMain.handle("topsl:command", async (event, raw: unknown) => {

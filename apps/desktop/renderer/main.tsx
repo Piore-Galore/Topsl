@@ -129,6 +129,29 @@ function HandoffOmissions({ snapshot }: { snapshot: ContextSnapshot }) {
     </div>
   );
 }
+/**
+ * Identifies an in-flight command by its type and target, so the same action
+ * on a second runtime, project, attempt, connection or route is not mistaken
+ * for a repeat of the first.
+ */
+function commandKey(command: {
+  type: string;
+  [field: string]: unknown;
+}): string {
+  return [
+    command.type,
+    ...[
+      "id",
+      "projectId",
+      "conversationId",
+      "installationId",
+      "attemptId",
+      "connectionId",
+      "routeId",
+    ].map((field) => (command as any)[field] ?? ""),
+  ].join(":");
+}
+
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [page, setPage] = useState<Page>("projects");
@@ -173,9 +196,16 @@ function App() {
   const [searchResults, setSearchResults] = useState<Message[] | null>(null);
   const [searchCursor, setSearchCursor] = useState<string | null>(null);
   const [scopedData, setScopedData] = useState<any>(null);
+  // Pages from "Load older chats" live apart from the project snapshot, which
+  // is replaced whole on every refresh and holds only the first page.
+  const [olderChats, setOlderChats] = useState<{
+    items: any[];
+    cursor: string | null;
+  } | null>(null);
   const scopeGeneration = useRef(0);
   useEffect(() => {
     setScopedData(null);
+    setOlderChats(null);
     setSearchResults(null);
     setSearchCursor(null);
   }, [projectId]);
@@ -214,23 +244,27 @@ function App() {
     // another runtime is selected there; one from Providers for any other
     // runtime keeps its result and error.
     const runtimeAtStart = selectedRuntime.current;
+    // A command for a project other than the selected one comes from a
+    // surface that is not project-scoped, such as a Projects card's "Open
+    // terminal". Its result belongs to that surface, so the selected-project
+    // fence does not apply to it.
+    const elsewhere =
+      "projectId" in command &&
+      !!command.projectId &&
+      command.projectId !== selectedProject.current;
     const inScope = () =>
-      (!scoped || scopeTicket === scopeGeneration.current) &&
-      (!("projectId" in command) ||
-        !command.projectId ||
-        command.projectId === selectedProject.current) &&
+      (elsewhere ||
+        ((!scoped || scopeTicket === scopeGeneration.current) &&
+          (!("projectId" in command) ||
+            !command.projectId ||
+            command.projectId === selectedProject.current))) &&
       (!("conversationId" in command) ||
         command.conversationId === selectedConversation.current) &&
       (!command.type.startsWith("runtime-") ||
         !("id" in command) ||
         command.id !== runtimeAtStart ||
         command.id === selectedRuntime.current);
-    const key = [
-      command.type,
-      ...["id", "projectId", "conversationId", "installationId"].map(
-        (field) => (command as any)[field] ?? "",
-      ),
-    ].join(":");
+    const key = commandKey(command);
     if (inFlight.current.has(key)) return undefined;
     inFlight.current.add(key);
     if (activeAction.current)
@@ -334,7 +368,9 @@ function App() {
   /** Switches the selected project, leaving its terminal and chat behind. */
   function switchProject(id: string) {
     projectTicket.current++;
-    if (id === projectId) return;
+    // The ref, not this render's value: a callback kept by an earlier render
+    // must compare against the project selected now.
+    if (id === selectedProject.current) return;
     setProjectId(id);
     setThreadId(null);
     setConversationId("");
@@ -377,10 +413,21 @@ function App() {
   const threadIndex = useThreadIndex(
     state?.locked ? [] : (state?.projects.map((p) => p.id) ?? []),
   );
-  const conversations =
+  const firstChats: any[] =
     scopedData?.conversations ??
     state?.conversations.filter((c) => c.projectId === projectId) ??
     [];
+  const conversations = olderChats
+    ? [
+        ...firstChats,
+        ...olderChats.items.filter(
+          (older) => !firstChats.some((c) => c.id === older.id),
+        ),
+      ]
+    : firstChats;
+  const conversationCursor = olderChats
+    ? olderChats.cursor
+    : scopedData?.conversationCursor;
   const conversation = conversations.find((c: any) => c.id === conversationId);
   const installation = state?.installations.find(
     (i) => i.id === installationId,
@@ -701,7 +748,11 @@ function App() {
                 section={section}
                 onView={openProjectView}
                 threadId={threadId}
-                onThread={(next) => openThread(next)}
+                onThread={(next) => {
+                  // A result from a project's page that arrives after another
+                  // project was selected does not open its thread there.
+                  if (projectId === selectedProject.current) openThread(next);
+                }}
                 attachment={attachments[projectId] ?? null}
                 onAttachment={(referenceId) =>
                   setAttachments((current) => {
@@ -822,24 +873,30 @@ function App() {
                           <ActionButton onClick={newConversation}>
                             + New chat
                           </ActionButton>
-                          {scopedData?.conversationCursor && (
+                          {conversationCursor && (
                             <ActionButton
-                              disabled={pending["history-conversations"]}
+                              disabled={
+                                pending[
+                                  commandKey({
+                                    type: "history-conversations",
+                                    projectId,
+                                  })
+                                ]
+                              }
                               onClick={async () => {
                                 const result = await act({
                                   type: "history-conversations",
                                   projectId,
-                                  cursor: scopedData.conversationCursor,
+                                  cursor: conversationCursor,
                                   limit: 200,
                                 });
                                 if (result)
-                                  setScopedData((current: any) => ({
-                                    ...current,
-                                    conversations: [
-                                      ...current.conversations,
+                                  setOlderChats((current) => ({
+                                    items: [
+                                      ...(current?.items ?? []),
                                       ...result.items,
                                     ],
-                                    conversationCursor: result.nextCursor,
+                                    cursor: result.nextCursor ?? null,
                                   }));
                               }}
                             >

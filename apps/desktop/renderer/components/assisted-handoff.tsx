@@ -60,6 +60,9 @@ export function AssistedHandoff({
             setRole(event.target.value as any);
             setHandoff(null);
             setApproved(false);
+            // The attestation and report belong to one handoff only.
+            setStopped(false);
+            setReport("");
           }}
         >
           <option value="builder">Builder</option>
@@ -91,6 +94,8 @@ export function AssistedHandoff({
             if (ticket === generation.current) {
               setHandoff(value);
               setResult(null);
+              setStopped(false);
+              setReport("");
             }
           })
         }

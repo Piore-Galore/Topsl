@@ -36,6 +36,7 @@ import type {
 import type { Command } from "../../packages/domain/commands";
 import { NativeService } from "./native";
 import {
+  budgetPeriodStart,
   providerBudgetId,
   providerBudgetStatus,
   type AllowanceSnapshot,
@@ -765,9 +766,31 @@ export class Service {
   private providerBudgets() {
     const budgets = this.store.list<ProviderBudget>("provider-budget");
     if (!budgets.length) return [];
-    const runs = this.store.list<Run>("run"),
-      usage = this.store.list<UsageFact>("usage"),
-      at = new Date();
+    const at = new Date(),
+      earliest = Math.min(
+        ...budgets.map((budget) =>
+          budgetPeriodStart(budget.period, at).getTime(),
+        ),
+      ),
+      runs: Run[] = [],
+      usage: UsageFact[] = [];
+    // Read every run and fact of the longest period, not the newest 5,000 of
+    // each. A run is stored when it is created, so the walk stops at the first
+    // run older than every period; a usage fact is stored after its run, so
+    // none that counts lies before the oldest run kept.
+    let oldest = Infinity;
+    for (const { value, sequence } of this.store.newestFirst<Run>("run")) {
+      if (Date.parse(value.createdAt) < earliest) break;
+      runs.push(value);
+      oldest = sequence;
+    }
+    if (runs.length)
+      for (const { value, sequence } of this.store.newestFirst<UsageFact>(
+        "usage",
+      )) {
+        if (sequence < oldest) break;
+        usage.push(value);
+      }
     return budgets.map((budget) =>
       providerBudgetStatus(budget, runs, usage, at),
     );
@@ -2799,6 +2822,20 @@ export class Service {
         this.changed();
         return result;
       }
+      case "check-execution-mark-not-running": {
+        if (!trusted.approved)
+          throw new Error(
+            "Marking a check as not running requires native confirmation.",
+          );
+        this.require<Project>("project", command.projectId);
+        this.replication.assertLocalOwner(command.projectId);
+        const result = this.checks.markNotRunning(
+          command.projectId,
+          command.id,
+        );
+        this.changed();
+        return result;
+      }
       case "check-cleanup-retry": {
         this.require<Project>("project", command.projectId);
         this.replication.assertLocalOwner(command.projectId);
@@ -3378,6 +3415,14 @@ export class Service {
           throw new Error(
             "Close native sessions before deleting their history.",
           );
+        // An uncertain run still holds its workspace lease and its capacity,
+        // and only reconciling the run releases them. Deleting the run with
+        // its conversation would leave both held with nothing to reconcile.
+        for (const run of this.store.iterate<any>("run"))
+          if (run.conversationId === command.id && run.status === "uncertain")
+            throw new Error(
+              "This conversation has a run whose outcome is unknown. Reconcile it before deleting its history.",
+            );
         this.store.deleteConversation(command.id);
         this.changed();
         return;
@@ -3397,18 +3442,25 @@ export class Service {
           throw new Error("Connect the selected runtime first.");
         try {
           const result = await this.runtime.inspect(i);
+          // Saved onto the current record: discovery or a trust decision may
+          // have changed it while the runtime was inspected.
           this.store.save("installation", {
-            ...i,
+            ...this.installation(i.id),
             compatibility: "compatible",
           });
           this.changed();
           return result;
         } catch (e) {
-          this.store.save("installation", {
-            ...i,
-            compatibility: "incompatible",
-          });
-          this.changed();
+          // Only a failed connection says the runtime is incompatible. A
+          // failed refresh of a connected runtime (a timeout, a billing
+          // variable, a shutdown) leaves it connected.
+          if (command.type === "runtime-connect") {
+            this.store.save("installation", {
+              ...this.installation(i.id),
+              compatibility: "incompatible",
+            });
+            this.changed();
+          }
           throw e;
         }
       }

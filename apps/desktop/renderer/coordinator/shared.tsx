@@ -77,18 +77,32 @@ export function useCommandRunner(refresh: () => Promise<void>, scope: string) {
   useEffect(() => {
     generation.current++;
     setErrors({});
+    // Leaving the screen counts as a change too, so a command still in
+    // flight at unmount does not refresh or report afterwards.
+    return () => {
+      generation.current++;
+    };
   }, [scope]);
   const run: Run = async (key, command) => {
     const ticket = generation.current;
     setErrors((current) => ({ ...current, [key]: "" }));
+    let result: any;
     try {
-      const result = await window.topsl.command(command);
-      if (ticket === generation.current) await latest.current();
-      return result;
+      result = await window.topsl.command(command);
     } catch (error: any) {
       if (ticket === generation.current)
         setErrors((current) => ({ ...current, [key]: error.message }));
+      return undefined;
     }
+    // The command succeeded. A failed refresh is not a failed command: were
+    // it reported as one, the owner would send again and pay for a second
+    // session or message. The next refresh brings the screen up to date.
+    if (ticket === generation.current) {
+      try {
+        await latest.current();
+      } catch {}
+    }
+    return result;
   };
   return { run, errors };
 }

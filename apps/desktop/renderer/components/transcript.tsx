@@ -21,10 +21,13 @@ export function Transcript({
     [contentPending, setContentPending] = useState<Record<string, boolean>>({});
   const generation = useRef(0),
     reads = useRef(new ScopedReadFence(projectId)),
-    viewport = useRef<HTMLDivElement>(null);
+    viewport = useRef<HTMLDivElement>(null),
+    // Whether an older page was loaded; a refresh must then keep the cursor.
+    loadedOlder = useRef(false);
   useEffect(() => {
     generation.current++;
     reads.current.reset(projectId);
+    loadedOlder.current = false;
     setItems([]);
     setCursor(null);
     setTop(0);
@@ -60,9 +63,13 @@ export function Transcript({
       setItems((previous) =>
         [
           ...new Map(
-            [...(older ? previous : []), ...page.items.slice().reverse()].map(
-              (item: Message) => [item.id, item],
-            ),
+            // A refresh merges too, so older pages the user loaded stay. An
+            // older page goes first: the sort below is stable, and imported
+            // messages can all share one timestamp.
+            (older
+              ? [...page.items.slice().reverse(), ...previous]
+              : [...previous, ...page.items.slice().reverse()]
+            ).map((item: Message) => [item.id, item]),
           ).values(),
         ].sort(
           (a: any, b: any) =>
@@ -75,7 +82,8 @@ export function Transcript({
           if (viewport.current)
             viewport.current.scrollTop = viewport.current.scrollHeight;
         });
-      setCursor(page.nextCursor);
+      if (older || !loadedOlder.current) setCursor(page.nextCursor);
+      if (older) loadedOlder.current = true;
       setError("");
     } catch (e: any) {
       if (ticket === generation.current) setError(e.message);

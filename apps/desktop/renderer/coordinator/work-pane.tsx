@@ -22,6 +22,7 @@ import {
   stateTone,
   type CheckDraft,
   type Run,
+  useSubmission,
 } from "./shared";
 
 /**
@@ -275,6 +276,7 @@ function CreateLoop({
   const [reserve, setReserve] = useState(1);
   const [allowance, setAllowance] = useState("");
   const [created, setCreated] = useState<string | null>(null);
+  const { submit, busy } = useSubmission();
   return (
     <section aria-label="Create loop" className="create-loop">
       <h3>
@@ -321,27 +323,29 @@ function CreateLoop({
                 ...c,
                 id: "loop-check-1",
               }));
-              const result = await run("create-loop", {
-                type: "loop-create",
-                projectId,
-                conversationId: session.id,
-                mode,
-                text: text.trim(),
-                policy: {
-                  checks,
-                  automaticChecks: automaticChecks && checks.length > 0,
-                  scheduling: { reserveForDirectWork: reserve },
-                  ...(allowance.trim() && Number(allowance) > 0
-                    ? {
-                        allowances: {
-                          runMemberTurns: Number(allowance),
-                          rolling: null,
-                        },
-                      }
-                    : {}),
-                },
-                commandId: newCommandId(),
-              });
+              const result = await submit(() =>
+                run("create-loop", {
+                  type: "loop-create",
+                  projectId,
+                  conversationId: session.id,
+                  mode,
+                  text: text.trim(),
+                  policy: {
+                    checks,
+                    automaticChecks: automaticChecks && checks.length > 0,
+                    scheduling: { reserveForDirectWork: reserve },
+                    ...(allowance.trim() && Number(allowance) > 0
+                      ? {
+                          allowances: {
+                            runMemberTurns: Number(allowance),
+                            rolling: null,
+                          },
+                        }
+                      : {}),
+                  },
+                  commandId: newCommandId(),
+                }),
+              );
               if (result?.run?.id) {
                 setCreated(result.run.id);
                 setText("");
@@ -421,7 +425,10 @@ function CreateLoop({
                 />
               </label>
             </details>
-            <button type="submit" disabled={mode === "goal" && !text.trim()}>
+            <button
+              type="submit"
+              disabled={busy || (mode === "goal" && !text.trim())}
+            >
               Create loop
             </button>
           </form>

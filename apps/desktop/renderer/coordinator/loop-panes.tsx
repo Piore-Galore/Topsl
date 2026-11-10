@@ -126,14 +126,16 @@ export function GoalsPane({ view, run }: { view: any; run: Run }) {
       <button
         type="button"
         disabled={!newGoal.trim()}
-        onClick={() => {
-          void run("add-goal", {
+        onClick={async () => {
+          const text = newGoal;
+          const added = await run("add-goal", {
             type: "loop-goals-update",
             runId: r.id,
-            add: [{ text: newGoal }],
+            add: [{ text }],
             commandId: newCommandId(),
           });
-          setNewGoal("");
+          // A failed add keeps the typed goal; so does one edited meanwhile.
+          if (added) setNewGoal((current) => (current === text ? "" : current));
         }}
       >
         Add goal

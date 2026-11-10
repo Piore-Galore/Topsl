@@ -13,8 +13,9 @@ port.on("message", async ({ data }: any) => {
   try {
     let value: any;
     if (data.kind === "initialize") {
-      if (service) throw new Error("Control service already initialized.");
-      service = new Service(
+      if (service || initializing)
+        throw new Error("Control service already initialized.");
+      const starting = new Service(
         data.directory,
         data.key,
         (event) => port.postMessage({ event }),
@@ -24,9 +25,17 @@ port.on("message", async ({ data }: any) => {
           ? data.qualificationDirectory
           : undefined,
       );
-      initializing = service.start();
+      service = starting;
+      // A failed start must not leave a half-started service that answers
+      // later commands or refuses a retry, so it is closed and forgotten.
+      initializing = starting.start().catch(async (error) => {
+        service = undefined;
+        await starting.close().catch(() => {});
+        initializing = undefined;
+        throw error;
+      });
       await initializing;
-      value = service.state();
+      value = starting.state();
     } else if (data.kind === "close") {
       closing = true;
       await initializing?.catch(() => {});

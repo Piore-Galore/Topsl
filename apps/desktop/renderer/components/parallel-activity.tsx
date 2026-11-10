@@ -17,7 +17,11 @@ export function ParallelActivity({
     [inspection, setInspection] = useState<any>(null),
     [pending, setPending] = useState<Record<string, boolean>>({}),
     [errors, setErrors] = useState<Record<string, string>>({}),
-    [resolutions, setResolutions] = useState<Record<string, string>>({});
+    // Chosen candidates are kept per workflow, so one preview's choices are
+    // never sent with another workflow's preview.
+    [resolutions, setResolutions] = useState<
+      Record<string, Record<string, string>>
+    >({});
   const generation = useRef(0),
     reads = useRef(new ScopedReadFence(projectId));
   useEffect(() => {
@@ -154,9 +158,9 @@ export function ParallelActivity({
                       type: "parallel-integration-preview",
                       id: workflow.id,
                       expectedRevision: workflow.revision,
-                      resolutions: Object.entries(resolutions).map(
-                        ([path, candidateId]) => ({ path, candidateId }),
-                      ),
+                      resolutions: Object.entries(
+                        resolutions[workflow.id] ?? {},
+                      ).map(([path, candidateId]) => ({ path, candidateId })),
                     });
                     if (plan) setInspection({ workflowId: workflow.id, plan });
                   })()
@@ -235,13 +239,24 @@ export function ParallelActivity({
             <label key={conflict.path}>
               {conflict.path} · {conflict.reason}
               <select
-                value={resolutions[conflict.path] ?? ""}
-                onChange={(event) =>
-                  setResolutions((current) => ({
-                    ...current,
-                    [conflict.path]: event.target.value,
-                  }))
+                value={
+                  resolutions[inspection.workflowId]?.[conflict.path] ?? ""
                 }
+                onChange={(event) => {
+                  const candidateId = event.target.value;
+                  setResolutions((current) => {
+                    // The placeholder removes the choice: an empty candidate
+                    // is not a resolution and the command refuses it.
+                    const { [conflict.path]: _cleared, ...rest } =
+                      current[inspection.workflowId] ?? {};
+                    return {
+                      ...current,
+                      [inspection.workflowId]: candidateId
+                        ? { ...rest, [conflict.path]: candidateId }
+                        : rest,
+                    };
+                  });
+                }}
               >
                 <option value="">
                   Choose a submitted candidate explicitly

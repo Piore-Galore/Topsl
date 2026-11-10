@@ -401,7 +401,9 @@ function ConnectionCard({
   const [receipts, setReceipts] = useState<RequestReceipt[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const external = connection.kind === "openai-compatible";
-  const suggested = model ? `${aliasPrefix[connection.kind]}/${model}` : "";
+  const suggested = model.trim()
+    ? `${aliasPrefix[connection.kind]}/${model.trim()}`
+    : "";
   const usable =
     connection.state === "ready" || connection.state === "paused-usage-limit";
   return (
@@ -522,8 +524,16 @@ function ConnectionCard({
               type: "connection-models",
               connectionId: connection.id,
             }).catch(() => null);
-            if (Array.isArray(listed)) setModels(listed);
-            else if (external)
+            if (Array.isArray(listed)) {
+              setModels(listed);
+              // The select cannot show a typed value the list lacks.
+              if (listed.length)
+                setModel((current) =>
+                  listed.some((m: { id: string }) => m.id === current)
+                    ? current
+                    : "",
+                );
+            } else if (external)
               setNotice(
                 "The service did not list its models. Enter a model ID below.",
               );
