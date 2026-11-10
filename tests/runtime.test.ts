@@ -149,6 +149,50 @@ describe("native process adapter", () => {
     expect(f.store.list<any>("usage")[0].input).toBe(12);
     expect(f.store.list("message")).toHaveLength(2);
   });
+  test("a turn's usage covers every model request, and the next turn starts from zero", async () => {
+    const f = await setup();
+    const turn = async (prompt: string) => {
+      const run = await f.runtime.start(
+        f.installation,
+        f.store.get<typeof f.conversation>("conversation", "c")!,
+        f.project,
+        prompt,
+        "fixture-model",
+        "review",
+      );
+      await vi.waitFor(() =>
+        expect(f.store.get<Run>("run", run.id)?.status).toBe("completed"),
+      );
+      return f.store.list<any>("usage").filter((fact) => fact.runId === run.id);
+    };
+    const sum = { input: 250, output: 30, cached: 130 };
+    const first = await turn("two requests");
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject(sum);
+    const second = await turn("two requests");
+    expect(second).toHaveLength(1);
+    expect(second[0]).toMatchObject(sum);
+  });
+  test("usage without a thread total falls back to the last request", async () => {
+    const f = await setup();
+    const run = await f.runtime.start(
+      f.installation,
+      f.conversation,
+      f.project,
+      "usage without total",
+      "fixture-model",
+      "review",
+    );
+    await vi.waitFor(() =>
+      expect(f.store.get<Run>("run", run.id)?.status).toBe("completed"),
+    );
+    expect(f.store.list<any>("usage")).toHaveLength(1);
+    expect(f.store.list<any>("usage")[0]).toMatchObject({
+      input: 7,
+      output: 2,
+      cached: 1,
+    });
+  });
   test("review mode cannot grant escalation requests", async () => {
     const f = await setup();
     const run = await f.runtime.start(
@@ -254,6 +298,51 @@ describe("native process adapter", () => {
       ).rejects.toThrow("uncertain");
     },
   );
+  test("reconciliation identifies the process behind a recorded PID instead of trusting liveness", async () => {
+    const f = await setup();
+    await expect(
+      f.runtime.start(
+        f.installation,
+        f.conversation,
+        f.project,
+        "crash",
+        "fixture-model",
+        "edit",
+      ),
+    ).rejects.toThrow();
+    const run = f.store.list<Run>("run")[0];
+    expect(run.status).toBe("uncertain");
+    // A live process this user may not signal holds the recorded PID.
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: string | number,
+    ) => {
+      if (pid === 999_999 && signal === 0)
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(pid, signal as any);
+    }) as typeof process.kill);
+    try {
+      // Same boot and nothing that identifies the process: still refused.
+      f.store.save("run", { ...run, nativePid: 999_999 });
+      f.store.save("installation", {
+        ...f.store.get<any>("installation", run.installationId),
+        realPath: path.join(f.directory, "missing-runtime"),
+      });
+      await expect(f.runtime.reconcile(run.id)).rejects.toThrow(
+        "The native process is still present.",
+      );
+      // A run from before this boot cannot own any process alive now.
+      f.store.save("run", {
+        ...f.store.get<Run>("run", run.id)!,
+        createdAt: new Date(0).toISOString(),
+      });
+      await f.runtime.reconcile(run.id);
+      expect(f.store.get<Run>("run", run.id)?.status).toBe("interrupted");
+    } finally {
+      kill.mockRestore();
+    }
+  });
   test("API billing mode cannot silently replace subscription execution", async () => {
     const f = await setup("apiKey");
     await expect(

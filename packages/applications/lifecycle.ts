@@ -68,6 +68,23 @@ export class Lifecycle {
   ) {
     for (const job of store.list<LifecycleJob>("job"))
       if (
+        store.get<LifecyclePlan>("plan", job.planId)?.route === "download" &&
+        [
+          "queued",
+          "downloading",
+          "verifying",
+          "waiting-for-idle",
+          "uncertain",
+        ].includes(job.state)
+      ) {
+        // A download changes nothing outside Topsl, so an interrupted one is
+        // settled here; left uncertain it would hold its lock for good. Only
+        // the states a download passes through count.
+        this.change(job, {
+          state: "failed",
+          detail: "Download interrupted; nothing was installed or executed.",
+        });
+      } else if (
         ![
           "completed",
           "unchanged",
@@ -383,6 +400,11 @@ export class Lifecycle {
           processes === null ||
           processes.length
         ) {
+          // A Cancel recorded during the checks above stands.
+          if (
+            this.store.get<LifecycleJob>("job", job.id)?.state === "cancelled"
+          )
+            return;
           this.change(job, {
             state: "waiting-for-idle",
             detail:
@@ -455,6 +477,12 @@ export class Lifecycle {
         await this.deps.nativeOpen(target);
       }
     } catch (e) {
+      // Nothing has started while the record still says cancelled; keep it.
+      if (
+        !mutationStarted &&
+        this.store.get<LifecycleJob>("job", job.id)?.state === "cancelled"
+      )
+        return;
       this.change(job, {
         state: this.controllers.get(job.id)?.signal.aborted
           ? "cancelled"
@@ -602,7 +630,18 @@ export class Lifecycle {
       }
     }
     if (
+      plan.route === "download" &&
+      ["queued", "downloading", "verifying", "uncertain"].includes(job.state)
+    ) {
+      // A download installs nothing, so an installed version proves nothing
+      // about it; a download that is no longer running did not finish.
+      this.change(job, {
+        state: "failed",
+        detail: "Download interrupted; nothing was installed or executed.",
+      });
+    } else if (
       installation?.version &&
+      plan.route !== "download" &&
       (!plan.release || installation.version === plan.release.version) &&
       (plan.action !== "update" ||
         installation.version !== plan.installedVersion)

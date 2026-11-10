@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, realpath, stat, readFile, readdir } from "node:fs/promises";
+import {
+  access,
+  realpath,
+  stat,
+  readFile,
+  readdir,
+  readlink,
+} from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -144,7 +151,9 @@ export async function candidatePaths(name: string): Promise<string[]> {
   const bins = [...new Set(nativeEnvironment().PATH.split(path.delimiter))];
   const names =
     process.platform === "win32"
-      ? [`${name}.exe`, `${name}.cmd`, name]
+      ? // npm also installs an extension-less shell shim beside the .cmd,
+        // which Windows cannot execute and would list a second installation.
+        [`${name}.exe`, `${name}.cmd`]
       : [name];
   const paths: string[] = [];
   for (const bin of bins)
@@ -226,6 +235,31 @@ export async function affectedProcesses(
           )
         )
           found.push(p.ProcessId);
+    } else if (process.platform === "linux") {
+      // Linux `ps -o comm=` prints a truncated name, never a path, so each
+      // process's executable is read from /proc instead.
+      let identified = 0;
+      for (const entry of await readdir("/proc")) {
+        if (!/^\d+$/.test(entry)) continue;
+        let executable: string;
+        try {
+          executable = await readlink(`/proc/${entry}/exe`);
+        } catch {
+          // A kernel thread, another user's process, or one that just ended.
+          continue;
+        }
+        identified += 1;
+        // A replaced binary that is still running reads as "<path> (deleted)".
+        executable = executable.replace(/ \(deleted\)$/, "");
+        if (
+          paths.some(
+            (x) => executable === x || executable.startsWith(x + path.sep),
+          )
+        )
+          found.push(Number(entry));
+      }
+      // No readable executable at all means /proc cannot answer: unknown.
+      if (!identified) return null;
     } else {
       const raw = await runFile("/bin/ps", ["-axo", "pid=,comm="]);
       for (const line of raw.split("\n")) {

@@ -364,6 +364,55 @@ describe("Claude Code's live route", () => {
     expect(exited).toBeNull();
   });
 
+  test("a Claude Code run that exits at once while a large prompt is still being written is the known launch failure", async () => {
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (_executable, _args, cwd) =>
+        spawn(process.execPath, ["-e", "process.exit(1)"], {
+          cwd,
+          env: nativeEnvironment({ ELECTRON_RUN_AS_NODE: "1" }),
+        }),
+    });
+    const connection = adapter.connect("/opt/claude", process.cwd());
+    // Larger than a pipe holds, so the write is still pending at the exit.
+    const prepared = turn("review", "x".repeat(8_000_000));
+    const session = await adapter.startSession(connection, prepared, null);
+    const done = completion(connection);
+    let exited: string | null = null;
+    connection.onExit = (detail: string) => (exited = detail);
+    expect(connection.process.pid).toBeUndefined();
+    await adapter.startTurn(connection, prepared, session.nativeSessionId);
+    // The process starts with the turn, and the runtime records it from here.
+    expect(connection.process.pid).toBeTypeOf("number");
+    expect(await done).toMatchObject({
+      type: "completed",
+      failed: true,
+      detail: "Claude Code exited with code 1 before it started a session, so no model was called.",
+    });
+    await connection.close();
+    expect(exited).toBeNull();
+  });
+
+  test("a Claude Code executable that cannot be started is a known launch failure", async () => {
+    const adapter = new ClaudeAdapter(undefined, undefined, {
+      routeAllowed: () => true,
+      transport: (_executable, _args, cwd) =>
+        spawn(path.join(cwd, "no-such-claude-executable"), [], { cwd }),
+    });
+    const connection = adapter.connect("/opt/claude", process.cwd());
+    const prepared = turn("review", "Reply with nothing else: OK-1");
+    const session = await adapter.startSession(connection, prepared, null);
+    const done = completion(connection);
+    let exited: string | null = null;
+    connection.onExit = (detail: string) => (exited = detail);
+    await adapter.startTurn(connection, prepared, session.nativeSessionId);
+    const event = await done;
+    expect(event).toMatchObject({ type: "completed", failed: true });
+    expect(event.detail).toMatch(/^Claude Code could not be started \(.*\), so no model was called\.$/);
+    await connection.close();
+    expect(exited).toBeNull();
+  });
+
   test("a Claude Code run that exits with an error after reporting its session stays an unknown outcome", async () => {
     const adapter = new ClaudeAdapter(undefined, undefined, {
       routeAllowed: () => true,

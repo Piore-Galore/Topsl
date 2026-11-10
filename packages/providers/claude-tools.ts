@@ -121,6 +121,8 @@ export class ClaudeToolServer {
     // Topsl offers no server-sent stream; each POST gets one JSON answer.
     if (request.method !== "POST") return { status: 405, body: null };
     let raw = "";
+    // Decode as one stream, so a character split across chunks stays whole.
+    request.setEncoding("utf8");
     for await (const chunk of request) {
       raw += chunk;
       if (raw.length > maxRequestBytes) return { status: 413, body: null };

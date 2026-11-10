@@ -220,6 +220,19 @@ export class CodexAdapter implements ProviderAdapter {
     private peer = (executable: string, cwd: string) =>
       new RpcPeer(executable, codexAppServerArguments, cwd),
   ) {}
+  /** Each thread's token total when its current turn began, so a turn's
+   * usage can be read off the thread's running total. */
+  private usageStart = new Map<
+    string,
+    {
+      turnId: string | null;
+      total: {
+        inputTokens: number;
+        outputTokens: number;
+        cachedInputTokens: number;
+      };
+    }
+  >();
   connect(executable: string, cwd: string): ProviderConnection {
     return this.peer(executable, cwd);
   }
@@ -528,6 +541,8 @@ export class CodexAdapter implements ProviderAdapter {
     const p = base.data,
       ids = { threadId: p.threadId ?? null, turnId: p.turnId ?? null };
     if (method === "turn/started") {
+      // A new turn measures its usage from the thread's total at its start.
+      this.usageStart.delete(ids.threadId ?? "");
       const parsed = z.object({ turn: z.object({ id: string }) }).safeParse(p);
       return parsed.success
         ? {
@@ -584,6 +599,7 @@ export class CodexAdapter implements ProviderAdapter {
     }
     if (method === "thread/tokenUsage/updated") {
       const number = z.number().finite().nonnegative().nullable().catch(null),
+        counted = z.number().finite().nonnegative(),
         parsed = z
           .object({
             tokenUsage: z.object({
@@ -592,18 +608,57 @@ export class CodexAdapter implements ProviderAdapter {
                 outputTokens: number,
                 cachedInputTokens: number,
               }),
+              total: z
+                .object({
+                  inputTokens: counted,
+                  outputTokens: counted,
+                  cachedInputTokens: counted,
+                })
+                .optional()
+                .catch(undefined),
             }),
           })
           .safeParse(p);
-      return parsed.success
-        ? {
-            type: "usage",
-            ...ids,
-            input: parsed.data.tokenUsage.last.inputTokens,
-            output: parsed.data.tokenUsage.last.outputTokens,
-            cached: parsed.data.tokenUsage.last.cachedInputTokens,
-          }
-        : null;
+      if (!parsed.success) return null;
+      const { last, total } = parsed.data.tokenUsage,
+        fields = ["inputTokens", "outputTokens", "cachedInputTokens"] as const,
+        key = ids.threadId ?? "";
+      // `last` may be one model request, and a turn with a tool call makes
+      // several. The thread's running total less its value when the turn
+      // began is the whole turn under either reading of `last`.
+      let turn: typeof last = last;
+      if (total) {
+        let start = this.usageStart.get(key);
+        if (!start || start.turnId !== ids.turnId) {
+          start = {
+            turnId: ids.turnId,
+            total: {
+              inputTokens: total.inputTokens - (last.inputTokens ?? 0),
+              outputTokens: total.outputTokens - (last.outputTokens ?? 0),
+              cachedInputTokens:
+                total.cachedInputTokens - (last.cachedInputTokens ?? 0),
+            },
+          };
+          this.usageStart.set(key, start);
+        }
+        const from = start.total;
+        // A total below the turn's start means the thread was reset or
+        // compacted, so the difference would be negative: keep `last`.
+        if (fields.every((field) => total[field] >= from[field]))
+          turn = {
+            inputTokens: total.inputTokens - from.inputTokens,
+            outputTokens: total.outputTokens - from.outputTokens,
+            cachedInputTokens:
+              total.cachedInputTokens - from.cachedInputTokens,
+          };
+      }
+      return {
+        type: "usage",
+        ...ids,
+        input: turn.inputTokens,
+        output: turn.outputTokens,
+        cached: turn.cachedInputTokens,
+      };
     }
     if (method === "turn/completed") {
       const parsed = z
