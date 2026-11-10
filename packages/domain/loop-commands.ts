@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { roleGroupSettingsSchema, roleIdSchema } from "./role-groups";
+import { boundedRoleGroupSettingsSchema, roleIdSchema } from "./role-groups";
 import {
   activeRoleCountProblem,
   criterionVerificationSchema,
@@ -113,7 +113,7 @@ export const loopCommands = [
         "role-frozen",
       ]),
       roleId: roleIdSchema.nullable().default(null),
-      settings: roleGroupSettingsSchema.nullable().default(null),
+      settings: boundedRoleGroupSettingsSchema.nullable().default(null),
       value: z
         .union([z.number(), z.string().max(200)])
         .nullable()

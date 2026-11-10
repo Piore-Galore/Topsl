@@ -1,6 +1,25 @@
 import { z } from "zod";
 import { requiredCheckSchema } from "./orchestration-commands";
+import { roleGroupSettingsBoundsProblem } from "./role-groups";
 import { composerModes, sessionConfigurationPatchSchema } from "./sessions";
+
+/**
+ * A configuration patch as a command may send it. The stored configuration
+ * schema stays unbounded for existing documents, so each role's settings are
+ * bounded here.
+ */
+const boundedConfigurationPatchSchema =
+  sessionConfigurationPatchSchema.superRefine((configuration, ctx) => {
+    for (const [roleId, role] of Object.entries(configuration.roles ?? {})) {
+      const problem = roleGroupSettingsBoundsProblem(role.settings);
+      if (problem)
+        ctx.addIssue({
+          code: "custom",
+          message: problem,
+          path: ["roles", roleId, "settings"],
+        });
+    }
+  });
 
 const id = z.string().min(1).max(256);
 const commandId = z.string().min(8).max(256);
@@ -12,7 +31,7 @@ export const sessionCommands = [
     type: z.literal("session-create"),
     projectId: id,
     title: z.string().max(200).optional(),
-    configuration: sessionConfigurationPatchSchema.optional(),
+    configuration: boundedConfigurationPatchSchema.optional(),
     text: z.string().max(100000).optional(),
     mode: z.enum(composerModes).optional(),
     kind: z.enum(["code", "information"]).default("code"),
@@ -31,7 +50,7 @@ export const sessionCommands = [
     type: z.literal("session-update"),
     sessionId: id,
     expectedRevision: z.number().int().nonnegative(),
-    configuration: sessionConfigurationPatchSchema,
+    configuration: boundedConfigurationPatchSchema,
     commandId,
   }),
   /** A message to the session's coordinators. */

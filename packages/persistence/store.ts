@@ -3,7 +3,11 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { hash, now, uid, stable } from "../domain/invariants";
 import type { Message } from "../domain/types";
-import { markCreated, migrateWithBackup } from "./migrations/backup";
+import {
+  markCreated,
+  migrateWithBackup,
+  pruneMigrationBackups,
+} from "./migrations/backup";
 import { EVENT_SCHEMA_VERSION, migrateEvents } from "./migrations/events";
 import { migrateExecutions } from "./migrations/executions";
 import { migrateBlobs } from "./migrations/blobs";
@@ -126,8 +130,16 @@ export class Store {
       migrateBlobs(this.db, file, key);
       migrateNative(this.db, file, key);
       recoverAbandonedCaptures(this);
-      new ProtectedBlobs(this).collectUnreferenced(100);
+      // A failed capture of a large tree leaves thousands of blobs with no
+      // reference. They count against the vault's size limit until they are
+      // reclaimed, so reclaim them now, not a hundred per launch.
+      const blobs = new ProtectedBlobs(this);
+      for (let round = 0; round < 40; round++)
+        if (blobs.collectUnreferenced(500) < 500) break;
       chmodSync(file, 0o600);
+      // The vault opened, so older and intermediate migration backups are no
+      // longer needed.
+      pruneMigrationBackups(file, this.db);
     } catch (e) {
       this.db.close();
       throw e;
@@ -211,6 +223,25 @@ export class Store {
       cursor = page.nextCursor;
     } while (cursor);
   }
+  /**
+   * A kind's documents from the newest back, with no cap. Sequences follow
+   * insertion order, so a caller bounded by time stops at the first document
+   * that is too old instead of loading the whole kind.
+   */
+  *newestFirst<T>(kind: string): Generator<{ value: T; sequence: number }> {
+    const page = this.prepare(
+      "SELECT d.body,i.sequence FROM document_index i JOIN documents d ON d.kind=i.kind AND d.id=i.id WHERE i.kind=? AND i.sequence<? ORDER BY i.sequence DESC LIMIT 500",
+    );
+    let before = Number.MAX_SAFE_INTEGER;
+    for (;;) {
+      const rows = page.all(kind, before);
+      for (const row of rows) {
+        before = row.sequence;
+        yield { value: JSON.parse(row.body) as T, sequence: row.sequence };
+      }
+      if (rows.length < 500) return;
+    }
+  }
   messagesPage(options: MessagePageOptions): Page<Message> {
     if (!options.projectId)
       throw new Error("History requires a project scope.");
@@ -225,7 +256,10 @@ export class Store {
     const safe = query
       .trim()
       .split(/\s+/)
-      .filter(Boolean)
+      // A word with no letter or digit ("->", "&") has no token in the
+      // index. Quoted, it is a phrase that matches nothing, and ANDed with
+      // the rest it would empty the whole result.
+      .filter((w) => /[\p{L}\p{N}]/u.test(w))
       .map((w) => '"' + w.replaceAll('"', '""') + '"')
       .join(" AND ");
     return this.queryPage("message", { ...options, projectId }, safe);
@@ -374,7 +408,12 @@ export class Store {
   }
   immutable<T extends { id: string }>(kind: string, value: T): void {
     const previous = this.get(kind, value.id);
-    if (previous && stable(previous) !== stable(value))
+    // Compare the value as it would be stored: JSON drops a property whose
+    // value is undefined, while stable() would write it as null.
+    if (
+      previous &&
+      stable(previous) !== stable(JSON.parse(JSON.stringify(value)))
+    )
       throw new Error("Immutable record collision.");
     if (!previous) this.put(kind, value);
   }
@@ -424,22 +463,16 @@ export class Store {
   }
   deleteConversation(id: string): void {
     this.transaction(() => {
-      const runs = this.prepare(
-        "SELECT id FROM documents WHERE kind='run' AND json_extract(body,'$.conversationId')=?",
-      )
-        .all(id)
-        .map((r) => r.id);
-      for (const runId of runs)
-        this.prepare(
-          "DELETE FROM documents WHERE kind='usage' AND json_extract(body,'$.runId')=?",
-        ).run(runId);
+      // One pass over each table, however many runs the conversation has: this
+      // runs synchronously on the only writer and neither JSON field is indexed.
+      const runIds =
+        "SELECT id FROM documents WHERE kind='run' AND json_extract(body,'$.conversationId')=?";
       this.prepare(
-        "DELETE FROM events WHERE json_extract(body,'$.conversationId')=? OR (kind LIKE 'conversation.%' AND json_extract(body,'$.id')=?)",
-      ).run(id, id);
-      for (const runId of runs)
-        this.prepare(
-          "DELETE FROM events WHERE json_extract(body,'$.runId')=? OR (kind LIKE 'run.%' AND json_extract(body,'$.id')=?)",
-        ).run(runId, runId);
+        `DELETE FROM documents WHERE kind='usage' AND json_extract(body,'$.runId') IN (${runIds})`,
+      ).run(id);
+      this.prepare(
+        `DELETE FROM events WHERE json_extract(body,'$.conversationId')=? OR (kind LIKE 'conversation.%' AND json_extract(body,'$.id')=?) OR json_extract(body,'$.runId') IN (${runIds}) OR (kind LIKE 'run.%' AND json_extract(body,'$.id') IN (${runIds}))`,
+      ).run(id, id, id, id);
       this.prepare(
         "DELETE FROM message_search WHERE rowid IN (SELECT sequence FROM document_index WHERE kind='message' AND conversation_id=?)",
       ).run(id);
@@ -450,9 +483,6 @@ export class Store {
       // boundary as their source conversation. Control events retain no deleted text.
       this.prepare(
         "DELETE FROM documents WHERE kind IN ('context-package','context-package-revision','context-delivery','context-delivery-revision','agent-session','agent-session-revision','attempt','attempt-revision','task','task-revision','artifact','artifact-revision') AND json_extract(body,'$.conversationId')=?",
-      ).run(id);
-      this.prepare(
-        "DELETE FROM events WHERE json_extract(body,'$.conversationId')=?",
       ).run(id);
       this.remove("conversation", id);
       this.put("tombstone", { id, deletedAt: now() });

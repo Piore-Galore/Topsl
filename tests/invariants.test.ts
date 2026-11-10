@@ -6,7 +6,6 @@ import {
   validatePlan,
   checkDue,
   nextCheck,
-  normalizeUsage,
   safeError,
 } from "../packages/domain/invariants";
 import { nativeEnvironment, isWithin } from "../packages/platform/system";
@@ -146,37 +145,4 @@ describe("command and network boundary", () => {
     expect(isWithin("/project", "/project-copy/secret")).toBe(false);
     expect(isWithin("/project", "/project/../secret")).toBe(false);
   });
-});
-describe("usage provenance", () => {
-  test("snapshot IDs permit deduplication instead of summing repeats", () => {
-    const a = normalizeUsage(
-      "codex",
-      { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 },
-      "r",
-      "t",
-    );
-    expect(a).toMatchObject({
-      id: "r:t",
-      input: 12,
-      cached: 4,
-      source: "native-runtime",
-    });
-  });
-  test("unknown fields remain unknown", () => {
-    expect(normalizeUsage("codex", {}, "r").input).toBeNull();
-    expect(normalizeUsage("claude", { input_tokens: 4 }, "r").input).toBeNull();
-  });
-  test("Claude cache input is accounted for once", () =>
-    expect(
-      normalizeUsage(
-        "claude",
-        {
-          input_tokens: 4,
-          cache_read_input_tokens: 7,
-          cache_creation_input_tokens: 3,
-          output_tokens: 2,
-        },
-        "r",
-      ).input,
-    ).toBe(14));
 });

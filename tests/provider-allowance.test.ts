@@ -174,6 +174,59 @@ describe("allowance snapshots", () => {
     expect(merged.readAt).toBe("2026-10-18T10:00:00.000Z");
     expect(merged.observedAt).toBe("2026-10-18T10:05:00.000Z");
   });
+  test("a reached limit stays through an empty update and lifts once a window below its limit arrives", () => {
+    const update = (primary: ReturnType<typeof window> | null) => ({
+      kind: "update" as const,
+      ordinaryUsageAllowed: null,
+      buckets: [
+        {
+          id: "codex",
+          name: null,
+          primary,
+          secondary: null,
+          credits: null,
+          planType: null,
+          limitReached: null,
+        },
+      ],
+    });
+    const reached = applyAllowanceReport(
+      undefined,
+      origin,
+      {
+        ...read,
+        buckets: [
+          {
+            ...read.buckets[0],
+            primary: window(100),
+            limitReached: "rate_limit_reached",
+          },
+        ],
+      },
+      "2026-10-18T10:00:00.000Z",
+    );
+    const sparse = applyAllowanceReport(
+      reached,
+      origin,
+      update(null),
+      "2026-10-18T10:01:00.000Z",
+    );
+    expect(sparse.buckets[0].limitReached).toBe("rate_limit_reached");
+    const full = applyAllowanceReport(
+      sparse,
+      origin,
+      update(window(100)),
+      "2026-10-18T10:02:00.000Z",
+    );
+    expect(full.buckets[0].limitReached).toBe("rate_limit_reached");
+    const lifted = applyAllowanceReport(
+      full,
+      origin,
+      update(window(4)),
+      "2026-10-18T10:03:00.000Z",
+    );
+    expect(lifted.buckets[0].limitReached).toBeNull();
+  });
   test("an update before any read is kept without inventing the read-only fields", () => {
     const snapshot = applyAllowanceReport(
       undefined,

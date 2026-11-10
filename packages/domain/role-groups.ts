@@ -321,6 +321,48 @@ export const roleGroupSettingsSchema = z
   .strict();
 export type RoleGroupSettings = z.infer<typeof roleGroupSettingsSchema>;
 
+/**
+ * Why settings are too large to accept from a command, or null. The schemas
+ * above also read documents already stored, so they stay unbounded; only the
+ * command boundary applies these limits.
+ */
+export function roleGroupSettingsBoundsProblem(
+  settings: RoleGroupSettings,
+): string | null {
+  const over = (n: number | null | undefined) =>
+    typeof n === "number" && n > MEMBER_LIMIT_CEILING;
+  const long = (ids: unknown[] | null | undefined) =>
+    !!ids && ids.length > MEMBER_LIMIT_CEILING;
+  if (long(settings.members)) return "Too many members.";
+  // `count`, `minCount`, `maxCount` and `executionWidth` are deliberately not
+  // limited here: a count above the member limit is accepted, kept as asked
+  // and reported as a policy conflict (TEAM-02 §6.1), never refused.
+  const completion = settings.completion;
+  if (!completion) return null;
+  if (
+    long(completion.requiredContributorIds) ||
+    long(completion.electorateIds) ||
+    long(completion.requiredEndorserIds)
+  )
+    return "Too many member IDs.";
+  const threshold = completion.threshold;
+  if (threshold?.kind === "count" && over(threshold.count))
+    return `A member count cannot exceed ${MEMBER_LIMIT_CEILING}.`;
+  if (
+    threshold?.kind === "fraction" &&
+    threshold.numerator > threshold.denominator
+  )
+    return "A fraction threshold cannot exceed one.";
+  return null;
+}
+
+/** Role-group settings as a command may send them: the same shape, bounded. */
+export const boundedRoleGroupSettingsSchema =
+  roleGroupSettingsSchema.superRefine((settings, ctx) => {
+    const problem = roleGroupSettingsBoundsProblem(settings);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
+
 export const groupScopeLevels = ["project-role", "goal-role", "task"] as const;
 export type GroupScopeLevel = (typeof groupScopeLevels)[number];
 
