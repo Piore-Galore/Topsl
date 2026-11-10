@@ -1,0 +1,106 @@
+{
+ "outcome": "completed",
+ "error": null,
+ "model": "gpt-6.1-sol",
+ "turnsStarted": 1,
+ "declined": [
+  "item/commandExecution/requestApproval",
+  "item/commandExecution/requestApproval"
+ ],
+ "methods": {
+  "remoteControl/status/changed": 1,
+  "account/updated": 1,
+  "thread/started": 1,
+  "mcpServer/startupStatus/updated": 18,
+  "thread/status/changed": 6,
+  "turn/started": 1,
+  "item/started": 7,
+  "item/completed": 7,
+  "turn/moderationMetadata": 4,
+  "item/commandExecution/requestApproval": 2,
+  "serverRequest/resolved": 2,
+  "thread/tokenUsage/updated": 4,
+  "account/rateLimits/updated": 4,
+  "item/agentMessage/delta": 15,
+  "thread/readState/changed": 1,
+  "turn/completed": 1
+ },
+ "usage": [
+  {
+   "turnId": "01a1c637-01c8-7822-b0b0-d5e7a919d22d",
+   "last": {
+    "totalTokens": 20198,
+    "inputTokens": 20161,
+    "cachedInputTokens": 13440,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 37,
+    "reasoningOutputTokens": 0
+   },
+   "total": {
+    "totalTokens": 20198,
+    "inputTokens": 20161,
+    "cachedInputTokens": 13440,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 37,
+    "reasoningOutputTokens": 0
+   }
+  },
+  {
+   "turnId": "01a1c637-01c8-7822-b0b0-d5e7a919d22d",
+   "last": {
+    "totalTokens": 20430,
+    "inputTokens": 20242,
+    "cachedInputTokens": 19968,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 188,
+    "reasoningOutputTokens": 131
+   },
+   "total": {
+    "totalTokens": 40628,
+    "inputTokens": 40403,
+    "cachedInputTokens": 33408,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 225,
+    "reasoningOutputTokens": 131
+   }
+  },
+  {
+   "turnId": "01a1c637-01c8-7822-b0b0-d5e7a919d22d",
+   "last": {
+    "totalTokens": 28652,
+    "inputTokens": 28493,
+    "cachedInputTokens": 20224,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 159,
+    "reasoningOutputTokens": 67
+   },
+   "total": {
+    "totalTokens": 69280,
+    "inputTokens": 68896,
+    "cachedInputTokens": 53632,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 384,
+    "reasoningOutputTokens": 198
+   }
+  },
+  {
+   "turnId": "01a1c637-01c8-7822-b0b0-d5e7a919d22d",
+   "last": {
+    "totalTokens": 28764,
+    "inputTokens": 28696,
+    "cachedInputTokens": 28416,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 68,
+    "reasoningOutputTokens": 47
+   },
+   "total": {
+    "totalTokens": 98044,
+    "inputTokens": 97592,
+    "cachedInputTokens": 82048,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 452,
+    "reasoningOutputTokens": 245
+   }
+  }
+ ]
+}
