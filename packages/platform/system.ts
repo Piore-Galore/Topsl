@@ -177,8 +177,17 @@ export async function projectPath(
   const target = path.resolve(root, relative);
   if (!isWithin(root, target))
     throw new Error("Path escapes approved project.");
-  if (await exists(target)) {
-    if (!isWithin(root, await realpath(target)))
+  // A link whose target is gone has no real path. POSIX reports it as
+  // missing; Windows reports that it exists and then fails to resolve it.
+  // Either way its parent decides, as for a path that does not exist yet.
+  const real = (await exists(target))
+    ? await realpath(target).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      })
+    : null;
+  if (real !== null) {
+    if (!isWithin(root, real))
       throw new Error("Symlink escapes approved project.");
   } else if (!isWithin(root, await realpath(path.dirname(target))))
     throw new Error("Parent escapes approved project.");

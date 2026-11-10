@@ -1,4 +1,4 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -74,6 +74,13 @@ export async function resolveInside(
         )
       )
         throw new PathRejected("Native tools do not write Git metadata.");
+      // The nearest existing ancestor of a path that does not exist yet must
+      // be a folder. POSIX already fails such a path with ENOTDIR; Windows
+      // reports only that the path is missing.
+      if (probe !== target && !(await stat(resolved)).isDirectory())
+        throw new PathRejected(
+          "The path passes through something that is not a folder, or is too long.",
+        );
       if (probe === target && options.write) {
         const info = await lstat(target);
         if (info.isSymbolicLink())
