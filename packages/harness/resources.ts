@@ -124,6 +124,7 @@ export class ResourceLedger {
       this.options.store?.put("native-quota-wait", { id: owner, ...wait });
     }
   }
+  /** The key from `quotaKey`, or null for an attempt with no native route. */
   quotaWait(owner: string | null): QuotaWait | null {
     return owner ? (this.quota.get(owner) ?? null) : null;
   }
@@ -154,3 +155,12 @@ export class ResourceLedger {
     };
   }
 }
+
+/**
+ * The key a quota wait is stored, checked and cleared under: the account's
+ * quota owner, or the connection itself when the account names none.
+ */
+export const quotaKey = (native: {
+  quotaOwner?: string | null;
+  connectionId: string;
+}): string => native.quotaOwner ?? `connection:${native.connectionId}`;

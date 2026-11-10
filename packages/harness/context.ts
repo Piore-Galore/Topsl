@@ -164,7 +164,10 @@ export function buildConversation(
       case "response-settled": {
         const body = event.body as JournalBodies["response-settled"];
         if (!usable(body, compactions)) break;
-        flush(event.sequence);
+        // The turn is complete just before this response. A boundary at the
+        // response itself would let a compaction replace the response and
+        // keep the results of its tool calls, with no call to answer.
+        flush(event.sequence - 1);
         const parts = body.output.filter(
           (p) =>
             p.type !== "reasoning" ||

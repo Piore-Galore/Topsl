@@ -62,28 +62,12 @@ export class McpClient {
   ) {}
 
   async start(timeoutMs = 20_000): Promise<McpToolInfo[]> {
-    this.child = await spawnContained(this.definition.argv, {
-      cwd: this.cwd,
-      policy: this.policy,
-    });
-    this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk: string) => this.receive(chunk));
-    this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (chunk: string) => {
-      this.stderr = (this.stderr + chunk).slice(-8000);
-    });
-    this.child.on("exit", () => {
-      for (const entry of this.pending.values()) {
-        clearTimeout(entry.timer);
-        entry.reject(
-          new Error(
-            `The MCP server ${this.definition.name} exited.${this.stderr.trim() ? ` Its last output: ${this.stderr.trim().slice(-500)}` : ""}`,
-          ),
-        );
-      }
-      this.pending.clear();
-      this.child = null;
-    });
+    this.attach(
+      await spawnContained(this.definition.argv, {
+        cwd: this.cwd,
+        policy: this.policy,
+      }),
+    );
     await this.request(
       "initialize",
       {
@@ -109,15 +93,52 @@ export class McpClient {
       }));
   }
 
+  private attach(child: ChildProcessWithoutNullStreams): void {
+    this.child = child;
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => this.receive(chunk));
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      this.stderr = (this.stderr + chunk).slice(-8000);
+    });
+    const settle = (what: string) => {
+      if (this.child !== child) return;
+      this.child = null;
+      for (const entry of this.pending.values()) {
+        clearTimeout(entry.timer);
+        entry.reject(
+          new Error(
+            `The MCP server ${this.definition.name} ${what}.${this.stderr.trim() ? ` Its last output: ${this.stderr.trim().slice(-500)}` : ""}`,
+          ),
+        );
+      }
+      this.pending.clear();
+    };
+    child.on("exit", () => settle("exited"));
+    // A write to a server that closed its input (EPIPE, write after end) is
+    // reported here; without a listener it would be an uncaught exception in
+    // the service. The server is settled as if it had exited, then stopped.
+    child.stdin.on("error", () => {
+      settle("closed its input");
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Already gone.
+      }
+    });
+  }
+
   async call(
     tool: string,
     args: unknown,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<{ ok: boolean; output: string }> {
     const result = await this.request(
       "tools/call",
       { name: tool, arguments: args },
       timeoutMs,
+      signal,
     );
     const content = Array.isArray(result?.content) ? result.content : [];
     const text = content
@@ -150,13 +171,32 @@ export class McpClient {
     method: string,
     params: unknown,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<any> {
     if (!this.child)
       return Promise.reject(
         new Error(`The MCP server ${this.definition.name} is not running.`),
       );
+    if (signal?.aborted)
+      return Promise.reject(new Error(`${method} was stopped.`));
     const id = ++this.sequence;
-    return new Promise((resolve, reject) => {
+    return new Promise((resolvePending, rejectPending) => {
+      // Stop must not wait for the server's answer or the tool timeout.
+      const onAbort = () => {
+        if (!this.pending.delete(id)) return;
+        clearTimeout(timer);
+        this.notify("notifications/cancelled", { requestId: id });
+        rejectPending(new Error(`${method} was stopped.`));
+      };
+      const resolve = (value: any) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolvePending(value);
+      };
+      const reject = (error: Error) => {
+        signal?.removeEventListener("abort", onAbort);
+        rejectPending(error);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(
@@ -190,7 +230,13 @@ export class McpClient {
       } catch {
         continue;
       }
-      if (typeof message?.id === "number" && this.pending.has(message.id)) {
+      // A message with a method is the server's own request or notification,
+      // even when its id equals one of ours; it is never taken as a response.
+      if (
+        message?.method === undefined &&
+        typeof message?.id === "number" &&
+        this.pending.has(message.id)
+      ) {
         const entry = this.pending.get(message.id)!;
         this.pending.delete(message.id);
         clearTimeout(entry.timer);

@@ -28,6 +28,8 @@ function call(
 ): Promise<any> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(grant.endpoint);
+    // Decoded as one stream: a character split across two chunks stays whole.
+    socket.setEncoding("utf8");
     let data = "";
     socket.setTimeout(10000, () =>
       socket.destroy(new Error("Topsl context timed out.")),
@@ -36,7 +38,7 @@ function call(
       socket.write(JSON.stringify({ ...grant, method, query, ...page }) + "\n"),
     );
     socket.on("data", (bytes) => {
-      data += bytes.toString("utf8");
+      data += String(bytes);
       if (data.length > 1_000_000)
         socket.destroy(new Error("Context response exceeds its limit."));
     });
