@@ -257,7 +257,20 @@ Until this point nothing had been exercised in the Electron window. Two things w
 
 The last check found one more defect, present before the review: an older page was appended after the newer one, so with messages that share a timestamp the older rows appeared at the bottom. `apps/desktop/renderer/components/transcript.tsx` now puts an older page ahead of what is shown. After a rebuild the same check showed rows in order. A double click on Send in the Provider tools composer produced one `run-start`; the loop and session composers were not exercised.
 
-Still not exercised in the window: the other renderer fixes, the "Mark as not running" dialog and button, and anything with a live provider or a packaged build.
+**A second walk-through, the same day**, on the committed branch with the same method:
+
+| Fix | What was done | Observed |
+|---|---|---|
+| Native tasks form | Typed empty, 0, 9999 and 2.5 into "Model requests"; started with the check lines `npm run test:unit`, `lint: npm run lint` and `: cmd`; sent steering text one character over the limit. | Clamped on blur to 50, 1, 500 and 3. One `native-start` with checks named `npm run test:unit` and `lint`. `: cmd` blocked Start with a message and sent nothing. The refused steering text stayed in the box. |
+| "Members per role limit" | Focus and blur unchanged; cleared and blurred; changed to 9 and blurred. | No command, no command with the value restored, and exactly one `orchestration-policy-set`. |
+| Connections | "Test route" on two routes of one connection while the first was in flight; a model ID typed with a trailing space. | Both `connection-test` commands reached the main process. The suggested route name had no trailing hyphen. |
+| Session and loop composers | A double click on Send, and on "Start session"; an over-long goal and then a valid one in "Add goal". | One `session-message`, one `session-create`, one `loop-message`. The refused goal stayed in the box; the valid one was added and the box cleared. |
+| History and Imports paging | Submitted a search, typed other text without submitting, clicked "load more". | The next page was requested for the submitted query in both screens. |
+| Sessions list | 55 sessions, both pages loaded, then a new session. | It appeared at the top; no row was lost or repeated. |
+
+The "Mark as not running" button and its dialog were not exercised: getting an uncertain check with no process ID onto the screen needs a service kill mid-run, which was more set-up than the walk-through allowed. One thing seen and left alone: when a command is refused for length, the alert shows the raw validation JSON, not a sentence.
+
+Still not exercised in the window: the "Mark as not running" dialog and button, a few smaller renderer fixes (parallel activity, assisted handoff, workflow evidence, advanced workflows), and anything with a live provider or a packaged build.
 
 ## Not fixed
 
