@@ -1249,6 +1249,27 @@ describe("TEAM-10: one high-severity finding among five reviewers", () => {
     });
     expect(after.findings[0].observations).toHaveLength(2);
     expect(goalOf(f, goal.id).state).toBe("awaiting-acceptance");
+    // An ended goal's findings are closed: deciding one would reopen the goal.
+    await f.orchestrator.controlCommand({
+      projectId: goalOf(f, goal.id).projectId,
+      goalId: goal.id,
+      action: "stop",
+      commandId: cmd(),
+    });
+    expect(goalOf(f, goal.id).state).toBe("stopped");
+    await expect(
+      f.orchestrator.decideFinding({
+        goalId: goal.id,
+        findingKey: only.key,
+        disposition: "open",
+        rationale: "Reopened after the goal ended.",
+        commandId: cmd(),
+      }),
+    ).rejects.toThrow(/ended/);
+    expect(goalOf(f, goal.id).state).toBe("stopped");
+    expect(f.orchestrator.goalView(goal.id).review!.findings[0].disposition).toBe(
+      "waived",
+    );
   });
 });
 

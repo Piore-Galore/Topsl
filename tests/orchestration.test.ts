@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { commandSchema } from "../packages/domain/commands";
 import type {
   CoordinatorPlan,
   Goal,
@@ -1384,6 +1385,189 @@ describe("coordinator goals end to end (scripted driver)", () => {
     expect(goalOf(f, goal.id).state).toBe("stopped");
   });
 
+  test("a steer during admitted work carries an unchanged task and its round into the new plan", async () => {
+    const f = await setup();
+    const { conversation, goal } = await start(f, "Build it.");
+    f.driver.reply = (turn) =>
+      turn.purpose === "implementation" ? "hang" : defaultReply(turn);
+    await drive(f.orchestrator, f.driver, goal.id, {
+      maxSteps: 12,
+      until: () => rounds(f, goal.id, "work").length > 0,
+    });
+    const [work] = rounds(f, goal.id, "work");
+    const before = goalOf(f, goal.id);
+    await f.orchestrator.post({
+      conversationId: conversation.id,
+      text: "Also keep the public API unchanged.",
+      commandId: cmd(),
+    });
+    await drive(f.orchestrator, f.driver, goal.id, {
+      maxSteps: 12,
+      until: () => goalOf(f, goal.id).planRevision > before.planRevision,
+    });
+    const after = goalOf(f, goal.id);
+    expect(after.planRevision).toBe(before.planRevision + 1);
+    // The carried task is not charged against the delegated-task grant again.
+    expect(after.usage.delegatedTasks).toBe(before.usage.delegatedTasks);
+    const action = f.orchestrator.repo
+      .all<{ planId: string; state: string; roundId: string | null }>(
+        kinds.action,
+        "p",
+      )
+      .find((a) => a.planId === after.planId)!;
+    expect([action.state, action.roundId]).toEqual(["admitted", work.id]);
+    f.driver.reply = (turn) => defaultReply(turn);
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    const all = rounds(f, goal.id, "work");
+    expect(all.map((r) => [r.id, r.stage])).toEqual([[work.id, "completed"]]);
+    expect(
+      f.driver.launches.filter((t) => t.purpose === "implementation"),
+    ).toHaveLength(work.members.length);
+  });
+
+  test("a steer that changes an admitted task retires its round and runs the new task", async () => {
+    const f = await setup();
+    const { conversation, goal } = await start(f, "Build it.");
+    let brief = "Do the bounded task.";
+    f.driver.reply = (turn) =>
+      turn.purpose === "implementation"
+        ? "hang"
+        : defaultReply(
+            turn,
+            rosterPlan(turn).map((t) => ({ ...t, brief })),
+          );
+    await drive(f.orchestrator, f.driver, goal.id, {
+      maxSteps: 12,
+      until: () => rounds(f, goal.id, "work").length > 0,
+    });
+    const [work] = rounds(f, goal.id, "work");
+    const before = goalOf(f, goal.id);
+    brief = "Do the bounded task and keep the public API unchanged.";
+    await f.orchestrator.post({
+      conversationId: conversation.id,
+      text: "Also keep the public API unchanged.",
+      commandId: cmd(),
+    });
+    await drive(f.orchestrator, f.driver, goal.id, {
+      maxSteps: 12,
+      until: () => goalOf(f, goal.id).planRevision > before.planRevision,
+    });
+    expect(goalOf(f, goal.id).usage.delegatedTasks).toBe(
+      before.usage.delegatedTasks + 1,
+    );
+    f.driver.reply = (turn) =>
+      defaultReply(
+        turn,
+        rosterPlan(turn).map((t) => ({ ...t, brief })),
+      );
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    const all = rounds(f, goal.id, "work");
+    expect(all).toHaveLength(2);
+    expect(all.find((r) => r.id === work.id)!.stage).toBe("stale");
+    expect(all.find((r) => r.id !== work.id)!.stage).toBe("completed");
+  });
+
+  /**
+   * A plan of three tasks: "extend" depends on "build", and "docs" stands
+   * alone and hangs, so a steer arrives with both of the others completed.
+   */
+  async function steerAfterCompleted(changed: "build" | "docs") {
+    const f = await setup();
+    const { conversation, goal } = await start(f, "Build it.");
+    const briefs: Record<string, string> = {};
+    const plan = (turn: Parameters<typeof rosterPlan>[0]) =>
+      [
+        ...rosterPlan(turn),
+        {
+          key: "extend",
+          title: "Extend the change",
+          kind: "implementation",
+          roleId: "implementer",
+          dependencies: ["build"],
+          permittedOutputs: ["src/b.ts"],
+          acceptanceCriteria: ["It works."],
+          brief: "Extend the bounded task.",
+          partitions: [],
+        },
+        {
+          key: "docs",
+          title: "Document it",
+          kind: "information",
+          roleId: "researcher",
+          dependencies: [],
+          permittedOutputs: [],
+          acceptanceCriteria: [],
+          brief: "Summarize.",
+          partitions: [],
+        },
+      ].map((t) => ({ ...t, brief: briefs[t.key] ?? t.brief }));
+    f.driver.reply = (turn) =>
+      turn.purpose === "information" ? "hang" : defaultReply(turn, plan(turn));
+    const actions = () => {
+      const planId = goalOf(f, goal.id).planId;
+      return f.orchestrator.repo
+        .all<QueuedPlanAction>(kinds.action, "p")
+        .filter((a) => a.planId === planId);
+    };
+    const action = (key: string) => actions().find((a) => a.taskKey === key)!;
+    await drive(f.orchestrator, f.driver, goal.id, {
+      maxSteps: 40,
+      until: () =>
+        ["build", "extend"].every((k) => action(k)?.state === "completed"),
+    });
+    const before = goalOf(f, goal.id);
+    const old = { build: action("build"), extend: action("extend") };
+    expect([old.build.state, old.extend.state]).toEqual([
+      "completed",
+      "completed",
+    ]);
+    briefs[changed] = "Do it and keep the public API unchanged.";
+    await f.orchestrator.post({
+      conversationId: conversation.id,
+      text: "Also keep the public API unchanged.",
+      commandId: cmd(),
+    });
+    await drive(f.orchestrator, f.driver, goal.id, {
+      maxSteps: 12,
+      until: () => goalOf(f, goal.id).planRevision > before.planRevision,
+    });
+    return { f, goal, before, old, action, plan };
+  }
+
+  test("a steer that changes a dependency of a completed task runs that task again", async () => {
+    const { f, goal, before, old, action, plan } =
+      await steerAfterCompleted("build");
+    // The changed task and its dependent are both admitted anew.
+    expect(goalOf(f, goal.id).usage.delegatedTasks).toBe(
+      before.usage.delegatedTasks + 2,
+    );
+    expect(action("extend").state).not.toBe("completed");
+    f.driver.reply = (turn) => defaultReply(turn, plan(turn));
+    expect(await drive(f.orchestrator, f.driver, goal.id)).toBe(
+      "awaiting-acceptance",
+    );
+    expect(action("extend").state).toBe("completed");
+    expect(action("extend").roundId).not.toBe(old.extend.roundId);
+    expect(action("build").roundId).not.toBe(old.build.roundId);
+  });
+
+  test("a steer that leaves a completed task and its dependencies alone carries it", async () => {
+    const { f, goal, before, old, action } = await steerAfterCompleted("docs");
+    // Only the changed task is admitted anew.
+    expect(goalOf(f, goal.id).usage.delegatedTasks).toBe(
+      before.usage.delegatedTasks + 1,
+    );
+    for (const key of ["build", "extend"] as const)
+      expect([action(key).state, action(key).roundId]).toEqual([
+        "completed",
+        old[key].roundId,
+      ]);
+  });
+
   test("CO-05: duplicate commands and a crash around launch create no duplicate work", async () => {
     const f = await setup();
     const conversation = await f.orchestrator.createConversation({
@@ -1955,4 +2139,114 @@ describe("plan reconciliation: wording versus structure", () => {
     ]);
     expect(combined.agreement).toBe("matching");
   });
+});
+
+describe("control commands that land while a wave is launching", () => {
+  test("a stop during a member's launch interrupts that attempt and starts no further member", async () => {
+    const f = await setup();
+    const launch = f.driver.launch.bind(f.driver);
+    let stopped = false;
+    f.driver.launch = async (turn) => {
+      const result = await launch(turn);
+      if (!stopped) {
+        // The stop arrives after the runtime accepted the turn and before the
+        // engine recorded the member's attempt.
+        stopped = true;
+        await f.orchestrator.controlCommand({
+          projectId: "p",
+          goalId: turn.goalId,
+          action: "stop",
+          commandId: cmd(),
+        });
+      }
+      return result;
+    };
+    const { goal } = await start(f, "Add the coordinator feature.");
+    await f.orchestrator.tick();
+    await f.orchestrator.tick();
+    expect(stopped).toBe(true);
+    expect(goalOf(f, goal.id).state).toBe("stopped");
+    expect(f.driver.launches).toHaveLength(1);
+    expect(f.driver.interrupted).toEqual(["attempt-1"]);
+    const [round] = rounds(f, goal.id);
+    expect(round.stage).toBe("stopped");
+    expect(round.members.some((m) => m.launchId && !m.activeAttemptId)).toBe(
+      false,
+    );
+  });
+});
+
+test("commands bound role-group settings that stored documents may exceed", () => {
+  const ok = (raw: unknown) => commandSchema.safeParse(raw).success;
+  const group = (settings: unknown) => ({
+    type: "orchestration-group-set",
+    projectId: "p",
+    level: "project-role",
+    roleId: "reviewer",
+    settings,
+    commandId: "command-1",
+  });
+  const members = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ memberId: `m${i}` }));
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `m${i}`);
+  expect(
+    ok(
+      group({
+        form: "exact",
+        members: members(64),
+        executionWidth: null,
+        completion: {
+          electorateIds: ids(64),
+          threshold: { kind: "fraction", numerator: 2, denominator: 3 },
+        },
+      }),
+    ),
+  ).toBe(true);
+  expect(ok(group({ count: 64, maxCount: 64, executionWidth: 64 }))).toBe(true);
+  expect(ok(group({ members: members(65) }))).toBe(false);
+  // A count above the limit still parses: it is a policy conflict, not a
+  // refusal (TEAM-02 §6.1).
+  for (const field of ["count", "minCount", "maxCount", "executionWidth"])
+    expect(ok(group({ [field]: 65 }))).toBe(true);
+  for (const field of [
+    "requiredContributorIds",
+    "electorateIds",
+    "requiredEndorserIds",
+  ])
+    expect(ok(group({ completion: { [field]: ids(65) } }))).toBe(false);
+  const fraction = { kind: "fraction", numerator: 3, denominator: 2 };
+  expect(ok(group({ completion: { threshold: fraction } }))).toBe(false);
+  expect(
+    ok(group({ completion: { threshold: { kind: "count", count: 65 } } })),
+  ).toBe(false);
+  // The same limits hold wherever a command carries these settings.
+  const policy = (defaults: unknown) => ({
+    type: "orchestration-policy-set",
+    projectId: "p",
+    expectedRevision: 0,
+    maxMembersPerRole: 8,
+    defaults,
+    commandId: "command-1",
+  });
+  expect(ok(policy({ count: 2 }))).toBe(true);
+  expect(ok(policy({ members: members(65) }))).toBe(false);
+  const override = (settings: unknown) => ({
+    type: "loop-override-set",
+    runId: "run",
+    kind: "role-settings",
+    roleId: "reviewer",
+    settings,
+    commandId: "command-1",
+  });
+  expect(ok(override({ count: 2 }))).toBe(true);
+  expect(ok(override(null))).toBe(true);
+  expect(ok(override({ completion: { threshold: fraction } }))).toBe(false);
+  const session = (settings: unknown) => ({
+    type: "session-create",
+    projectId: "p",
+    configuration: { roles: { reviewer: { settings } } },
+    commandId: "command-1",
+  });
+  expect(ok(session({ count: 2 }))).toBe(true);
+  expect(ok(session({ members: members(65) }))).toBe(false);
 });
