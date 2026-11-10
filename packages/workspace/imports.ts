@@ -77,7 +77,10 @@ export class HistoryImports {
   constructor(
     private store: Store,
     private changed: () => void = () => {},
-  ) {}
+  ) {
+    // A preview holds the file's text, so one left by an earlier run goes now.
+    this.purgeExpired();
+  }
 
   private references(projectId: string): HistoryReference[] {
     return [
@@ -281,18 +284,21 @@ export class HistoryImports {
     cursor?: string | null;
     limit: number;
   }) {
+    this.purgeExpired();
     let items = this.references(input.projectId);
     const query = input.query?.trim();
     if (query) {
       const words = query.toLowerCase().split(/\s+/);
-      const hits = new Set(
-        this.store
-          .searchPage(input.projectId, query, { limit: 500 })
-          .items.map((m) => m.conversationId),
-      );
+      // Each import is searched in its own conversation: one page over the
+      // project would miss an import behind newer matches elsewhere.
+      const hit = (r: HistoryReference) =>
+        this.store.searchPage(input.projectId, query, {
+          conversationId: r.conversationId,
+          limit: 1,
+        }).items.length > 0;
       items = items.filter(
         (r) =>
-          hits.has(r.conversationId) ||
+          hit(r) ||
           words.every((w) =>
             `${r.fileName} ${r.formatLabel} ${r.provider}`
               .toLowerCase()

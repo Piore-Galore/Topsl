@@ -174,6 +174,23 @@ describe("recognizing exported files", () => {
     );
     expect(claude.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(claude.warnings.join(" ")).toMatch(/2 conversations/);
+    expect(claude.warnings.join(" ")).toMatch(/order the file lists them/);
+  });
+  test("a numeric time no date can hold does not fail the import", () => {
+    const parsed = parse(
+      JSON.stringify([
+        // Nanoseconds and microseconds since the epoch, then a number too large for any date.
+        { role: "user", content: "One", timestamp: 1731200000000000000 },
+        { role: "assistant", content: "Two", timestamp: 1731200000000000 },
+        { role: "user", content: "Three", timestamp: 1e300 },
+      ]),
+      "messages.json",
+    );
+    expect(parsed.messages.map((m) => m.at)).toEqual([
+      "2024-11-10T00:53:20.000Z",
+      "2024-11-10T00:53:20.000Z",
+      null,
+    ]);
   });
   test("unrecognized JSON and plain text are kept whole, with no invented speakers", () => {
     const config = JSON.stringify({ model: "x", settings: { a: 1 } });

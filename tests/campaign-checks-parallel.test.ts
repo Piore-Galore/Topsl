@@ -778,6 +778,314 @@ describe("CK-16 public check-execution-reconcile", () => {
   );
 });
 
+describe("recovery of a check that crashed before its process started", () => {
+  test("a prepared execution with no process becomes an error, releases its folder and queues clean-up; a dispatching one stays uncertain and held", async () => {
+    const f = await checkSetup(),
+      checks = new CheckExecutions(f.store);
+    expect(
+      (await checks.execute(f.repository, f.plan, f.plan.digest)).result,
+    ).toBe("passed");
+    const real = f.store.list<CheckExecution>("check-execution")[0];
+    const spare = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "topsl-campaign-roots-")),
+    );
+    cleanup.push(() => rm(spare, { recursive: true, force: true }));
+    const crashed = async (
+      id: string,
+      state: CheckExecution["state"],
+      lockId: string,
+    ) => {
+      const root = path.join(spare, id);
+      await mkdir(root);
+      await writeFile(path.join(root, "owned.txt"), id);
+      const rootStat = await stat(root);
+      f.store.put("check-execution", {
+        ...real,
+        id,
+        state,
+        eligibility: "pending",
+        verificationId: null,
+        lifecycle: null,
+        failurePhase: null,
+        error: null,
+        ownedRoots: [
+          {
+            root,
+            realPath: root,
+            dev: String(rootStat.dev),
+            ino: String(rootStat.ino),
+          },
+        ],
+      } satisfies CheckExecution);
+      f.store.put("check-workspace-lock", {
+        id: lockId,
+        executionId: id,
+        projectId: "p",
+        held: true,
+      });
+      return root;
+    };
+    const preparedRoot = await crashed(
+        "crashed-prepared",
+        "prepared",
+        f.candidate.workspaceIdentity,
+      ),
+      dispatchingRoot = await crashed(
+        "crashed-dispatching",
+        "dispatching",
+        "lock-crashed-dispatching",
+      );
+    checks.recover();
+
+    expect(
+      f.store.get<CheckExecution>("check-execution", "crashed-prepared"),
+    ).toMatchObject({
+      state: "error",
+      eligibility: "ineligible",
+      error: expect.stringContaining("nothing ran"),
+    });
+    expect(
+      f.store.get<any>("check-workspace-lock", f.candidate.workspaceIdentity)
+        .held,
+    ).toBe(false);
+    const job = f.store
+      .list<CleanupJob>("check-cleanup")
+      .find((j) => j.executionId === "crashed-prepared")!;
+    expect((await checks.retryCleanup("p", job.id)).state).toBe("completed");
+    await expect(stat(preparedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // From dispatching on, a process may exist: nothing is released.
+    expect(
+      f.store.get<CheckExecution>("check-execution", "crashed-dispatching"),
+    ).toMatchObject({ state: "uncertain", eligibility: "uncertain" });
+    expect(
+      f.store.get<any>("check-workspace-lock", "lock-crashed-dispatching").held,
+    ).toBe(true);
+    expect(
+      f.store
+        .list<CleanupJob>("check-cleanup")
+        .some((j) => j.executionId === "crashed-dispatching"),
+    ).toBe(false);
+    expect(
+      await readFile(path.join(dispatchingRoot, "owned.txt"), "utf8"),
+    ).toBe("crashed-dispatching");
+  });
+
+  test("an execution an earlier version left uncertain is repaired only when its record proves it never reached dispatching", async () => {
+    const f = await checkSetup(),
+      checks = new CheckExecutions(f.store);
+    expect(
+      (await checks.execute(f.repository, f.plan, f.plan.digest)).result,
+    ).toBe("passed");
+    const real = f.store.list<CheckExecution>("check-execution")[0];
+    expect(real.resourceId).toBeTruthy();
+    const spare = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "topsl-campaign-roots-")),
+    );
+    cleanup.push(() => rm(spare, { recursive: true, force: true }));
+    const stranded = async (
+      id: string,
+      lockId: string,
+      patch: Partial<CheckExecution>,
+    ) => {
+      const root = path.join(spare, id);
+      await mkdir(root);
+      await writeFile(path.join(root, "owned.txt"), id);
+      const rootStat = await stat(root);
+      f.store.put("check-execution", {
+        ...real,
+        id,
+        state: "uncertain",
+        eligibility: "uncertain",
+        verificationId: null,
+        lifecycle: null,
+        failurePhase: null,
+        outputBytes: 0,
+        error:
+          "Service restarted during a check. Reconcile the original execution; no command was replayed.",
+        ownedRoots: [
+          {
+            root,
+            realPath: root,
+            dev: String(rootStat.dev),
+            ino: String(rootStat.ino),
+          },
+        ],
+        ...patch,
+      } satisfies CheckExecution);
+      f.store.put("check-workspace-lock", {
+        id: lockId,
+        executionId: id,
+        projectId: "p",
+        held: true,
+      });
+      return root;
+    };
+    // Resources are allocated and saved before dispatching, so a record
+    // without a resource ID never reached it. With one, it may have.
+    const provenRoot = await stranded(
+        "stranded-proven",
+        f.candidate.workspaceIdentity,
+        { resourceId: null, environmentInstanceId: undefined },
+      ),
+      ambiguousRoot = await stranded(
+        "stranded-ambiguous",
+        "lock-stranded-ambiguous",
+        {},
+      );
+    checks.recover();
+
+    expect(
+      f.store.get<CheckExecution>("check-execution", "stranded-proven"),
+    ).toMatchObject({
+      state: "error",
+      eligibility: "ineligible",
+      error: expect.stringMatching(/nothing ran.*repaired/),
+    });
+    expect(
+      f.store.get<any>("check-workspace-lock", f.candidate.workspaceIdentity)
+        .held,
+    ).toBe(false);
+    const job = f.store
+      .list<CleanupJob>("check-cleanup")
+      .find((j) => j.executionId === "stranded-proven")!;
+    expect((await checks.retryCleanup("p", job.id)).state).toBe("completed");
+    await expect(stat(provenRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(
+      f.store.get<CheckExecution>("check-execution", "stranded-ambiguous"),
+    ).toMatchObject({ state: "uncertain", eligibility: "uncertain" });
+    expect(
+      f.store.get<any>("check-workspace-lock", "lock-stranded-ambiguous").held,
+    ).toBe(true);
+    expect(
+      f.store
+        .list<CleanupJob>("check-cleanup")
+        .some((j) => j.executionId === "stranded-ambiguous"),
+    ).toBe(false);
+    expect(await readFile(path.join(ambiguousRoot, "owned.txt"), "utf8")).toBe(
+      "stranded-ambiguous",
+    );
+    // With no process ID there is still nothing to reconcile.
+    await expect(
+      checks.reconcileStopped("p", "stranded-ambiguous"),
+    ).rejects.toThrow("No native process identity survived");
+  });
+
+  test("the owner can mark an uncertain check with no process ID as not running; one with a process ID or another state is refused", async () => {
+    const f = await serviceSetup();
+    const checks = f.service.checks;
+    await checks.execute(
+      f.service.coordinator.repository,
+      f.plan,
+      f.plan.digest,
+    );
+    const real = f.store.list<CheckExecution>("check-execution")[0];
+    const spare = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "topsl-campaign-roots-")),
+    );
+    cleanup.push(() => rm(spare, { recursive: true, force: true }));
+    const uncertain = async (id: string, patch: Partial<CheckExecution>) => {
+      const root = path.join(spare, id);
+      await mkdir(root);
+      await writeFile(path.join(root, "owned.txt"), id);
+      const rootStat = await stat(root);
+      f.store.put("check-execution", {
+        ...real,
+        id,
+        state: "uncertain",
+        eligibility: "uncertain",
+        verificationId: null,
+        lifecycle: null,
+        failurePhase: null,
+        error: "Service restarted during a check.",
+        ownedRoots: [
+          {
+            root,
+            realPath: root,
+            dev: String(rootStat.dev),
+            ino: String(rootStat.ino),
+          },
+        ],
+        ...patch,
+      } satisfies CheckExecution);
+      f.store.put("check-workspace-lock", {
+        id: `lock-${id}`,
+        executionId: id,
+        projectId: "p",
+        held: true,
+      });
+      return root;
+    };
+    const root = await uncertain("no-pid", {});
+    await uncertain("with-pid", { lifecycle: real.lifecycle });
+    expect(real.lifecycle?.pid).toBeTruthy();
+    expect(checks.inspect("p", "no-pid").processIdRecorded).toBe(false);
+    expect(checks.inspect("p", "with-pid").processIdRecorded).toBe(true);
+
+    // Reconciliation still refuses the record with no process ID.
+    await expect(checks.reconcileStopped("p", "no-pid")).rejects.toThrow(
+      "No native process identity survived",
+    );
+    expect(() => checks.markNotRunning("p", "with-pid")).toThrow(
+      "recorded a process ID",
+    );
+    expect(() => checks.markNotRunning("p", real.id)).toThrow(
+      "Only an inactive uncertain execution",
+    );
+    expect(() => checks.markNotRunning("q", "no-pid")).toThrow(
+      "outside this project",
+    );
+    expect(f.store.get<any>("check-workspace-lock", "lock-with-pid").held).toBe(
+      true,
+    );
+
+    // The command is strict, and the service requires the native confirmation
+    // that only the main process can supply.
+    const command = {
+      type: "check-execution-mark-not-running",
+      requestId: uid(),
+      projectId: "p",
+      id: "no-pid",
+    };
+    expect(
+      commandSchema.safeParse({ ...command, approved: true }).success,
+    ).toBe(false);
+    await expect(f.command(command)).rejects.toThrow(
+      "requires native confirmation",
+    );
+    expect(f.store.get<any>("check-workspace-lock", "lock-no-pid").held).toBe(
+      true,
+    );
+    const settled: CheckExecution = await f.service.command(
+      commandSchema.parse({ ...command, requestId: uid() }) as Command,
+      { approved: true },
+    );
+    expect(settled).toMatchObject({
+      state: "error",
+      eligibility: "ineligible",
+      error: expect.stringMatching(/owner attested at .* that no process/),
+    });
+    expect(f.store.get("check-execution", "no-pid")).toMatchObject({
+      state: "error",
+      eligibility: "ineligible",
+    });
+    expect(f.store.get<any>("check-workspace-lock", "lock-no-pid").held).toBe(
+      false,
+    );
+    const job = f.store
+      .list<CleanupJob>("check-cleanup")
+      .find((j) => j.executionId === "no-pid")!;
+    expect(job).toBeTruthy();
+    expect((await checks.retryCleanup("p", job.id)).state).toBe("completed");
+    await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    // Settled once: it is no longer uncertain.
+    expect(() => checks.markNotRunning("p", "no-pid")).toThrow(
+      "Only an inactive uncertain execution",
+    );
+  });
+});
+
 describe("CK-17 public check-cleanup-retry", () => {
   // The check leaves a read-only directory in its task resource root, so the
   // product's own recursive removal fails with a real filesystem error.

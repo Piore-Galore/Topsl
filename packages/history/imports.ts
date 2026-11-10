@@ -49,8 +49,20 @@ const roleOf = (value: unknown): ImportedMessage["role"] | null => {
 };
 
 const timeOf = (value: unknown): string | null => {
-  if (typeof value === "number" && Number.isFinite(value))
-    return new Date(value < 1e12 ? value * 1000 : value).toISOString();
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Seconds, milliseconds, microseconds or nanoseconds, told apart by size.
+    const date = new Date(
+      value < 1e12
+        ? value * 1000
+        : value < 1e15
+          ? value
+          : value < 1e18
+            ? value / 1e3
+            : value / 1e6,
+    );
+    // A number no date can hold has no time, rather than failing the import.
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
   if (typeof value === "string" && Number.isFinite(Date.parse(value)))
     return new Date(value).toISOString();
   return null;
@@ -303,7 +315,7 @@ function json(text: string): ParsedImport {
     warnings:
       conversations > 1
         ? [
-            `${plural(conversations, "conversation")} in this file are combined in time order.`,
+            `${plural(conversations, "conversation")} in this file are combined in the order the file lists them.`,
           ]
         : [],
     nativeSessionId: meta.session,

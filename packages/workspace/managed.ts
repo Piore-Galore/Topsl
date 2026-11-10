@@ -447,7 +447,11 @@ export class ManagedWorkspaces {
         record.detail =
           "Approved inputs copied. Shared Git metadata and native tools remain outside complete isolation.";
       } else {
-        await this.assertCompleteCleanupManifest(snapshot, plan.root);
+        await this.assertCompleteCleanupManifest(
+          snapshot,
+          plan.root,
+          plan.kind,
+        );
         if (plan.kind === "worktree")
           await runFile(
             plan.gitExecutable!,
@@ -527,6 +531,7 @@ export class ManagedWorkspaces {
   private async assertCompleteCleanupManifest(
     snapshot: CandidateSnapshot,
     root: string,
+    kind: ManagedWorkspace["kind"],
   ) {
     const allowed = new Set(
       snapshot.files.filter((f) => f.hash).map((f) => f.path),
@@ -534,7 +539,10 @@ export class ManagedWorkspaces {
     async function inspect(directory: string, prefix = "") {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         const relative = prefix + entry.name;
-        if (relative === ".git") continue;
+        // Only a worktree's own Git link file is expected metadata. A .git
+        // folder, or any .git in a snapshot workspace, is unreviewed content.
+        if (relative === ".git" && kind === "worktree" && entry.isFile())
+          continue;
         if (entry.isDirectory())
           await inspect(path.join(directory, entry.name), relative + "/");
         else if (!entry.isFile() || !allowed.has(relative))
@@ -575,7 +583,11 @@ export class ManagedWorkspaces {
       approvedUntracked: initial.approvedUntracked,
       gitExecutable: record.gitExecutable ?? undefined,
     });
-    await this.assertCompleteCleanupManifest(snapshot, record.root);
+    await this.assertCompleteCleanupManifest(
+      snapshot,
+      record.root,
+      record.kind,
+    );
     const program = record.gitExecutable
         ? await identity(record.gitExecutable)
         : null,

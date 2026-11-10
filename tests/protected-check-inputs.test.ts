@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import path from "node:path";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fixture } from "./helpers";
 import {
   captureCandidate,
@@ -16,6 +16,7 @@ import {
   type CheckDefinition,
 } from "../packages/workflows/verification";
 import { CoordinationRepository } from "../packages/persistence/repositories/coordination";
+import { fileEqual } from "../packages/workflows/parallel-specialists";
 
 const fixtures: Awaited<ReturnType<typeof fixture>>[] = [];
 const definition: CheckDefinition = {
@@ -108,6 +109,37 @@ test.each(["tests/accept.test.js", "scripts/check.mjs"])(
     expect(() =>
       assertCheckInputs(f.store, "w", candidate, definition),
     ).toThrow("Required acceptance inputs changed");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "a protected file rewritten with the same bytes and other non-exec permission bits is unchanged; an exec-bit change is not",
+  async () => {
+    const f = await setup(),
+      file = path.join(f.directory, "tests/accept.test.js"),
+      original = f.baseline.files.find(
+        (entry) => entry.path === "tests/accept.test.js",
+      )!;
+    // The baseline's own non-exec bits flipped, as an atomic replace may do.
+    await chmod(file, ((original.mode ?? 0o644) & 0o777) ^ 0o020);
+    const rewritten = await f.capture(),
+      now = rewritten.files.find((entry) => entry.path === original.path)!;
+    expect(now.mode).not.toBe(original.mode);
+    expect(() =>
+      assertCheckInputs(f.store, "w", rewritten, definition),
+    ).not.toThrow();
+    expect(fileEqual(original, now)).toBe(true);
+    await chmod(file, 0o755);
+    const executable = await f.capture();
+    expect(() =>
+      assertCheckInputs(f.store, "w", executable, definition),
+    ).toThrow("Required acceptance inputs changed");
+    expect(
+      fileEqual(
+        original,
+        executable.files.find((entry) => entry.path === original.path),
+      ),
+    ).toBe(false);
   },
 );
 

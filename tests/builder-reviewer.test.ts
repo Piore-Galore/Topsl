@@ -1,6 +1,6 @@
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { chmod, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rm, stat, writeFile } from "node:fs/promises";
 import {
   BuilderReviewerWorkflow,
   type WorkflowDispatch,
@@ -436,6 +436,24 @@ describe("provider-neutral builder reviewer lifecycle", () => {
     expect(latest.repairRound).toBe(2);
     expect(f.calls()).toBe(6);
     await expect(f.advance(state.id)).rejects.toThrow("repair limit");
+  });
+  test("a review whose dispatch fails before reaching the provider leaves no copy of the build behind", async () => {
+    const f = await setup(),
+      state = await f.create(),
+      dispatch = f.driver.dispatch.bind(f.driver);
+    let copy = "";
+    f.driver.dispatch = async (input) => {
+      if (input.mode !== "review") return dispatch(input);
+      copy = input.project.realPath;
+      expect((await stat(copy)).isDirectory()).toBe(true);
+      throw new Error("Fixture provider unavailable");
+    };
+    let stage = state.stage;
+    for (let i = 0; i < 4 && stage !== "blocked"; i++)
+      stage = (await f.advance(state.id)).stage;
+    expect(stage).toBe("blocked");
+    expect(copy).not.toBe("");
+    await expect(stat(copy)).rejects.toMatchObject({ code: "ENOENT" });
   });
   test("lost dispatch acknowledgment stays uncertain and blocks a second billable turn", async () => {
     const f = await setup({ unknown: true }),

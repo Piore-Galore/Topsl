@@ -199,7 +199,15 @@ export async function readClaudeStepReply(input: {
   // After /clear or /branch, Claude Code goes on in a new session in the same folder.
   const opened = Date.parse(input.openedAt),
     directory = path.dirname(file);
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return fail(
+      "Topsl could not list the folder that holds the session's transcript.",
+    );
+  }
+  for (const entry of entries) {
     if (entry.name === name || !entry.name.endsWith(".jsonl")) continue;
     const other = await lstat(path.join(directory, entry.name)).catch(
       () => null,

@@ -433,15 +433,34 @@ export class LocalReplication {
           projectId,
           association: "explicit-native-device-approval",
         });
+      this.releaseUnsharedProjects(previous?.approvedProjectIds ?? []);
     });
     return identity;
   }
   revokeDevice(deviceId: string) {
     this.store.transaction(() => {
+      const peer = this.store.get<Peer>("replication-peer", deviceId);
       this.store.remove("replication-peer", deviceId);
       this.clearPeerObservations(deviceId);
       this.clearPeerTransfers(deviceId);
+      this.releaseUnsharedProjects(peer?.approvedProjectIds ?? []);
     });
+  }
+  // A project that no approved peer lists any more, and that never had an
+  // owner, is local again. Without this its authority would stay unknown with
+  // no peer left to supply an owner.
+  private releaseUnsharedProjects(projectIds: readonly string[]) {
+    const shared = new Set(
+      [...this.store.iterate<Peer>("replication-peer")].flatMap(
+        (peer) => peer.approvedProjectIds,
+      ),
+    );
+    for (const projectId of projectIds)
+      if (
+        !shared.has(projectId) &&
+        !this.store.get("replication-owner", projectId)
+      )
+        this.store.remove("replication-shared-project", projectId);
   }
   previewMapping(projectId: string, logicalWorkspaceId: string, root: string) {
     if (!this.store.get("project", projectId))
@@ -1086,6 +1105,18 @@ export class LocalReplication {
           : conflict.remote;
     this.store.put("replica-record", value);
     this.trackRevision(value);
+    // Every other conflict reviewed against the superseded local revision can
+    // no longer be resolved, so it is removed with this one.
+    for (const other of [
+      ...this.store.iterate<any>("replication-conflict", {
+        projectId: conflict.projectId,
+      }),
+    ])
+      if (
+        other.recordId === conflict.recordId &&
+        other.local.revision === conflict.local.revision
+      )
+        this.store.remove("replication-conflict", other.id);
     this.store.remove("replication-conflict", conflictId);
     return value;
   }

@@ -12,11 +12,10 @@ import {
 import { Store } from "../persistence/store";
 import type { ConfigurationPlan, Project, Provider } from "../domain/types";
 import { hash, now, stable, uid } from "../domain/invariants";
-import { exists, isWithin, projectPath, readBounded } from "../platform/system";
+import { exists, isWithin, projectPath } from "../platform/system";
 import { parse as parseToml } from "smol-toml";
 
-/** Topsl reads configuration through `readBounded`, which refuses files over
- * this many bytes, so an edit larger than this could be written but never read
+/** Topsl refuses to read a configuration file over this many bytes, so an edit larger than this could be written but never read
  * back. The IPC schema bounds characters; this bounds UTF-8 bytes. */
 export const configurationByteLimit = 1_000_000;
 const assertWithinByteLimit = (text: string) => {
@@ -26,6 +25,37 @@ const assertWithinByteLimit = (text: string) => {
       `The edited configuration is ${bytes.toLocaleString("en-US")} bytes. Topsl reads configuration files up to ${configurationByteLimit.toLocaleString("en-US")} bytes, so it was not written.`,
     );
 };
+
+/** A byte that is not UTF-8 throws rather than becoming U+FFFD, and a
+ * leading byte order mark stays in the text, so what Topsl hashes, shows,
+ * backs up and writes is the file's own bytes. */
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+/** JSON.parse rejects a leading byte order mark. It is removed only for
+ * validation; the text that is written keeps it. */
+const withoutMark = (text: string) => text.replace(/^\uFEFF/, "");
+
+/**
+ * The text of the configuration file, or "" when nothing is at the path.
+ * lstat sees a link whose target is gone, which fs.access reports as no
+ * file, so a dangling link is refused instead of being replaced.
+ */
+async function currentText(file: string, linked: string): Promise<string> {
+  const entry = await lstat(file).catch(() => null);
+  if (!entry) return "";
+  if (entry.isSymbolicLink()) throw new Error(linked);
+  if (!entry.isFile() || entry.size > configurationByteLimit)
+    throw new Error("File is not a supported size or type.");
+  const bytes = await readFile(file);
+  if (bytes.length > configurationByteLimit)
+    throw new Error("File is not a supported size or type.");
+  try {
+    return decoder.decode(bytes);
+  } catch {
+    throw new Error(
+      "This configuration file is not valid UTF-8, so Topsl cannot show or replace it without changing its bytes. Edit it in the native application.",
+    );
+  }
+}
 
 export class Configuration {
   private readable = new Map<string, string>();
@@ -82,13 +112,10 @@ export class Configuration {
         provider === "codex" ? "config.toml" : "settings.json",
       );
     file = path.resolve(file);
-    if ((await exists(file)) && (await lstat(file)).isSymbolicLink())
-      throw new Error(
-        "Edit symlinked configuration in the native application. Topsl does not replace symlinks.",
-      );
-    const text = (await exists(file))
-      ? await readBounded(file, configurationByteLimit)
-      : "";
+    const text = await currentText(
+      file,
+      "Edit symlinked configuration in the native application. Topsl does not replace symlinks.",
+    );
     const destination = await this.destination(file);
     if (project && !isWithin(project.realPath, destination))
       throw new Error("Configuration escapes the approved project.");
@@ -109,19 +136,17 @@ export class Configuration {
     if (!this.readable.has(file))
       throw new Error("Read this provider configuration through Topsl first.");
     assertWithinByteLimit(text);
-    const before = (await exists(file))
-      ? await readBounded(file, configurationByteLimit)
-      : "";
+    const before = await currentText(file, "Configuration became a symlink.");
     if (hash(before) !== expectedHash)
       throw new Error(
         "Configuration changed externally. Read it again before editing.",
       );
     if (file.endsWith(".json")) {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(withoutMark(text));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         throw new Error("Settings must contain a JSON object.");
     }
-    if (file.endsWith(".toml")) parseToml(text);
+    if (file.endsWith(".toml")) parseToml(withoutMark(text));
     const value: ConfigurationPlan = {
       id: uid(),
       path: file,
@@ -160,18 +185,14 @@ export class Configuration {
     this.writing = true;
     let temporary: string | undefined;
     try {
-      if (
-        (await exists(plan.path)) &&
-        (await lstat(plan.path)).isSymbolicLink()
-      )
-        throw new Error("Configuration became a symlink.");
       if ((await this.destination(plan.path)) !== this.readable.get(plan.path))
         throw new Error(
           "Configuration parent changed after preview. No file was written.",
         );
-      const current = (await exists(plan.path))
-        ? await readBounded(plan.path, configurationByteLimit)
-        : "";
+      const current = await currentText(
+        plan.path,
+        "Configuration became a symlink.",
+      );
       if (hash(current) !== plan.expectedHash)
         throw new Error(
           "Configuration changed after approval. No file was written.",
@@ -195,6 +216,10 @@ export class Configuration {
       const staged = await open(temporary, "wx", 0o600);
       try {
         await staged.writeFile(plan.after);
+        // The rename would otherwise leave an existing file with the staged
+        // file's owner-only mode. A new file stays owner-only.
+        const existing = await lstat(plan.path).catch(() => null);
+        if (existing?.isFile()) await staged.chmod(existing.mode & 0o777);
         await staged.sync();
       } finally {
         await staged.close();
@@ -202,7 +227,7 @@ export class Configuration {
       // A second read catches ordinary external editor changes during preview/apply.
       if (
         hash(
-          (await exists(plan.path)) ? await readFile(plan.path, "utf8") : "",
+          await currentText(plan.path, "Configuration became a symlink."),
         ) !== plan.expectedHash
       )
         throw new Error(
@@ -229,13 +254,8 @@ export class Configuration {
       .filter((e) => e.state === "applying")) {
       let state = "uncertain";
       try {
-        if (
-          (await exists(entry.path)) &&
-          (await lstat(entry.path)).isSymbolicLink()
-        )
-          throw new Error("Symlink changed.");
         const currentHash = hash(
-          (await exists(entry.path)) ? await readBounded(entry.path) : "",
+          await currentText(entry.path, "Symlink changed."),
         );
         const plan = this.store.get<ConfigurationPlan>(
           "configuration-plan",
