@@ -152,13 +152,20 @@ describe("native process adapter", () => {
   test("a turn's usage covers every model request, and the next turn starts from zero", async () => {
     const f = await setup();
     const turn = async (prompt: string) => {
-      const run = await f.runtime.start(
-        f.installation,
-        f.store.get<typeof f.conversation>("conversation", "c")!,
-        f.project,
-        prompt,
-        "fixture-model",
-        "review",
+      // A run is completed before its workspace lease is released, which
+      // waits for the process to be confirmed gone. A start refused for that
+      // lease changes nothing, so the next turn simply tries again.
+      const run = await vi.waitFor(
+        () =>
+          f.runtime.start(
+            f.installation,
+            f.store.get<typeof f.conversation>("conversation", "c")!,
+            f.project,
+            prompt,
+            "fixture-model",
+            "review",
+          ),
+        { timeout: 30_000, interval: 50 },
       );
       await vi.waitFor(() =>
         expect(f.store.get<Run>("run", run.id)?.status).toBe("completed"),
