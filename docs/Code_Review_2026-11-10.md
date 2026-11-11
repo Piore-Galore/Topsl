@@ -288,6 +288,14 @@ The fixes were pushed as pull request [#52](https://github.com/Piore-Galore/Tops
 
 What this does and does not establish: the unit suite, the desktop smoke and the packaged session journey now have a passing run on Windows and Linux with these changes. The Linux `/proc` lookup in `affectedProcesses` and the Windows drive check in checkpoint ownership have no test of their own, so a green suite does not show those branches ran. The two steps added to the release workflow run only on a release tag and have not run.
 
+### A regression CI found after the merge
+
+The documentation-only follow-up, pull request [#53](https://github.com/Piore-Galore/Topsl/pull/53), failed once on macOS Apple silicon in `scripts/desktop-native-test.mjs`: a native task that had been started never appeared as "Completed" within 60 seconds. The same step had passed on that platform at the merged head.
+
+The cause is in the review's own fix for the Native tasks re-query loop. The screen reads its state through the app's `act` helper, which drops a command while the same one is in flight. A change event that arrived during a read was therefore lost, and with no later event the screen kept the older state. Before the fix the endless re-query hid this. `apps/desktop/renderer/screens/native-tasks.tsx` now runs one more read when a refresh is asked for during a read.
+
+Evidence: the script passed three times in a row locally after the change, and it also passed most runs before it, so the local runs do not prove the race is closed; the reasoning above and the CI result on this pull request are what support it.
+
 ## Not fixed
 
 Nothing from the review remains open except the items below, and what the live Codex check did not observe (`total` after a compaction or on a resumed thread).
