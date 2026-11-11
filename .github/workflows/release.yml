@@ -39,7 +39,7 @@ jobs:
     needs: prepare
     name: ${{ matrix.name }}
     # Same steps, and so the same limit, as Compile Topsl (build.yml).
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: write
     strategy:
