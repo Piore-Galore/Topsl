@@ -107,7 +107,10 @@ async function setup(script: Script) {
     await upstream.close();
     await rm(directory, { recursive: true, force: true });
   });
-  const signIn = (expiresInMs: number) => {
+  const signIn = (
+    expiresInMs: number,
+    earliestRefreshAt: string | null = null,
+  ) => {
     const connection = proxy.registry.createConnection({
       kind: "chatgpt-plan",
       label: "ChatGPT",
@@ -124,7 +127,7 @@ async function setup(script: Script) {
       refreshToken: "refresh-initial",
       tokenType: "Bearer",
       expiresAt: new Date(Date.now() + expiresInMs).toISOString(),
-      earliestRefreshAt: null,
+      earliestRefreshAt,
       scopes: ["chatgpt.tokens.use.direct"],
       savedAt: new Date().toISOString(),
     };
@@ -200,6 +203,79 @@ describe("plan sign-in maintenance", () => {
     ]);
   });
 
+  test("a token near expiry is used without a refresh while the provider's earliest refresh time is ahead", async () => {
+    const f = await setup(() => ({ events: answer([{ text: "hi" }]) }));
+    f.signIn(60_000, new Date(Date.now() + 30_000).toISOString());
+    const response = await f.post("/v1/responses", {
+      model: "chatgpt/x",
+      input: "x",
+      stream: true,
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(f.auth.requests.filter((r) => r.path.endsWith("/token"))).toEqual(
+      [],
+    );
+    expect(f.upstream.calls.map((c) => c.headers.authorization)).toEqual([
+      "Bearer access-initial",
+    ]);
+  });
+
+  test.each([
+    ["in the past", () => new Date(Date.now() - 30_000).toISOString()],
+    ["absent", () => null],
+    ["unreadable", () => "soon"],
+  ])(
+    "a token near expiry is refreshed when the earliest refresh time is %s",
+    async (_name, earliest) => {
+      const f = await setup(() => ({ events: answer([{ text: "hi" }]) }));
+      f.signIn(60_000, earliest());
+      const response = await f.post("/v1/responses", {
+        model: "chatgpt/x",
+        input: "x",
+        stream: true,
+      });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(
+        f.auth.requests.filter((r) => r.path.endsWith("/token")),
+      ).toHaveLength(1);
+      expect(f.upstream.calls[0].headers.authorization).not.toBe(
+        "Bearer access-initial",
+      );
+    },
+  );
+
+  test("a rejected token is refreshed even while the earliest refresh time is ahead", async () => {
+    let rejections = 1;
+    const f = await setup(() =>
+      rejections-- > 0
+        ? {
+            status: 401,
+            body: { error: { code: "invalid_api_key", message: "expired" } },
+          }
+        : { events: answer([{ text: "ok" }]) },
+    );
+    f.signIn(60_000, new Date(Date.now() + 30_000).toISOString());
+    const response = await f.post("/v1/responses", {
+      model: "chatgpt/x",
+      input: "x",
+      stream: true,
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(
+      f.auth.requests.filter((r) => r.path.endsWith("/token")),
+    ).toHaveLength(1);
+    expect(f.upstream.calls.map((c) => c.headers.authorization)[0]).toBe(
+      "Bearer access-initial",
+    );
+    expect(f.upstream.calls).toHaveLength(2);
+    expect(f.upstream.calls[1].headers.authorization).not.toBe(
+      "Bearer access-initial",
+    );
+  });
+
   test("an explicit authentication rejection renews once with the same identity, then gives up", async () => {
     let rejections = 1;
     const f = await setup(() =>
@@ -228,6 +304,34 @@ describe("plan sign-in maintenance", () => {
     expect(failed.status).toBe(401);
     expect((await failed.json()).topsl_error.kind).toBe("authentication");
     expect(f.upstream.calls).toHaveLength(4);
+  });
+
+  test("a renewal that fails for a passing reason after a rejection is retryable and keeps the sign-in", async () => {
+    const f = await setup(() => ({
+      status: 401,
+      body: { error: { code: "invalid_api_key", message: "expired" } },
+    }));
+    f.auth.setRefresh(() => ({
+      status: 503,
+      body: { error: "temporarily_unavailable" },
+    }));
+    const { connection } = f.signIn(3_600_000);
+    const response = await f.post("/v1/responses", {
+      model: "chatgpt/x",
+      input: "x",
+      stream: true,
+    });
+    expect(response.status).toBe(503);
+    expect((await response.json()).topsl_error).toMatchObject({
+      kind: "unavailable",
+      retryable: true,
+    });
+    // The refused token is not sent a second time, and nothing was renewed,
+    // so the sign-in is not marked as needing replacement.
+    expect(f.upstream.calls).toHaveLength(1);
+    expect(f.proxy.registry.requireConnection(connection.id).state).toBe(
+      "ready",
+    );
   });
 
   test("a terminal refresh error asks for sign-in again and stops sending requests", async () => {
@@ -307,7 +411,9 @@ describe("plan sign-in maintenance", () => {
       .post("/v1/responses", { model: "chatgpt/x", input: "x", stream: true })
       .then(async (r) => ({ status: r.status, body: await r.text() }));
     await expect
-      .poll(() => f.auth.requests.filter((r) => r.path.endsWith("/token")).length)
+      .poll(
+        () => f.auth.requests.filter((r) => r.path.endsWith("/token")).length,
+      )
       .toBe(1);
     // Disconnect cancels the request first, then waits for the refresh lock.
     const disconnecting = f.proxy.disconnect(connection.id);
@@ -320,6 +426,97 @@ describe("plan sign-in maintenance", () => {
       hasCredential: false,
       state: "disconnected",
     });
+    expect(f.upstream.calls).toHaveLength(0);
+  });
+});
+
+describe("the loopback listener", () => {
+  test("a request target that is not a URL is answered, and the listener keeps serving", async () => {
+    const f = await setup(() => ({ events: answer([{ text: "hi" }]) }));
+    const get = (target: string) =>
+      new Promise<number>((resolve, reject) => {
+        const request = http.request(
+          {
+            host: "127.0.0.1",
+            port: f.server.port,
+            path: target,
+            method: "GET",
+            headers: { authorization: `Bearer ${f.proxy.accessToken}` },
+          },
+          (response) => {
+            response.resume();
+            resolve(response.statusCode ?? 0);
+          },
+        );
+        request.on("error", reject);
+        request.end();
+      });
+    expect(await get("//")).toBe(400);
+    expect(await get("/v1/models")).toBe(200);
+  });
+
+  test("a body declared larger than the limit is refused with 413 before it is read", async () => {
+    const f = await setup(() => ({ events: answer([{ text: "hi" }]) }));
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = http.request(
+        {
+          host: "127.0.0.1",
+          port: f.server.port,
+          path: "/v1/responses",
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${f.proxy.accessToken}`,
+            "content-type": "application/json",
+            "content-length": String(64 * 1024 * 1024),
+          },
+        },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode ?? 0);
+        },
+      );
+      request.on("error", () => undefined);
+      request.flushHeaders();
+    });
+    expect(status).toBe(413);
+    expect(f.upstream.calls).toHaveLength(0);
+  });
+
+  test("a chunked body that passes the limit is answered with 413, not a reset", async () => {
+    const f = await setup(() => ({ events: answer([{ text: "hi" }]) }));
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = http.request(
+        {
+          host: "127.0.0.1",
+          port: f.server.port,
+          path: "/v1/responses",
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${f.proxy.accessToken}`,
+            "content-type": "application/json",
+            "transfer-encoding": "chunked",
+          },
+        },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode ?? 0);
+          request.destroy();
+        },
+      );
+      // The upload may be cut off once the answer is on its way.
+      request.on("error", () => undefined);
+      request.on("close", () => reject(new Error("closed with no answer")));
+      const block = Buffer.alloc(1024 * 1024, 0x20);
+      let sent = 0;
+      const pump = () => {
+        while (sent < 40 && !request.destroyed) {
+          sent++;
+          if (!request.write(block)) return void request.once("drain", pump);
+        }
+      };
+      pump();
+    });
+    expect(status).toBe(413);
     expect(f.upstream.calls).toHaveLength(0);
   });
 });

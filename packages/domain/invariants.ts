@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import type { LifecyclePlan, UpdateCheck, UsageFact } from "./types";
+import type { LifecyclePlan, UpdateCheck } from "./types";
 export const now = () => new Date().toISOString();
 export const uid = () => randomUUID();
 export const hash = (value: string | Buffer) =>
@@ -75,40 +75,4 @@ export function safeError(error: unknown): string {
       "[redacted]",
     )
     .slice(0, 1500);
-}
-export function normalizeUsage(
-  provider: "codex" | "claude",
-  raw: any,
-  runId: string,
-  scope = "run",
-): UsageFact {
-  const number = (n: unknown) =>
-    typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
-  if (provider === "codex")
-    return {
-      id: `${runId}:${scope}`,
-      runId,
-      provider,
-      input: number(raw.inputTokens ?? raw.input_tokens),
-      output: number(raw.outputTokens ?? raw.output_tokens),
-      cached: number(raw.cachedInputTokens ?? raw.cached_input_tokens),
-      source: "native-runtime",
-      scope,
-    };
-  const input = number(raw.input_tokens),
-    cached = number(raw.cache_read_input_tokens),
-    created = number(raw.cache_creation_input_tokens);
-  return {
-    id: `${runId}:${scope}`,
-    runId,
-    provider,
-    input:
-      input === null || cached === null || created === null
-        ? null
-        : input + cached + created,
-    output: number(raw.output_tokens),
-    cached,
-    source: "native-runtime",
-    scope,
-  };
 }

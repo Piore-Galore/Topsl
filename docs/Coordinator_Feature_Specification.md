@@ -88,6 +88,7 @@ Roles have no built-in provider preference. Optional user presets can express pr
 | “Use at most three reviewers.” | Auto membership with a maximum count of three. |
 | “Use Sol first, then Fable.” | Explicit sequential collaboration. Both remain active contributors. |
 | “Use Sol; fall back to Fable if unavailable.” | One active member with an explicit availability policy. |
+| “Use React hooks.” (no fall-back clause) | Not a roster instruction. A sentence about the work stays part of the goal; one model is named with a fall-back clause, or with “Review with …” or “Coordinate with …”. *(10 November 2026.)* |
 
 Exact rosters cannot be enlarged, reduced, or converted into alternatives by a model-generated plan. A user can intentionally configure several sessions of the same model in one role, but that must not satisfy a request for several different models.
 

@@ -171,6 +171,8 @@ async function readCapturedFile(
     reviewed?: boolean;
     captureId?: string;
     vaultBytes?: number;
+    /** The vault's size as this capture knows it, shared across its files. */
+    vault?: { used: number };
   } = {},
 ): Promise<{ file: CandidateFile; stagingId: string | null }> {
   cancelled(options.signal);
@@ -207,6 +209,12 @@ async function readCapturedFile(
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
   );
   const stagingId = options.blobs ? `${options.captureId}:${uid()}` : null;
+  // Summing the vault per chunk is a table scan each time. It is read once and
+  // the bytes this file stages are added as they go.
+  const vaultUsed = stagingId
+    ? (options.vault?.used ?? options.blobs!.usage())
+    : 0;
+  let staged = 0;
   try {
     const before = await handle.stat();
     if (!before.isFile() || before.size > limit)
@@ -277,13 +285,14 @@ async function readCapturedFile(
       }
       if (stagingId) {
         if (
-          options.blobs!.usage() + bytes.length >
+          vaultUsed + staged + bytes.length >
           (options.vaultBytes ?? Number.MAX_SAFE_INTEGER)
         )
           throw new Error(
             "Protected vault disk budget exceeded during capture; reduce scope or review retention.",
           );
         options.blobs!.stage(stagingId, ordinal, bytes);
+        staged += bytes.length;
       }
       offset += bytesRead;
       ordinal++;
@@ -358,16 +367,51 @@ export async function gitWorkingTreeChanges(
   root: string,
   gitExecutable?: string,
 ): Promise<string[]> {
-  return (
+  const fields = (
     await runFile(
       await gitProgram(gitExecutable),
       ["status", "--porcelain=v1", "--untracked-files=all", "-z"],
       { cwd: root },
     )
-  )
-    .split("\0")
-    .filter((entry) => entry.length > 3)
-    .map((entry) => entry.slice(3));
+  ).split("\0");
+  const paths: string[] = [];
+  for (let index = 0; index < fields.length; index++) {
+    const entry = fields[index];
+    if (entry.length <= 3) continue;
+    paths.push(entry.slice(3));
+    // With -z, a rename or copy is followed by the path it came from as a
+    // field of its own, with no status in front of it.
+    if (/[RC]/.test(entry.slice(0, 2))) {
+      const origin = fields[++index];
+      if (origin) paths.push(origin);
+    }
+  }
+  return paths;
+}
+/**
+ * The commit a folder's own repository has checked out, or null when the
+ * folder is not the root of a work tree or has no commit yet. Git answers
+ * this, so packed refs and linked work trees are read correctly.
+ */
+export async function gitHeadRevision(
+  root: string,
+  gitExecutable?: string,
+): Promise<string | null> {
+  try {
+    // A directory in a repository, a file in a linked work tree.
+    await lstat(path.join(root, ".git"));
+    return (
+      (
+        await runFile(
+          await gitProgram(gitExecutable),
+          ["rev-parse", "--verify", "HEAD"],
+          { cwd: root },
+        )
+      ).trim() || null
+    );
+  } catch {
+    return null;
+  }
 }
 const noGit = {
   git: false,
@@ -579,6 +623,9 @@ export async function captureCandidate(
               "diff",
               "--cached",
               "--name-only",
+              // Without this the old name of a staged rename is reported as
+              // a rename, and the deletion filter drops it.
+              "--no-renames",
               "--diff-filter=D",
               "-z",
               "HEAD",
@@ -641,6 +688,7 @@ export async function captureCandidate(
   });
   let total = 0,
     committed = false;
+  const vault = { used: blobs.usage() };
   try {
     // Stat preflight is useful feedback, but the opened-file checks enforce limits.
     for (const name of paths) {
@@ -654,6 +702,7 @@ export async function captureCandidate(
           reviewed: selection.reviewedSourcePaths?.includes(name),
           captureId: id,
           vaultBytes: limits.vaultBytes,
+          vault,
         },
       );
       const file = captured.file;
@@ -668,7 +717,9 @@ export async function captureCandidate(
       }
       if (captured.stagingId)
         store.transaction(() => {
-          blobs.publish(captured.stagingId!, file.hash!, file.bytes);
+          // A blob the vault already held adds nothing to its size.
+          if (blobs.publish(captured.stagingId!, file.hash!, file.bytes))
+            vault.used += file.bytes;
           blobs.reference(selection.projectId, id, file);
         });
       file.blobCandidateId = id;

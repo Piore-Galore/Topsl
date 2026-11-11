@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import { realpathSync } from "node:fs";
 import { z } from "zod";
 import { bindCheckInputs } from "./check-inputs";
 import {
@@ -587,10 +588,14 @@ export class BuilderReviewerWorkflow {
       // During an authorized builder turn the live workspace is expected to change.
       if (!["building", "repairing"].includes(state.stage)) {
         this.repository.invalidateCandidate(candidate.id, safeError(error));
-        return this.save(state, {
+        const blocked = this.save(state, {
           stage: "blocked",
           detail: safeError(error),
         });
+        // A review of an invalidated build is void, so its copy goes too.
+        if (state.stage === "reviewing")
+          await this.removeReviewCopy(state.id, state.activeAttemptId);
+        return blocked;
       }
     }
     if (state.activeAttemptId) {
@@ -607,7 +612,7 @@ export class BuilderReviewerWorkflow {
       if (attempt.state !== "completed") {
         // The attempt has ended, so its reader grant goes with it.
         this.contextServer?.revokeAttempt(attempt.id);
-        return this.save(
+        const blocked = this.save(
           state,
           {
             stage: "blocked",
@@ -615,6 +620,10 @@ export class BuilderReviewerWorkflow {
           },
           "blocked",
         );
+        // An uncertain reviewer may still be reading its copy.
+        if (attempt.state !== "uncertain")
+          await this.removeReviewCopy(state.id, attempt.id);
+        return blocked;
       }
       const outstandingLease = this.repository.store.db
         .prepare(
@@ -632,7 +641,23 @@ export class BuilderReviewerWorkflow {
         // A finding is a proposal. Leave time for explicit adjudication before
         // the next bounded repair dispatch (including the background observer).
         if (state.stage === "ready-repair") return state;
-      } else state = await this.completeBuild(state, attempt);
+      } else
+        try {
+          state = await this.completeBuild(state, attempt);
+        } catch (error) {
+          // The background observer calls this every 500 ms and discards
+          // what it throws. Left to throw, a folder that cannot be captured
+          // (a secret-like file, an oversized file) would be hashed again on
+          // every pass, for ever, with nothing shown.
+          return this.save(
+            this.state(state.id),
+            {
+              stage: "blocked",
+              detail: `Capture blocked: ${safeError(error)}`,
+            },
+            "blocked",
+          );
+        }
     }
     if (["ready-build", "ready-review", "ready-repair"].includes(state.stage))
       return await this.dispatch(state);
@@ -1110,11 +1135,18 @@ export class BuilderReviewerWorkflow {
         attempt.id,
         current.operationIntentId ? "unknown" : "failed",
       );
-      return this.save(
+      const blocked = this.save(
         state,
         { stage: "blocked", detail: safeError(error) },
         "blocked",
       );
+      // A review that never reached its provider leaves no reader of its copy.
+      if (
+        this.repository.require<ExecutionAttempt>("attempt", attempt.id)
+          .state === "failed"
+      )
+        await this.removeReviewCopy(state.id, attempt.id);
+      return blocked;
     }
   }
   /** Records a prepared stage as a Claude Code step that waits for the owner. */
@@ -1347,6 +1379,41 @@ export class BuilderReviewerWorkflow {
         );
     });
     if (step.role === "reviewer") await this.removeStepCopy(step);
+  }
+  /** Removes the copy of the build made for a review attempt that is
+   * abandoned or over. After a restart only the proof record names it. A
+   * copy that cannot be removed must not change what the workflow does. */
+  private async removeReviewCopy(
+    workflowId: string,
+    attemptId?: string | null,
+  ): Promise<void> {
+    const proof = attemptId
+      ? this.repository.store.get<{ root?: string }>(
+          "review-snapshot-proof",
+          attemptId,
+        )
+      : undefined;
+    if (!proof) return;
+    try {
+      const copy = this.reviews.get(workflowId);
+      if (copy) {
+        await copy.cleanup();
+        this.reviews.delete(workflowId);
+        return;
+      }
+      if (!proof.root) return;
+      const parent = path.dirname(path.resolve(proof.root)),
+        temporary = path.resolve(os.tmpdir());
+      // The proof records the resolved path, which on macOS differs from
+      // the temporary folder's own name.
+      if (
+        (parent === temporary || parent === realpathSync(temporary)) &&
+        path.basename(proof.root).startsWith("topsl-candidate-")
+      )
+        await removeMaterializedCopy(proof.root);
+    } catch {
+      /* The copy stays in the temporary folder for the system to clear. */
+    }
   }
   /** Removes a review step's copy of the build, which only Topsl created. */
   private async removeStepCopy(step: ClaudeStep): Promise<void> {
@@ -1829,8 +1896,7 @@ export class BuilderReviewerWorkflow {
     state: BuilderReviewerState,
     attempt: ExecutionAttempt,
   ): Promise<BuilderReviewerState> {
-    const candidate = this.candidate(state.candidateId),
-      copy = this.reviews.get(state.id);
+    const candidate = this.candidate(state.candidateId);
     const proof = this.repository.store.get<{
       id: string;
       candidateId: string;
@@ -1886,10 +1952,7 @@ export class BuilderReviewerWorkflow {
         attempt.id,
       );
       if (step) await this.removeStepCopy(step);
-      else if (copy) {
-        await copy.cleanup();
-        this.reviews.delete(state.id);
-      }
+      else await this.removeReviewCopy(state.id, attempt.id);
     }
     await assertCandidateCurrent(candidate);
     let reply: unknown;
@@ -2101,10 +2164,12 @@ export class BuilderReviewerWorkflow {
         "workflow-finding",
         input.findingId,
       );
+      // A finding raised on an earlier candidate of this workflow stays in
+      // state.findings and keeps blocking until it is decided, so it must be
+      // decidable here. The decision is recorded against the current candidate.
       if (
         finding.projectId !== state.projectId ||
-        finding.workflowId !== state.id ||
-        finding.candidateId !== state.candidateId
+        finding.workflowId !== state.id
       )
         throw new Error(
           "Finding belongs to a different workflow or candidate.",
@@ -2417,6 +2482,9 @@ export class BuilderReviewerWorkflow {
     } finally {
       if (state.activeAttemptId)
         this.contextServer?.revokeAttempt(state.activeAttemptId);
+      // A Claude Code step removed its own copy above.
+      if (!waiting)
+        await this.removeReviewCopy(state.id, state.activeAttemptId);
     }
     return cancelled;
   }
@@ -2545,6 +2613,7 @@ export class BuilderReviewerWorkflow {
             "The prior writer is not confirmed stopped; reconcile ownership before restarting.",
           );
         this.contextServer?.revokeAttempt(attempt.id);
+        await this.removeReviewCopy(id, attempt.id);
       }
       const workspace = this.repository.require<Workspace>(
         "workspace",

@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useRef, type Dispatch, type SetStateAction } from "react";
 import type { Message } from "../../../../packages/domain/types";
 import type { Command } from "../../../../packages/domain/commands";
 import { ActionButton } from "../components/action-button";
@@ -28,6 +28,9 @@ export function HistoryScreen({
   conversations,
   openConversation,
 }: Props) {
+  // The query the listed results belong to; paging must not use newer text
+  // typed into the box but not yet submitted.
+  const submitted = useRef(query);
   return (
     <>
       <h2>Provider history</h2>
@@ -42,6 +45,7 @@ export function HistoryScreen({
             limit: 80,
           });
           if (result) {
+            submitted.current = query;
             setSearchResults(result.items);
             setSearchCursor(result.nextCursor);
           }
@@ -75,7 +79,7 @@ export function HistoryScreen({
                 const result = await act({
                   type: "history-page",
                   projectId,
-                  query,
+                  query: submitted.current,
                   cursor: searchCursor,
                   limit: 80,
                 });

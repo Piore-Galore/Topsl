@@ -117,9 +117,11 @@ export interface ParallelDriver {
   }): Promise<void>;
   interrupt?(attempt: ExecutionAttempt): Promise<void>;
 }
+// Only the exec bit is content, as in candidateDiff; a missing file differs
+// by its hash.
 export const fileEqual = (a?: CandidateFile, b?: CandidateFile) =>
   (a?.hash ?? null) === (b?.hash ?? null) &&
-  (a?.mode ?? null) === (b?.mode ?? null);
+  ((a?.mode ?? 0) & 0o111) === ((b?.mode ?? 0) & 0o111);
 /** Names refused paths quoted, so a hidden character cannot disguise one, and
  * at most 20 of them. */
 const namedPaths = (paths: string[]) =>
@@ -128,7 +130,7 @@ const namedPaths = (paths: string[]) =>
     .map((p) => JSON.stringify(p))
     .join(", ") + (paths.length > 20 ? ` and ${paths.length - 20} more` : "");
 const contentBasis = (candidate: CandidateSnapshot) =>
-  stable(candidate.files.map((f) => [f.path, f.hash, f.mode]));
+  stable(candidate.files.map((f) => [f.path, f.hash, (f.mode ?? 0) & 0o111]));
 export function candidateChanges(
   baseline: CandidateSnapshot,
   candidate: CandidateSnapshot,
@@ -1048,7 +1050,13 @@ export class ParallelSpecialists {
       );
     await executeCheck(this.repository, plan, digest);
     const latest = this.state(state.id);
-    if (latest.stage === "cancelled") return latest;
+    // Whatever replaced the stage while the check ran (a cancel, a block
+    // after an outside edit) stands; the result must not write over it.
+    if (
+      latest.stage !== "checking" ||
+      latest.combinedCandidateId !== state.combinedCandidateId
+    )
+      return latest;
     const checks = this.currentChecks(latest),
       passed = latest.checks.every(
         (c) =>
@@ -1231,7 +1239,17 @@ export class ParallelSpecialists {
         this.coordinator.concurrency.available(specialist.provider, state.id, 0)
           .available
       )
-        await this.dispatch(state.id, state.revision, queued.key);
+        try {
+          await this.dispatch(state.id, state.revision, queued.key);
+        } catch (error) {
+          // One entry that can no longer start (a stale baseline, a lost
+          // capability) must not fail the tick on every pass and keep every
+          // entry behind it, in any workflow, from starting.
+          this.coordinator.store.remove("parallel-dispatch-queued", queued.id);
+          this.save(this.state(queued.workflowId), {
+            detail: `Queued specialist ${queued.key} could not start: ${safeError(error)}`,
+          });
+        }
     }
   }
   async reviewSnapshot(

@@ -43,8 +43,28 @@ const rateLimitSnapshot = (usedPercent) => ({
 let pendingApproval = false;
 let pendingTool = null;
 let turn = "turn-fixture";
+// The thread's running token total, which already holds earlier history.
+const threadTotal = {
+  inputTokens: 5000,
+  outputTokens: 500,
+  cachedInputTokens: 2000,
+};
+// One model request's usage notification. With `counted`, it also carries the
+// thread's total after that request, as Codex does.
+const requestUsage = (last, counted = true) => {
+  for (const field of Object.keys(last)) threadTotal[field] += last[field];
+  return {
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId: "thread-fixture",
+      turnId: turn,
+      tokenUsage: counted ? { total: { ...threadTotal }, last } : { last },
+    },
+  };
+};
 // FIXTURE_DELTAS streams the reply as that many one-character deltas first.
-const done = (text) => {
+// `usages` replaces the usual usage notification, which is sent twice.
+const done = (text, usages) => {
   const deltas = Number(process.env.FIXTURE_DELTAS || 0);
   let stream = "";
   for (let i = 0; i < deltas; i++)
@@ -87,8 +107,7 @@ const done = (text) => {
       },
     },
   };
-  send(usage);
-  send(usage);
+  for (const notification of usages ?? [usage, usage]) send(notification);
   send({
     method: "turn/completed",
     params: {
@@ -276,6 +295,27 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             ask();
           }, 20);
         }
+      } else if (prompt === "two requests") {
+        // A turn with a tool call makes two model requests, and Codex
+        // repeats a notification, so the second one is sent twice.
+        const first = requestUsage({
+            inputTokens: 100,
+            outputTokens: 10,
+            cachedInputTokens: 40,
+          }),
+          second = requestUsage({
+            inputTokens: 150,
+            outputTokens: 20,
+            cachedInputTokens: 90,
+          });
+        done(prompt, [first, second, second]);
+      } else if (prompt === "usage without total") {
+        done(prompt, [
+          requestUsage(
+            { inputTokens: 7, outputTokens: 2, cachedInputTokens: 1 },
+            false,
+          ),
+        ]);
       } else if (prompt === "rate limit update") {
         // A sparse rolling update, as Codex sends while a turn runs.
         send({

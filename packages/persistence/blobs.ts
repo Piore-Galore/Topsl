@@ -43,8 +43,9 @@ export class ProtectedBlobs {
       .prepare("DELETE FROM protected_blob_staging WHERE capture_id=?")
       .run(captureId);
   }
-  publish(captureId: string, digest: string, bytes: number): void {
-    this.store.transaction(() => {
+  /** True when the blob was new to the vault, false when it was already held. */
+  publish(captureId: string, digest: string, bytes: number): boolean {
+    return this.store.transaction(() => {
       const old = this.store.db
         .prepare("SELECT bytes FROM protected_blobs WHERE hash=?")
         .get(digest);
@@ -61,6 +62,7 @@ export class ProtectedBlobs {
           .run(digest, captureId);
       }
       this.discard(captureId);
+      return !old;
     });
   }
   reference(
@@ -227,14 +229,6 @@ export class ProtectedBlobs {
       throw new Error("Protected blob content integrity failed.");
     return result;
   }
-  /** Releases every blob an owner holds; unreferenced content is reclaimed later. */
-  releaseOwner(kind: BlobOwnerKind, id: string): number {
-    return this.store.db
-      .prepare(
-        "DELETE FROM protected_blob_owners WHERE owner_kind=? AND owner_id=?",
-      )
-      .run(kind, id).changes;
-  }
   /** Explicit bounded maintenance. Independently retained candidates stay
    * referenced after conversation deletion. Active/evidence references are
    * never guessed obsolete, so this only reclaims interrupted, unreferenced
@@ -261,6 +255,9 @@ export class ProtectedBlobs {
   }
 }
 
+/** How old a capturing record from another host must be to count as dead. */
+const FOREIGN_CAPTURE_DEAD_AFTER_MS = 24 * 60 * 60_000;
+
 /** Bounded recovery only for a known failed/dead capture. Live owners and every
  * immutable candidate (including independently retained evidence) are kept. */
 export function recoverAbandonedCaptures(store: Store, limit = 100): number {
@@ -271,6 +268,11 @@ export function recoverAbandonedCaptures(store: Store, limit = 100): number {
     afterRowid = 0;
   // Page by rowid so live or foreign-host captures at the head of the table
   // cannot starve dead ones behind them. The scan itself stays bounded.
+  // A capture from another host cannot be probed, so it is skipped while it is
+  // young. The vault is local and only one service opens it, and a macOS
+  // hostname changes with the network, so an old one is this machine's own
+  // crashed capture under an earlier name.
+  const foreignDeadBefore = Date.now() - FOREIGN_CAPTURE_DEAD_AFTER_MS;
   const page = store.db.prepare(
     "SELECT rowid,body FROM documents WHERE kind='candidate-capture' AND json_extract(body,'$.state') IN ('capturing','failed') AND rowid>? ORDER BY rowid LIMIT ?",
   );
@@ -285,6 +287,7 @@ export function recoverAbandonedCaptures(store: Store, limit = 100): number {
           id: string;
           state: string;
           owner?: typeof captureOwner;
+          createdAt?: string;
         };
       }
     }
@@ -303,7 +306,8 @@ export function recoverAbandonedCaptures(store: Store, limit = 100): number {
         } catch (error) {
           dead = (error as NodeJS.ErrnoException).code === "ESRCH";
         }
-    }
+    } else if (!dead && capture.owner)
+      dead = Date.parse(capture.createdAt ?? "") < foreignDeadBefore;
     if (!dead) continue;
     store.transaction(() => {
       store.db

@@ -343,7 +343,9 @@ export class AgentJobService {
         }
         continue;
       }
-      if (job.state !== "admitted") continue;
+      // A blocked action can recover, for example after a pause or a replan,
+      // so a blocked job keeps following its action.
+      if (job.state !== "admitted" && job.state !== "blocked") continue;
       const action = actions.get(job.task.key);
       if (!action) continue;
       if (action.state === "completed")
@@ -353,10 +355,14 @@ export class AgentJobService {
           state: "cancelled",
           detail: action.detail || "The task was cancelled.",
         });
-      else if (action.state === "blocked")
+      else if (action.state === "blocked") {
+        const detail = action.detail || "The task is blocked.";
+        if (job.state !== "blocked" || job.detail !== detail)
+          this.save(job, { state: "blocked", detail });
+      } else if (job.state === "blocked")
         this.save(job, {
-          state: "blocked",
-          detail: action.detail || "The task is blocked.",
+          state: "admitted",
+          detail: "Admitted as a task of the goal's plan.",
         });
     }
   }

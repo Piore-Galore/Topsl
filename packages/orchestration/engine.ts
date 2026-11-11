@@ -366,6 +366,12 @@ export class Orchestrator {
         const plan = this.plan(goal);
         if (!plan) throw new Error("The goal has no committed plan.");
         if (plan.tasks.some((t) => t.key === task.key)) return;
+        // The grant was checked when the job was requested, before the plan
+        // committed its own tasks; it is checked again against what is used now.
+        if (goal.usage.delegatedTasks >= goal.grant.maxDelegatedTasks)
+          throw new Error(
+            `The goal's grant allows ${goal.grant.maxDelegatedTasks} delegated tasks and all are used; the job was not started.`,
+          );
         this.admitTask(goal, plan, task, actor, "job");
       },
       cancelQueued: (goal, taskKey) => this.withdrawQueued(goal, taskKey),
@@ -1229,7 +1235,7 @@ export class Orchestrator {
       goal.projectId,
       "goal-steer",
       () => {
-        if (["stopped", "accepted"].includes(goal.state))
+        if (endedGoalStates.includes(goal.state))
           throw new Error("This goal has ended. Start a new goal.");
         const next = this.store.transaction(() => {
           const updated = this.saveGoal(
@@ -1360,7 +1366,7 @@ export class Orchestrator {
               continue;
             }
             if (
-              ["stopped", "accepted"].includes(goal.state) &&
+              endedGoalStates.includes(goal.state) &&
               input.action !== "resume"
             )
               continue;
@@ -1770,6 +1776,24 @@ export class Orchestrator {
       return "The goal's scope changed; this round's candidates can no longer commit.";
     if (round.kind === "review" && round.input.candidateId !== goal.candidateId)
       return "The candidate changed; this review no longer covers the current candidate.";
+    // A replan can drop the task an older round still serves. Such a round has
+    // no task to prompt for or to complete, so it ends here.
+    if (
+      round.kind !== "coordination" &&
+      round.taskKey &&
+      !this.plan(goal)?.tasks.some((t) => t.key === round.taskKey)
+    )
+      return "The plan changed and no longer has this round's task.";
+    // A replan can also keep the key and change the task. Only a round the new
+    // plan carried forward still has an action to complete; any other round
+    // from an older plan would finish with nowhere to put its result.
+    if (
+      round.kind !== "coordination" &&
+      round.taskKey &&
+      round.input.planRevision !== goal.planRevision &&
+      !this.actions(goal).some((a) => a.roundId === round.id)
+    )
+      return "The plan changed this round's task; the new plan runs it again.";
     if (
       [
         "collecting",
@@ -1784,6 +1808,17 @@ export class Orchestrator {
       );
       if (current !== round.groupDigest)
         return "The role's membership or policy changed; a new round freezes the new assignments.";
+      // A member that has not started can only start on the assignment the
+      // round froze, so a changed one needs a new round.
+      for (const m of round.members) {
+        if (m.state !== "queued" || m.activeAttemptId) continue;
+        const assignment = this.repo.get<ResolvedMemberAssignment>(
+          kinds.assignment,
+          m.assignmentId,
+        );
+        if (assignment && assignment.revision !== m.assignmentRevision)
+          return `${m.memberId}'s assignment changed after the round froze; a new round freezes the new assignments.`;
+      }
       if (round.input.roleRevisions) {
         const roles = this.repo.roles(goal.projectId);
         for (const [roleId, revision] of Object.entries(
@@ -2041,6 +2076,13 @@ export class Orchestrator {
           rosters: round.input.rosters,
           rolePurposes: Object.fromEntries(roles.map((r) => [r.id, r.purpose])),
         });
+        // The engine reads this prefix as "a repair of the current candidate"
+        // and integrates such a task on its own.
+        for (const action of actions)
+          if (action.key.startsWith("repair-"))
+            problems.push(
+              `Action key ${action.key} starts with "repair-", which Topsl keeps for its own repair tasks. Choose another key.`,
+            );
         output = { ...parsed.value, actions };
         validation = problems.length
           ? { state: "invalid", reason: problems.join(" ") }
@@ -2281,9 +2323,36 @@ export class Orchestrator {
     });
     const started: string[] = [];
     let failure: string | null = null;
+    // A stop or a pause that arrives while a member is starting finds no
+    // attempt to interrupt yet, so the wave checks for one around each start.
+    const halted = () => {
+      const g = this.repo.require<Goal>(kinds.goal, goal.id);
+      return (
+        g.controlGeneration !== goal.controlGeneration ||
+        ["paused", "stopped"].includes(g.state) ||
+        !activeStages.has(
+          this.repo.require<RoleRound>(kinds.round, round.id).stage,
+        )
+      );
+    };
+    let halt = false;
     for (const memberId of decision.admit) {
+      if (halted()) {
+        halt = true;
+        break;
+      }
       const fresh = this.repo.require<RoleRound>(kinds.round, round.id);
       const member = fresh.members.find((m) => m.memberId === memberId)!;
+      if (member.state !== "queued") {
+        // The owner stopped this member before its turn started. Its launch
+        // record is cleared so that collecting does not queue it again.
+        this.repo.saveRound(fresh, {
+          members: fresh.members.map((m) =>
+            m.memberId === memberId ? { ...m, launchId: null } : m,
+          ),
+        });
+        continue;
+      }
       const assignment = this.repo.require<ResolvedMemberAssignment>(
         kinds.assignment,
         member.assignmentId,
@@ -2329,21 +2398,38 @@ export class Orchestrator {
         const { attemptId } = await this.driver.launch(turn);
         started.push(memberId);
         const latest = this.repo.require<RoleRound>(kinds.round, round.id);
+        const memberStopped =
+          latest.members.find((m) => m.memberId === memberId)?.state ===
+          "stopped";
         this.repo.saveRound(latest, {
           members: latest.members.map((m) =>
-            m.memberId === memberId
-              ? {
-                  ...m,
-                  state: "running",
-                  activeAttemptId: attemptId,
-                  attemptIds: [...m.attemptIds, attemptId],
-                  detail: "",
-                }
-              : m,
+            m.memberId !== memberId
+              ? m
+              : memberStopped
+                ? {
+                    // Stopped by the owner while starting: it stays stopped.
+                    ...m,
+                    activeAttemptId: attemptId,
+                    attemptIds: [...m.attemptIds, attemptId],
+                  }
+                : {
+                    ...m,
+                    state: "running",
+                    activeAttemptId: attemptId,
+                    attemptIds: [...m.attemptIds, attemptId],
+                    detail: "",
+                  },
           ),
         });
         const g = this.repo.require<Goal>(kinds.goal, goal.id);
         this.saveGoal(g, { usage: { ...g.usage, turns: g.usage.turns + 1 } });
+        // The command that stopped the goal, the round or this member could
+        // not interrupt this attempt, so it is interrupted here, and a halted
+        // round starts no further member.
+        halt = halted();
+        if (halt || memberStopped)
+          await this.driver.interrupt(attemptId).catch(() => {});
+        if (halt) break;
       } catch (error) {
         // A launch that recorded an attempt before failing is adopted and
         // observed, never assumed unstarted and dispatched again.
@@ -2364,6 +2450,11 @@ export class Orchestrator {
             ),
           });
           started.push(memberId);
+          if (halted()) {
+            await this.driver.interrupt(recorded).catch(() => {});
+            halt = true;
+            break;
+          }
           continue;
         }
         failure = `${memberId} did not start: ${safeError(error)}`;
@@ -2388,6 +2479,15 @@ export class Orchestrator {
       }
     }
     let latest = this.repo.require<RoleRound>(kinds.round, round.id);
+    if (halt)
+      // Members of the wave that never started keep no launch record.
+      return this.repo.saveRound(latest, {
+        members: latest.members.map((m) =>
+          launches.has(m.memberId) && !m.activeAttemptId && m.launchId
+            ? { ...m, launchId: null }
+            : m,
+        ),
+      });
     if (failure && round.scheduling === "all-simultaneous") {
       // A strict cohort that cannot all start: release never-started members
       // and interrupt started peers; their processes keep their capacity
@@ -2803,17 +2903,50 @@ export class Orchestrator {
       };
       this.repo.immutable(kinds.plan, plan);
       let delegated = 0;
+      // A task is unchanged when its definition and that of every task it
+      // depends on, transitively, are the same in both plans.
+      const unchanged = (key: string, seen = new Set<string>()): boolean => {
+        if (seen.has(key)) return true;
+        seen.add(key);
+        const before = previous?.tasks.find((t) => t.key === key);
+        const after = candidate.actions.find((t) => t.key === key);
+        return (
+          !!before &&
+          !!after &&
+          actionDigest(before) === actionDigest(after) &&
+          after.dependencies.every((d) => unchanged(d, seen))
+        );
+      };
+      // Work already running on an unchanged task keeps its round, so the
+      // turns it has spent are not paid for again. Repair and job tasks are
+      // admitted outside a coordinator decision and are not carried here.
+      const running = (a: QueuedPlanAction): boolean => {
+        if (a.state !== "admitted" || !a.roundId) return false;
+        if (a.taskKey.startsWith("repair-") || a.taskKey.startsWith("job-"))
+          return false;
+        const active = this.repo.get<RoleRound>(kinds.round, a.roundId);
+        return (
+          !!active &&
+          activeStages.has(active.stage) &&
+          !this.stale(active, current) &&
+          unchanged(a.taskKey)
+        );
+      };
       for (const task of candidate.actions) {
+        // A completed result was built on its dependencies' output, so it is
+        // carried only while those are unchanged too; otherwise the task runs
+        // again on the new output.
         const carried = previous
-          ? prior.find(
+          ? (prior.find(
               (a) =>
                 a.state === "completed" &&
                 previous.tasks.some(
                   (t) =>
                     t.key === a.taskKey &&
                     actionDigest(t) === actionDigest(task),
-                ),
-            )
+                ) &&
+                task.dependencies.every((d) => unchanged(d)),
+            ) ?? prior.find((a) => a.taskKey === task.key && running(a)))
           : undefined;
         if (!carried) delegated += 1;
         this.repo.saveRevisioned(kinds.action, {
@@ -2823,7 +2956,7 @@ export class Orchestrator {
           planId,
           taskKey: task.key,
           revision: 1,
-          state: carried ? "completed" : "queued",
+          state: carried?.state ?? "queued",
           expectedControlGeneration: current.controlGeneration,
           roundId: carried?.roundId ?? null,
           attemptIds: carried?.attemptIds ?? [],
@@ -2930,6 +3063,15 @@ export class Orchestrator {
   // -------------------------------------------------------------------------
   // Work, integration and review
 
+  /** Whether no stop, pause, resume or steer came between two reads of a goal. */
+  private sameControl(before: Goal, latest: Goal): boolean {
+    return (
+      latest.state === before.state &&
+      latest.controlGeneration === before.controlGeneration &&
+      latest.revision === before.revision
+    );
+  }
+
   private async dispatch(goal: Goal): Promise<void> {
     const plan = this.plan(goal);
     if (!plan) return;
@@ -2962,6 +3104,7 @@ export class Orchestrator {
       actions.filter((a) => a.state === "completed").map((a) => a.taskKey),
     );
     for (const action of actions.filter((a) => a.state === "queued")) {
+      const before = goal;
       if (action.expectedControlGeneration !== goal.controlGeneration) {
         this.saveAction(action, {
           expectedControlGeneration: goal.controlGeneration,
@@ -3002,10 +3145,15 @@ export class Orchestrator {
         goal = this.saveGoal(this.repo.require<Goal>(kinds.goal, goal.id), {
           baselineCandidateId,
         });
+        if (!this.sameControl(before, goal)) return;
       }
       // Ordering alone is not a data dependency: a dependent task receives its
       // predecessors' actual results, and code tasks start from them.
       const bundle = await this.dependencyBundle(goal, plan, task);
+      // A stop, pause or steer during the waits above ends this dispatch; a
+      // goal the owner stopped must not become blocked or get a new round.
+      goal = this.repo.require<Goal>(kinds.goal, goal.id);
+      if (!this.sameControl(before, goal)) return;
       if (bundle && "blocked" in bundle) {
         if (action.state !== "blocked" || action.detail !== bundle.blocked)
           this.saveAction(action, { state: "blocked", detail: bundle.blocked });
@@ -3042,7 +3190,9 @@ export class Orchestrator {
           });
           continue;
         }
-        if (action.detail !== round.blocked)
+        // Compared with what is saved, or every tick would write the same
+        // detail again as a new revision.
+        if (action.detail !== `Waiting: ${round.blocked}`)
           this.saveAction(action, { detail: `Waiting: ${round.blocked}` });
         continue;
       }
@@ -3353,6 +3503,12 @@ export class Orchestrator {
       })),
       ...(Object.keys(ancestry).length ? { ancestry } : {}),
     });
+    // A goal stopped, paused or steered during integration keeps that state;
+    // the plan is integrated again when the goal runs again.
+    if (
+      !this.sameControl(goal, this.repo.require<Goal>(kinds.goal, goal.id))
+    )
+      return;
     if ("conflicts" in result) {
       const owners = this.candidateOwners(goal);
       const conflicts: IntegrationConflict[] = result.conflicts.map((c) => ({
@@ -3556,7 +3712,11 @@ export class Orchestrator {
       candidateId: round.input.candidateId,
       createdAt: now(),
     };
-    this.store.immutable(kinds.completion, completion);
+    // The ID names a combination of dispositions. Deciding a finding back
+    // to an earlier combination names the completion recorded for it then;
+    // writing it again, with a new time, would be refused as a collision.
+    if (!this.repo.get<RoleCompletion>(kinds.completion, completion.id))
+      this.store.immutable(kinds.completion, completion);
     this.repo.saveRound(round, {
       stage: status.complete ? "completed" : "blocked",
       completionId: completion.id,
@@ -3603,6 +3763,16 @@ export class Orchestrator {
       () => {
         if (!input.rationale.trim())
           throw new Error("A disposition needs a rationale.");
+        // Recording the review moves the goal to awaiting acceptance or
+        // blocked, which would reopen a goal that was accepted or stopped.
+        if (
+          endedGoalStates.includes(
+            this.repo.require<Goal>(kinds.goal, goal.id).state,
+          )
+        )
+          throw new Error(
+            "This goal has ended; its findings can no longer be decided.",
+          );
         const completion = goal.reviewCompletionId
           ? this.repo.require<RoleCompletion>(
               kinds.completion,
@@ -3630,13 +3800,17 @@ export class Orchestrator {
               }
             : f,
         );
-        this.store.put(kinds.findings, {
-          id: round.id,
-          projectId: round.projectId,
-          goalId: goal.id,
-          findings: next,
+        // One transaction: if recording the review fails, the findings keep
+        // the dispositions the goal's review completion was computed from.
+        this.store.transaction(() => {
+          this.store.put(kinds.findings, {
+            id: round.id,
+            projectId: round.projectId,
+            goalId: goal.id,
+            findings: next,
+          });
+          this.recordReview(goal, round, next);
         });
-        this.recordReview(goal, round, next);
         this.changed();
         return this.repo.require<Goal>(kinds.goal, goal.id);
       },
@@ -4395,7 +4569,13 @@ export class Orchestrator {
     this.ticking = true;
     const head = this.store.controlHead();
     try {
-      await this.driver.sync?.();
+      try {
+        await this.driver.sync?.();
+      } catch {
+        // A copy that cannot be processed must not stop every goal, and the
+        // loops and sessions that tick after this, from advancing. It is
+        // tried again on the next tick.
+      }
       for (const goal of this.repo.all<Goal>(kinds.goal))
         try {
           await this.tickGoal(goal.id);
@@ -4464,14 +4644,12 @@ export class Orchestrator {
         kind: "coordination",
         taskKey: null,
       });
-      this.saveGoal(
-        goal,
+      const detail =
         "blocked" in round
-          ? { detail: `Coordinators cannot start: ${round.blocked}` }
-          : {
-              detail: `${round.members.length === 1 ? "The coordinator is" : `${round.members.length} coordinators are`} preparing proposals.`,
-            },
-      );
+          ? `Coordinators cannot start: ${round.blocked}`
+          : `${round.members.length === 1 ? "The coordinator is" : `${round.members.length} coordinators are`} preparing proposals.`;
+      // A goal that is still waiting for the same reason is not saved again.
+      if (goal.detail !== detail) this.saveGoal(goal, { detail });
       return;
     }
     if (goal.state === "running") {
@@ -4490,7 +4668,10 @@ export class Orchestrator {
         taskKey: null,
         candidateId: goal.candidateId,
       });
-      if ("blocked" in round)
+      if (
+        "blocked" in round &&
+        goal.detail !== `Reviewers cannot start: ${round.blocked}`
+      )
         this.saveGoal(goal, {
           detail: `Reviewers cannot start: ${round.blocked}`,
         });

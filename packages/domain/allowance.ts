@@ -126,15 +126,28 @@ export function applyAllowanceReport(
   for (const update of report.buckets) {
     const index = buckets.findIndex((bucket) => bucket.id === update.id),
       old = index >= 0 ? buckets[index] : undefined,
+      primary = observe(update.primary, at, "update") ?? old?.primary ?? null,
+      secondary =
+        observe(update.secondary, at, "update") ?? old?.secondary ?? null,
+      // An adapter reports "no limit" as null, the same as leaving the field
+      // out. The limit has lifted only when this update carries a window and
+      // no window now known is full; otherwise the earlier value stands.
+      lifted =
+        update.limitReached === null &&
+        (update.primary !== null || update.secondary !== null) &&
+        [primary, secondary].every(
+          (window) => !window || window.usedPercent < 100,
+        ),
       merged: ObservedBucket = {
         id: update.id,
         name: update.name ?? old?.name ?? null,
-        primary: observe(update.primary, at, "update") ?? old?.primary ?? null,
-        secondary:
-          observe(update.secondary, at, "update") ?? old?.secondary ?? null,
+        primary,
+        secondary,
         credits: update.credits ?? old?.credits ?? null,
         planType: update.planType ?? old?.planType ?? null,
-        limitReached: update.limitReached ?? old?.limitReached ?? null,
+        limitReached: lifted
+          ? null
+          : (update.limitReached ?? old?.limitReached ?? null),
       };
     if (index >= 0) buckets[index] = merged;
     else buckets.push(merged);

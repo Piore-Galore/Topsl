@@ -462,14 +462,16 @@ export function parseMembership(
   const results: MembershipInstruction[] = [];
   const clauses = text
     .split(
-      /(?<=[.;\n])\s*|,\s*(?=(?:and\s+)?(?:review|coordinate|use|include)\s)|\s+(?=then\s+(?:review|coordinate)\s)/i,
+      // A period ends a clause only before white space, so the one inside a
+      // model name such as "GPT-5.5" does not cut the name in two.
+      /(?<=;)\s*|(?<=\.)\s+|\n+|,\s*(?=(?:and\s+)?(?:review|coordinate|use|include)\s)|\s+(?=then\s+(?:review|coordinate)\s)/i,
     )
     .map((c) => c.replace(/^and\s+/i, ""))
     .map((c) => c.trim())
     .filter(Boolean);
   // A count clause may be followed by an "include" clause for the same role.
   let lastCountRole: { roleId: string; index: number } | null = null;
-  for (const raw of clauses) {
+  for (const [position, raw] of clauses.entries()) {
     const clause = raw.replace(/[.;]+$/, "").trim();
     let m: RegExpExecArray | null;
     if (
@@ -675,9 +677,15 @@ export function parseMembership(
         }
         continue;
       }
-      // "Use Sol" before a fallback clause: a one-member roster for the role in context.
+      // "Use Sol" before a fallback clause: a one-member roster for the role
+      // in context. Only before one: on its own, "Use React hooks." is part
+      // of the work the goal describes, not a choice of model.
       const list = labels(m[1]);
-      if (list.length === 1 && /^[A-Z]/.test(list[0])) {
+      if (
+        list.length === 1 &&
+        /^[A-Z]/.test(list[0]) &&
+        /^fall ?back to /i.test(clauses[position + 1] ?? "")
+      ) {
         const roleId = lastCountRole?.roleId ?? "reviewer";
         results.push({
           roleId,

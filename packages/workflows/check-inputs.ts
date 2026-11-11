@@ -102,8 +102,18 @@ function referencedInputs(
   return referenced;
 }
 
-function bindingId(workflowId: string, definitionId: string): string {
-  return hash(stable([workflowId, definitionId]));
+function bindingId(
+  workflowId: string,
+  definitionId: string,
+  candidateId?: string,
+): string {
+  return hash(
+    stable(
+      candidateId
+        ? [workflowId, definitionId, candidateId]
+        : [workflowId, definitionId],
+    ),
+  );
 }
 function jsonFile(
   candidate: CandidateSnapshot,
@@ -173,8 +183,14 @@ export function bindCheckInputs(
   workflowId: string,
   baseline: CandidateSnapshot,
   definitions: readonly CheckDefinition[],
+  options: {
+    /** The baseline was approved for the project before this workflow existed. */
+    sharedBaseline?: boolean;
+    /** Each candidate is its own baseline, so the binding is keyed by it. */
+    perCandidate?: boolean;
+  } = {},
 ): void {
-  if (baseline.workflowId !== workflowId)
+  if (!options.sharedBaseline && baseline.workflowId !== workflowId)
     throw new Error("Check protocol baseline belongs to another workflow.");
   store.transaction(() => {
     for (const definition of definitions) {
@@ -192,8 +208,18 @@ export function bindCheckInputs(
           hash: file.hash!,
           mode: file.mode,
         }));
-      const id = bindingId(workflowId, definition.id);
+      const id = bindingId(
+        workflowId,
+        definition.id,
+        options.perCandidate ? baseline.id : undefined,
+      );
       const previous = store.get<CheckInputBinding>("workflow-check-input", id);
+      // Earlier versions bound a renamed copy of a shared baseline. That
+      // binding protects the same bytes, so it stays in force.
+      if (
+        previous?.baselineId === `${workflowId}:check-baseline:${baseline.id}`
+      )
+        continue;
       const binding: CheckInputBinding = {
         id,
         projectId: baseline.projectId,
@@ -216,10 +242,15 @@ export function assertCheckInputs(
   candidate: CandidateSnapshot,
   definition: CheckDefinition,
 ): void {
-  const binding = store.get<CheckInputBinding>(
-    "workflow-check-input",
-    bindingId(workflowId, definition.id),
-  );
+  const binding =
+    store.get<CheckInputBinding>(
+      "workflow-check-input",
+      bindingId(workflowId, definition.id, candidate.id),
+    ) ??
+    store.get<CheckInputBinding>(
+      "workflow-check-input",
+      bindingId(workflowId, definition.id),
+    );
   if (
     !binding ||
     binding.workflowId !== workflowId ||
@@ -235,7 +266,13 @@ export function assertCheckInputs(
     );
   const changed = binding.protectedFiles.filter((expected) => {
     const file = candidate.files.find((file) => file.path === expected.path);
-    return !file || file.hash !== expected.hash || file.mode !== expected.mode;
+    // Only the exec bit is content, as in candidateDiff: an atomic replace
+    // may rewrite identical bytes with other permission bits.
+    return (
+      !file ||
+      file.hash !== expected.hash ||
+      ((file.mode ?? 0) & 0o111) !== ((expected.mode ?? 0) & 0o111)
+    );
   });
   if (changed.length)
     throw new Error(

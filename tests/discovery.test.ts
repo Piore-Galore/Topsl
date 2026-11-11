@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { describeInstallation } from "../packages/applications/discovery";
+import { candidatePaths } from "../packages/platform/system";
 const directories: string[] = [];
 async function directory() {
   const dir = await realpath(
@@ -70,5 +71,24 @@ test("separate custom versions remain distinct and symlink aliases resolve to on
     await symlink(first, alias);
     const c = await describeInstallation("openai.codex-cli", alias);
     expect(c.id).toBe(a.id);
+  }
+});
+
+test("Windows lists only the executable forms of a runtime, not npm's extension-less shell shim", async () => {
+  const d = await directory();
+  for (const file of ["codex", "codex.cmd", "codex.exe"])
+    await writeFile(path.join(d, file), file);
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!,
+    PATH = process.env.PATH;
+  try {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    process.env.PATH = d;
+    expect(await candidatePaths("codex")).toEqual([
+      path.join(d, "codex.exe"),
+      path.join(d, "codex.cmd"),
+    ]);
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    process.env.PATH = PATH;
   }
 });

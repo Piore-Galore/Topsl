@@ -815,6 +815,9 @@ export class ClaudeAdapter implements ProviderAdapter {
       },
       (event) => client.receive(event),
     );
+    // Claude Code starts with the turn, so the connection has a process
+    // identifier only from here; the runtime records it after this returns.
+    client.process.pid = client.execution.process.pid;
     client.execution.process.once("exit", () => client.process.emit("exit"));
     client.lifecycle = new ProcessLifecycle(client.execution.process);
     client.execution.done.then(
@@ -1052,7 +1055,11 @@ export class ClaudeAdapter implements ProviderAdapter {
     }, limits.checkMs);
     let cancelled = false;
     const done = new Promise<void>((resolve, reject) => {
-      let parserError: Error | undefined;
+      let parserError: Error | undefined,
+        // A failed start or a failed prompt write, held until the process
+        // closes: the exit decides whether the outcome is known.
+        launchError: Error | undefined,
+        inputError: Error | undefined;
       process.stdout.setEncoding("utf8");
       process.stdout.on("data", (chunk: string) => {
         if (!parserError && !stalled)
@@ -1066,6 +1073,10 @@ export class ClaudeAdapter implements ProviderAdapter {
       // Drain stderr without retaining credential-bearing native diagnostics.
       process.stderr.resume();
       process.on("error", (error) => {
+        // A process that never started still closes, and the close handler
+        // records it as a launch failure. Any other process error may leave
+        // Claude Code running, so its outcome is unknown at once.
+        if (process.pid === undefined) return void (launchError = error);
         clearInterval(watch);
         reject(error);
       });
@@ -1138,22 +1149,25 @@ export class ClaudeAdapter implements ProviderAdapter {
               text: "",
               structuredOutput: null,
               failed: true,
-              detail: `Claude Code exited with code ${code ?? signal} before it started a session, so no model was called.`,
+              detail: launchError
+                ? `Claude Code could not be started (${safeError(launchError)}), so no model was called.`
+                : `Claude Code exited with code ${code ?? signal} before it started a session, so no model was called.`,
               reportedModel: null,
               denials: [],
             });
             return resolve();
           }
-          reject(e);
+          reject(launchError ?? inputError ?? e);
         }
       });
-      process.stdin.on("error", (e) =>
-        reject(
-          new Error(
-            `Claude input submission failed: ${safeError(e)}. Outcome is unknown.`,
-          ),
-        ),
-      );
+      // Claude Code that exits at once breaks the pipe while a large prompt
+      // is still being written, so the close handler decides: no session and
+      // a non-zero exit is the known launch failure, anything else is unknown.
+      process.stdin.on("error", (e) => {
+        inputError ??= new Error(
+          `Claude input submission failed: ${safeError(e)}. Outcome is unknown.`,
+        );
+      });
       process.stdin.end(input.prompt);
     });
     return {

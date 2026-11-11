@@ -304,3 +304,16 @@ Evidence: `tests/native-loops.test.ts` (scripted stand-in driver with the harnes
 
 - A Goal loop with a Claude Code coordinator and native implementer and reviewer completes. An Endless loop mixing both engines improves once and monitors. After Stop, nothing new launches on either engine (`tests/native-members.test.ts`, synthetic).
 - **Fixed:** a Claude Code coordinator's candidate reader was refused from the second iteration on, because the checkpoint it reads was made by an earlier iteration's goal. The run waited with "Required decisions are missing … Candidate grant subject is not an attributed attempt/task/session". The driver now records each turn's input candidate, and the reader admits that one candidate for that attempt ([record](Subscription_Runtime_Execution.md#phase-5-loops-across-engines-and-a-reader-defect)). Before 6 November 2026, any loop whose Claude Code coordinator reached a second iteration was affected.
+
+## Follow-up: review fixes (10 November 2026)
+
+The [whole-codebase review](Code_Review_2026-11-10.md) changed the following loop behaviour. Evidence is local automated tests and reading only; the record names the test for each.
+
+- **Team instructions are not goals.** "Use exactly four active roles" and "Always keep an accessibility role" set their override and are no longer also added as required goals (§5).
+- **Dependencies are validated.** A goal cannot be added or edited to depend on a goal that is not in the run. A goal whose dependency is removed later is blocked with a reason naming it; editing its dependencies clears the blocker (§5).
+- **The "approaches failed" blocker can be cleared.** Only rejections after the goal's latest owner edit or unblock count toward it.
+- **Control is honoured across awaits.** A Stop during `start()`, and a stop or pause while a wait is being written or a child goal prepared, are no longer overwritten; a pause during preparation does not lead to a second child goal on resume. A completed run is not paused.
+- **Stalls end.** A team proposal that cannot be evaluated is recorded as rejected; a refused repair or integration rejects the iteration; after two blocked decision rounds the next wake freezes a fresh round; a provider limit whose retry time has passed no longer holds the run.
+- **Settlement.** Iterations that end as no-work, completed or stopped are settled, so their turns appear in the token totals and outcome records.
+- **Restart.** A run with a recovery problem (its project is missing, or its accepted checkpoint no longer matches its recorded digest) stays suspended, whether the service closed cleanly or crashed. Resume is refused while the problem remains. The hold pauses the run's child goals; Resume resumes them and Stop stops them. A run with no recovery problem behaves as §10 describes.
+- **Publication.** The project's head revision is read through Git, so a linked work tree or packed refs no longer read as "no revision".

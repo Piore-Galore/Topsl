@@ -456,21 +456,18 @@ describe("BW-21 builder-reviewer cancellation (engine)", () => {
     ).rejects.toThrow("Acceptance is stale");
   });
 
-  test(
-    "BW-21: a failed managed interruption still revokes the cancelled attempt's reader grant",
-    async () => {
-      const f = await setup({ hold: ["edit"] }),
-        created = await f.create();
-      const attemptId = (await f.advance(created.id)).activeAttemptId!;
-      expect(f.grantLive(attemptId)).toBe(true);
-      f.interrupt.mockRejectedValueOnce(new Error("fixture interrupt failed"));
-      await f.engine
-        .cancel(created.id, f.revision(created.id))
-        .catch(() => undefined);
-      expect(f.state(created.id).stage).toBe("cancelled");
-      expect(f.grantLive(attemptId)).toBe(false);
-    },
-  );
+  test("BW-21: a failed managed interruption still revokes the cancelled attempt's reader grant", async () => {
+    const f = await setup({ hold: ["edit"] }),
+      created = await f.create();
+    const attemptId = (await f.advance(created.id)).activeAttemptId!;
+    expect(f.grantLive(attemptId)).toBe(true);
+    f.interrupt.mockRejectedValueOnce(new Error("fixture interrupt failed"));
+    await f.engine
+      .cancel(created.id, f.revision(created.id))
+      .catch(() => undefined);
+    expect(f.state(created.id).stage).toBe("cancelled");
+    expect(f.grantLive(attemptId)).toBe(false);
+  });
 
   test("BW-21: an accepted workflow cannot be cancelled and keeps its acceptance", async () => {
     const f = await setup(),
@@ -611,6 +608,33 @@ describe("BW-13 finding decisions (engine and command schema)", () => {
     expect(
       decisionsOf(f, created.id).map((d) => [d.decision, d.actor]),
     ).toEqual([["resolved", "subsequent-review"]]);
+  });
+
+  test("BW-13: a finding left open by an earlier review can be decided after a later review raised another", async () => {
+    const f = await setup({ findings: 2 }),
+      created = await f.create();
+    await f.advance(created.id);
+    await f.advance(created.id);
+    const first = await f.advance(created.id);
+    expect(first.stage).toBe("ready-repair");
+    expect((await f.advance(created.id)).stage).toBe("repairing");
+    await f.advance(created.id);
+    const second = await f.advance(created.id);
+    expect(second.candidateId).not.toBe(first.candidateId);
+    expect(second.findings).toHaveLength(2);
+    expect(second.findings[0]).toBe(first.findings[0]);
+    const decide = (findingId: string) =>
+      f.engine.decideFinding({
+        id: created.id,
+        expectedRevision: f.revision(created.id),
+        candidateId: second.candidateId,
+        findingId,
+        decision: "rejected",
+        expectedDecisionId: null,
+        rationale: "The protected check shows value two is required.",
+      });
+    expect(decide(second.findings[1]).stage).not.toBe("checking");
+    expect(decide(second.findings[0]).stage).toBe("checking");
   });
 
   test("BW-13: the public command schema refuses malformed finding decisions before the service", () => {

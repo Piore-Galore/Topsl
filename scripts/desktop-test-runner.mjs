@@ -33,10 +33,27 @@ function report(script, detail) {
     );
   }
 }
+// Topsl refuses to launch providers while a billing variable is set
+// (billingConflicts in packages/platform/system.ts). A terminal or agent
+// session that exports one, such as ANTHROPIC_BASE_URL, would fail every
+// runtime step for that reason alone, so the scripts run as a Dock launch
+// would, as scripts/test.mjs does for the unit suite.
+const environment = { ...process.env, DEBUG: "pw:browser" };
+for (const name of [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+])
+  delete environment[name];
 function run(script) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [script], {
-      env: { ...process.env, DEBUG: "pw:browser" },
+      env: environment,
       stdio: ["ignore", "inherit", "pipe"],
     });
     let diagnostics = "";

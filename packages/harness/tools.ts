@@ -284,6 +284,10 @@ const readFileTool = define({
         ok: false,
         output: `${args.path} is a folder; use list_directory.`,
       };
+    // Opening a named pipe or a device would block a file-system thread for
+    // good.
+    if (!info.isFile())
+      return { ok: false, output: `${args.path} is not a regular file.` };
     if (info.size > MAX_READ_FILE_BYTES)
       return {
         ok: false,
@@ -304,7 +308,7 @@ const readFileTool = define({
     const body = shown
       .map(
         (line, i) =>
-          `${String(start + i).padStart(width)}\t${line.length > 2000 ? `${line.slice(0, 2000)}… [line truncated]` : line}`,
+          `${String(start + i).padStart(width)}\t${line.length > 2000 ? `${line.slice(0, 2000).replace(/[\uD800-\uDBFF]$/, "")}… [line truncated]` : line}`,
       )
       .join("\n");
     const end = start + shown.length - 1;
@@ -403,13 +407,15 @@ function run(
       },
       (error, stdout, stderr) =>
         resolve({
+          // -1 when the program gave no exit code: it could not start, or
+          // it was stopped by the timeout, a cancel or the output limit.
           code: error
             ? typeof (error as any).code === "number"
               ? (error as any).code
-              : 1
+              : -1
             : 0,
           stdout: String(stdout ?? ""),
-          stderr: String(stderr ?? (error ? error.message : "")),
+          stderr: String(stderr || (error ? error.message : "")),
         }),
     );
   });
@@ -477,7 +483,9 @@ const searchTool = define({
           signal: ctx.signal,
         },
       );
-      if (result.code > 1)
+      // ripgrep exits with 1 for "no matches". A search that was cut short
+      // has no exit code, and must not be reported as finding nothing.
+      if (result.code > 1 || result.code < 0)
         return {
           ok: false,
           output: `Search failed: ${result.stderr.slice(0, 2000)}`,
@@ -508,35 +516,95 @@ const searchTool = define({
     }
     const found: string[] = [];
     const root = await realPathOf(ctx.workspace.root);
+    const wanted = args.glob ? globMatcher(args.glob) : null;
+    // The same limit the ripgrep run has; the scan stops between files.
+    const deadline = Date.now() + Math.min(ctx.timeoutMs, 30_000);
+    let cutShort = false;
     const walk = async (entry: string) => {
-      if (found.length >= args.max_results) return;
+      if (found.length >= args.max_results || cutShort) return;
+      if (ctx.signal.aborted || Date.now() > deadline) {
+        cutShort = true;
+        return;
+      }
       const info = await lstat(entry);
       if (info.isDirectory()) {
         if (skipped.has(path.basename(entry))) return;
         for (const child of await readdir(entry))
           await walk(path.join(entry, child));
       } else if (info.isFile() && info.size < 2 * 1024 * 1024) {
+        // Workspace paths use "/" on every platform, as the other tools report them.
+        const relative = path.relative(root, entry).split(path.sep).join("/");
+        if (wanted && !wanted(relative)) return;
         const bytes = await readFile(entry);
         if (isBinary(bytes)) return;
         bytes
           .toString("utf8")
           .split("\n")
           .forEach((line, i) => {
-            if (found.length < args.max_results && expression.test(line))
-              found.push(
-                // Workspace paths use "/" on every platform, as the other tools report them.
-                `${path.relative(root, entry).split(path.sep).join("/")}:${i + 1}:${line.slice(0, 400)}`,
-              );
+            // A very long line is tested only up to a bound, so one minified
+            // file cannot hold the service in a single match.
+            if (
+              found.length < args.max_results &&
+              expression.test(line.slice(0, 4000))
+            )
+              found.push(`${relative}:${i + 1}:${line.slice(0, 400)}`);
           });
       }
     };
     await walk(target);
+    // A search that was cut short must not be reported as finding nothing.
+    if (cutShort && !found.length)
+      return {
+        ok: false,
+        output: ctx.signal.aborted
+          ? "Search stopped before it finished."
+          : "Search ran out of time before it finished; narrow the path or glob.",
+      };
     return {
       ok: true,
-      output: found.length ? found.join("\n") : "No matches.",
+      output: found.length
+        ? `${found.join("\n")}${cutShort ? "\n… the search ran out of time; more matches may exist" : ""}`
+        : "No matches.",
     };
   },
 });
+
+/**
+ * A matcher for the search tool's glob, following ripgrep: a glob with no
+ * "/" is tested against the file name, any other against the workspace path,
+ * and a leading "!" excludes.
+ */
+function globMatcher(glob: string): (relative: string) => boolean {
+  const negated = glob.startsWith("!");
+  const pattern = negated ? glob.slice(1) : glob;
+  let source = "";
+  let braces = 0;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "*" && pattern[i + 1] === "*") {
+      i++;
+      if (pattern[i + 1] === "/") {
+        i++;
+        source += "(?:.*/)?";
+      } else source += ".*";
+    } else if (c === "*") source += "[^/]*";
+    else if (c === "?") source += "[^/]";
+    else if (c === "{") {
+      braces++;
+      source += "(?:";
+    } else if (c === "}" && braces) {
+      braces--;
+      source += ")";
+    } else if (c === "," && braces) source += "|";
+    else source += c.replace(/[.+^$()|[\]\\{}]/g, "\\$&");
+  }
+  source += ")".repeat(braces);
+  const expression = new RegExp(`^${source.replace(/^\//, "")}$`);
+  const byName = !pattern.includes("/");
+  return (relative) =>
+    expression.test(byName ? path.posix.basename(relative) : relative) !==
+    negated;
+}
 
 async function realPathOf(p: string): Promise<string> {
   const { realpath } = await import("node:fs/promises");
@@ -742,11 +810,12 @@ const editFileTool = define({
       write: true,
     });
     const before = await currentHash(file);
+    // An edit that cannot apply has no "after": a null there would read as
+    // "the file is gone", and a missing file would then pass for applied.
     if (before !== args.expected_sha256)
       return {
         path: args.path,
         before: args.expected_sha256,
-        after: null,
         current: before,
       };
     const text = (await readFile(file)).toString("utf8");
@@ -759,7 +828,7 @@ const editFileTool = define({
     return {
       path: args.path,
       before,
-      after: typeof next === "string" ? sha256(Buffer.from(next)) : null,
+      ...(typeof next === "string" ? { after: sha256(Buffer.from(next)) } : {}),
     };
   },
   async execute(args, ctx) {
@@ -779,8 +848,16 @@ const editFileTool = define({
         ok: false,
         output: `${args.path} changed since it was read (sha256 is now ${before}). Read it again before editing.`,
       };
+    const text = bytes.toString("utf8");
+    // Writing the decoded text back would replace every byte that is not
+    // UTF-8, anywhere in the file, with U+FFFD.
+    if (!Buffer.from(text).equals(bytes))
+      return {
+        ok: false,
+        output: `${args.path} is not UTF-8 text, so edit_file cannot change it without damaging it.`,
+      };
     const next = applyEdit(
-      bytes.toString("utf8"),
+      text,
       args.old_text,
       args.new_text,
       args.replace_all,
@@ -830,6 +907,9 @@ async function reconcileHash(
   if (expectation.after !== undefined && now === expectation.after)
     return "applied";
   if (now === expectation.before) return "not-applied";
+  // The call was going to be refused, and the file is still as it was then.
+  if ("current" in expectation && now === expectation.current)
+    return "not-applied";
   return "uncertain";
 }
 

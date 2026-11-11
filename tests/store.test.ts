@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "vitest";
 import path from "node:path";
 import { readFile, rm, writeFile, mkdir, symlink } from "node:fs/promises";
+import Database from "better-sqlite3-multiple-ciphers";
 import { Store } from "../packages/persistence/store";
+import {
+  migrateWithBackup,
+  pruneMigrationBackups,
+} from "../packages/persistence/migrations/backup";
 import { hash, now } from "../packages/domain/invariants";
 import { projectPath } from "../packages/platform/system";
 import { contextRequest } from "../packages/workspace/context";
@@ -80,6 +85,138 @@ describe("protected durable history", () => {
       store.immutable("revision", { id: "r", version: 2 }),
     ).toThrow();
   });
+  test("an identical immutable rewrite with an undefined property is accepted", async () => {
+    const { store } = await setup();
+    const record = { id: "r", a: 1, opt: undefined };
+    store.immutable("revision", record);
+    expect(() => store.immutable("revision", record)).not.toThrow();
+    expect(() =>
+      store.immutable("revision", { id: "r", a: 2, opt: undefined }),
+    ).toThrow("Immutable record collision.");
+    expect(() =>
+      store.immutable("revision", { id: "r", a: 1, opt: "set" }),
+    ).toThrow("Immutable record collision.");
+  });
+  test("a successful open keeps the two newest migration backups", async () => {
+    const f = await setup();
+    const { readdir } = await import("node:fs/promises");
+    const file = path.join(f.directory, "history.sqlite");
+    const stamp = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+    const backup = (schema: number) =>
+      `history.sqlite.schema-${schema}.backup-${stamp(schema)}`;
+    const nearMisses = [
+      "history.sqlite.schema-1.backup-not-a-stamp",
+      `history.sqlite.schema-1.backup-${stamp(1)}.txt`,
+      `history.sqlite.schema-x.backup-${stamp(1)}`,
+      `other.sqlite.schema-1.backup-${stamp(1)}`,
+    ];
+    for (const name of [
+      ...[3, 4, 5, 6].map(backup),
+      `${backup(3)}-wal`,
+      `${backup(3)}-shm`,
+      ...nearMisses,
+    ])
+      await writeFile(path.join(f.directory, name), "x");
+    // A failed open prunes nothing.
+    expect(() => new Store(file, "0".repeat(64))).toThrow();
+    expect(
+      (await readdir(f.directory)).filter((n) => n.includes(".backup-")),
+    ).toHaveLength(10);
+    new Store(file, f.key).close();
+    expect(
+      (await readdir(f.directory)).filter((n) => n.includes(".backup-")).sort(),
+    ).toEqual([backup(5), backup(6), ...nearMisses].sort());
+  });
+  test("each upgrade leaves its pre-upgrade backup; the last two upgrades are kept", async () => {
+    const f = await setup();
+    const { readdir } = await import("node:fs/promises");
+    const file = path.join(f.directory, "upgraded.sqlite");
+    const nearMiss = "upgraded.sqlite.schema-1.backup-not-a-stamp";
+    await writeFile(path.join(f.directory, nearMiss), "x");
+    // One launch: open at `from`, migrate one schema step at a time to `to`.
+    // `failAt` makes the step from that schema throw after its backup.
+    const launch = (from: number, to: number, prune = true, failAt = -1) => {
+      const db = new Database(file);
+      try {
+        db.pragma("cipher='sqlcipher'");
+        db.pragma("legacy=4");
+        db.pragma(`key='${f.key}'`);
+        if (from === 0) db.exec("CREATE TABLE t(x); PRAGMA user_version=1;");
+        for (let v = Math.max(from, 1); v < to; v++)
+          migrateWithBackup(db, file, f.key, v, v + 1, () => {
+            if (v === failAt) throw new Error("step failed");
+          });
+        if (prune) pruneMigrationBackups(file, db);
+      } finally {
+        db.close();
+      }
+    };
+    const schemas = async () =>
+      (await readdir(f.directory))
+        .filter((n) => n.startsWith("upgraded.sqlite.schema-"))
+        .filter((n) => n !== nearMiss)
+        .map((n) => Number(/schema-(\d+)/.exec(n)?.[1]))
+        .sort((a, b) => a - b);
+    launch(0, 1);
+    // A multi-step upgrade keeps only the copy from before it.
+    launch(1, 4);
+    expect(await schemas()).toEqual([1]);
+    launch(4, 6);
+    expect(await schemas()).toEqual([1, 4]);
+    // A launch that does not finish prunes nothing.
+    launch(6, 8, false);
+    expect(await schemas()).toEqual([1, 4, 6, 7]);
+    // The next successful launch knows the unfinished one's backups as one
+    // upgrade, so its intermediate step goes and its first copy counts once.
+    launch(8, 10);
+    expect(await schemas()).toEqual([6, 8]);
+    // An upgrade that fails partway keeps every backup it wrote.
+    expect(() => launch(10, 14, true, 12)).toThrow("step failed");
+    expect(await schemas()).toEqual([6, 8, 10, 11, 12]);
+    // Two successful upgrades later, only their pre-upgrade copies remain.
+    launch(12, 14);
+    expect(await schemas()).toEqual([10, 12]);
+    launch(14, 16);
+    expect(await schemas()).toEqual([12, 14]);
+    const names = await readdir(f.directory);
+    expect(names).toContain(nearMiss);
+    const stamp = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+    for (const name of names.filter(
+      (n) => n !== nearMiss && n.startsWith("upgraded.sqlite.schema-"),
+    ))
+      expect(name).toMatch(
+        new RegExp(`\\.schema-\\d+\\.backup-${stamp}\\.upgrade-${stamp}$`),
+      );
+  });
+  test("backups named before upgrade IDs each count as one upgrade", async () => {
+    const f = await setup();
+    const { readdir } = await import("node:fs/promises");
+    const file = path.join(f.directory, "history.sqlite");
+    const stamp = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+    const old = (schema: number) =>
+      `history.sqlite.schema-${schema}.backup-${stamp(schema)}`;
+    const grouped = (schema: number, upgrade: number) =>
+      `${old(schema)}.upgrade-${stamp(upgrade)}`;
+    const nearMisses = [
+      `${old(4)}.upgrade-not-a-stamp`,
+      `${grouped(4, 9)}.txt`,
+      `${old(4)}.upgrade-${stamp(9)}.upgrade-${stamp(9)}`,
+      `history.sqlite.schema-4.backup-.upgrade-${stamp(9)}`,
+    ];
+    for (const name of [
+      old(2),
+      old(3),
+      ...[4, 5, 6].map((schema) => grouped(schema, 9)),
+      `${grouped(5, 9)}-wal`,
+      `${grouped(5, 9)}-shm`,
+      ...nearMisses,
+    ])
+      await writeFile(path.join(f.directory, name), "x");
+    new Store(file, f.key).close();
+    expect(
+      (await readdir(f.directory)).filter((n) => n.includes(".backup-")).sort(),
+    ).toEqual([old(3), grouped(4, 9), ...nearMisses].sort());
+  });
   test("search and MCP are confined to the grant project", async () => {
     const { store } = await setup();
     store.message(message("a", "project-a"));
@@ -96,6 +233,24 @@ describe("protected durable history", () => {
       contextRequest(store, "project-a", { method: "lifecycle-apply" }),
     ).toThrow("cannot execute");
   });
+  test("newest-first reading has no cap and can stop early", async () => {
+    const { store } = await setup();
+    store.transaction(() => {
+      for (let i = 0; i < 5002; i++) store.put("usage", { id: `u${i}`, n: i });
+    });
+    expect(store.list("usage")).toHaveLength(5000);
+    const all = [...store.newestFirst<{ n: number }>("usage")];
+    expect(all).toHaveLength(5002);
+    expect(all[0].value.n).toBe(5001);
+    expect(all.at(-1)!.value.n).toBe(0);
+    expect(all[0].sequence).toBeGreaterThan(all[1].sequence);
+    let read = 0;
+    for (const { value } of store.newestFirst<{ n: number }>("usage")) {
+      read++;
+      if (value.n < 5000) break;
+    }
+    expect(read).toBe(3);
+  });
   test("deletion removes derivatives and blocks accidental reimport", async () => {
     const { store } = await setup();
     store.message(message("m"));
@@ -103,7 +258,27 @@ describe("protected durable history", () => {
     store.put("usage", { id: "u", runId: "r" });
     store.put("snapshot", { id: "s", conversationId: "c" });
     store.event("run.changed", { id: "r", conversationId: "c" });
+    store.event("run.changed", { id: "r" });
+    store.event("tool.used", { id: "t", runId: "r" });
+    store.put("run", { id: "kept", conversationId: "other" });
+    store.put("usage", { id: "kept-usage", runId: "kept" });
+    store.event("run.changed", { id: "kept" });
+    store.event("tool.used", { id: "r", runId: "kept" });
     store.deleteConversation("c");
+    const events = (path: string, value: string) =>
+      store.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM events WHERE json_extract(body,'${path}')=?`,
+        )
+        .get(value).count;
+    expect(events("$.runId", "r")).toBe(0);
+    // Only a run event is matched by its own id.
+    expect(events("$.id", "r")).toBe(1);
+    expect(events("$.id", "kept")).toBe(1);
+    expect(events("$.runId", "kept")).toBe(1);
+    expect(store.list("usage")).toEqual([{ id: "kept-usage", runId: "kept" }]);
+    store.remove("usage", "kept-usage");
+    store.remove("run", "kept");
     store.message(message("m"));
     expect(store.search("p", "quartz")).toHaveLength(0);
     expect(store.list("usage")).toHaveLength(0);
@@ -132,6 +307,15 @@ describe("protected durable history", () => {
     expect(store.get<any>("snapshot", s.id).text).toContain(
       "PRIVATE_TOPSL_PHRASE",
     );
+  });
+  test("a query word with no letter or digit does not empty the search", async () => {
+    const { store } = await setup();
+    store.message({ ...message("m"), text: "error then retry" });
+    for (const query of ["error -> retry", "error & retry"])
+      expect(
+        store.search("p", query).map((m) => m.id),
+        query,
+      ).toEqual(["m"]);
   });
   test("an import of the same content is stored once", async () => {
     const f = await setup();

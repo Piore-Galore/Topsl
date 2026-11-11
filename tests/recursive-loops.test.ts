@@ -164,6 +164,12 @@ describe("Recursive Looping: Goal mode", () => {
     expect(t.driver.launches.some((l) => l.purpose === "implementation")).toBe(
       false,
     );
+    // The concluding iteration is settled: its turns reach the outcome
+    // records and the token totals.
+    const last = t.supervisor.iterations(view.run).at(-1)!;
+    expect(last.state).toBe("no-work");
+    expect(last.outcomeRecordIds.length).toBeGreaterThan(0);
+    expect(view.usage.tokens.totalAttempts).toBeGreaterThan(0);
   });
 
   test("GL-05: coordinators claiming success without the required evidence cannot complete", async () => {
@@ -528,6 +534,67 @@ describe("Recursive Looping: Endless mode", () => {
     expect(view.usage.memberTurns).toBeGreaterThan(turns);
   });
 
+  test("a provider limit whose renewal time has passed does not hold the run", async () => {
+    const t = await setup();
+    t.script.opportunities = () => [improvement("Quota-bound change")];
+    t.script.met = (_id, p) => p.stage === "evaluate";
+    t.loop.limits = [
+      {
+        provider: "codex",
+        kind: "quota",
+        detail: "rate_limit_reached",
+        retryAt: new Date(t.now() - 1000).toISOString(),
+      },
+    ];
+    const started = await endless(t);
+    const view = await driveLoop(
+      t,
+      started.run.id,
+      (v) => v.run.state === "waiting" || v.checkpoint?.sequence === 1,
+      300,
+    );
+    expect(view.run.state).not.toBe("waiting");
+    expect(view.checkpoint!.sequence).toBe(1);
+  });
+
+  test("a goal cannot depend on a goal the run does not have, or on a removed one", async () => {
+    const t = await setup();
+    implementing(t);
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting\nAdd a farewell",
+      policy,
+    });
+    const [first, second] = t.supervisor.goals(started.run);
+    await expect(
+      t.supervisor.updateGoals({
+        runId: started.run.id,
+        edit: [{ goalId: first.id, dependsOn: ["no-such-goal"] }],
+        commandId: "depend-unknown",
+      }),
+    ).rejects.toThrow(/not in this run/);
+    await expect(
+      t.supervisor.updateGoals({
+        runId: started.run.id,
+        add: [{ text: "Add a banner", dependsOn: ["no-such-goal"] }],
+        commandId: "depend-unknown-add",
+      }),
+    ).rejects.toThrow(/not in this run/);
+    await t.supervisor.updateGoals({
+      runId: started.run.id,
+      remove: [second.id],
+      commandId: "depend-remove",
+    });
+    await expect(
+      t.supervisor.updateGoals({
+        runId: started.run.id,
+        edit: [{ goalId: first.id, dependsOn: [second.id] }],
+        commandId: "depend-removed",
+      }),
+    ).rejects.toThrow(/removed/);
+    expect(t.supervisor.goals(started.run)[0].dependsOn).toEqual([]);
+  });
+
   test("EN-05: a stopped Endless run that reaches its wakeup starts no new work", async () => {
     const t = await setup();
     const started = await endless(t);
@@ -610,6 +677,42 @@ describe("Recursive Looping: stopping, restart and recovery", () => {
     );
     expect(child.state).toBe("stopped");
     expect(view.checkpoint!.sequence).toBe(0);
+    // The cancelled iteration is settled once the run is quiescent.
+    const cancelled = t.supervisor.iterations(view.run)[0];
+    expect(cancelled.state).toBe("cancelled");
+    expect(cancelled.outcomeRecordIds.length).toBeGreaterThan(0);
+  });
+
+  test("a Stop issued while start captures the base is not overwritten", async () => {
+    const t = await setup();
+    const created = await t.supervisor.create({
+      projectId: "p",
+      mode: "goal",
+      goals: [{ text: "Add a greeting" }],
+      policy,
+      commandId: "create-stop-race",
+    });
+    const capture = t.loop.captureBase.bind(t.loop);
+    t.loop.captureBase = async (...args: Parameters<typeof capture>) => {
+      const base = await capture(...args);
+      await t.supervisor.control({
+        runId: created.run.id,
+        action: "stop",
+        commandId: "stop-during-capture",
+      });
+      return base;
+    };
+    await expect(
+      t.supervisor.start({
+        runId: created.run.id,
+        digest: t.supervisor.authorityReview(created.run.id).digest,
+        commandId: "start-stop-race",
+      }),
+    ).rejects.toThrow(/stopped before it started/);
+    const view = t.supervisor.view(created.run.id);
+    expect(view.run.started).toBe(false);
+    expect(view.run.desiredState).toBe("stopped");
+    expect(view.run.state).not.toBe("active");
   });
 
   test("ST-03: a provider that cannot confirm interruption keeps the run stopping", async () => {
@@ -807,6 +910,137 @@ describe("Recursive Looping: stopping, restart and recovery", () => {
       commandId: "resume-st07",
     });
     expect(reopened.run(a.run.id).state).toBe("active");
+  });
+
+  test("a crashed run whose accepted checkpoint fails revalidation is held suspended until the owner resumes", async () => {
+    const t = await setup();
+    const started = await startRun(t, {
+      mode: "endless",
+      text: "Keep improving.",
+      policy: { ...policy, recovery: { resumeAfterRestart: true } },
+    });
+    const runId = started.run.id;
+    await driveLoop(t, runId, (v) => v.run.state === "monitoring");
+    const before = t.supervisor.run(runId);
+    const head = t.store.get<{ candidateId: string; contentDigest: string }>(
+      loopKinds.checkpoint,
+      before.acceptedCheckpointId!,
+    )!;
+    // The service crashes: no suspend(). The checkpoint's bytes then differ.
+    t.loop.digests.set(head.candidateId, "tampered");
+    const reopened = t.reopenSupervisor();
+    await reopened.recover();
+    const held = reopened.run(runId);
+    expect(held.state).toBe("suspended");
+    expect(held.waitReason).toMatchObject({ kind: "recovery" });
+    expect(held.detail).toContain("could not be verified");
+    // Neither a tick nor a due wakeup moves it, whatever its recovery policy.
+    const launches = t.driver.launches.length;
+    t.advance(6 * 3_600_000);
+    for (let i = 0; i < 5; i++) await reopened.tick();
+    expect(reopened.run(runId).state).toBe("suspended");
+    expect(reopened.run(runId).iterationCount).toBe(before.iterationCount);
+    expect(t.driver.launches.length).toBe(launches);
+    // Resume is refused while the problem is still there.
+    await expect(
+      reopened.control({
+        runId,
+        action: "resume",
+        commandId: "resume-recovery-refused",
+      }),
+    ).rejects.toThrow("could not be verified");
+    expect(reopened.run(runId).state).toBe("suspended");
+    expect(reopened.run(runId).waitReason).toMatchObject({ kind: "recovery" });
+    // Once the problem is gone, the owner's Resume lets the run continue.
+    t.loop.digests.set(head.candidateId, head.contentDigest);
+    await reopened.control({
+      runId,
+      action: "resume",
+      commandId: "resume-recovery-hold",
+    });
+    expect(reopened.run(runId).state).toBe("active");
+    expect(reopened.run(runId).waitReason).toBeNull();
+    await driveLoop(
+      t,
+      runId,
+      (v) =>
+        v.run.state === "monitoring" &&
+        v.run.iterationCount > before.iterationCount,
+      50,
+      reopened,
+    );
+    // Stop also works from the held state.
+    t.loop.digests.set(head.candidateId, "tampered");
+    const again = t.reopenSupervisor();
+    await again.recover();
+    expect(again.run(runId).state).toBe("suspended");
+    await again.control({ runId, action: "stop", commandId: "stop-held" });
+    expect(again.run(runId).state).toBe("stopped");
+  });
+
+  test("a run held for a recovery problem pauses its running child goal; Resume resumes it and Stop stops it", async () => {
+    const t = await setup();
+    implementing(t);
+    const reply = t.driver.reply;
+    t.driver.reply = (turn) =>
+      turn.purpose === "implementation" ? "hang" : reply(turn);
+    const started = await startRun(t, {
+      mode: "goal",
+      text: "Add a greeting",
+      policy: { ...policy, recovery: { resumeAfterRestart: true } },
+    });
+    const runId = started.run.id;
+    await driveLoop(
+      t,
+      runId,
+      () => t.driver.launches.some((l) => l.purpose === "implementation"),
+      200,
+    );
+    const before = t.supervisor.run(runId);
+    const childId = t.supervisor.iterations(before)[0].childExecutionGoalIds[0];
+    const child = (s: { orchestrator: typeof t.orchestrator }) =>
+      s.orchestrator.repo.require<{ state: string }>("goal", childId).state;
+    expect(child(t.supervisor)).toBe("running");
+    const head = t.store.get<{ candidateId: string; contentDigest: string }>(
+      loopKinds.checkpoint,
+      before.acceptedCheckpointId!,
+    )!;
+    // The service crashes with the child running; the checkpoint then differs.
+    t.loop.digests.set(head.candidateId, "tampered");
+    const reopened = t.reopenSupervisor();
+    await reopened.recover();
+    const held = reopened.run(runId);
+    expect(held.state).toBe("suspended");
+    expect(held.waitReason).toMatchObject({ kind: "recovery" });
+    expect(held.desiredState).toBe("running");
+    expect(child(reopened)).toBe("paused");
+    // A refused Resume leaves the child paused.
+    await expect(
+      reopened.control({
+        runId,
+        action: "resume",
+        commandId: "resume-held-child-refused",
+      }),
+    ).rejects.toThrow("could not be verified");
+    expect(child(reopened)).toBe("paused");
+    // Once the revalidation passes, Resume resumes the child as well.
+    t.loop.digests.set(head.candidateId, head.contentDigest);
+    await reopened.control({
+      runId,
+      action: "resume",
+      commandId: "resume-held-child",
+    });
+    expect(reopened.run(runId).state).toBe("active");
+    expect(child(reopened)).not.toBe("paused");
+    // Stop from the held state reaches the paused child.
+    t.loop.digests.set(head.candidateId, "tampered");
+    const again = t.reopenSupervisor();
+    await again.recover();
+    expect(again.run(runId).state).toBe("suspended");
+    expect(child(again)).toBe("paused");
+    await again.control({ runId, action: "stop", commandId: "stop-held-child" });
+    expect(again.run(runId).state).toBe("stopped");
+    expect(child(again)).toBe("stopped");
   });
 
   test("ST-08: a sleep gap revalidates and fires a due wakeup once", async () => {

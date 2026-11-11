@@ -20,6 +20,7 @@ import {
   newCommandId,
   stateTone,
   useCommandRunner,
+  useSubmission,
 } from "./shared";
 
 const author = { user: "You", service: "Topsl", coordinator: "Coordinators" };
@@ -145,6 +146,7 @@ export function LoopThread({
   }
   const freshness = useScopedRefresh(projectId, refresh);
   const { run, errors } = useCommandRunner(refresh, runId);
+  const { submit, busy } = useSubmission();
   if (missing)
     return (
       <section aria-label="Recursive loop" className="thread">
@@ -187,12 +189,14 @@ export function LoopThread({
   async function send() {
     const text = draft.trim();
     if (!text) return;
-    const sent = await run("steer", {
-      type: "loop-message",
-      runId: r.id,
-      text,
-      commandId: newCommandId(),
-    });
+    const sent = await submit(() =>
+      run("steer", {
+        type: "loop-message",
+        runId: r.id,
+        text,
+        commandId: newCommandId(),
+      }),
+    );
     if (sent) setDraft("");
   }
   const current = view.current;
@@ -382,6 +386,7 @@ export function LoopThread({
                 onChange={setDraft}
                 onSend={() => void send()}
                 disabled={!enabled || ended}
+                sending={busy}
                 note={
                   r.mode === "goal"
                     ? "Add goals, or change the team: “Use five reviewers.” “Do not use provider claude.”"

@@ -88,7 +88,12 @@ export const sessionConfigurationPatchSchema = z
   .object({
     coordinators: z.array(memberIntentSchema).max(8).optional(),
     team: z.enum(teamModes).optional(),
-    roles: z.record(roleIdSchema, sessionRoleSchema).optional(),
+    roles: z
+      .record(roleIdSchema, sessionRoleSchema)
+      .refine((roles) => Object.keys(roles).length <= 64, {
+        message: "Too many roles.",
+      })
+      .optional(),
     requiredRoles: z.array(roleIdSchema).max(64).optional(),
     composerMode: z.enum(composerModes).optional(),
   })

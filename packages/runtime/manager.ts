@@ -4,6 +4,7 @@ import {
   reviewOutputSchema,
 } from "../workflows/builder-reviewer";
 import os from "node:os";
+import { closeSync, openSync, readSync } from "node:fs";
 import {
   RuntimeAcceptanceRegistry,
   runtimeBindingId,
@@ -92,7 +93,6 @@ import type {
 } from "../domain/types";
 import {
   hash,
-  normalizeUsage,
   now,
   safeError,
   stable,
@@ -1552,6 +1552,14 @@ export class RuntimeManager {
           prepared,
           run.nativeSessionId,
         );
+        // A provider whose process starts with the turn has a process
+        // identifier only now; without it, reconciling an uncertain run
+        // cannot tell this run's process from any other of the installation.
+        if (!run.nativePid && client.process.pid) {
+          run.nativePid = client.process.pid;
+          this.coordinator.attachExecution(run.id, run.nativePid);
+          this.store.save("run", run);
+        }
         this.store.immutable("runtime-turn-result-metadata", {
           id: attempt.id,
           attemptId: attempt.id,
@@ -1813,6 +1821,16 @@ export class RuntimeManager {
     method: string,
     params: any,
   ): void {
+    // A request still in the pipe when the run ended has nobody to decide it,
+    // and recording it would turn the finished run back into a waiting one.
+    if (active.finished) {
+      try {
+        active.client.reject(requestId, "The run has already ended.");
+      } catch {
+        // The connection is closed; nothing is waiting for the answer.
+      }
+      return;
+    }
     const request = active.adapter.approval(method, params, (id) =>
       active.items.get(id),
     );
@@ -2018,25 +2036,30 @@ export class RuntimeManager {
       );
       return;
     }
-    await active.adapter.interrupt(
-      active.client,
-      active.run.nativeSessionId,
-      active.run.nativeTurnId,
-    );
-    // A runtime that acknowledges the interrupt but never ends the turn would
-    // hold the run, its writer lease and capacity until Topsl quit (W4-3).
-    // After the grace period Topsl stops the process; the lease is released
-    // only once the process group is confirmed gone (settle), else the run is
-    // uncertain as for any unconfirmed exit.
-    const grace = setTimeout(() => {
-      if (this.active.get(id) !== active || active.finished) return;
-      this.finish(
-        active,
-        "interrupted",
-        `${active.run.provider === "claude" ? "Claude Code" : "Codex"} did not end the interrupted turn within ${Math.round(this.interruptGraceMs / 1000)} s, so Topsl stopped its process. The turn did not complete and was not replayed.`,
+    try {
+      await active.adapter.interrupt(
+        active.client,
+        active.run.nativeSessionId,
+        active.run.nativeTurnId,
       );
-    }, this.interruptGraceMs);
-    grace.unref?.();
+    } finally {
+      // A runtime that acknowledges the interrupt but never ends the turn
+      // would hold the run, its writer lease and capacity until Topsl quit
+      // (W4-3). So would one that never answers the interrupt at all, which
+      // is why the timer is armed even when the request above fails. After
+      // the grace period Topsl stops the process; the lease is released only
+      // once the process group is confirmed gone (settle), else the run is
+      // uncertain as for any unconfirmed exit.
+      const grace = setTimeout(() => {
+        if (this.active.get(id) !== active || active.finished) return;
+        this.finish(
+          active,
+          "interrupted",
+          `${active.run.provider === "claude" ? "Claude Code" : "Codex"} did not end the interrupted turn within ${Math.round(this.interruptGraceMs / 1000)} s, so Topsl stopped its process. The turn did not complete and was not replayed.`,
+        );
+      }, this.interruptGraceMs);
+      grace.unref?.();
+    }
   }
   /**
    * Opens a native terminal. Its permission mode comes only from the fixed
@@ -2251,6 +2274,24 @@ export class RuntimeManager {
     this.openingWorkspaces.set(key, project.id);
     return key;
   }
+  /**
+   * Whether the live process holding a run's recorded PID may be that run's
+   * process. A PID is reused after a restart, so liveness alone would block
+   * reconciliation forever. Anything that cannot be established counts as
+   * the run's own process.
+   */
+  private async recordedProcessMayRemain(run: Run): Promise<boolean> {
+    // No process alive now started before this computer booted. The margin
+    // covers the imprecision of the reported uptime.
+    const booted = Date.now() - os.uptime() * 1000;
+    if (Date.parse(run.createdAt) < booted - 60_000) return false;
+    // The run recorded no process identity, so the live process's executable
+    // is compared with the installation's real path.
+    const i = this.store.get<Installation>("installation", run.installationId);
+    if (!i || !reportsOwnExecutable(i.realPath)) return true;
+    const processes = await affectedProcesses([i.realPath]);
+    return processes === null || processes.includes(run.nativePid!);
+  }
   async reconcile(id: string): Promise<void> {
     const run = this.store.get<Run>("run", id);
     if (!run || run.status !== "uncertain")
@@ -2264,14 +2305,19 @@ export class RuntimeManager {
         "Owned descendant group is still present or unknown. Reconciliation cannot release this workspace.",
       );
     if (run.nativePid) {
+      let present = true;
       try {
         process.kill(run.nativePid, 0);
+      } catch (e: any) {
+        if (e.code === "ESRCH") present = false;
+        // EPERM means a process exists that is not ours to signal. It is
+        // identified below like any other live process.
+        else if (e.code !== "EPERM") throw e;
+      }
+      if (present && (await this.recordedProcessMayRemain(run)))
         throw new Error(
           "The native process is still present. Close it in its native application before reconciling.",
         );
-      } catch (e: any) {
-        if (e.code !== "ESRCH") throw e;
-      }
     } else {
       const i = this.store.get<Installation>(
         "installation",
@@ -2346,5 +2392,27 @@ export class RuntimeManager {
       if (this.ownsCoordinator) this.coordinator.close();
     })();
     return this.closePromise;
+  }
+}
+
+/**
+ * Whether a process started from this file reports the file as its
+ * executable. A script or a command shim runs under its interpreter, so its
+ * path cannot tell that process from an unrelated one.
+ */
+function reportsOwnExecutable(file: string): boolean {
+  if (process.platform === "win32") return /\.exe$/i.test(file);
+  try {
+    const descriptor = openSync(file, "r");
+    try {
+      const head = Buffer.alloc(2);
+      return (
+        readSync(descriptor, head, 0, 2, 0) === 2 && head.toString() !== "#!"
+      );
+    } finally {
+      closeSync(descriptor);
+    }
+  } catch {
+    return false;
   }
 }

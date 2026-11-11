@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   MEMBER_LIMIT_CEILING,
   groupScopeLevels,
-  roleGroupSettingsSchema,
+  boundedRoleGroupSettingsSchema,
   roleIdSchema,
 } from "./role-groups";
 
@@ -106,7 +106,7 @@ export const orchestrationCommands = [
     level: z.enum(groupScopeLevels),
     taskKey: z.string().max(64).nullable().default(null),
     roleId: z.union([roleIdSchema, z.literal("*")]),
-    settings: roleGroupSettingsSchema,
+    settings: boundedRoleGroupSettingsSchema,
     mode: z.enum(["merge", "replace"]).default("replace"),
     commandId,
   }),
@@ -130,7 +130,7 @@ export const orchestrationCommands = [
     projectId: id,
     expectedRevision: z.number().int().nonnegative(),
     maxMembersPerRole: z.number().int().min(1).max(MEMBER_LIMIT_CEILING),
-    defaults: roleGroupSettingsSchema.default({}),
+    defaults: boundedRoleGroupSettingsSchema.default({}),
     commandId,
   }),
   z.object({

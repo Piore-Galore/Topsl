@@ -661,6 +661,81 @@ describe("CONF-03 external change, parent change and symlink replacement", () =>
   });
 });
 
+describe("CONF-03 bytes, mode and dangling links are preserved", () => {
+  test("a file that is not UTF-8 is refused and left byte for byte", async () => {
+    const f = await serviceFixture();
+    const file = path.join(f.project, "AGENTS.md");
+    const read = () =>
+      f.send({
+        type: "configuration-read",
+        provider: "codex",
+        projectId: "p",
+        kind: "instructions",
+      });
+    await writeFile(file, "plain\n");
+    const { plan } = await f.edit("codex", "p", "instructions", "mine\n");
+    const bytes = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+    await writeFile(file, bytes);
+    await expect(read()).rejects.toThrow("not valid UTF-8");
+    await expect(f.apply(plan.id)).rejects.toThrow("not valid UTF-8");
+    expect((await readFile(file)).equals(bytes)).toBe(true);
+    expect(f.write(plan.id)).toBeUndefined();
+  });
+
+  test("settings that start with a byte order mark can be previewed, and the mark is kept", async () => {
+    const f = await serviceFixture();
+    const folder = path.join(f.project, ".claude");
+    await mkdir(folder);
+    const file = path.join(folder, "settings.json");
+    await writeFile(file, '\uFEFF{"a":1}');
+    const { read, plan } = await f.edit(
+      "claude",
+      "p",
+      "native",
+      '\uFEFF{"a":2}',
+    );
+    expect(read.text).toBe('\uFEFF{"a":1}');
+    await f.apply(plan.id);
+    expect(await readFile(file, "utf8")).toBe('\uFEFF{"a":2}');
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "replacing a file keeps its mode, and a new file is owner-only",
+    async () => {
+      const f = await serviceFixture();
+      const file = path.join(f.project, "AGENTS.md");
+      await writeFile(file, "one\n");
+      await chmod(file, 0o644);
+      const { plan } = await f.edit("codex", "p", "instructions", "two\n");
+      await f.apply(plan.id);
+      expect((await stat(file)).mode & 0o777).toBe(0o644);
+      const created = await f.edit("claude", "p", "instructions", "new\n");
+      await f.apply(created.plan.id);
+      expect(
+        (await stat(path.join(f.project, "CLAUDE.md"))).mode & 0o777,
+      ).toBe(0o600);
+    },
+  );
+
+  test("a link whose target is gone is refused, not replaced by a file", async () => {
+    const f = await serviceFixture();
+    const file = path.join(f.project, "AGENTS.md");
+    const read = () =>
+      f.send({
+        type: "configuration-read",
+        provider: "codex",
+        projectId: "p",
+        kind: "instructions",
+      });
+    const { plan } = await f.edit("codex", "p", "instructions", "mine\n");
+    await symlink(path.join(f.outside, "missing.md"), file);
+    await expect(f.apply(plan.id)).rejects.toThrow("became a symlink");
+    await expect(read()).rejects.toThrow("does not replace symlinks");
+    expect((await lstat(file)).isSymbolicLink()).toBe(true);
+    expect(await readdir(f.outside)).toEqual([]);
+  });
+});
+
 describe("CONF-04 native approval and active sessions", () => {
   test("missing, renderer-forged, wrong, foreign, tampered, expired and replayed approvals change no file", async () => {
     const f = await serviceFixture();

@@ -101,6 +101,8 @@ export function AdvancedWorkflows({
     if (!background) {
       pendingInspections.current.set(key, ticket);
       setPending((current) => ({ ...current, [key]: true }));
+      // A new attempt replaces the alert left by an earlier failure.
+      setErrors((current) => ({ ...current, [key]: "" }));
     }
     try {
       const value = await window.topsl.command({
@@ -229,7 +231,11 @@ export function AdvancedWorkflows({
       ) : (
         <>
           {inspection?.task?.id !== task.id && (
-            <p role="status">Loading recorded task evidence…</p>
+            <p role="status">
+              {errors[`inspect:${task.id}`]
+                ? "Recorded task evidence could not be loaded."
+                : "Loading recorded task evidence…"}
+            </p>
           )}
           <dl>
             <dt>Responsible agent</dt>

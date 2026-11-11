@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { safeEqual } from "../domain/invariants";
@@ -50,15 +51,37 @@ function presentedToken(request: http.IncomingMessage): string | null {
   return typeof key === "string" ? key.trim() : null;
 }
 
-async function readBody(request: http.IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > MAX_REQUEST_BYTES) throw new Error("too-large");
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+/**
+ * The request body, or null once it passes the limit. Buffering stops there
+ * without closing the request: leaving a `for await` early would destroy it
+ * and reset the connection before the caller could answer.
+ */
+function readBody(request: http.IncomingMessage): Promise<Buffer | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const onData = (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= MAX_REQUEST_BYTES) return void chunks.push(chunk);
+      done();
+      resolve(null);
+    };
+    const onEnd = () => {
+      done();
+      resolve(Buffer.concat(chunks));
+    };
+    const onError = (error: Error) => {
+      done();
+      reject(error);
+    };
+    const done = () => {
+      request.off("data", onData).off("end", onEnd).off("error", onError);
+      request.off("close", onClose);
+    };
+    const onClose = () => onError(new Error("The request was closed."));
+    request.on("data", onData).on("end", onEnd).on("error", onError);
+    request.on("close", onClose);
+  });
 }
 
 export async function startProxyServer(
@@ -66,8 +89,10 @@ export async function startProxyServer(
   options: { port?: number } = {},
 ): Promise<ProxyServer> {
   let port = 0;
-  const server = http.createServer(async (request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const handle = async (
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> => {
     const host = request.headers.host ?? "";
     if (
       request.headers.origin ||
@@ -79,6 +104,15 @@ export async function startProxyServer(
       return send(response, 401, {
         error: { message: "Missing or invalid local access token." },
       });
+    // A target such as "//" is not a URL; without this it would throw.
+    let url: URL;
+    try {
+      url = new URL(request.url ?? "/", "http://127.0.0.1");
+    } catch {
+      return send(response, 400, {
+        error: { message: "The request target is not valid." },
+      });
+    }
     if (request.method === "GET" && url.pathname === "/v1/models")
       return send(
         response,
@@ -88,19 +122,47 @@ export async function startProxyServer(
     const protocol = routes[url.pathname];
     if (!protocol || request.method !== "POST")
       return send(response, 404, { error: { message: "Not found." } });
+    // Refused before the body is read: stopping in the middle of an upload
+    // resets the connection, and the client would never see this answer.
+    if (Number(request.headers["content-length"]) > MAX_REQUEST_BYTES) {
+      response.setHeader("connection", "close");
+      return send(response, 413, {
+        error: { message: "The request body is too large." },
+      });
+    }
     let body: unknown;
     try {
-      body = JSON.parse((await readBody(request)).toString("utf8"));
-    } catch (error) {
-      return send(
-        response,
-        (error as Error)?.message === "too-large" ? 413 : 400,
-        {
-          error: {
-            message: "The request body is not valid JSON or is too large.",
-          },
-        },
-      );
+      const bytes = await readBody(request);
+      if (!bytes) {
+        // A body with no declared length that passed the limit. The rest of
+        // it is discarded, not kept. The whole answer is written at once, but
+        // the connection is closed only when the client stops sending or a
+        // short grace period ends: closing while the upload is still arriving
+        // resets the connection, and the client would lose the answer.
+        request.resume();
+        const text = JSON.stringify({
+          error: { message: "The request body is too large." },
+        });
+        response.writeHead(413, {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(text),
+          "cache-control": "no-store",
+          connection: "close",
+        });
+        response.write(text);
+        const finish = () => {
+          clearTimeout(grace);
+          response.end(() => request.destroy());
+        };
+        const grace = setTimeout(finish, 2_000);
+        request.once("end", finish).once("close", finish);
+        return;
+      }
+      body = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      return send(response, 400, {
+        error: { message: "The request body is not valid JSON." },
+      });
     }
     const controller = new AbortController();
     response.on("close", () => {
@@ -132,8 +194,12 @@ export async function startProxyServer(
     try {
       for await (const chunk of result.chunks) {
         if (controller.signal.aborted) break;
+        // A client that leaves while the socket is full never drains it, so
+        // the wait also ends when the request is aborted.
         if (!response.write(chunk))
-          await new Promise<void>((resolve) => response.once("drain", resolve));
+          await once(response, "drain", { signal: controller.signal }).catch(
+            () => undefined,
+          );
       }
     } catch {
       // The stream already carries its terminal error event, or the client left.
@@ -141,6 +207,17 @@ export async function startProxyServer(
       await result.chunks.return?.(undefined);
       response.end();
     }
+  };
+  const server = http.createServer((request, response) => {
+    // Nothing a request does may become an unhandled rejection in the proxy
+    // process.
+    handle(request, response).catch(() => {
+      if (response.headersSent) response.destroy();
+      else
+        send(response, 500, {
+          error: { message: "The proxy failed to handle the request." },
+        });
+    });
   });
   server.keepAliveTimeout = 5_000;
   await new Promise<void>((resolve, reject) => {

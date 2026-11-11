@@ -290,18 +290,26 @@ export class NativeJournal {
     } = {},
   ): { items: NativeAttemptView[]; nextCursor: string | null } {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    // The cursor is "<updated_at> <attempt_id>", so rows that share a
+    // timestamp with the last one shown are not skipped. A cursor with no
+    // identifier (an older client's) behaves as it did before.
+    const [at, after = ""] = (options.before ?? "\uffff").split(" ");
     const rows = this.db
       .prepare(
-        `SELECT body,updated_at FROM native_projections WHERE project_id=? ${options.rootsOnly ? "AND root_attempt_id=attempt_id" : ""} AND updated_at<? ORDER BY updated_at DESC LIMIT ?`,
+        `SELECT body,updated_at,attempt_id FROM native_projections WHERE project_id=? ${options.rootsOnly ? "AND root_attempt_id=attempt_id" : ""} AND (updated_at<? OR (updated_at=? AND attempt_id<?)) ORDER BY updated_at DESC, attempt_id DESC LIMIT ?`,
       )
-      .all(projectId, options.before ?? "￿", limit + 1) as Array<{
+      .all(projectId, at, at, after, limit + 1) as Array<{
       body: string;
       updated_at: string;
+      attempt_id: string;
     }>;
     const included = rows.slice(0, limit);
     return {
       items: included.map((row) => JSON.parse(row.body)),
-      nextCursor: rows.length > limit ? included.at(-1)!.updated_at : null,
+      nextCursor:
+        rows.length > limit
+          ? `${included.at(-1)!.updated_at} ${included.at(-1)!.attempt_id}`
+          : null,
     };
   }
 

@@ -298,6 +298,49 @@ describe("application lifecycle", () => {
     );
     expect(f.deps.execute).not.toHaveBeenCalled();
   });
+  test("a download interrupted by closing Topsl fails and frees its installation", async () => {
+    const f = await setup({ fetch: () => new Promise(() => {}) });
+    const p = await f.lifecycle.preview("openai.codex-cli", null, "download");
+    const job = await f.lifecycle.approve(p.id, p.digest);
+    await outcome(f, job.id, ["downloading"]);
+    // The next start: a new Lifecycle over the same store.
+    f.deps.fetch = vi.fn(async () => new Response(payload));
+    const restarted = new Lifecycle(f.store, f.directory, f.deps);
+    const settled = f.store.get<LifecycleJob>("job", job.id)!;
+    expect(settled.state).toBe("failed");
+    expect(settled.detail).toContain("nothing was installed");
+    expect((await restarted.reconcile(job.id)).state).toBe("failed");
+    const again = await restarted.preview("openai.codex-cli", null, "download");
+    const retry = await restarted.approve(again.id, again.digest);
+    expect((await outcome(f, retry.id)).state).toBe("completed");
+  });
+  test.each([
+    ["reports unknown", null],
+    ["fails", new Error("probe failed")],
+  ])(
+    "a cancel during a running-state probe that %s is kept",
+    async (_name, result) => {
+      let f!: Awaited<ReturnType<typeof setup>>;
+      f = await setup({
+        processes: vi.fn(async () => {
+          f.lifecycle.cancel(f.store.list<LifecycleJob>("job")[0].id);
+          if (result) throw result;
+          return result;
+        }),
+      });
+      const p = await f.lifecycle.preview(
+        "openai.codex-cli",
+        f.installation.id,
+        "update",
+      );
+      const job = await f.lifecycle.approve(p.id, p.digest);
+      await vi.waitFor(() => expect(f.deps.processes).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(f.store.get<LifecycleJob>("job", job.id)?.state).toBe("cancelled");
+      await f.lifecycle.tick();
+      expect(f.deps.nativeOpen).not.toHaveBeenCalled();
+    },
+  );
   test("successful installation does not claim runtime compatibility", async () => {
     const f = await setup();
     const p = await f.lifecycle.preview(

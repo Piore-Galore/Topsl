@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
 import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -138,6 +139,24 @@ async function rootIdentity(root: string): Promise<RootIdentity> {
   };
 }
 
+/** recover() runs inside a transaction, so it reads the folder synchronously. */
+function rootIdentityIfPresent(root: string): RootIdentity[] {
+  try {
+    const stat = lstatSync(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return [];
+    return [
+      {
+        root,
+        realPath: realpathSync(root),
+        dev: String(stat.dev),
+        ino: String(stat.ino),
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
 /** Every workflow uses this registry. Cleanup has no command or authorization
  * path; recovery never calls execute(). All records use the encrypted store. */
 export class CheckExecutions {
@@ -159,9 +178,47 @@ export class CheckExecutions {
   }
   /** Called only after the service acquired its profile owner. */
   recover(): void {
+    const queued: CleanupJob[] = [];
     this.store.transaction(() => {
       for (const old of this.store.iterate<CheckExecution>("check-execution")) {
         if (finalStates.has(old.state)) continue;
+        // An earlier version left a crashed, never-dispatched execution
+        // uncertain. Its record still proves that nothing ran, so repair it.
+        const repaired = this.strandedBeforeDispatch(old);
+        if (repaired || this.neverStarted(old)) {
+          // No process identity exists to reconcile, so left uncertain this
+          // execution would hold its folder's lock for ever.
+          const at = now(),
+            roots = old.ownedRoots?.length
+              ? old.ownedRoots
+              : rootIdentityIfPresent(old.materializedRoot);
+          this.save({
+            ...old,
+            state: "error",
+            eligibility: "ineligible",
+            error: repaired
+              ? "The service restarted before this check's process was started; nothing ran. This record was left uncertain by an earlier version and has been repaired."
+              : "The service restarted before this check's process was started; nothing ran.",
+          });
+          const job: CleanupJob = {
+            version: 1,
+            id: uid(),
+            projectId: old.projectId,
+            executionId: old.id,
+            state: "pending",
+            roots,
+            attempts: 0,
+            error: null,
+            createdAt: at,
+            updatedAt: at,
+          };
+          this.store.put("check-cleanup", job);
+          queued.push(job);
+          for (const lock of this.store.iterate<any>("check-workspace-lock"))
+            if (lock.executionId === old.id)
+              this.store.put("check-workspace-lock", { ...lock, held: false });
+          continue;
+        }
         this.save({
           ...old,
           state: "uncertain",
@@ -190,6 +247,62 @@ export class CheckExecutions {
             updatedAt: now(),
           });
     });
+    // A failed clean-up stays a retryable job, as after a finished check.
+    for (const job of queued)
+      Promise.resolve()
+        .then(() => this.retryCleanup(job.projectId, job.id))
+        .catch(() => {});
+  }
+  /** True only for an execution that crashed before any process of its own
+   * could exist: still prepared, with an environment that either never
+   * began preparing or finished with every preparation process observed
+   * gone. From `dispatching` on, a crash is ambiguous and stays uncertain. */
+  private neverStarted(execution: CheckExecution): boolean {
+    if (execution.state !== "prepared" || execution.lifecycle) return false;
+    if (!execution.environmentInstanceId) return true;
+    const instance = this.store.get<EnvironmentInstance>(
+      "environment-instance",
+      execution.environmentInstanceId,
+    );
+    if (!instance) return false;
+    return ["planned", "approved"].includes(instance.state)
+      ? !instance.preparationLifecycle
+      : instance.state === "ready" &&
+          (!instance.preparationLifecycle ||
+            instance.preparationLifecycle.state === "quiescent");
+  }
+  /** True only for an uncertain execution whose record proves it never
+   * reached `dispatching`. The record keeps no earlier state, so the proof
+   * is a field that the save of `dispatching` can never carry: no resource
+   * ID (resources are allocated and saved before preparation and dispatch),
+   * or the "environment" failure phase (cleared and saved once preparation
+   * ends) beside an environment whose preparation processes are all
+   * observed gone. Anything else may have a process and stays uncertain. */
+  private strandedBeforeDispatch(execution: CheckExecution): boolean {
+    if (
+      execution.state !== "uncertain" ||
+      execution.lifecycle ||
+      execution.outputBytes ||
+      execution.verificationId ||
+      execution.storageError ||
+      this.store.get("check-log", `${execution.id}:1`)
+    )
+      return false;
+    const instance = execution.environmentInstanceId
+      ? this.store.get<EnvironmentInstance>(
+          "environment-instance",
+          execution.environmentInstanceId,
+        )
+      : undefined;
+    if (execution.environmentInstanceId && !instance) return false;
+    if (!execution.resourceId)
+      return !instance?.resourceId && !instance?.preparationLifecycle;
+    return (
+      execution.failurePhase === "environment" &&
+      instance?.state === "ready" &&
+      (!instance.preparationLifecycle ||
+        instance.preparationLifecycle.state === "quiescent")
+    );
   }
   list(projectId: string) {
     return {
@@ -227,7 +340,29 @@ export class CheckExecutions {
           execution.environmentInstanceId,
         )
       : null;
-    return { execution, plan, logs, cleanup, environment };
+    return {
+      execution,
+      plan,
+      logs,
+      cleanup,
+      environment,
+      /** Whether a process ID survives that reconciliation can verify. */
+      processIdRecorded: !!this.recordedLifecycle(execution)?.pid,
+    };
+  }
+  /** The lifecycle `reconcileStopped` verifies: the check's own, or the
+   * environment preparation's when the check stopped in that phase. */
+  private recordedLifecycle(execution: CheckExecution) {
+    return (
+      execution.lifecycle ??
+      (execution.failurePhase === "environment" &&
+      execution.environmentInstanceId
+        ? this.store.get<EnvironmentInstance>(
+            "environment-instance",
+            execution.environmentInstanceId,
+          )?.preparationLifecycle
+        : null)
+    );
   }
   private ownerBinding(): string | null {
     const row = this.store.db
@@ -607,7 +742,11 @@ export class CheckExecutions {
         detached: process.platform !== "win32",
         stdio: "pipe",
       });
-      spawned = true;
+      // No process ID means no process: the program could not be started
+      // (not executable, a missing interpreter). That is an error with a
+      // known outcome. Counted as spawned, it would end "uncertain" with
+      // nothing to reconcile, and hold the workspace's check lock for good.
+      spawned = child.pid !== undefined;
       child.stdin.end();
       let spawnError: Error | undefined;
       child.on("error", (error) => {
@@ -993,6 +1132,105 @@ export class CheckExecutions {
         if (lock.executionId === executionId)
           this.store.put("check-workspace-lock", { ...lock, held: false });
     });
+    return updated;
+  }
+  /** Owner attestation for an uncertain execution that kept no process ID,
+   * so nothing can be verified. Topsl observed nothing: the execution becomes
+   * an ineligible error, never a result, and its workspace lock is released.
+   * The caller must have obtained the owner's native confirmation. */
+  markNotRunning(projectId: string, executionId: string): CheckExecution {
+    const execution = this.store.get<CheckExecution>(
+      "check-execution",
+      executionId,
+    );
+    if (!execution || execution.projectId !== projectId)
+      throw new Error("Execution is outside this project.");
+    if (
+      execution.state !== "uncertain" ||
+      [...this.active.values()].some((a) => a.executionId === executionId)
+    )
+      throw new Error(
+        "Only an inactive uncertain execution can be marked as not running.",
+      );
+    if (this.recordedLifecycle(execution)?.pid)
+      throw new Error(
+        "This check recorded a process ID. Reconcile the original check lifecycle instead; Topsl can verify that process.",
+      );
+    // An uncertain environment instance is never settled by reconciliation
+    // either: it stays as recorded evidence and holds no lock. Its
+    // preparation process is refused here only if it left a process ID that
+    // was not observed gone, because that is verifiable and not attested.
+    const instance = execution.environmentInstanceId
+      ? this.store.get<EnvironmentInstance>(
+          "environment-instance",
+          execution.environmentInstanceId,
+        )
+      : undefined;
+    if (
+      instance?.preparationLifecycle?.pid &&
+      instance.preparationLifecycle.state !== "quiescent"
+    )
+      throw new Error(
+        "This check's environment preparation recorded a process ID that was not observed stopped. It cannot be marked as not running; inspect that process.",
+      );
+    const at = now(),
+      roots = execution.ownedRoots?.length
+        ? execution.ownedRoots
+        : rootIdentityIfPresent(execution.materializedRoot),
+      detail = `The owner attested at ${at} that no process from this check was running. Topsl held no process ID and verified nothing; the original result remains unproven and nothing was rerun.`,
+      updated: CheckExecution = {
+        ...execution,
+        state: "error",
+        eligibility: "ineligible",
+        error: detail,
+        // Clean-up requires a quiescent lifecycle. One without a process ID
+        // is settled by the attestation, and says so.
+        lifecycle: execution.lifecycle
+          ? {
+              ...execution.lifecycle,
+              state: "quiescent",
+              observedAt: at,
+              detail,
+            }
+          : execution.lifecycle,
+        updatedAt: at,
+      };
+    this.store.transaction(() => {
+      this.save(updated);
+      const oldJob = [
+        ...this.store.iterate<CleanupJob>("check-cleanup", { projectId }),
+      ].find((j) => j.executionId === executionId);
+      if (oldJob)
+        this.store.put("check-cleanup", {
+          ...oldJob,
+          state: "pending",
+          updatedAt: at,
+        });
+      else
+        this.store.put("check-cleanup", {
+          version: 1,
+          id: uid(),
+          projectId,
+          executionId,
+          state: "pending",
+          roots,
+          attempts: 0,
+          error: null,
+          createdAt: at,
+          updatedAt: at,
+        } satisfies CleanupJob);
+      for (const lock of this.store.iterate<any>("check-workspace-lock"))
+        if (lock.executionId === executionId)
+          this.store.put("check-workspace-lock", { ...lock, held: false });
+    });
+    const job = [
+      ...this.store.iterate<CleanupJob>("check-cleanup", { projectId }),
+    ].find((j) => j.executionId === executionId);
+    // A failed clean-up stays a retryable job, as after a finished check.
+    if (job)
+      Promise.resolve()
+        .then(() => this.retryCleanup(projectId, job.id))
+        .catch(() => {});
     return updated;
   }
   private async cleanup(

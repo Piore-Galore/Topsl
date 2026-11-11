@@ -282,3 +282,28 @@ test("cancel withdraws a job that has not started and refuses one that has", asy
   expect(refused.ok).toBe(false);
   expect(refused.text).toContain("stop the goal to cancel it");
 });
+
+test("a job whose task was held by a pause follows the task when it recovers", async () => {
+  const f = await setup();
+  f.goal("g", "p", { state: "running", planId: "plan-1" } as Partial<Goal>);
+  f.enable();
+  f.authorize("attempt", "g");
+  const job = parse(f.jobs.call("attempt", "a", "start_agent_job", request));
+  f.jobs.settle(f.goals.get("g")!);
+  const status = () =>
+    parse(f.jobs.call("attempt", "s", "get_agent_job", { job_id: job.job_id }))
+      .status;
+  const action = f.actions.find((a) => a.goalId === "g")!;
+  action.state = "blocked";
+  action.detail = "Paused before admission.";
+  f.jobs.settle(f.goals.get("g")!);
+  expect(status()).toBe("blocked");
+  // Resume queues the action again; the job is no longer reported blocked.
+  action.state = "queued";
+  action.detail = "";
+  f.jobs.settle(f.goals.get("g")!);
+  expect(status()).toBe("queued");
+  action.state = "completed";
+  f.jobs.settle(f.goals.get("g")!);
+  expect(status()).toBe("completed");
+});

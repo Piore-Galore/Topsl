@@ -10,7 +10,7 @@ import {
 } from "../proxy/canonical";
 import { NativeJournal, StaleGeneration } from "./journal";
 import type { ModelClient } from "./model-client";
-import type { ResourceLedger } from "./resources";
+import { quotaKey, type ResourceLedger } from "./resources";
 import {
   buildConversation,
   capsuleText,
@@ -300,8 +300,15 @@ export class NativeKernel {
           });
       }
     let uncertain = false;
+    let commandUncertain = false;
     for (const intent of openIntents(events, processes)) {
+      // An outcome that was already unknown before this restart stays unknown.
+      if (intent.uncertain) {
+        uncertain = true;
+        continue;
+      }
       if (intent.effect === "process") {
+        commandUncertain = true;
         const record = intent.processPid;
         const verified = record !== null && alive(record);
         if (verified) kill(record!);
@@ -320,8 +327,9 @@ export class NativeKernel {
       body: uncertain
         ? {
             kind: "uncertain",
-            reason:
-              "Topsl restarted while a command was running. Reconcile it, then resume.",
+            reason: commandUncertain
+              ? "Topsl restarted while a command was running. Reconcile it, then resume."
+              : "A tool call's outcome is still unknown. Reconcile it, then resume.",
           }
         : { kind: "restart", reason: RESTART_DETAIL },
     });
@@ -459,6 +467,7 @@ export class NativeKernel {
         if (openToolCalls(events).length) {
           // Every proposed call must have a result before the next request.
           await this.settleOpenIntents(rt);
+          if (this.closeUnsettled(rt)) return;
           continue;
         }
         const lastResponse = latestUsableResponse(events);
@@ -486,7 +495,7 @@ export class NativeKernel {
           return;
         }
         const quota = this.deps.resources.quotaWait(
-          spec.binding.native?.quotaOwner ?? null,
+          spec.binding.native ? quotaKey(spec.binding.native) : null,
         );
         if (quota) {
           this.append(id, rt.generation, [
@@ -523,6 +532,21 @@ export class NativeKernel {
         const window = spec.binding.model.contextWindowTokens;
         if (compiled.estimatedTokens > spec.limits.compactAt * window) {
           if (await this.compact(rt, events)) continue;
+          // A compaction that published nothing still used a request number.
+          view = this.journal.require(id);
+          events = [...this.journal.all(id)];
+          if (view.requests >= spec.limits.maxRequests) {
+            this.append(id, rt.generation, [
+              {
+                kind: "paused",
+                body: {
+                  kind: "budget",
+                  reason: `This attempt used its ${spec.limits.maxRequests} model requests. Raise the budget or start a new attempt from a checkpoint.`,
+                },
+              },
+            ]);
+            return;
+          }
           if (compiled.estimatedTokens > window) {
             this.append(id, rt.generation, [
               {
@@ -589,9 +613,7 @@ export class NativeKernel {
         if (response.error) {
           const error = response.error;
           if (error.kind === "quota") {
-            const owner =
-              spec.binding.native!.quotaOwner ??
-              `connection:${spec.binding.native!.connectionId}`;
+            const owner = quotaKey(spec.binding.native!);
             this.deps.resources.pauseQuota(
               owner,
               `${spec.binding.native!.connectionLabel} reported its usage limit: ${error.message}`,
@@ -935,6 +957,7 @@ export class NativeKernel {
       raw: unknown;
       args: unknown;
       key: string;
+      expectation: Record<string, unknown> | null;
     }> = [];
     if (calls.length > spec.limits.maxToolCallsPerResponse) {
       for (const call of calls)
@@ -1006,8 +1029,20 @@ export class NativeKernel {
           ? await tool.expectation(args, this.context(rt, call.id))
           : null;
       } catch (error) {
-        if (!(error instanceof PathRejected)) throw error;
-        this.result(rt, call.id, { ok: false, output: error.message }, 0);
+        // Nothing has run yet, so any failure here (a refused path, an
+        // unreadable file) is this call's result, not the attempt's.
+        this.result(
+          rt,
+          call.id,
+          {
+            ok: false,
+            output:
+              error instanceof PathRejected || error instanceof ToolInputError
+                ? error.message
+                : `${tool.name} failed before it ran: ${safeError(error)}`,
+          },
+          0,
+        );
         continue;
       }
       const argumentsHash = hash(stable(args));
@@ -1032,6 +1067,7 @@ export class NativeKernel {
         raw,
         args,
         key: `${tool.name}:${argumentsHash}`,
+        expectation,
       });
     }
     // Consecutive reads run together (at most maxConcurrentReads); anything
@@ -1082,6 +1118,7 @@ export class NativeKernel {
       tool: NativeTool;
       raw: unknown;
       key: string;
+      expectation: Record<string, unknown> | null;
     },
   ): Promise<"ok" | "failed" | "uncertain"> {
     const { spec } = rt;
@@ -1121,8 +1158,10 @@ export class NativeKernel {
       if (error instanceof ToolInputError || error instanceof PathRejected)
         outcome = { ok: false, output: error.message };
       else if (item.tool.effect === "mutation" && item.tool.reconcile) {
+        // The expectation computed before the call tells a write that never
+        // happened apart from one that may have.
         const state = await item.tool
-          .reconcile(args, null, ctx)
+          .reconcile(args, item.expectation, ctx)
           .catch(() => "uncertain" as const);
         if (state === "uncertain") {
           this.append(spec.attemptId, rt.generation, [
@@ -1192,8 +1231,13 @@ export class NativeKernel {
         Buffer.from(output),
       );
       outputBlob = stored.hash;
+      // Cut by bytes, which is what the limit counts, and never inside a
+      // character: a partial one decodes to U+FFFD and is dropped.
+      const bytes = Buffer.from(output);
       const half = Math.floor(MAX_INLINE_OUTPUT / 2);
-      output = `${output.slice(0, half)}\n… [${stored.bytes - MAX_INLINE_OUTPUT} bytes omitted; Topsl kept the full output as evidence] …\n${output.slice(-half)}`;
+      const head = bytes.subarray(0, half).toString("utf8");
+      const tail = bytes.subarray(bytes.length - half).toString("utf8");
+      output = `${head.replace(/\uFFFD+$/, "")}\n… [${bytes.length - 2 * half} bytes omitted; Topsl kept the full output as evidence] …\n${tail.replace(/^\uFFFD+/, "")}`;
     }
     this.append(spec.attemptId, rt.generation, [
       {
@@ -1209,6 +1253,45 @@ export class NativeKernel {
         },
       },
     ]);
+  }
+
+  /**
+   * Deals with what `settleOpenIntents` leaves open, so the step loop cannot
+   * come straight back to the same open calls. A call that never reached its
+   * intention did not run, and is recorded so. A call whose outcome is
+   * unknown needs the owner: the attempt pauses. Returns whether it paused.
+   */
+  private closeUnsettled(rt: Runtime): boolean {
+    const events = [...this.journal.all(rt.spec.attemptId)];
+    const intents = new Map(openIntents(events).map((i) => [i.callId, i]));
+    let uncertain = false;
+    for (const callId of openToolCalls(events)) {
+      const intent = intents.get(callId);
+      if (intent?.uncertain) uncertain = true;
+      else if (!intent)
+        this.result(
+          rt,
+          callId,
+          {
+            ok: false,
+            output:
+              "Topsl stopped before this call started, so it did not run. Call the tool again if it is still needed.",
+          },
+          0,
+        );
+    }
+    if (!uncertain) return false;
+    this.append(rt.spec.attemptId, rt.generation, [
+      {
+        kind: "paused",
+        body: {
+          kind: "uncertain",
+          reason:
+            "A tool call's outcome is still unknown. Reconcile it, then resume.",
+        },
+      },
+    ]);
+    return true;
   }
 
   /**
@@ -1244,6 +1327,7 @@ export class NativeKernel {
           tool,
           raw: intent.arguments,
           key: `${intent.tool}:${intent.argumentsHash}`,
+          expectation: intent.expectation,
         });
         continue;
       }
@@ -1283,6 +1367,7 @@ export class NativeKernel {
               tool,
               raw: intent.arguments,
               key: `${intent.tool}:${intent.argumentsHash}`,
+              expectation: intent.expectation,
             }),
           );
           continue;

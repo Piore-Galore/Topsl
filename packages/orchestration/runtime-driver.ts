@@ -1241,13 +1241,17 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       } catch (e) {
         error = safeError(e);
       }
-      this.store.immutable("orchestration-capture", {
-        id: attempt.id,
-        projectId: attempt.projectId,
-        candidateId,
-        error,
-        at: now(),
-      } satisfies CaptureRecord);
+      // Written once per attempt. A stop between this record and the copy
+      // being marked processed brings the copy here again; a second record,
+      // with a new time, would be refused as a collision on every tick.
+      if (!this.store.get<CaptureRecord>("orchestration-capture", attempt.id))
+        this.store.immutable("orchestration-capture", {
+          id: attempt.id,
+          projectId: attempt.projectId,
+          candidateId,
+          error,
+          at: now(),
+        } satisfies CaptureRecord);
       const task = this.store.get<Task>("task", attempt.taskId);
       if (task?.state === "active" && attempt.state === "completed")
         this.repository.transitionTask(
@@ -1330,13 +1334,15 @@ export class RuntimeOrchestrationDriver implements OrchestrationDriver {
       } catch (e) {
         error = safeError(e);
       }
-    this.store.immutable("orchestration-capture", {
-      id: attemptId,
-      projectId: copy.projectId,
-      candidateId,
-      error,
-      at: now(),
-    } satisfies CaptureRecord);
+    // Written once per attempt, as in `sync`.
+    if (!this.store.get<CaptureRecord>("orchestration-capture", attemptId))
+      this.store.immutable("orchestration-capture", {
+        id: attemptId,
+        projectId: copy.projectId,
+        candidateId,
+        error,
+        at: now(),
+      } satisfies CaptureRecord);
     await removeMaterializedCopy(copy.root).catch(() => {});
     if (view) await host.harness.discardWorkspace(attemptId).catch(() => {});
     this.store.put("orchestration-copy", { ...copy, state: "processed" });

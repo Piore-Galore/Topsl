@@ -334,10 +334,12 @@ export function GoalCard({
                   key={p.id}
                   type="button"
                   onClick={async () => {
-                    await run(`check-${p.id}`, {
+                    const applied = await run(`check-${p.id}`, {
                       type: "orchestration-check-apply",
                       id: p.id,
                     });
+                    // A failed or declined run keeps its button for another try.
+                    if (!applied) return;
                     setCheckPlans((current) =>
                       current.filter((x: any) => x.id !== p.id),
                     );

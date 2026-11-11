@@ -337,7 +337,7 @@ export function WorkflowSetup({
           id: "required-check",
           label: "Required project check",
           executable: draft.checkExecutable,
-          args: draft.checkArguments,
+          args: draft.checkArguments.filter((a) => a.length),
           timeoutMs: 120000,
           environmentRecipeId: draft.environmentRecipeId,
         },
@@ -807,7 +807,9 @@ export function WorkflowSetup({
                             ? (draft.checkArguments[2] ?? "")
                             : ""
                         }
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          // The custom option names no script to run.
+                          if (!event.target.value) return;
                           update({
                             checkExecutable: selectedEnvironment.nodeExecutable,
                             checkArguments: [
@@ -815,8 +817,8 @@ export function WorkflowSetup({
                               "run",
                               event.target.value,
                             ],
-                          })
-                        }
+                          });
+                        }}
                       >
                         <option value="">
                           Custom exact command · inspect advanced details

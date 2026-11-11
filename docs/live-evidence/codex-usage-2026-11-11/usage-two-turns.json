@@ -1,0 +1,49 @@
+{
+ "outcomes": [
+  "completed",
+  "completed"
+ ],
+ "error": null,
+ "model": "gpt-6.1-sol",
+ "declined": [],
+ "usage": [
+  {
+   "turnId": "01a1c65e-61f7-77a3-903f-60730a7e089d",
+   "last": {
+    "totalTokens": 23358,
+    "inputTokens": 23353,
+    "cachedInputTokens": 7168,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 5,
+    "reasoningOutputTokens": 0
+   },
+   "total": {
+    "totalTokens": 23358,
+    "inputTokens": 23353,
+    "cachedInputTokens": 7168,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 5,
+    "reasoningOutputTokens": 0
+   }
+  },
+  {
+   "turnId": "01a1c65e-8c26-7d60-a98d-b10c0cd87f67",
+   "last": {
+    "totalTokens": 23383,
+    "inputTokens": 23378,
+    "cachedInputTokens": 23168,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 5,
+    "reasoningOutputTokens": 0
+   },
+   "total": {
+    "totalTokens": 46741,
+    "inputTokens": 46731,
+    "cachedInputTokens": 30336,
+    "cacheWriteInputTokens": 0,
+    "outputTokens": 10,
+    "reasoningOutputTokens": 0
+   }
+  }
+ ]
+}

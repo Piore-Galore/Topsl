@@ -91,7 +91,11 @@ export const commandSchema = z.discriminatedUnion("type", [
         }),
       )
       .max(100),
-    values: z.record(z.string(), z.string().max(2000)),
+    values: z
+      .record(z.string().max(256), z.string().max(2000))
+      .refine((values) => Object.keys(values).length <= 100, {
+        message: "Too many environment values.",
+      }),
   }),
   z.object({
     type: z.literal("check-authorization-reuse-preview"),
@@ -177,6 +181,14 @@ export const commandSchema = z.discriminatedUnion("type", [
     projectId: id,
     id,
   }),
+  z
+    .object({
+      type: z.literal("check-execution-mark-not-running"),
+      requestId: id,
+      projectId: id,
+      id,
+    })
+    .strict(),
   z.object({
     type: z.literal("check-cleanup-retry"),
     requestId: id,

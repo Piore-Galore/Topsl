@@ -147,6 +147,11 @@ export class ProxyService {
   /** The local access token clients present. Never written to disk. */
   readonly accessToken = randomBytes(32).toString("base64url");
   private readonly fetch: typeof fetch;
+  /**
+   * One object for the life of the service: the sign-in code caches the
+   * provider's discovery document and keys per config object.
+   */
+  private readonly chatgpt: ChatGptAuthConfig;
   private closed = false;
   private readonly active = new Map<string, Set<AbortController>>();
   private readonly startingSignIns = new Map<string, symbol>();
@@ -168,6 +173,7 @@ export class ProxyService {
     this.registry = new ProxyRegistry(this.database);
     this.credentials = new CredentialStore(this.database);
     this.fetch = options.fetch ?? fetch;
+    this.chatgpt = options.chatgpt ?? {};
   }
 
   view(): ProxyStateView {
@@ -316,7 +322,7 @@ export class ProxyService {
     this.startingSignIns.set(connectionId, opening);
     let attempt: SignInAttempt;
     try {
-      attempt = await beginChatGptSignIn(this.options.chatgpt ?? {}, {
+      attempt = await beginChatGptSignIn(this.chatgpt, {
         hostId: this.database.hostId(),
         registration,
         loginHint: registration?.email ?? undefined,
@@ -428,7 +434,7 @@ export class ProxyService {
       const stored = this.credentials.get(connectionId)?.credential;
       if (stored?.kind === "oauth-chatgpt" && stored.refreshToken) {
         const result = await revokeChatGpt(
-          this.options.chatgpt ?? {},
+          this.chatgpt,
           stored,
         ).catch((error) => ({
           confirmed: false,
@@ -515,15 +521,20 @@ export class ProxyService {
         );
       let active: ChatGptCredential = credential;
       const remaining = Date.parse(credential.expiresAt) - Date.now();
-      if (
-        (force &&
-          (rejectedRevision === undefined ||
-            rejectedRevision === current.revision)) ||
-        remaining < REFRESH_MARGIN_MS
-      ) {
+      // The provider refused this very token, and nobody has renewed it since.
+      const rejected =
+        force &&
+        (rejectedRevision === undefined ||
+          rejectedRevision === current.revision);
+      // The provider may name a time before which it asks not to be asked for
+      // a new token. That only postpones an early refresh: an expired or
+      // refused token cannot be used, so it is renewed regardless.
+      const earliest = Date.parse(credential.earliestRefreshAt ?? "");
+      const postponed = remaining > 0 && earliest > Date.now();
+      if (rejected || (remaining < REFRESH_MARGIN_MS && !postponed)) {
         try {
           const next = await refreshChatGpt(
-            this.options.chatgpt ?? {},
+            this.chatgpt,
             credential,
           );
           if (
@@ -564,8 +575,10 @@ export class ProxyService {
             );
           }
           // A temporary refresh failure keeps the credential; a still-valid
-          // token remains usable.
-          if (remaining <= 0)
+          // token remains usable. A token the provider just refused is not:
+          // sending it again would only be refused again, and that second
+          // refusal would be recorded as a sign-in that needs replacing.
+          if (rejected || remaining <= 0)
             throw new UpstreamError(
               failure(
                 "unavailable",
@@ -862,14 +875,30 @@ export class ProxyService {
         status: statusFor(collected.error),
         body: errorJson(module, collected.error),
       };
-    return {
-      kind: "json",
-      status: 200,
-      body: module.writeResponse(collected, {
-        model: request.model,
-        responseId: receipt.id,
-      }),
-    };
+    const body = module.writeResponse(collected, {
+      model: request.model,
+      responseId: receipt.id,
+    });
+    // The Messages writer answers tool-call arguments it cannot represent
+    // with an error body. That is a failed request, never a 200.
+    if (input.protocol === "messages" && body.type === "error") {
+      const info = failure(
+        "upstream",
+        null,
+        null,
+        null,
+        "The upstream produced tool-call arguments that are not a JSON object.",
+      );
+      receipt.outcome = "failed";
+      receipt.error = info;
+      if (!this.closed) this.registry.recordReceipt(receipt);
+      return {
+        kind: "json",
+        status: statusFor(info),
+        body: errorJson(module, info),
+      };
+    }
+    return { kind: "json", status: 200, body };
   }
 
   /** Watches a stream for the receipt and settles it when the stream ends. */

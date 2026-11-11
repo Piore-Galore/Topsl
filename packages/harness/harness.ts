@@ -38,7 +38,7 @@ import {
   type ModelClient,
   type ProxyEndpoint,
 } from "./model-client";
-import { ResourceLedger } from "./resources";
+import { quotaKey, ResourceLedger } from "./resources";
 import { nativeProcessIdentity } from "./process-identity";
 import { transcript } from "./context";
 import {
@@ -162,7 +162,10 @@ export interface NativeHarnessOptions {
    * Why a bound route can no longer be used, when it was retired; null when
    * it was not. Retired bindings stay readable and are never dispatched.
    */
-  retired?: (binding: { routeId: string; connectionId: string }) => string | null;
+  retired?: (binding: {
+    routeId: string;
+    connectionId: string;
+  }) => string | null;
   gitExecutable: string;
   model?: ModelClient;
   resources?: ResourceLedger;
@@ -263,7 +266,8 @@ export class NativeHarness {
         this.delegate(parent, callId, request, signal),
       integrate: (parent, child) => this.integrate(parent, child),
       proposeMemory: (spec, text) => this.proposeMemory(spec, text),
-      callMcp: (spec, tool, args) => this.callMcp(spec, tool, args),
+      callMcp: (spec, tool, args, signal) =>
+        this.callMcp(spec, tool, args, signal),
       agentJobs: async (spec, callId, tool, args) => {
         if (!this.agentJobs)
           return { ok: false, output: "Agent jobs are not available here." };
@@ -552,7 +556,9 @@ export class NativeHarness {
       !!input.outputSchema,
     )[0];
     if (capabilityBlocker)
-      throw new Error(capabilityBlocker.slice(capabilityBlocker.indexOf(":") + 2));
+      throw new Error(
+        capabilityBlocker.slice(capabilityBlocker.indexOf(":") + 2),
+      );
     if (!existsSync(input.workspace.root))
       throw new Error("The member's workspace copy does not exist.");
     const attemptId = input.attemptId ?? randomUUID();
@@ -635,7 +641,8 @@ export class NativeHarness {
   private resumeQuotaMembers(owner: string): void {
     for (const view of this.journal.unfinished()) {
       if (view.state !== "waiting-quota") continue;
-      if (view.binding.native?.quotaOwner !== owner) continue;
+      if (!view.binding.native || quotaKey(view.binding.native) !== owner)
+        continue;
       if (this.kernel.isRunning(view.attemptId)) continue;
       const spec = this.storedSpec(view.attemptId);
       if (!spec?.member) continue;
@@ -739,11 +746,14 @@ export class NativeHarness {
   private async projectInstructionFiles(root: string): Promise<string> {
     const out: string[] = [];
     let budget = MAX_INSTRUCTION_BYTES;
+    // A file reached twice (CLAUDE.md that points at AGENTS.md) is included once.
+    const seen = new Set<string>();
     const include = async (name: string, depth: number) => {
       const file = path.join(root, name);
-      if (budget <= 0 || !existsSync(file)) return;
+      if (budget <= 0 || seen.has(file) || !existsSync(file)) return;
       const info = await stat(file);
       if (!info.isFile()) return;
+      seen.add(file);
       const text = (await readFile(file, "utf8")).slice(0, budget);
       budget -= text.length;
       const lines: string[] = [];
@@ -831,7 +841,7 @@ export class NativeHarness {
       this.stopMcp(attemptId);
       await this.startMcp(spec, spec.mcpServerIds, true);
     }
-    const owner = spec.binding.native?.quotaOwner;
+    const owner = spec.binding.native ? quotaKey(spec.binding.native) : null;
     // Resuming a quota wait is the owner deciding to try the allowance again.
     if (owner && this.resources.quotaWait(owner))
       this.resources.resumeQuota(owner);
@@ -1224,6 +1234,8 @@ export class NativeHarness {
     this.kernel.start(spec);
     const onAbort = () => void this.kernel.cancel(childId);
     signal.addEventListener("abort", onAbort, { once: true });
+    // A stop during the set-up above fired before this listener existed.
+    if (signal.aborted) onAbort();
     let child: NativeAttemptView;
     try {
       child = await this.kernel.settled(childId);
@@ -1522,6 +1534,7 @@ export class NativeHarness {
     spec: AttemptSpec,
     tool: string,
     args: unknown,
+    signal: AbortSignal,
   ): Promise<ToolOutcome> {
     const entry = this.mcp.get(spec.attemptId)?.get(tool);
     if (!entry)
@@ -1530,7 +1543,12 @@ export class NativeHarness {
         output:
           "The MCP server is not running for this attempt (Topsl may have restarted).",
       };
-    return entry.client.call(entry.tool, args, spec.limits.toolTimeoutMs);
+    return entry.client.call(
+      entry.tool,
+      args,
+      spec.limits.toolTimeoutMs,
+      signal,
+    );
   }
   private stopMcp(attemptId: string) {
     for (const client of this.mcpClients.get(attemptId) ?? []) client.close();

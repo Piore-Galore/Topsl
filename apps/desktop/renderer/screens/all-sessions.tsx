@@ -32,7 +32,9 @@ export function AllSessions({
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const ticket = useRef(0);
-  async function load(search: string, after: string | null) {
+  // How many pages are shown, so a live refresh keeps the ones after the first.
+  const pages = useRef(1);
+  async function load(search: string, after: string | null, live = false) {
     const mine = ++ticket.current;
     setError("");
     try {
@@ -44,11 +46,28 @@ export function AllSessions({
         limit: PAGE,
       });
       if (mine !== ticket.current) return;
+      const fresh = new Set(page.threads.map((t: ThreadSummary) => t.threadId));
+      // A live refresh rereads the first page only. Later pages already shown
+      // stay below it, without the sessions that moved up, and the cursor
+      // still points past them.
+      const keepRest = live && pages.current > 1;
+      if (after) pages.current++;
+      else if (!keepRest) pages.current = 1;
       setThreads((current) =>
-        after ? [...(current ?? []), ...page.threads] : page.threads,
+        after
+          ? [
+              ...(current ?? []).filter((t) => !fresh.has(t.threadId)),
+              ...page.threads,
+            ]
+          : keepRest
+            ? [
+                ...page.threads,
+                ...(current ?? []).filter((t) => !fresh.has(t.threadId)),
+              ]
+            : page.threads,
       );
       setTotal(page.total);
-      setCursor(page.nextCursor);
+      if (!keepRest) setCursor(page.nextCursor);
     } catch (e: any) {
       if (mine === ticket.current) setError(e.message);
     }
@@ -71,9 +90,9 @@ export function AllSessions({
               e.kind,
             ),
         );
-        if (touched && !cursor) void load(applied, null);
+        if (touched) void load(applied, null, true);
       }),
-    [projectId, applied, cursor],
+    [projectId, applied],
   );
   return (
     <section className="all-sessions" aria-label="All sessions">

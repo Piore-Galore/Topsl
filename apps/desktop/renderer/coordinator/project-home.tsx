@@ -296,6 +296,8 @@ export function ProjectHome({
         onChange={setText}
         onSend={() => void send()}
         sending={busy}
+        // Starting before the attached import is read would drop the reference.
+        loading={!!attachment && !excerpt && !excerptError}
         sendLabel="Start session"
         placeholder={
           excerpt

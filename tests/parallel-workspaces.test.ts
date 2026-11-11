@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { fixture } from "./helpers";
 import { hash, now, uid } from "../packages/domain/invariants";
@@ -322,6 +323,24 @@ describe("managed parallel workspace safety", () => {
       kind: "snapshot",
       dirtyInputPolicy: "reviewed-snapshot",
     });
+    // A repository committed inside a snapshot workspace is unreviewed content.
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: snapshot.root });
+    git("init", "-q");
+    git("add", "-A");
+    git(
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-q",
+      "-m",
+      "agent commit",
+    );
+    await expect(f.managed.previewRemove(snapshot.id)).rejects.toThrow(
+      "unprotected",
+    );
     await writeFile(path.join(f.source, "a.txt"), "new bytes");
     await expect(f.managed.apply(late.id, late.digest)).rejects.toThrow(
       "changed",

@@ -779,9 +779,14 @@ export class SessionSupervisor {
       .filter((i) => i.outcome && i.outcome.kind !== "failed")
       .map((i) => ({
         intakeId: i.id,
+        // Once the owner has chosen, the decision taken is reported, not the
+        // offer: an acting choice keeps its intent in the candidate, and any
+        // other choice is a discussion.
         intent:
           i.outcome!.kind === "alternatives"
-            ? "awaiting the owner"
+            ? i.outcome!.chosen === null
+              ? "awaiting the owner"
+              : (i.candidate?.intent ?? "discuss")
             : (i.outcome as { intent: string }).intent,
         summary: i.text,
       }));
@@ -1182,6 +1187,30 @@ export class SessionSupervisor {
         error = safeError(e);
       }
       const latest = this.repo.require<SessionIntake>(kinds.intake, intake.id);
+      // A stop or a pause that arrived while this turn was starting has
+      // already closed the intake or stopped the member, before the turn had
+      // an attempt to interrupt. Nothing would collect it now, so it is
+      // interrupted here, and no further member is started.
+      if (
+        !openIntakeStages.includes(latest.stage) ||
+        latest.members.find((m) => m.memberId === member.memberId)?.state !==
+          "queued"
+      ) {
+        if (attemptId)
+          try {
+            await this.driver.interrupt(attemptId);
+          } catch {
+            // As in interruptIntake: an undeliverable interrupt leaves the
+            // attempt uncertain until it is reconciled.
+          }
+        return this.saveIntake(latest, {
+          members: latest.members.map((m) =>
+            m.memberId === member.memberId && attemptId
+              ? { ...m, attemptIds: [...new Set([...m.attemptIds, attemptId])] }
+              : m,
+          ),
+        });
+      }
       intake = this.saveIntake(latest, {
         members: latest.members.map((m) => {
           if (m.memberId !== member.memberId) return m;
@@ -1477,9 +1506,17 @@ export class SessionSupervisor {
     const stances = intake.members
       .filter((m) => m.phase === "endorsement")
       .map((m) => {
+        // Only a word on this candidate counts: after a reconciliation the
+        // member's endorsement of an earlier candidate says nothing about it.
         const c = [...m.contributions]
           .reverse()
-          .find((x) => x.phase === "endorsement" && x.valid);
+          .find(
+            (x) =>
+              x.phase === "endorsement" &&
+              x.valid &&
+              (x.output as { candidateDigest?: string } | undefined)
+                ?.candidateDigest === candidate.digest,
+          );
         return {
           memberId: m.memberId,
           stance:
@@ -1736,12 +1773,14 @@ export class SessionSupervisor {
         }
       } else if (outcome.intent === "new-work") {
         const latest = this.require(session.id);
-        const item: SessionWorkItem = {
+        // One item per message, however often this step is reached again.
+        const queued = latest.queue.find((q) => q.intakeId === intake.id);
+        const item: SessionWorkItem = queued ?? {
           ...this.item(intake.text, intake.kind, intake.checks),
           messageId: intake.messageId,
           intakeId: intake.id,
         };
-        this.save(latest, { queue: [...latest.queue, item] });
+        if (!queued) this.save(latest, { queue: [...latest.queue, item] });
         outcome = { ...outcome, workItemId: item.id };
       }
     }
@@ -2038,6 +2077,16 @@ export class SessionSupervisor {
           candidateId: session.acceptedCheckpoint.candidateId,
         });
       }
+      // A Stop or Pause can land while the snapshot is materialised. Start
+      // nothing unless the session still runs under the same control
+      // generation and the item still waits.
+      const current = this.require(session.id);
+      if (
+        current.control !== "running" ||
+        current.controlGeneration !== session.controlGeneration ||
+        !current.queue.some((w) => w.id === next.id && w.state === next.state)
+      )
+        return;
       const recent = this.intakes(session.id)
         .filter((i) => i.outcome?.kind === "act")
         .slice(-3)
@@ -2065,6 +2114,20 @@ export class SessionSupervisor {
             }
           : {}),
       });
+      // A Stop or Pause can also land while the goal is created. A Stop
+      // cancelled the item (as does removing it), so its goal is stopped and
+      // the item is left as it is.
+      const created = this.require(session.id);
+      if (!created.queue.some((w) => w.id === next.id && w.state === next.state)) {
+        await this.orchestrator.controlCommand({
+          projectId: session.projectId,
+          goalId,
+          action: "stop",
+          commandId: `${next.id}:goal:fence`,
+        });
+        this.changed();
+        return;
+      }
       if (next.messageId)
         this.membership(
           session.projectId,
@@ -2073,6 +2136,16 @@ export class SessionSupervisor {
           next.messageId,
           `${next.id}:membership`,
         );
+      // A Pause keeps the item queued. Its goal is paused and recorded as the
+      // session's active work, so Resume resumes it; stopping it instead would
+      // lose the work, because the goal's command ID is not accepted twice.
+      if (created.control !== "running")
+        await this.orchestrator.controlCommand({
+          projectId: session.projectId,
+          goalId,
+          action: "pause",
+          commandId: `${next.id}:goal:fence`,
+        });
       const latest = this.require(session.id);
       this.save(latest, {
         activeWorkId: next.id,
@@ -2182,8 +2255,11 @@ export class SessionSupervisor {
         async () => {
           let latest = this.save(this.sync(this.require(input.sessionId)), {
             control: input.action === "pause" ? "paused" : "running",
+            // Only a pause ends what was in flight. A resume keeps the
+            // generation, so a message sent while paused is still answered.
             controlGeneration:
-              this.require(input.sessionId).controlGeneration + 1,
+              this.require(input.sessionId).controlGeneration +
+              (input.action === "pause" ? 1 : 0),
           });
           const goalId = this.activeGoalId(latest);
           const goal = goalId ? this.repo.get<Goal>(kinds.goal, goalId) : null;
@@ -2305,7 +2381,12 @@ export class SessionSupervisor {
           try {
             await this.advance(intake);
           } catch (error) {
-            this.saveIntake(intake, { detail: safeError(error) });
+            // Onto the current record: `advance` may have saved progress
+            // before it failed, and the copy read above would undo it.
+            this.saveIntake(
+              this.repo.get<SessionIntake>(kinds.intake, id) ?? intake,
+              { detail: safeError(error) },
+            );
           }
         }
       for (const { id } of sessions) {

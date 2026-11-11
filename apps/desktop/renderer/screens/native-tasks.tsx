@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState } from "../../../../packages/domain/types";
 import type { Command } from "../../../../packages/domain/commands";
 import type {
@@ -79,10 +79,15 @@ export function NativeTasks({
   const [provisional, setProvisional] = useState<Record<string, string | null>>(
     {},
   );
+  // `act` is a new function on every render of the app, and calling it
+  // re-renders the app. Reading it through a ref keeps `refresh` stable, so
+  // the effect below does not re-run (and re-query) after each response.
+  const actRef = useRef(act);
+  actRef.current = act;
   const refresh = useCallback(async () => {
-    const value = await act({ type: "native-state", projectId });
+    const value = await actRef.current({ type: "native-state", projectId });
     if (value) setNative(value);
-  }, [act, projectId]);
+  }, [projectId]);
   useEffect(() => {
     void refresh();
     return window.topsl.subscribe((event) => {
@@ -234,7 +239,10 @@ function StartForm({
   const [checks, setChecks] = useState("");
   const [delegation, setDelegation] = useState(false);
   const [servers, setServers] = useState<string[]>([]);
-  const [maxRequests, setMaxRequests] = useState(50);
+  // The typed text is kept while editing, so the field can be cleared and
+  // retyped; requestLimit turns it into the number that is sent.
+  const [maxRequests, setMaxRequests] = useState("50");
+  const [checkError, setCheckError] = useState("");
   const alias = route || routes[0]?.alias || "";
   return (
     <section className="application-card" aria-label="Start a native task">
@@ -313,7 +321,8 @@ function StartForm({
                 min={1}
                 max={500}
                 value={maxRequests}
-                onChange={(e) => setMaxRequests(Number(e.target.value) || 50)}
+                onChange={(e) => setMaxRequests(e.target.value)}
+                onBlur={() => setMaxRequests(String(requestLimit(maxRequests)))}
               />
             </label>
           </div>
@@ -326,8 +335,12 @@ function StartForm({
                   "Checks required before applying, one per line as name: command — e.g. test: npm test"
                 }
                 value={checks}
-                onChange={(e) => setChecks(e.target.value)}
+                onChange={(e) => {
+                  setChecks(e.target.value);
+                  setCheckError("");
+                }}
               />
+              {checkError && <p role="alert">{checkError}</p>}
               <p className="muted">
                 Each listed check must pass after the final edit before you can
                 apply the candidate.
@@ -358,15 +371,17 @@ function StartForm({
             className="primary"
             disabled={!prompt.trim() || !alias}
             onClick={async () => {
-              const parsedChecks = checks
-                .split("\n")
-                .map((line) => /^([^:]+):\s*(.+)$/.exec(line.trim()))
-                .filter((m): m is RegExpExecArray => !!m)
-                .map((m) => ({
-                  name: m[1].trim(),
-                  argv: ["/bin/sh", "-c", m[2]],
-                  timeoutMs: 600_000,
-                }));
+              const parsed = processes
+                ? parseChecks(checks)
+                : { checks: [], error: "" };
+              // A line that cannot be sent is named, never dropped.
+              setCheckError(parsed.error);
+              if (parsed.error) return;
+              const parsedChecks = parsed.checks.map((check) => ({
+                name: check.name,
+                argv: ["/bin/sh", "-c", check.command],
+                timeoutMs: 600_000,
+              }));
               const view = await act({
                 type: "native-start",
                 projectId,
@@ -382,7 +397,7 @@ function StartForm({
                 mcpServerIds: servers,
                 reasoningEffort: null,
                 contextWindowTokens: null,
-                maxRequests,
+                maxRequests: requestLimit(maxRequests),
               });
               if (view?.attemptId) {
                 setPrompt("");
@@ -396,6 +411,53 @@ function StartForm({
       )}
     </section>
   );
+}
+
+/** The bounds of maxRequests in native-start (packages/domain/native-commands.ts). */
+const REQUESTS_MIN = 1,
+  REQUESTS_MAX = 500,
+  REQUESTS_DEFAULT = 50;
+
+/** The typed request limit as a whole number inside the command's bounds. */
+function requestLimit(text: string): number {
+  const typed = Number(text);
+  if (!text.trim() || !Number.isFinite(typed)) return REQUESTS_DEFAULT;
+  return Math.min(REQUESTS_MAX, Math.max(REQUESTS_MIN, Math.round(typed)));
+}
+
+/**
+ * Reads the Checks field, one check per line. A name ends at the first colon
+ * that is followed by a space, so `npm run test:unit` stays one command; a
+ * line without that separator is a command that is also its own name. The
+ * limits are those of native-start, reported here in plain words.
+ */
+function parseChecks(text: string): {
+  checks: Array<{ name: string; command: string }>;
+  error: string;
+} {
+  const checks = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.search(/:\s/);
+      return at < 0
+        ? { name: line.slice(0, 100), command: line }
+        : {
+            name: line.slice(0, at).trim(),
+            command: line.slice(at + 1).trim(),
+          };
+    });
+  const unnamed = checks.find((check) => !check.name);
+  const long = checks.find((check) => check.name.length > 100);
+  const error = unnamed
+    ? `The check "${unnamed.command}" has no name before its colon.`
+    : long
+      ? `The check name "${long.name.slice(0, 40)}…" is longer than 100 characters.`
+      : checks.length > 20
+        ? `A task takes at most 20 checks; ${checks.length} are listed.`
+        : "";
+  return { checks, error };
 }
 
 function describe(event: JournalEvent): string | null {
@@ -467,13 +529,20 @@ function AttemptDetail({
     void (async () => {
       let after = through;
       while (!cancelled) {
-        const result = await act({
-          type: "native-events",
-          attemptId: view.attemptId,
-          after,
-          limit: 200,
-        });
-        if (!result?.page?.events?.length) break;
+        // Read through the bridge directly: `act` drops a read that overlaps
+        // another, which would look like the end of the journal.
+        let result: any;
+        try {
+          result = await window.topsl.command({
+            type: "native-events",
+            attemptId: view.attemptId,
+            after,
+            limit: 200,
+          });
+        } catch {
+          break;
+        }
+        if (cancelled || !result?.page?.events?.length) break;
         const page = result.page.events as JournalEvent[];
         setEvents((current) => [
           ...current,
@@ -563,12 +632,13 @@ function AttemptDetail({
           <ActionButton
             disabled={!steer.trim()}
             onClick={async () => {
-              await act({
+              const sent = await act({
                 type: "native-steer",
                 attemptId: view.attemptId,
                 text: steer,
               });
-              setSteer("");
+              // A failed send keeps the typed text.
+              if (sent) setSteer("");
             }}
           >
             Send steering
@@ -665,7 +735,11 @@ function AttemptDetail({
                 void act({
                   type: "native-apply",
                   attemptId: view.attemptId,
-                }).then(() => setPreview(null))
+                }).then((result) => {
+                  // A cancelled, refused or failed application keeps the
+                  // preview so the owner can try again.
+                  if (result?.applied) setPreview(null);
+                })
               }
             >
               Apply to project folder
@@ -837,6 +911,8 @@ function Extensions({
                 setInspected(null);
                 setName("");
                 setLine("");
+                // The next server starts with no network access.
+                setNetwork("");
                 void refresh();
               }
             }}

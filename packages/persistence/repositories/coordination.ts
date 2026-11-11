@@ -639,7 +639,9 @@ export class CoordinationRepository {
       const result = {
         ...intent,
         state,
-        providerReference,
+        // A state change that names no reference keeps the one recorded:
+        // an intent that becomes "unknown" is the one that needs it most.
+        providerReference: providerReference ?? intent.providerReference,
         revision: intent.revision + 1,
         updatedAt: now(),
       };

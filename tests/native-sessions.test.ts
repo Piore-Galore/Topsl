@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CoordinatorMessage, Goal } from "../packages/domain/role-groups";
 import type { SessionIntake, TopslSession } from "../packages/domain/sessions";
 import {
@@ -532,6 +532,105 @@ describe("native sessions", () => {
     hold = false;
     await run(f, () => !member(), 10);
     expect(member()).toBeUndefined();
+  });
+
+  test("a Stop that lands while the next goal's baseline is prepared starts nothing", async () => {
+    const f = await setup();
+    const { sessionId } = await f.sessions.create({
+      projectId: "p",
+      text: "Build A",
+      commandId: cmd(),
+    });
+    await accept(f, sessionId);
+    let entered = false;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const continueFrom = f.driver.continueFrom.bind(f.driver);
+    f.driver.continueFrom = async (input) => {
+      entered = true;
+      await gate;
+      return continueFrom(input);
+    };
+    await f.sessions.message({ sessionId, text: "Build B", commandId: cmd() });
+    const ticking = run(f, () => entered, 40);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    await f.sessions.control({ sessionId, action: "stop", commandId: cmd() });
+    release();
+    await ticking;
+    await run(f, () => false, 3);
+    const s = session(f, sessionId);
+    expect(s.activeWorkId).toBeNull();
+    expect(s.queue[1].state).toBe("cancelled");
+    expect(s.queue[1].goalId ?? null).toBeNull();
+    expect(f.store.get<Goal>(kinds.goal, `${s.queue[1].id}-goal`)).toBeFalsy();
+  });
+
+  test("a Stop that lands while the next goal is created stops that goal and leaves the item cancelled", async () => {
+    const f = await setup();
+    const { sessionId } = await f.sessions.create({
+      projectId: "p",
+      text: "Build A",
+      commandId: cmd(),
+    });
+    await accept(f, sessionId);
+    let entered = false;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const createGoal = f.orchestrator.createGoal.bind(f.orchestrator);
+    f.orchestrator.createGoal = async (input) => {
+      const created = await createGoal(input);
+      entered = true;
+      await gate;
+      return created;
+    };
+    await f.sessions.message({ sessionId, text: "Build B", commandId: cmd() });
+    const ticking = run(f, () => entered, 40);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    await f.sessions.control({ sessionId, action: "stop", commandId: cmd() });
+    release();
+    await ticking;
+    await run(f, () => false, 3);
+    const s = session(f, sessionId);
+    expect(s.activeWorkId).toBeNull();
+    expect(s.queue[1].state).toBe("cancelled");
+    expect(s.queue[1].goalId ?? null).toBeNull();
+    expect(f.store.get<Goal>(kinds.goal, `${s.queue[1].id}-goal`)!.state).toBe(
+      "stopped",
+    );
+  });
+
+  test("a Pause that lands while the next goal is created pauses that goal, and Resume resumes it", async () => {
+    const f = await setup();
+    const { sessionId } = await f.sessions.create({
+      projectId: "p",
+      text: "Build A",
+      commandId: cmd(),
+    });
+    await accept(f, sessionId);
+    let entered = false;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const createGoal = f.orchestrator.createGoal.bind(f.orchestrator);
+    f.orchestrator.createGoal = async (input) => {
+      const created = await createGoal(input);
+      entered = true;
+      await gate;
+      return created;
+    };
+    await f.sessions.message({ sessionId, text: "Build B", commandId: cmd() });
+    const ticking = run(f, () => entered, 40);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    await f.sessions.control({ sessionId, action: "pause", commandId: cmd() });
+    release();
+    await ticking;
+    await run(f, () => false, 3);
+    const s = session(f, sessionId);
+    const goalId = `${s.queue[1].id}-goal`;
+    expect(s.control).toBe("paused");
+    expect(s.activeWorkId).toBe(s.queue[1].id);
+    expect(f.store.get<Goal>(kinds.goal, goalId)!.state).toBe("paused");
+    await f.sessions.control({ sessionId, action: "resume", commandId: cmd() });
+    expect(f.store.get<Goal>(kinds.goal, goalId)!.state).not.toBe("paused");
   });
 
   test("a stopped goal contributes nothing to the accepted result", async () => {

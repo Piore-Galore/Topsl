@@ -383,6 +383,40 @@ describe("optional portable encrypted replication", () => {
     );
     expect(b.engine.status("project").conflicts).toHaveLength(0);
   });
+  test("resolving one conflict clears every conflict reviewed against the same superseded local revision", async () => {
+    const { a, b } = await pair();
+    stage(a, "base");
+    deliver(b, envelope(a, b));
+    stage(b, "B changed");
+    stage(a, "A changed");
+    const first = deliver(b, envelope(a, b));
+    stage(a, "A changed again");
+    const second = deliver(b, envelope(a, b));
+    expect(first.receipt.conflicts).toHaveLength(1);
+    expect(second.receipt.conflicts).toHaveLength(1);
+    expect(second.receipt.conflicts[0]).not.toBe(first.receipt.conflicts[0]);
+    expect(b.engine.status("project").conflicts).toHaveLength(2);
+    const conflict = b.engine.conflictPreview(second.receipt.conflicts[0]);
+    b.engine.resolveConflict(conflict.id, "local", { digest: conflict.digest });
+    expect(b.engine.status("project").conflicts).toHaveLength(0);
+  });
+  test("revoking the only approved peer of an ownerless project returns it to local authority; an owned project keeps its owner", async () => {
+    const a = await device("A"),
+      b = await device("B"),
+      c = await device("C");
+    approve(a, b);
+    approve(a, c);
+    a.engine.revokeDevice(b.engine.identity().id);
+    // Another approved peer still lists the project, so the pause holds.
+    expect(() => a.engine.assertLocalOwner("project")).toThrow(/unknown/);
+    a.engine.revokeDevice(c.engine.identity().id);
+    expect(() => a.engine.assertLocalOwner("project")).not.toThrow();
+    owner(a);
+    approve(a, b);
+    a.engine.revokeDevice(b.engine.identity().id);
+    expect(a.engine.status("project").owner).toBeTruthy();
+    expect(() => a.engine.previewOwner("project")).toThrow();
+  });
   test("deletion propagates minimal tombstones, scrubs conflict/partial/export payloads and prevents replay resurrection", async () => {
     const { a, b } = await pair(),
       deletedText = "delete this unique payload";

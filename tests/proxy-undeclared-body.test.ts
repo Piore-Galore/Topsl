@@ -112,3 +112,61 @@ test("a declared event stream and declared JSON keep their paths", async () => {
   );
   expect(json.result.ok && json.result.streamed).toBe(false);
 });
+
+/** A declared event stream that sends `head`, then fails as a socket would. */
+const broken = (head: string) =>
+  new Response(
+    new ReadableStream({
+      start(controller) {
+        if (head) controller.enqueue(new TextEncoder().encode(head));
+      },
+      pull(controller) {
+        controller.error(new Error("socket hang up"));
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  );
+
+const dispatch = (response: Response, signal: AbortSignal) =>
+  dispatchUpstream(
+    {
+      connection: { kind: "chatgpt-plan", endpoint: "https://api.openai.com/v1" } as any,
+      route: { protocol: "responses", upstreamModel: "gpt-6.1-sol" } as any,
+      headers: { "x-test": "1" },
+      fetch: async () => response,
+      signal,
+    },
+    request,
+  );
+
+test("an upstream that drops the connection mid-stream ends the stream with an error event", async () => {
+  // Everything up to, and not including, the terminal event.
+  const head = sse.slice(0, sse.indexOf("event: response.completed"));
+  const result = await dispatch(broken(head), new AbortController().signal);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("not ok");
+  const out: CanonicalEvent[] = [];
+  for await (const event of result.events) out.push(event);
+  expect(out.some((e) => e.type === "text-delta" && e.text === "OK")).toBe(true);
+  expect(out.some((e) => e.type === "finish")).toBe(false);
+  const last = out.at(-1);
+  expect(last?.type).toBe("error");
+  if (last?.type !== "error") throw new Error("no error event");
+  expect(last.error).toMatchObject({ kind: "interrupted", retryable: true });
+  expect(last.error.message).toContain("socket hang up");
+});
+
+test("a body that fails before its first bytes is a classified failure, and a cancel is not retryable", async () => {
+  const failed = await dispatch(broken(""), new AbortController().signal);
+  expect(failed).toMatchObject({
+    ok: false,
+    error: { kind: "interrupted", retryable: true },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = await dispatch(broken(""), controller.signal);
+  expect(cancelled).toMatchObject({
+    ok: false,
+    error: { kind: "interrupted", retryable: false },
+  });
+});

@@ -5,7 +5,7 @@ import {
   RuntimeSelection,
 } from "../providers/readiness";
 import { z } from "zod";
-import { hash, now, stable, uid } from "../domain/invariants";
+import { hash, now, safeError, stable, uid } from "../domain/invariants";
 import type {
   Artifact,
   ContextPackage,
@@ -775,18 +775,44 @@ export class AdvancedCollaboration {
       const workflow = this.repository.require<Workflow>("workflow", id);
       if (workflow.state === "ready")
         this.repository.transitionWorkflow(id, workflow.revision, "running");
-      await this.driver.dispatch({
-        attempt,
-        task: this.repository.require<Task>("task", task.id),
-        workspace,
-        installation,
-        project: {
-          ...project,
-          path: workspace.canonicalRoot,
-          realPath: workspace.canonicalRoot,
-        },
-        context,
-      });
+      try {
+        await this.driver.dispatch({
+          attempt,
+          task: this.repository.require<Task>("task", task.id),
+          workspace,
+          installation,
+          project: {
+            ...project,
+            path: workspace.canonicalRoot,
+            realPath: workspace.canonicalRoot,
+          },
+          context,
+        });
+      } catch (error) {
+        // The participant already names this attempt, so an attempt left
+        // prepared could be neither dispatched again nor captured.
+        const current = this.repository.require<ExecutionAttempt>(
+          "attempt",
+          attempt.id,
+        );
+        if (current.state === "prepared") {
+          this.repository.transitionAttempt(
+            current.id,
+            current.revision,
+            "failed",
+            { error: safeError(error) },
+          );
+          const latest = this.repository.require<Task>("task", task.id);
+          this.repository.transitionTask(
+            latest.id,
+            latest.revision,
+            "blocked",
+            safeError(error),
+          );
+        }
+        this.save(state, { stage: "blocked", detail: safeError(error) });
+        throw error;
+      }
       return state;
     } finally {
       this.locks.delete(id);
@@ -1282,13 +1308,14 @@ export class AdvancedCollaboration {
         "Execute the declared protocol against the exact frozen inputs.",
       ],
     });
-    const scopedBaseline = {
-      ...baseline,
-      id: `${id}:check-baseline:${baseline.id}`,
-      workflowId: id,
-    };
-    this.repository.store.immutable("candidate", scopedBaseline);
-    bindCheckInputs(this.repository.store, id, scopedBaseline, [definition]);
+    // Bind against the stored baseline itself: its protected blobs are
+    // referenced by its own id, so a renamed copy cannot be read. In
+    // independent test design each captured candidate is its own baseline and
+    // gets its own binding.
+    bindCheckInputs(this.repository.store, id, baseline, [definition], {
+      sharedBaseline: state.template !== "independent-test-design",
+      perCandidate: state.template === "independent-test-design",
+    });
     const plan = await previewCheck(
       this.repository,
       id,

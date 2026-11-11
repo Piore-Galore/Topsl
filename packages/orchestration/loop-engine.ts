@@ -135,6 +135,9 @@ export const LOOP_ACTOR = "loop-policy";
 /** Fewer remaining turns than this cannot carry an iteration's decisions and work. */
 const MIN_ITERATION_TURNS = 4;
 
+/** The start of the blocker of a goal whose dependency was removed or is unknown. */
+const REMOVED_DEPENDENCY = "This goal depends on a goal that was removed";
+
 const terminalIteration: ReadonlySet<LoopIteration["state"]> = new Set([
   "promoted",
   "rejected",
@@ -229,7 +232,7 @@ const verbs =
  */
 export function splitGoals(text: string): string[] {
   const instruction =
-    /^(?:work until\b|choose (?:everything|the rest|all|the (?:roles|models|agents)).*automatically|decide the (?:roles|models).*automatically|use (?:exactly )?.+ as (?:the )?(?:exact )?(?:coordinators?|reviewers?|implementers?)|include .+ (?:among|as) (?:the )?\w+|use (?:\w+ )?(?:coordinators?|reviewers?|implementers?)$|keep improving\b|prioriti[sz]e\b|do not use (?:provider )?\w+$)/i;
+    /^(?:work until\b|choose (?:everything|the rest|all|the (?:roles|models|agents)).*automatically|decide the (?:roles|models).*automatically|use (?:exactly )?.+ as (?:the )?(?:exact )?(?:coordinators?|reviewers?|implementers?)|include .+ (?:among|as) (?:the )?\w+|use (?:\w+ )?(?:coordinators?|reviewers?|implementers?)$|keep improving\b|prioriti[sz]e\b|do not use (?:provider )?\w+$|always keep an? [a-z][a-z0-9-]* role\b|use exactly \w+ active roles\b)/i;
   const lines = text
     .split(/\n+/)
     .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
@@ -665,9 +668,17 @@ export class LoopSupervisor {
         required: true,
         provenance: "user" as const,
       })),
+      // A dependency on a goal the run does not have could never be met.
       dependsOn: (g.dependsOn ?? [])
-        .map((d) => (typeof d === "number" ? siblings[d] : d))
-        .filter((d): d is string => !!d && d !== id),
+        .map((d) => {
+          const dep = typeof d === "number" ? siblings[d] : d;
+          if (!dep || !siblings.includes(dep))
+            throw new Error(
+              `A goal cannot depend on "${d}": that goal is not in this run.`,
+            );
+          return dep;
+        })
+        .filter((d) => d !== id),
       externalInputs: [],
       status: "unassessed",
       lastEvaluatedCheckpointId: null,
@@ -867,6 +878,15 @@ export class LoopSupervisor {
         };
         const topology = this.bootstrapTopology(run);
         this.store.transaction(() => {
+          // The capture awaited, so a Stop or a second start may have landed
+          // meanwhile; a stale copy of the run must not overwrite it.
+          const latest = this.run(run.id);
+          if (latest.started)
+            throw new Error(
+              "This run already started. Use resume to continue it.",
+            );
+          if (latest.desiredState === "stopped")
+            throw new Error("This run was stopped before it started.");
           this.store.immutable(loopKinds.checkpoint, checkpoint);
           this.store.immutable(loopKinds.topology, topology);
           this.store.save(loopKinds.policy, {
@@ -874,11 +894,11 @@ export class LoopSupervisor {
             authorizedDigest: input.digest,
             authorizedAt: at,
           });
-          const started = this.saveRun(run, {
+          const started = this.saveRun(latest, {
             started: true,
             desiredState: "running",
             state: "active",
-            controlGeneration: run.controlGeneration + 1,
+            controlGeneration: latest.controlGeneration + 1,
             acceptedCheckpointId: checkpoint.id,
             publicationBaseCheckpointId: checkpoint.id,
             publicationBaseCandidateId: base.publicationBaseCandidateId,
@@ -1063,7 +1083,10 @@ export class LoopSupervisor {
         const goals = this.goals(run);
         const at = now();
         this.store.transaction(() => {
-          const ids = goals.map((g) => g.id);
+          // Removed goals cannot be depended on, so they are not offered.
+          const ids = goals
+            .filter((g) => g.status !== "cancelled_by_user")
+            .map((g) => g.id);
           for (const [index, g] of (input.add ?? []).entries()) {
             const id = `${run.id}:goal:${goals.length + index + 1}`;
             ids.push(id);
@@ -1091,8 +1114,16 @@ export class LoopSupervisor {
               changes.push(`priority ${e.priority}`);
             }
             if (e.dependsOn) {
+              const unknown = e.dependsOn.find((d) => !ids.includes(d));
+              if (unknown !== undefined)
+                throw new Error(
+                  `A goal cannot depend on "${unknown}": that goal is not in this run or was removed.`,
+                );
               next.dependsOn = e.dependsOn.filter((d) => d !== goal.id);
               changes.push("dependencies");
+              // New dependencies answer the blocker a removed one left.
+              if (goal.blocker?.startsWith(REMOVED_DEPENDENCY))
+                next.blocker = null;
             }
             if (e.criteria) {
               // The owner's own criteria replace theirs; coordinator criteria
@@ -1519,7 +1550,10 @@ export class LoopSupervisor {
           return this.view(run.id);
         }
         if (input.action === "pause") {
-          if (run.desiredState === "paused") return this.view(run.id);
+          // A completed run has nothing to pause. Pausing it would let a
+          // later resume mark it active, and no tick reads a completed run.
+          if (run.desiredState === "paused" || run.state === "completed")
+            return this.view(run.id);
           await this.pause(
             run,
             children,
@@ -1533,6 +1567,12 @@ export class LoopSupervisor {
         // revalidated before new work starts.
         if (run.desiredState === "running" && run.state !== "suspended")
           return this.view(run.id);
+        // A run held for a recovery problem resumes only once the same
+        // revalidation passes; otherwise it would start on unverified state.
+        if (run.state === "suspended" && run.waitReason?.kind === "recovery") {
+          const problems = this.recoveryProblems(run);
+          if (problems.length) throw new Error(problems.join(" "));
+        }
         for (const guard of this.resumeGuards) {
           const refusal = guard(run);
           if (refusal) throw new Error(refusal);
@@ -1895,6 +1935,13 @@ export class LoopSupervisor {
       "control-changed",
       "Stopped; owned execution is quiescent.",
     );
+    // The iteration the stop cancelled is settled here, once and only after
+    // its executions are quiescent, so its usage and copies are final.
+    const cancelled = this.iterations(stopped).at(-1);
+    if (cancelled?.state === "cancelled" && !cancelled.outcomeRecordIds.length)
+      await this.finishIteration(stopped, cancelled, "cancelled").catch(
+        () => {},
+      );
     return false;
   }
 
@@ -2286,6 +2333,16 @@ export class LoopSupervisor {
         );
     const dueAt = retryAt ?? this.iso(this.ms() + backoff * 1000);
     const fingerprint = await this.inputsFingerprint(run);
+    // The owner may have paused or stopped the run while a caller, or the
+    // line above, was awaiting. Writing a wait now would undo that, and a
+    // stopped run is no longer ticked, so nothing would repair it.
+    const current = this.repo.get<LoopRun>(loopKinds.run, run.id);
+    if (
+      !current ||
+      current.controlGeneration !== run.controlGeneration ||
+      current.desiredState !== "running"
+    )
+      return;
     this.store.transaction(() => {
       for (const w of this.scoped<LoopWakeup>(loopKinds.wakeup, run))
         if (w.state === "pending")
@@ -2531,7 +2588,7 @@ export class LoopSupervisor {
     );
   }
 
-  private noWork(
+  private async noWork(
     run: LoopRun,
     it: LoopIteration,
     reason: LoopWaitReason,
@@ -2546,6 +2603,12 @@ export class LoopSupervisor {
       const next = this.saveRun(run, { currentIterationId: null });
       this.intent(next, it.id, next.iterationCount + 1);
     });
+    // The boundary turns count toward the totals like any other iteration's.
+    await this.finishIteration(
+      this.run(run.id),
+      this.repo.require<LoopIteration>(loopKinds.iteration, it.id),
+      "no-work",
+    );
     return this.wait(
       this.run(run.id),
       reason,
@@ -2856,6 +2919,25 @@ export class LoopSupervisor {
             status: "blocked",
             blocker: `${this.policy(run.id).iteration.maxApproachesPerTarget} approaches failed at this content. Edit the goal or give direction; a repeated task under a new ID does not bypass the limit.`,
           });
+      // A dependency that was removed, or is not in the run, is never
+      // satisfied. The dependent goal says so instead of silently never
+      // becoming eligible.
+      const live = new Set(
+        goals.filter((g) => g.status !== "cancelled_by_user").map((g) => g.id),
+      );
+      for (const g of this.goals(run)) {
+        const gone = g.dependsOn.filter((d) => !live.has(d));
+        if (
+          gone.length &&
+          g.status !== "cancelled_by_user" &&
+          g.status !== "satisfied" &&
+          !g.blocker
+        )
+          this.saveGoal(g, {
+            status: "blocked",
+            blocker: `${REMOVED_DEPENDENCY} (${gone.join(", ")}). Change this goal's dependencies or remove it.`,
+          });
+      }
       const eligible = this.goals(run)
         .filter(
           (g) =>
@@ -3026,9 +3108,24 @@ export class LoopSupervisor {
   }
 
   private rejectedAt(run: LoopRun, goalId: string, digest: string): number {
+    // The owner's latest edit or unblock starts the count again; otherwise the
+    // action the blocker asks for could never clear it. Priority changes and
+    // coordinator changes do not.
+    const since =
+      this.repo
+        .get<LoopGoal>(loopKinds.goal, goalId)
+        ?.provenance.filter(
+          (p) =>
+            p.actor === "local-user" &&
+            p.change
+              .split(", ")
+              .some((c) => c !== "created" && !c.startsWith("priority")),
+        )
+        .at(-1)?.at ?? "";
     return this.iterations(run).filter(
       (i) =>
         i.state === "rejected" &&
+        (i.endedAt ?? "") > since &&
         i.failure?.kind !== "transient" &&
         i.failure?.kind !== "stopped" &&
         i.failure?.kind !== "limit" &&
@@ -3188,14 +3285,23 @@ export class LoopSupervisor {
       this.saveIteration(it, { state: "preparing" });
       return;
     }
-    const change = this.proposeTopology(
-      latest,
-      topology,
-      team.operations as TeamOperation[],
-      team.trigger,
-      result.round.id,
-      team.reason,
-    );
+    // A proposal that cannot even be evaluated is a rejected proposal. Left
+    // to throw, the same decided round would throw again on every tick and
+    // the iteration would never leave this stage.
+    const change = (() => {
+      try {
+        return this.proposeTopology(
+          latest,
+          topology,
+          team.operations as TeamOperation[],
+          team.trigger,
+          result.round.id,
+          team.reason,
+        );
+      } catch (error) {
+        return { rejections: [safeError(error)] };
+      }
+    })();
     if ("rejections" in change) {
       this.recordAdaptation(latest, {
         kind: "reject",
@@ -3567,7 +3673,15 @@ export class LoopSupervisor {
             rejections.push(`Role ${op.roleId} is not active.`);
             break;
           }
-          const purpose = this.repo.role(run.projectId, op.roleId).purpose;
+          // The role may have been created earlier in this same proposal,
+          // in which case the catalog does not hold it yet.
+          const purpose =
+            catalog.find((c) => c.id === op.roleId)?.purpose ??
+            created.find((c) => c.roleId === op.roleId)?.purpose;
+          if (!purpose) {
+            rejections.push(`Role ${op.roleId} is not active.`);
+            break;
+          }
           const problem = memberChangeProblem({
             roleId: op.roleId,
             locks: this.locks(run, op.roleId, binding),
@@ -3940,7 +4054,11 @@ export class LoopSupervisor {
     // A native allowance that reported its limit holds every member funded
     // by it (the same quota owner), so the iteration waits instead of
     // starting turns that would wait or fail.
-    const limits = this.loop.providerLimits?.(providers, nativeRoutes) ?? [];
+    // A limit whose renewal time has passed no longer holds: waiting on it
+    // would wake at once, on every tick.
+    const limits = (
+      this.loop.providerLimits?.(providers, nativeRoutes) ?? []
+    ).filter((l) => !l.retryAt || Date.parse(l.retryAt) > this.ms());
     if (limits.length) {
       const first = limits[0];
       return this.wait(
@@ -3967,6 +4085,22 @@ export class LoopSupervisor {
     )
       return;
     admission.available = false;
+    // A pause that landed while an earlier prepare created the child left the
+    // iteration preparing with that child paused, and Resume restarted it.
+    // That child is this iteration's work; a second one is never created.
+    const prior = this.childGoal(it);
+    if (prior && !prior.loopDisposition && prior.state !== "stopped") {
+      if (prior.state === "paused")
+        await this.orchestrator
+          .controlCommand({
+            projectId: run.projectId,
+            goalId: prior.id,
+            action: "resume",
+            commandId: `${prior.id}:adopt:${it.controlGeneration}`,
+          })
+          .catch(() => {});
+      return this.executing(run, it, prior.id);
+    }
     const goalId = `${it.id}:goal:${it.childExecutionGoalIds.length + 1}`;
     // Recorded before creation, so a concurrent stop finds and stops it.
     it = this.saveIteration(it, {
@@ -3994,6 +4128,14 @@ export class LoopSupervisor {
         null,
       );
     }
+    // A pause or stop that landed while the baseline was prepared: no child
+    // is created under the older generation.
+    const prepared = this.run(run.id);
+    if (
+      prepared.desiredState !== "running" ||
+      prepared.controlGeneration !== it.controlGeneration
+    )
+      return;
     const remaining = this.remainingTurns(run, policy);
     const goals = this.goals(run).filter((g) => it.goalIds.includes(g.id));
     await this.orchestrator.createGoal({
@@ -4021,7 +4163,13 @@ export class LoopSupervisor {
       message: false,
       reference: this.sessionReferenceOf(run),
     });
-    if (kind === "code" && policy.checks.length) {
+    return this.executing(run, it, goalId);
+  }
+
+  /** Moves a prepared iteration to executing its child goal, fenced by the run's generation. */
+  private async executing(run: LoopRun, it: LoopIteration, goalId: string) {
+    const policy = this.policy(run.id);
+    if (this.childKind(run, it) === "code" && policy.checks.length) {
       const problems = this.loop.protocolProblems({
         runId: run.id,
         goalId,
@@ -4177,11 +4325,20 @@ export class LoopSupervisor {
           },
           "repairs-exhausted",
         );
-      await this.orchestrator.integrateConflicts({
-        goalId: goal.id,
-        commandId: `${goal.id}:integrate:${n}`,
-        actor: LOOP_ACTOR,
-      });
+      // A refusal is stored against this command ID and would replay on
+      // every tick, so it ends the iteration.
+      try {
+        await this.orchestrator.integrateConflicts({
+          goalId: goal.id,
+          commandId: `${goal.id}:integrate:${n}`,
+          actor: LOOP_ACTOR,
+        });
+      } catch (error) {
+        return this.reject(run, it, {
+          kind: "integration",
+          detail: `The integration could not start: ${safeError(error)}`,
+        });
+      }
       this.saveIteration(it, {
         repairs: it.repairs + 1,
         detail:
@@ -4208,12 +4365,21 @@ export class LoopSupervisor {
           },
           "repairs-exhausted",
         );
-      await this.orchestrator.repair({
-        goalId: goal.id,
-        commandId: `${goal.id}:repair:${n}`,
-        actor: LOOP_ACTOR,
-        cause: { kind: "findings" },
-      });
+      // A refusal is stored against this command ID and would replay on
+      // every tick, so it ends the iteration.
+      try {
+        await this.orchestrator.repair({
+          goalId: goal.id,
+          commandId: `${goal.id}:repair:${n}`,
+          actor: LOOP_ACTOR,
+          cause: { kind: "findings" },
+        });
+      } catch (error) {
+        return this.reject(run, it, {
+          kind: "product-defect",
+          detail: `The repair could not start: ${safeError(error)}`,
+        });
+      }
       this.saveIteration(it, {
         repairs: it.repairs + 1,
         detail: `Repairing review findings (${n}).`,
@@ -4292,12 +4458,26 @@ export class LoopSupervisor {
           },
           "verification-failures",
         );
-      await this.orchestrator.repair({
-        goalId: goal.id,
-        commandId: `${goal.id}:repair:${goal.usage.repairRounds + 1}`,
-        actor: LOOP_ACTOR,
-        cause: { kind: "checks" },
-      });
+      // A refusal is stored against this command ID and would replay on
+      // every tick, so it ends the iteration.
+      try {
+        await this.orchestrator.repair({
+          goalId: goal.id,
+          commandId: `${goal.id}:repair:${goal.usage.repairRounds + 1}`,
+          actor: LOOP_ACTOR,
+          cause: { kind: "checks" },
+        });
+      } catch (error) {
+        return this.reject(
+          run,
+          it,
+          {
+            kind: "product-defect",
+            detail: `The repair could not start: ${safeError(error)}`,
+          },
+          "verification-failures",
+        );
+      }
       this.saveIteration(it, {
         state: "executing",
         repairs: it.repairs + 1,
@@ -4494,7 +4674,9 @@ export class LoopSupervisor {
       unmet.length
     ) {
       const roleId = requests.find((r) => r.roleId)?.roleId ?? undefined;
-      await this.orchestrator
+      // A refusal of both commands is stored against their IDs and would
+      // replay on every tick, so it ends the iteration.
+      const refusal = await this.orchestrator
         .repair({
           goalId: goal.id,
           commandId: `${goal.id}:repair:${goal.usage.repairRounds + 1}`,
@@ -4509,6 +4691,20 @@ export class LoopSupervisor {
             actor: LOOP_ACTOR,
             cause: { kind: "criteria", unmet },
           }),
+        )
+        .then(
+          () => null,
+          (error: unknown) => safeError(error),
+        );
+      if (refusal !== null)
+        return this.reject(
+          run,
+          this.repo.require<LoopIteration>(loopKinds.iteration, it.id),
+          {
+            kind: "product-defect",
+            detail: `The repair could not start: ${refusal}`,
+          },
+          "no-progress",
         );
       this.saveIteration(
         this.repo.require<LoopIteration>(loopKinds.iteration, it.id),
@@ -5203,6 +5399,7 @@ export class LoopSupervisor {
     it: LoopIteration,
     snapshot: CompletionSnapshot,
   ) {
+    let completed = false;
     this.store.transaction(() => {
       const latest = this.run(run.id);
       // Every expected revision must still match at the final commit.
@@ -5230,7 +5427,16 @@ export class LoopSupervisor {
       this.cancelScheduled(next);
       this.store.remove(loopKinds.active, run.id);
       this.event(next, "run-completed", next.detail);
+      completed = true;
     });
+    // The concluding turns count toward the totals; this runs once, because
+    // the completed run leaves the active index.
+    if (completed)
+      await this.finishIteration(
+        this.run(run.id),
+        this.repo.require<LoopIteration>(loopKinds.iteration, it.id),
+        "no-work",
+      );
   }
 
   // -------------------------------------------------------------------------
@@ -5342,6 +5548,12 @@ export class LoopSupervisor {
         if (this.recoverCoordinators(run, it, failedHere, bindingRec.roleId))
           return { state: "pending" };
         if (blocked.length >= 2) {
+          // The wait ends in a fresh round, never the same two failures again.
+          for (const r of blocked)
+            this.saveRound(r, {
+              state: "stale",
+              detail: `Retried after the route wait. ${r.detail}`,
+            });
           await this.wait(
             run,
             {
@@ -5807,6 +6019,13 @@ export class LoopSupervisor {
       reportedModel: obs.reportedModel,
       createdAt: now(),
     };
+    // One record per attempt. Reaching this again for the same attempt, after
+    // a failure later in the same tick, returns what was recorded.
+    const recorded = this.repo.get<LoopContribution>(
+      loopKinds.contribution,
+      contribution.id,
+    );
+    if (recorded) return recorded;
     this.store.immutable(loopKinds.contribution, contribution);
     return contribution;
   }
@@ -6324,7 +6543,9 @@ export class LoopSupervisor {
               `${criteria.filter((c) => c.result === "met").length} of ${criteria.length} criteria met with valid evidence.`),
         createdAt: now(),
       };
-      this.store.immutable(loopKinds.assessment, assessment);
+      // Recorded once: evaluating the same decision again keeps the first.
+      if (!this.repo.get(loopKinds.assessment, assessment.id))
+        this.store.immutable(loopKinds.assessment, assessment);
       ids.push(assessment.id);
       const conflicts = [...new Set(mine.flatMap((x) => x.a.conflictsWith))];
       if (conflicts.length && run.mode === "goal") {
@@ -7347,6 +7568,27 @@ export class LoopSupervisor {
     }
   }
 
+  /** What stops a run from continuing after a restart; empty when sound. */
+  private recoveryProblems(run: LoopRun): string[] {
+    const problems: string[] = [];
+    const project = this.repo.get<Project>("project", run.projectId);
+    const head = run.acceptedCheckpointId
+      ? this.repo.get<LoopCheckpoint>(
+          loopKinds.checkpoint,
+          run.acceptedCheckpointId,
+        )
+      : undefined;
+    if (!project) problems.push("The project no longer exists.");
+    // Revalidate the accepted checkpoint's bytes through the loop driver.
+    if (
+      run.acceptedCheckpointId &&
+      (!head ||
+        this.loop.contentDigest(head.candidateId) !== head.contentDigest)
+    )
+      problems.push("The accepted checkpoint's content could not be verified.");
+    return problems;
+  }
+
   /**
    * Reconciles after a restart: adopt recorded launches, revalidate the
    * project and checkpoint, and resume only under the run's recovery policy.
@@ -7360,34 +7602,6 @@ export class LoopSupervisor {
         if (round.members.some((m) => m.launchId && !m.activeAttemptId))
           this.collectRound(run, round);
       if (run.desiredState === "stopped") continue;
-      const problems: string[] = [];
-      const project = this.repo.get<Project>("project", run.projectId);
-      const head = run.acceptedCheckpointId
-        ? this.repo.get<LoopCheckpoint>(
-            loopKinds.checkpoint,
-            run.acceptedCheckpointId,
-          )
-        : undefined;
-      if (!project) problems.push("The project no longer exists.");
-      // Revalidate the accepted checkpoint's bytes through the loop driver.
-      if (
-        run.acceptedCheckpointId &&
-        (!head ||
-          this.loop.contentDigest(head.candidateId) !== head.contentDigest)
-      )
-        problems.push(
-          "The accepted checkpoint's content could not be verified.",
-        );
-      if (problems.length) {
-        this.saveRun(run, {
-          state: "waiting",
-          waitReason: { kind: "recovery", detail: problems.join(" ") },
-          detail: `Recovery: ${problems.join(" ")}`,
-        });
-        continue;
-      }
-      if (run.state !== "suspended") continue;
-      const policy = this.policy(run.id);
       const it = run.currentIterationId
         ? this.repo.get<LoopIteration>(
             loopKinds.iteration,
@@ -7402,6 +7616,33 @@ export class LoopSupervisor {
           !["stopped", "completed", "accepted"].includes(g.state)
         );
       });
+      const problems = this.recoveryProblems(run);
+      if (problems.length) {
+        // The run is held suspended whether the service closed cleanly or
+        // crashed: as a wait with no wakeup it would leave the wait on the
+        // next tick and continue in spite of the problem. The owner's Resume
+        // clears it.
+        const held = this.saveRun(run, {
+          state: "suspended",
+          waitReason: { kind: "recovery", detail: problems.join(" ") },
+          detail: `Recovery: ${problems.join(" ")}`,
+        });
+        // The coordinator engine would otherwise keep running the child
+        // goals' turns on state that could not be verified. Resume resumes
+        // them once the revalidation passes.
+        for (const goalId of children)
+          await this.orchestrator
+            .controlCommand({
+              projectId: run.projectId,
+              goalId,
+              action: "pause",
+              commandId: `${goalId}:recovery-hold:${held.revision}`,
+            })
+            .catch(() => {});
+        continue;
+      }
+      if (run.state !== "suspended") continue;
+      const policy = this.policy(run.id);
       if (
         run.desiredState === "running" &&
         policy.recovery.resumeAfterRestart &&

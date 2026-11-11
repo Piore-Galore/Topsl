@@ -15,6 +15,7 @@ import { bindCheckInputs } from "../workflows/check-inputs";
 import {
   assertCandidateCurrent,
   captureCandidate,
+  gitHeadRevision,
   gitWorkingTreeChanges,
   type CandidateSnapshot,
 } from "../workflows/candidates";
@@ -524,19 +525,7 @@ export class RuntimeLoopDriver implements LoopDriver {
   async folderRevision(projectId: string) {
     const project = this.store.get<Project>("project", projectId);
     if (!project) return null;
-    try {
-      const head = await readFile(
-        path.join(project.realPath, ".git", "HEAD"),
-        "utf8",
-      );
-      const ref = /^ref: (.+)$/m.exec(head)?.[1];
-      if (!ref) return head.trim();
-      return (
-        await readFile(path.join(project.realPath, ".git", ref), "utf8")
-      ).trim();
-    } catch {
-      return null;
-    }
+    return gitHeadRevision(project.realPath, this.deps.gitExecutable);
   }
 
   async publicationPreview(input: {
@@ -661,10 +650,12 @@ export class RuntimeLoopDriver implements LoopDriver {
       const candidate = this.store.get<CandidateSnapshot>("candidate", id);
       const root = copy?.root ?? candidate?.sourceRoot;
       if (!root || copy?.state === "reclaimed") continue;
-      const owned = [this.deps.loopRoot, ...this.deps.ownedRoots].some(
-        (r) =>
-          path.relative(r, root) && !path.relative(r, root).startsWith(".."),
-      );
+      // On Windows a root on another drive yields an absolute relative path,
+      // which does not start with ".." and is still outside the owned root.
+      const owned = [this.deps.loopRoot, ...this.deps.ownedRoots].some((r) => {
+        const rel = path.relative(r, root);
+        return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
+      });
       if (!owned) continue;
       await rm(root, { recursive: true, force: true });
       this.store.put("loop-retained-copy", {

@@ -167,16 +167,26 @@ export function ProjectSettings({
                 min={1}
                 max={64}
                 defaultValue={snapshot.policy.maxMembersPerRole}
-                onBlur={(e) =>
+                onBlur={(e) => {
+                  const current = snapshot.policy.maxMembersPerRole,
+                    value = e.target.value.trim()
+                      ? Number(e.target.value)
+                      : NaN;
+                  if (!Number.isInteger(value) || value < 1 || value > 64) {
+                    e.target.value = String(current);
+                    return;
+                  }
+                  // An unchanged value would still bump the policy revision.
+                  if (value === current) return;
                   void run("policy", {
                     type: "orchestration-policy-set",
                     projectId,
                     expectedRevision: snapshot.policy.revision,
-                    maxMembersPerRole: Number(e.target.value),
+                    maxMembersPerRole: value,
                     defaults: snapshot.policy.defaults ?? {},
                     commandId: newCommandId(),
-                  })
-                }
+                  });
+                }}
               />
             </label>
             <ul className="team-summary" aria-label="Role defaults">

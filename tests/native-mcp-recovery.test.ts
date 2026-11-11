@@ -2,6 +2,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import { nativeFixture, answer } from "./native-fixture";
 import { NativeHarness } from "../packages/harness/harness";
 import { McpClient, schemaHash } from "../packages/harness/mcp";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
 // Real kernel, persistence and loopback proxy; simulated MCP process boundary.
 const cleanups: Array<() => unknown | Promise<unknown>> = [];
@@ -173,4 +175,65 @@ test("children inherit admitted MCP tools in separate server instances", async (
   expect(server.start).toHaveBeenCalledTimes(2);
   expect(server.call).toHaveBeenCalledTimes(1);
   expect(f.harness.view(final.children[0])?.state).toBe("completed");
+});
+
+/** A client attached to an in-memory stand-in for the server process. */
+function attached() {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(),
+  });
+  const sent: any[] = [];
+  child.stdin.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean))
+      sent.push(JSON.parse(line));
+  });
+  const client = new McpClient(
+    { name: "fixture", argv: ["synthetic-mcp"] },
+    {} as any,
+    "/",
+  );
+  (client as any).attach(child);
+  return { client, child, sent };
+}
+
+test("a failed write to the server's input settles it instead of throwing", async () => {
+  const { client, child } = attached();
+  const call = client.call("ping", {}, 5_000);
+  child.stdin.destroy(Object.assign(new Error("EPIPE"), { code: "EPIPE" }));
+  await expect(call).rejects.toThrow(/closed its input/);
+  expect(client.running).toBe(false);
+  expect(child.kill).toHaveBeenCalled();
+});
+
+test("a server request that reuses a pending id is refused, not taken as the response", async () => {
+  const { client, child, sent } = attached();
+  const call = client.call("ping", {}, 5_000);
+  await until(() => sent.length === 1);
+  const id = sent[0].id;
+  child.stdout.write(
+    `${JSON.stringify({ jsonrpc: "2.0", id, method: "sampling/createMessage", params: {} })}\n`,
+  );
+  await until(() => sent.length === 2);
+  expect(sent[1]).toMatchObject({ id, error: { code: -32601 } });
+  child.stdout.write(
+    `${JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "pong" }] } })}\n`,
+  );
+  await expect(call).resolves.toEqual({ ok: true, output: "pong" });
+});
+
+test("stopping rejects a pending MCP call at once and tells the server", async () => {
+  const { client, sent } = attached();
+  const controller = new AbortController();
+  const call = client.call("ping", {}, 60_000, controller.signal);
+  await until(() => sent.length === 1);
+  controller.abort();
+  await expect(call).rejects.toThrow(/stopped/);
+  await until(() => sent.length === 2);
+  expect(sent[1]).toMatchObject({
+    method: "notifications/cancelled",
+    params: { requestId: sent[0].id },
+  });
 });
