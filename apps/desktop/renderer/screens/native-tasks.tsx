@@ -84,9 +84,28 @@ export function NativeTasks({
   // the effect below does not re-run (and re-query) after each response.
   const actRef = useRef(act);
   actRef.current = act;
+  // `act` drops a command while the same one is in flight. A change event
+  // that arrives during a read would then be lost, and with nothing after it
+  // the screen would keep the older state for good: a task that finished
+  // would never show as finished. So a refresh asked for during a read runs
+  // once more when that read returns.
+  const reading = useRef(false);
+  const readAgain = useRef(false);
   const refresh = useCallback(async () => {
-    const value = await actRef.current({ type: "native-state", projectId });
-    if (value) setNative(value);
+    if (reading.current) {
+      readAgain.current = true;
+      return;
+    }
+    reading.current = true;
+    try {
+      do {
+        readAgain.current = false;
+        const value = await actRef.current({ type: "native-state", projectId });
+        if (value) setNative(value);
+      } while (readAgain.current);
+    } finally {
+      reading.current = false;
+    }
   }, [projectId]);
   useEffect(() => {
     void refresh();

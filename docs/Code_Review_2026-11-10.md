@@ -4,7 +4,8 @@ A review of all product source (about 100,000 lines under `apps/` and `packages/
 
 - **Base revision:** `6ccc364` on `main`. The fixes are in the working tree; nothing was committed.
 - **Environment:** darwin-arm64, local only.
-- **Evidence level:** local automated tests and reading. Nothing here was exercised in the Electron window, against a live provider, on a packaged build, or in remote CI.
+- **Evidence level:** local automated tests and reading for the review passes of 10 November. On 11 November parts of it were exercised in the built app and with two live Codex sessions, and remote CI ran on all four platforms; see [In the built app](#in-the-built-app--11-november-2026) and [Remote CI and merge](#remote-ci-and-merge--11-november-2026).
+- **Merged:** pull request [#52](https://github.com/Piore-Galore/Topsl/pull/52), merge commit `ef4eeb9`, on 11 November 2026. The statement above that nothing was committed describes the passes as they were made.
 
 ## Method
 
@@ -272,6 +273,29 @@ The "Mark as not running" button and its dialog were not exercised: getting an u
 
 Still not exercised in the window: the "Mark as not running" dialog and button, a few smaller renderer fixes (parallel activity, assisted handoff, workflow evidence, advanced workflows), and anything with a live provider or a packaged build.
 
+## Remote CI and merge — 11 November 2026
+
+The fixes were pushed as pull request [#52](https://github.com/Piore-Galore/Topsl/pull/52). Remote CI found three things the local runs on macOS could not, each fixed on the branch before the merge:
+
+- **A race in a new test** (`tests/runtime.test.ts`, the two-turn Codex usage test). A run is marked completed before its workspace lease is released, and on the Linux lifecycle runner the second turn started inside that gap and was refused. The test now retries the start; a refused start changes nothing. Product code was not involved.
+- **A dangling link on Windows** (`packages/platform/system.ts`, `projectPath`). Windows reports that a link whose target is gone exists and then fails to resolve it, so reading a configuration file behind such a link threw a raw `ENOENT` where POSIX refused the link. The path check now falls through to the parent folder on both, and the link is refused with the intended message. Found by `tests/campaign-config-usage.test.ts`.
+- **A path through a regular file on Windows** (`packages/harness/paths.ts`, `resolveInside`). Windows fails `README.md/x` with `ENOENT`, not `ENOTDIR`, so the harness walked up to the file and accepted the path. The nearest existing ancestor must now be a folder. Found by `tests/native-context-paths.test.ts`.
+
+**Result at the merged head `5da7475`:** both workflows passed on macOS Apple silicon, macOS Intel, Windows x64 and Linux x64.
+
+- "Compile Topsl" ([run 42877060535](https://github.com/Piore-Galore/Topsl/actions/runs/42877060535)): type-check, the unit suite and the build, the desktop acceptance smoke, and the packaged session journey on each platform.
+- "Round 2 lifecycle stress" ([run 42877060439](https://github.com/Piore-Galore/Topsl/actions/runs/42877060439)): twenty lifecycle iterations on each platform.
+
+What this does and does not establish: the unit suite, the desktop smoke and the packaged session journey now have a passing run on Windows and Linux with these changes. The Linux `/proc` lookup in `affectedProcesses` and the Windows drive check in checkpoint ownership have no test of their own, so a green suite does not show those branches ran. The two steps added to the release workflow run only on a release tag and have not run.
+
+### A regression CI found after the merge
+
+The documentation-only follow-up, pull request [#53](https://github.com/Piore-Galore/Topsl/pull/53), failed once on macOS Apple silicon in `scripts/desktop-native-test.mjs`: a native task that had been started never appeared as "Completed" within 60 seconds. The same step had passed on that platform at the merged head.
+
+The cause is in the review's own fix for the Native tasks re-query loop. The screen reads its state through the app's `act` helper, which drops a command while the same one is in flight. A change event that arrived during a read was therefore lost, and with no later event the screen kept the older state. Before the fix the endless re-query hid this. `apps/desktop/renderer/screens/native-tasks.tsx` now runs one more read when a refresh is asked for during a read.
+
+Evidence: the script passed three times in a row locally after the change, and it also passed most runs before it, so the local runs do not prove the race is closed; the reasoning above and the CI result on this pull request are what support it.
+
 ## Not fixed
 
 Nothing from the review remains open except the items below, and what the live Codex check did not observe (`total` after a compaction or on a resumed thread).
@@ -335,4 +359,4 @@ Commands run on 10 November 2026 on darwin-arm64.
 
 - Apart from the four fixes walked through in the built app and the two live Codex sessions above, the fixes were not exercised in the Electron window or with a live provider, and none on a packaged build. Most renderer and `apps/desktop/main.ts` changes rest on type-check and reading.
 - The Linux branch of `affectedProcesses` and the added release workflow steps were not run.
-- Remote CI has not run on these changes, so the Windows and Linux branches are unverified.
+- Remote CI passed on all four platforms at the merged head (see "Remote CI and merge" above). The Linux `/proc` lookup and the Windows drive check still have no test of their own, and the release workflow's added steps have not run.
